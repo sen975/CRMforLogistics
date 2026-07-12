@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chatwoot WhatsApp Demo</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">WhatsApp via Chatwoot</p>
+        <h1>私发链路测试台</h1>
+      </div>
+      <div class="status-pill" id="modePill">mock</div>
+    </header>
+
+    <section class="grid">
+      <aside class="panel config-panel">
+        <div class="panel-head">
+          <h2>连接配置</h2>
+          <button class="icon-button" id="refreshBtn" title="刷新状态" aria-label="刷新状态">↻</button>
+        </div>
+        <label>运行模式
+          <select id="mode">
+            <option value="mock">mock 本地模拟</option>
+            <option value="real">real 调 Chatwoot</option>
+          </select>
+        </label>
+        <label>Chatwoot URL
+          <input id="chatwootUrl" placeholder="https://chat.example.com">
+        </label>
+        <div class="two-col">
+          <label>Account ID
+            <input id="accountId" type="number" placeholder="1">
+          </label>
+          <label>Inbox ID
+            <input id="inboxId" type="number" placeholder="2">
+          </label>
+        </div>
+        <label>API Token
+          <input id="apiToken" type="password" placeholder="只保存在本地 config.json">
+        </label>
+        <label>Webhook Secret
+          <input id="webhookSecret" type="password" placeholder="可选，留给后续签名校验">
+        </label>
+        <button class="primary" id="saveConfigBtn">保存配置</button>
+        <pre class="mini-log" id="configStatus">等待加载...</pre>
+      </aside>
+
+      <section class="panel send-panel">
+        <div class="panel-head">
+          <h2>一对一发送</h2>
+          <span class="tag">mock 可直接测</span>
+        </div>
+        <div class="two-col">
+          <label>手机号
+            <input id="phone" value="+15551234567">
+          </label>
+          <label>客户名
+            <input id="name" value="Maria Gomez">
+          </label>
+        </div>
+        <label>普通消息
+          <textarea id="textContent" rows="4">Hello, this is a test message from logistics CRM.</textarea>
+        </label>
+        <div class="button-row">
+          <button class="primary" id="sendTextBtn">发送文本</button>
+          <button id="loadMessagesBtn">刷新消息</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="template-row">
+          <label>模板名
+            <input id="templateName" value="lead_followup">
+          </label>
+          <label>语言
+            <input id="templateLang" value="en_US">
+          </label>
+        </div>
+        <label>模板参数，用英文逗号分隔
+          <input id="templateParams" value="YUEWEI, Shanghai">
+        </label>
+        <button id="sendTemplateBtn">发送模板</button>
+      </section>
+
+      <section class="panel webhook-panel">
+        <div class="panel-head">
+          <h2>Webhook 入站</h2>
+          <span class="endpoint">/webhooks/chatwoot</span>
+        </div>
+        <label>模拟 Chatwoot 入站 JSON
+          <textarea id="webhookJson" rows="11">{
+  "event": "message_created",
+  "message_type": "incoming",
+  "content": "Need air freight rate from Shanghai to Dubai",
+  "conversation": { "id": 7001 },
+  "sender": {
+    "id": 42,
+    "name": "Maria Gomez",
+    "phone_number": "+15551234567"
+  }
+}</textarea>
+        </label>
+        <button class="primary" id="sendWebhookBtn">模拟入站</button>
+      </section>
+
+      <section class="panel activity-panel">
+        <div class="panel-head">
+          <h2>消息记录</h2>
+          <input class="search" id="searchBox" placeholder="搜索内容 / 姓名 / 手机号">
+        </div>
+        <div class="list" id="messageList"></div>
+      </section>
+
+      <section class="panel event-panel">
+        <div class="panel-head">
+          <h2>Webhook 事件</h2>
+          <button id="loadWebhooksBtn">刷新</button>
+        </div>
+        <div class="list compact" id="eventList"></div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head">
+          <h2>操作日志</h2>
+          <button id="clearLogBtn">清空</button>
+        </div>
+        <pre id="logOutput"></pre>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

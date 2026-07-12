@@ -1,0 +1,7 @@
+packages:
+  - '.'
+
+overrides:
+  vite: 6.4.2
+  vitest: 3.0.5
+  rollup: '>=4.59.0'

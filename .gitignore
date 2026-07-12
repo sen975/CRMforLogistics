@@ -1,0 +1,62 @@
+# Local agent and worktree state
+.codex/
+.agents/
+.worktrees/
+**/.codex-stage/
+
+# Independent nested repositories
+wechat-decrypt/
+
+# Secrets and machine-local configuration
+**/.env
+**/.env.*
+!**/.env.example
+!**/config.example.env
+**/config.json
+!**/config.example.json
+**/*private*.pem
+**/workwx_*.pem
+
+# Runtime data
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/data/messages.jsonl
+**/data/inbox.jsonl
+**/data/contact-groups.jsonl
+**/data/media/
+**/result.txt
+**/*.log
+
+# Generated output and caches
+demo/outputs/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/node_modules/
+**/dist/
+**/.vite/
+**/target/
+**/*.class
+**/.verify/edge-profile-*/
+
+# IDE and operating-system state
+**/.idea/
+**/.vs/
+**/.vscode/
+**/*.suo
+**/*.user
+**/*.VC.db*
+**/*.ipch
+.DS_Store
+Thumbs.db
+
+# Vendor SDK binaries are installed locally from the official package
+wecom-archive-app/sdk_win_v3/**/*.dll
+wecom-archive-app/sdk_win_v3/**/*.lib
+

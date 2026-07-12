@@ -1,0 +1,8 @@
+{
+  "mode": "mock",
+  "chatwoot_url": "https://chat.example.com",
+  "account_id": 1,
+  "inbox_id": 2,
+  "api_token": "replace-with-chatwoot-api-token",
+  "webhook_secret": "optional"
+}

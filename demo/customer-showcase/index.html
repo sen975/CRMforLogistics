@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>跨境物流 AI 协作型 CRM - 客户展示 Demo</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell" data-crm-demo>
+    <aside class="sidebar" aria-label="系统导航">
+      <div class="brand-block">
+        <div class="brand-mark">L</div>
+        <div>
+          <strong>LogiCRM AI</strong>
+          <span>跨境物流协作 CRM</span>
+        </div>
+      </div>
+
+      <nav class="main-nav" id="mainNav" aria-label="主导航"></nav>
+    </aside>
+
+    <section class="app-main">
+      <header class="topbar">
+        <div class="breadcrumb-area">
+          <nav class="breadcrumb" id="breadcrumb" aria-label="面包屑导航"></nav>
+          <div class="page-title" id="pageTitle"></div>
+        </div>
+        <div class="top-actions">
+          <div class="role-switch" id="roleSwitch" aria-label="角色切换"></div>
+          <button class="button primary" id="nextStep">下一步</button>
+          <button class="button" id="resetDemo">重置</button>
+        </div>
+      </header>
+
+      <main class="content-shell">
+        <section class="page-column">
+          <div class="page-toolbar panel" id="pageToolbar"></div>
+          <div class="page-content" id="pageContent"></div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div id="aiSecretaryHost"></div>
+
+  <script src="./mock-data.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

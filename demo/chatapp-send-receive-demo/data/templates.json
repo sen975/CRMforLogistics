@@ -1,0 +1,20 @@
+[
+  {
+    "templateCode": "1235084769945395200",
+    "templateName": "order_management_3_fbd1e0521e024aa4853466c00664354e",
+    "languageCode": "zh_CN",
+    "body": "嗨$(text),我们收到你的订单。\n\n你的订单号是$(text1)。\n\n预计交付:$(date)。\n\n点击下方管理订单。",
+    "placeholders": [],
+    "raw": "{\"auditStatus\":\"unaudit\",\"category\":\"UTILITY\",\"categoryChangePaused\":false,\"components\":[{\"format\":\"TEXT\",\"text\":\"订单已确认\",\"type\":\"HEADER\"},{\"text\":\"嗨$(text),我们收到你的订单。\\n\\n你的订单号是$(text1)。\\n\\n预计交付:$(date)。\\n\\n点击下方管理订单。\",\"type\":\"BODY\"},{\"buttons\":[{\"extendAttrs\":{},\"text\":\"管理订单\",\"type\":\"URL\",\"url\":\"https://www.example.com\",\"urlType\":\"static\"}],\"type\":\"BUTTONS\"}],\"example\":{\"date\":\"2024年1月1日\",\"text1\":\"#12345\",\"text\":\"约翰\"},\"language\":\"zh_CN\",\"name\":\"order_management_3_fbd1e0521e024aa4853466c00664354e\",\"qualityScore\":\"\",\"templateCode\":\"1235084769945395200\",\"templateType\":\"WHATSAPP\"}",
+    "updatedAt": "2026-07-10T06:38:07.141657400Z"
+  },
+  {
+    "templateCode": "1235038485993684992",
+    "templateName": "wl",
+    "languageCode": "zh_CN",
+    "body": "嗨$(text),您的送货地址已成功更新到$(text1)。 任何咨询请联系 $(text2)。",
+    "placeholders": [],
+    "raw": "{\"auditStatus\":\"pass\",\"category\":\"UTILITY\",\"categoryChangePaused\":false,\"components\":[{\"format\":\"TEXT\",\"text\":\"地址更新\",\"type\":\"HEADER\"},{\"text\":\"嗨$(text),您的送货地址已成功更新到$(text1)。 任何咨询请联系 $(text2)。\",\"type\":\"BODY\"}],\"example\":{\"text1\":\"123 Main St\",\"text2\":\"support@telco.com\",\"text\":\"John\"},\"language\":\"zh_CN\",\"name\":\"wl\",\"qualityScore\":\"\",\"templateCode\":\"1235038485993684992\",\"templateType\":\"WHATSAPP\"}",
+    "updatedAt": "2026-07-10T06:38:07.529073Z"
+  }
+]

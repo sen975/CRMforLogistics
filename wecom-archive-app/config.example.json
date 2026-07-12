@@ -1,0 +1,13 @@
+{
+  "wxwork_archive": {
+    "corp_id": "YOUR_CORP_ID",
+    "secret": "YOUR_CHAT_ARCHIVE_SECRET",
+    "private_key_path": "private_key.pem",
+    "sdk_lib_path": "WeWorkFinanceSdk.dll",
+    "db_path": "data/wxwork_archive.db",
+    "media_dir": "data/media",
+    "proxy": "",
+    "passwd": "",
+    "timeout": 5
+  }
+}
