@@ -1,5 +1,6 @@
 package com.crmforlogistics.wecomsaas;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -23,6 +24,6 @@ public class ApiError extends RuntimeException {
     }
 
     public Map<String, Object> body() {
-        return Map.copyOf(body);
+        return Collections.unmodifiableMap(new LinkedHashMap<>(body));
     }
 }

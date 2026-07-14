@@ -10,6 +10,7 @@ public class WecomSaasDemoTest {
         loadsConfigFromEnvFileAndKeepsSafeDefaults();
         writesAndReadsJsonlRecords();
         rendersStructuredApiError();
+        preservesNullableApiErrorDetails();
     }
 
     private static void loadsConfigFromEnvFileAndKeepsSafeDefaults() throws Exception {
@@ -52,6 +53,17 @@ public class WecomSaasDemoTest {
         assertEquals("附件超过本地 demo 限制", String.valueOf(body.get("message")));
         assertEquals("422", Integer.toString(error.status()));
         assertContains(JsonSupport.GSON.toJson(body), "maxBytes");
+    }
+
+    private static void preservesNullableApiErrorDetails() {
+        ApiError error = new ApiError(422, "ValidationError", "请求参数无效",
+                JsonSupport.map("optional", null));
+
+        java.util.Map<String, Object> body = error.body();
+
+        if (!body.containsKey("optional") || body.get("optional") != null) {
+            throw new AssertionError("Expected optional detail to be present with a null value");
+        }
     }
 
     private static void assertEquals(String expected, String actual) {
