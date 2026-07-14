@@ -11,6 +11,8 @@ public class WecomSaasDemoTest {
         writesAndReadsJsonlRecords();
         rendersStructuredApiError();
         preservesNullableApiErrorDetails();
+        seedsTenantContactsMessagesAndSyncJobs();
+        appendsMessagesWithoutDroppingRawJson();
     }
 
     private static void loadsConfigFromEnvFileAndKeepsSafeDefaults() throws Exception {
@@ -64,6 +66,35 @@ public class WecomSaasDemoTest {
         if (!body.containsKey("optional") || body.get("optional") != null) {
             throw new AssertionError("Expected optional detail to be present with a null value");
         }
+    }
+
+    private static void seedsTenantContactsMessagesAndSyncJobs() throws Exception {
+        Path dir = Files.createTempDirectory("wecom-saas-store-test");
+        DemoStore store = new DemoStore(Config.forTests(dir));
+        store.ensureSeedData();
+
+        assertEquals("1", Integer.toString(store.tenants().size()));
+        assertEquals("4", Integer.toString(store.contacts().size()));
+        assertEquals("2", Integer.toString(store.syncJobs().size()));
+
+        List<MessageRecord> thread = store.messagesForContact("contact-ext-001");
+        assertEquals("2", Integer.toString(thread.size()));
+        assertEquals("archive", thread.get(1).channel);
+        assertContains(thread.get(1).rawJson, "encrypt_random_key");
+    }
+
+    private static void appendsMessagesWithoutDroppingRawJson() throws Exception {
+        Path dir = Files.createTempDirectory("wecom-saas-message-test");
+        DemoStore store = new DemoStore(Config.forTests(dir));
+        MessageRecord message = MessageRecord.outbound("tenant-demo", "contact-ext-001",
+                "wecom_kf", "客服您好", "{\"source\":\"unit-test\"}");
+
+        store.appendMessage(message);
+
+        MessageRecord saved = store.findMessage(message.id);
+        assertEquals("wecom_kf", saved.channel);
+        assertEquals("outbound", saved.direction);
+        assertContains(saved.rawJson, "unit-test");
     }
 
     private static void assertEquals(String expected, String actual) {
