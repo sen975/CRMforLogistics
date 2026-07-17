@@ -1,0 +1,72 @@
+name: crm-logistics-message-center
+
+services:
+  postgres:
+    image: postgres:17.5-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-message_center}
+      POSTGRES_USER: ${POSTGRES_USER:-message_center}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        access_key="$$(cat /run/secrets/minio_access_key)"
+        secret_key="$$(cat /run/secrets/minio_secret_key)"
+        mc alias set local http://minio:9000 "$$access_key" "$$secret_key" >/dev/null
+        mc mb --ignore-existing "local/${MINIO_BUCKET:-message-center}" >/dev/null
+        mc anonymous set none "local/${MINIO_BUCKET:-message-center}" >/dev/null
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+    restart: "no"
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  minio_access_key:
+    file: ./secrets/minio_access_key
+  minio_secret_key:
+    file: ./secrets/minio_secret_key
+
+volumes:
+  postgres_data:
+  minio_data:
