@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Comparator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,6 +53,22 @@ public class TemplateStore {
         return records;
     }
 
+    public synchronized void saveAll(List<TemplateRecord> records) throws IOException {
+        if (file == null) {
+            return;
+        }
+        if (file.getParent() != null) {
+            Files.createDirectories(file.getParent());
+        }
+        List<TemplateRecord> safeRecords = records == null ? new ArrayList<>() : new ArrayList<>(records);
+        safeRecords.sort(Comparator
+                .comparing((TemplateRecord item) -> firstNonBlank(item.templateName, ""))
+                .thenComparing(item -> firstNonBlank(item.languageCode, ""))
+                .thenComparing(item -> firstNonBlank(item.templateCode, "")));
+        Files.writeString(file, GSON.toJson(safeRecords), StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
     public TemplateRecord find(String code, String language) {
         if (code == null || code.isBlank()) {
             return null;
@@ -77,6 +94,13 @@ public class TemplateStore {
         } catch (IOException ignored) {
             return null;
         }
+    }
+
+    public String key(TemplateRecord record) {
+        if (record == null) {
+            return "|";
+        }
+        return normalize(record.templateCode) + "|" + normalize(record.languageCode);
     }
 
     public String render(String code, String language, String paramsJson, String fallbackName) {

@@ -17,6 +17,8 @@ public class UnifiedMessage {
     public String statusTimestamp;
     public String mediaType;
     public String mediaUrl;
+    public String objectKey;
+    public String mimeType;
     public String fileName;
     public String raw;
 }

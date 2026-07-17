@@ -35,6 +35,8 @@ public class UnifiedMessageStore {
 
     public List<UnifiedContact> contacts() throws IOException {
         Map<String, List<String>> groups = contactGroups();
+        Map<String, String> remarks = contactRemarks();
+        Map<String, List<String>> tags = contactTags();
         Map<String, ContactAccumulator> byPrimary = new LinkedHashMap<>();
         for (UnifiedMessage message : messages()) {
             if (message.contactPointId == null || message.contactPointId.isBlank()) {
@@ -46,7 +48,9 @@ public class UnifiedMessageStore {
         }
         List<UnifiedContact> result = new ArrayList<>();
         for (ContactAccumulator acc : byPrimary.values()) {
-            result.add(acc.toContact(groups.getOrDefault(acc.primaryPointId, List.of(acc.primaryPointId))));
+            result.add(acc.toContact(groups.getOrDefault(acc.primaryPointId, List.of(acc.primaryPointId)),
+                    remarks.getOrDefault(acc.primaryPointId, ""),
+                    tags.getOrDefault(acc.primaryPointId, List.of())));
         }
         result.sort(Comparator
                 .comparing((UnifiedContact contact) -> MessageTime.parseInstant(contact.lastTime))
@@ -105,6 +109,8 @@ public class UnifiedMessageStore {
             return;
         }
         Map<String, List<String>> groups = contactGroups();
+        Map<String, String> remarks = contactRemarks();
+        Map<String, List<String>> tags = contactTags();
         String primaryRoot = primaryFor(primary, groups);
         String mergedRoot = primaryFor(merged, groups);
         LinkedHashSet<String> points = new LinkedHashSet<>();
@@ -116,7 +122,19 @@ public class UnifiedMessageStore {
         groups.remove(primaryRoot);
         groups.remove(mergedRoot);
         groups.put(primary, new ArrayList<>(points));
-        writeContactGroups(groups);
+        String remark = ContactPointUtil.firstNonBlank(remarks.remove(primaryRoot), remarks.remove(mergedRoot));
+        if (!remark.isBlank()) {
+            remarks.put(primary, remark);
+        }
+        LinkedHashSet<String> mergedTags = new LinkedHashSet<>();
+        List<String> primaryTags = tags.remove(primaryRoot);
+        List<String> mergedRootTags = tags.remove(mergedRoot);
+        mergedTags.addAll(primaryTags == null ? List.of() : primaryTags);
+        mergedTags.addAll(mergedRootTags == null ? List.of() : mergedRootTags);
+        if (!mergedTags.isEmpty()) {
+            tags.put(primary, new ArrayList<>(mergedTags));
+        }
+        writeContactGroups(groups, remarks, tags);
     }
 
     public void splitContact(String primaryPointId, String pointToSplit) throws IOException {
@@ -126,15 +144,63 @@ public class UnifiedMessageStore {
             return;
         }
         Map<String, List<String>> groups = contactGroups();
+        Map<String, String> remarks = contactRemarks();
+        Map<String, List<String>> tags = contactTags();
         String root = primaryFor(primary, groups);
+        String remark = ContactPointUtil.firstNonBlank(remarks.remove(root), "");
+        List<String> retainedTags = tags.remove(root);
         List<String> points = new ArrayList<>(groups.getOrDefault(root, List.of(root)));
         points.removeIf(point -> Objects.equals(ContactPointUtil.normalizePointId(point), split));
         groups.remove(root);
-        if (points.size() > 1) {
+        if (!points.isEmpty()) {
             String newRoot = points.contains(root) ? root : points.get(0);
             groups.put(newRoot, points);
+            if (!remark.isBlank()) {
+                remarks.put(newRoot, remark);
+            }
+            if (retainedTags != null && !retainedTags.isEmpty()) {
+                tags.put(newRoot, retainedTags);
+            }
+            if (!Objects.equals(newRoot, root)) {
+                groups.put(root, List.of(root));
+            }
         }
-        writeContactGroups(groups);
+        writeContactGroups(groups, remarks, tags);
+    }
+
+    public void updateContactRemark(String contactPointId, String remark) throws IOException {
+        String point = ContactPointUtil.normalizePointId(contactPointId);
+        if (point.isBlank()) {
+            return;
+        }
+        Map<String, List<String>> groups = contactGroups();
+        String primary = primaryFor(point, groups);
+        updateContactProfile(contactPointId, remark, contactTags().getOrDefault(primary, List.of()));
+    }
+
+    public void updateContactProfile(String contactPointId, String nickname, List<String> newTags) throws IOException {
+        String point = ContactPointUtil.normalizePointId(contactPointId);
+        if (point.isBlank()) {
+            return;
+        }
+        Map<String, List<String>> groups = contactGroups();
+        Map<String, String> remarks = contactRemarks();
+        Map<String, List<String>> tags = contactTags();
+        String primary = primaryFor(point, groups);
+        groups.putIfAbsent(primary, List.of(primary));
+        String cleaned = nickname == null ? "" : nickname.trim();
+        if (cleaned.isBlank()) {
+            remarks.remove(primary);
+        } else {
+            remarks.put(primary, cleaned);
+        }
+        List<String> cleanedTags = cleanTags(newTags);
+        if (cleanedTags.isEmpty()) {
+            tags.remove(primary);
+        } else {
+            tags.put(primary, cleanedTags);
+        }
+        writeContactGroups(groups, remarks, tags);
     }
 
     public ChannelCapability channelCapability(String channel) {
@@ -230,14 +296,27 @@ public class UnifiedMessageStore {
                 message.to = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "to"), firstRaw(message.raw, "To", "to", "userNumber"));
                 String peer = "outbound".equals(message.direction) ? message.to : message.from;
                 message.contactPointId = ContactPointUtil.normalizePointId("chatapp:whatsapp:" + peer);
-                message.title = chatAppTitle(object, message.raw);
-                message.text = chatAppDisplayText(object, message.raw);
+                String storedText = JsonSupport.string(object, "text");
+                message.mediaType = cleanMediaType(ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mediaType"),
+                        firstJsonValue(storedText, "mediaType", "messageType", "type"),
+                        firstRaw(message.raw, "messageTypeName", "messageType", "Type")));
+                message.mediaUrl = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mediaUrl"),
+                        firstJsonValue(storedText, "url", "link", "mediaUrl"),
+                        firstRaw(message.raw, "link", "mediaUrl", "url"));
+                message.objectKey = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "objectKey"),
+                        firstJsonValue(storedText, "objectKey", "ossObjectKey"),
+                        firstRaw(message.raw, "objectKey", "ossObjectKey"));
+                message.mimeType = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mimeType"),
+                        firstJsonValue(storedText, "mimeType", "contentType"),
+                        firstRaw(message.raw, "mimeType", "contentType"));
+                message.fileName = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "fileName"),
+                        firstJsonValue(storedText, "fileName", "name"),
+                        firstRaw(message.raw, "fileName"));
+                message.title = chatAppTitle(object, message.raw, message.mediaType);
+                message.text = chatAppDisplayText(object, message.raw, message.mediaType);
                 message.summary = message.text;
                 message.status = cleanStatus(ContactPointUtil.firstNonBlank(JsonSupport.string(object, "status"), rawStatus(message.raw)));
                 message.statusTimestamp = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "statusTimestamp"), message.timestamp);
-                message.mediaType = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mediaType"), firstRaw(message.raw, "messageTypeName", "messageType", "Type"));
-                message.mediaUrl = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mediaUrl"), firstRaw(message.raw, "link", "mediaUrl"));
-                message.fileName = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "fileName"), firstRaw(message.raw, "fileName"));
                 rawMessages.add(message);
             } catch (RuntimeException ignored) {
                 // Keep reading the remaining local history when one line is malformed.
@@ -262,20 +341,11 @@ public class UnifiedMessageStore {
         return new ArrayList<>(bySourceId.values());
     }
 
-    private String chatAppTitle(JsonObject object, String raw) {
-        String mediaType = ContactPointUtil.firstNonBlank(JsonSupport.string(object, "mediaType"), firstRaw(raw, "messageTypeName", "messageType", "Type"));
-        if (!mediaType.isBlank()
-                && !"TEXT".equalsIgnoreCase(mediaType)
-                && !"template".equalsIgnoreCase(mediaType)
-                && !"TEMPLATE".equalsIgnoreCase(mediaType)) {
-            return mediaType.toLowerCase(Locale.ROOT);
-        }
-        String templateName = ContactPointUtil.firstNonBlank(firstRaw(raw, "templateName", "TemplateName"),
-                firstRaw(raw, "templateCode", "TemplateCode"));
-        return templateName.isBlank() ? "" : "Template: " + templateName;
+    private String chatAppTitle(JsonObject object, String raw, String projectedMediaType) {
+        return "";
     }
 
-    private String chatAppDisplayText(JsonObject object, String raw) {
+    private String chatAppDisplayText(JsonObject object, String raw, String projectedMediaType) {
         String templateText = templateText(raw);
         if (!templateText.isBlank()) {
             return templateText;
@@ -285,9 +355,50 @@ public class UnifiedMessageStore {
         if (!textFromJson.isBlank()) {
             return textFromJson;
         }
+        String storedCaptionText = stripMediaPlaceholderPrefix(stored);
+        if (!storedCaptionText.isBlank()) {
+            return storedCaptionText;
+        }
+        String storedMediaText = mediaTextFromJson(projectedMediaType, stored);
         String rawMessage = firstRaw(raw, "message", "Message", "text", "body", "content");
         String rawText = JsonSupport.textField(rawMessage);
-        return ContactPointUtil.firstNonBlank(rawText, rawMessage, stored);
+        String rawMediaText = mediaTextFromJson(projectedMediaType, rawMessage);
+        if (!storedMediaText.isBlank() && !isGenericMediaPlaceholder(storedMediaText)) {
+            return storedMediaText;
+        }
+        return ContactPointUtil.firstNonBlank(rawText, rawMediaText, storedMediaText, rawMessage, stored);
+    }
+
+    private static String mediaTextFromJson(String mediaType, String raw) {
+        String normalized = cleanMediaType(mediaType);
+        boolean attachmentType = "image".equals(normalized) || "video".equals(normalized) || "document".equals(normalized);
+        boolean hasAttachmentPayload = !firstJsonValue(raw, "caption", "url", "link", "mediaUrl", "fileName").isBlank();
+        if (!attachmentType && !hasAttachmentPayload) {
+            return "";
+        }
+        String caption = firstJsonValue(raw, "caption");
+        String fileName = firstJsonValue(raw, "fileName", "name");
+        String type = ContactPointUtil.firstNonBlank(attachmentType ? normalized : "",
+                cleanMediaType(firstJsonValue(raw, "mediaType", "messageType", "type")));
+        String label = type.isBlank() ? "附件" : type;
+        return ContactPointUtil.firstNonBlank(caption, fileName, "[" + label + "]");
+    }
+
+    private static boolean isGenericMediaPlaceholder(String value) {
+        String text = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        return "[image]".equals(text) || "[video]".equals(text) || "[document]".equals(text) || "[file]".equals(text)
+                || "[附件]".equals(text);
+    }
+
+    private static String stripMediaPlaceholderPrefix(String value) {
+        String text = value == null ? "" : value.trim();
+        if (text.isBlank()) {
+            return "";
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)^\\s*\\[(image|video|document|file|附件)\\]\\s+(.+)$")
+                .matcher(text);
+        return matcher.matches() ? matcher.group(2).trim() : "";
     }
 
     private String templateText(String raw) {
@@ -311,6 +422,8 @@ public class UnifiedMessageStore {
         target.statusTimestamp = ContactPointUtil.firstNonBlank(target.statusTimestamp, source.statusTimestamp);
         target.mediaType = ContactPointUtil.firstNonBlank(target.mediaType, source.mediaType);
         target.mediaUrl = ContactPointUtil.firstNonBlank(target.mediaUrl, source.mediaUrl);
+        target.objectKey = ContactPointUtil.firstNonBlank(target.objectKey, source.objectKey);
+        target.mimeType = ContactPointUtil.firstNonBlank(target.mimeType, source.mimeType);
         target.fileName = ContactPointUtil.firstNonBlank(target.fileName, source.fileName);
     }
 
@@ -319,6 +432,62 @@ public class UnifiedMessageStore {
         readUnifiedContactGroups(config.contactGroupFile(), groups);
         readLegacyEmailContactGroups(config.emailContactGroupFile(), groups);
         return groups;
+    }
+
+    private Map<String, String> contactRemarks() throws IOException {
+        Map<String, String> remarks = new LinkedHashMap<>();
+        Path file = config.contactGroupFile();
+        if (!Files.exists(file)) {
+            return remarks;
+        }
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            if (line.isBlank()) {
+                continue;
+            }
+            try {
+                JsonObject object = JsonParser.parseString(line).getAsJsonObject();
+                String primary = ContactPointUtil.normalizePointId(JsonSupport.string(object, "primaryPointId"));
+                String remark = JsonSupport.string(object, "remark").trim();
+                if (!primary.isBlank() && !remark.isBlank()) {
+                    remarks.put(primary, remark);
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return remarks;
+    }
+
+    private Map<String, List<String>> contactTags() throws IOException {
+        Map<String, List<String>> tags = new LinkedHashMap<>();
+        Path file = config.contactGroupFile();
+        if (!Files.exists(file)) {
+            return tags;
+        }
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            if (line.isBlank()) {
+                continue;
+            }
+            try {
+                JsonObject object = JsonParser.parseString(line).getAsJsonObject();
+                String primary = ContactPointUtil.normalizePointId(JsonSupport.string(object, "primaryPointId"));
+                JsonElement array = object.get("tags");
+                List<String> values = new ArrayList<>();
+                if (array != null && array.isJsonArray()) {
+                    for (JsonElement item : array.getAsJsonArray()) {
+                        String tag = item.getAsString().trim();
+                        if (!tag.isBlank()) {
+                            values.add(tag);
+                        }
+                    }
+                }
+                values = cleanTags(values);
+                if (!primary.isBlank() && !values.isEmpty()) {
+                    tags.put(primary, values);
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return tags;
     }
 
     private void readUnifiedContactGroups(Path file, Map<String, List<String>> groups) throws IOException {
@@ -345,7 +514,10 @@ public class UnifiedMessageStore {
                         }
                     }
                 }
-                if (points.size() > 1) {
+                if (!points.isEmpty()) {
+                    if (primary.isBlank()) {
+                        primary = points.iterator().next();
+                    }
                     groups.put(primary, new ArrayList<>(points));
                 }
             } catch (RuntimeException ignored) {
@@ -386,6 +558,15 @@ public class UnifiedMessageStore {
     }
 
     private void writeContactGroups(Map<String, List<String>> groups) throws IOException {
+        writeContactGroups(groups, Map.of());
+    }
+
+    private void writeContactGroups(Map<String, List<String>> groups, Map<String, String> remarks) throws IOException {
+        writeContactGroups(groups, remarks, Map.of());
+    }
+
+    private void writeContactGroups(Map<String, List<String>> groups, Map<String, String> remarks,
+                                    Map<String, List<String>> tags) throws IOException {
         Path file = config.contactGroupFile();
         if (file.getParent() != null) {
             Files.createDirectories(file.getParent());
@@ -399,7 +580,7 @@ public class UnifiedMessageStore {
                     points.add(normalized);
                 }
             }
-            if (points.size() <= 1) {
+            if (points.isEmpty()) {
                 continue;
             }
             String primary = ContactPointUtil.normalizePointId(entry.getKey());
@@ -409,6 +590,8 @@ public class UnifiedMessageStore {
             GroupRecord record = new GroupRecord();
             record.primaryPointId = primary;
             record.points = new ArrayList<>(points);
+            record.remark = ContactPointUtil.firstNonBlank(remarks.get(primary), "");
+            record.tags = cleanTags(tags.getOrDefault(primary, List.of()));
             output.append(GSON.toJson(record)).append(System.lineSeparator());
         }
         Files.writeString(file, output.toString(), StandardCharsets.UTF_8,
@@ -425,6 +608,20 @@ public class UnifiedMessageStore {
             }
         }
         return point;
+    }
+
+    private static List<String> cleanTags(List<String> values) {
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        if (values == null) {
+            return new ArrayList<>();
+        }
+        for (String value : values) {
+            String tag = value == null ? "" : value.trim();
+            if (!tag.isBlank()) {
+                result.add(tag);
+            }
+        }
+        return new ArrayList<>(result);
     }
 
     private static String mailTimestamp(String sentDate, String storedAt) {
@@ -476,7 +673,19 @@ public class UnifiedMessageStore {
         return status;
     }
 
+    private static String cleanMediaType(String value) {
+        String type = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (type.contains("image")) return "image";
+        if (type.contains("video")) return "video";
+        if (type.contains("document") || type.contains("file")) return "document";
+        return type;
+    }
+
     private static String firstRaw(String raw, String... keys) {
+        return firstJsonValue(raw, keys);
+    }
+
+    private static String firstJsonValue(String raw, String... keys) {
         if (raw == null || raw.isBlank()) {
             return "";
         }
@@ -517,6 +726,15 @@ public class UnifiedMessageStore {
                 }
             }
         }
+        if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+            String nested = element.getAsString().trim();
+            if ((nested.startsWith("{") && nested.endsWith("}")) || (nested.startsWith("[") && nested.endsWith("]"))) {
+                try {
+                    return findRecursive(JsonParser.parseString(nested), key);
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
         return "";
     }
 
@@ -549,6 +767,8 @@ public class UnifiedMessageStore {
 
     private static class GroupRecord {
         String primaryPointId;
+        String remark;
+        List<String> tags = new ArrayList<>();
         List<String> points = new ArrayList<>();
     }
 
@@ -559,6 +779,8 @@ public class UnifiedMessageStore {
         String displayName = "";
         String lastText = "";
         String lastTime = "";
+        String lastDirection = "";
+        String lastChannel = "";
         int messageCount;
 
         ContactAccumulator(String primaryPointId) {
@@ -574,18 +796,24 @@ public class UnifiedMessageStore {
             }
             lastText = ContactPointUtil.firstNonBlank(message.title, message.text, message.summary, lastText);
             lastTime = ContactPointUtil.firstNonBlank(message.timestamp, lastTime);
+            lastDirection = ContactPointUtil.firstNonBlank(message.direction, lastDirection);
+            lastChannel = ContactPointUtil.firstNonBlank(message.channel, lastChannel);
             messageCount++;
         }
 
-        UnifiedContact toContact(List<String> groupPoints) {
+        UnifiedContact toContact(List<String> groupPoints, String remark, List<String> tags) {
             for (String groupPoint : groupPoints) {
                 points.putIfAbsent(groupPoint, ContactPointUtil.fromId(groupPoint, null));
             }
             UnifiedContact contact = new UnifiedContact();
             contact.id = primaryPointId;
-            contact.displayName = ContactPointUtil.firstNonBlank(displayName, primaryPointId);
+            contact.remark = remark;
+            contact.displayName = ContactPointUtil.firstNonBlank(remark, displayName, primaryPointId);
+            contact.tags.addAll(cleanTags(tags));
             contact.lastText = lastText;
             contact.lastTime = lastTime;
+            contact.lastDirection = lastDirection;
+            contact.lastChannel = lastChannel;
             contact.messageCount = messageCount;
             List<ContactPoint> orderedPoints = new ArrayList<>(points.values());
             orderedPoints.sort(Comparator

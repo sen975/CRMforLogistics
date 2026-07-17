@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("web", "contacts", "test", "compile")]
+    [ValidateSet("web", "contacts", "receive", "sync", "sync-templates", "test", "compile")]
     [string]$Command = "web"
 )
 

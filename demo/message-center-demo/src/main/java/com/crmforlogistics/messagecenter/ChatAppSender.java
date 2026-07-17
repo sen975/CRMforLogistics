@@ -68,16 +68,11 @@ public class ChatAppSender {
         String code = required(templateCode, "templateCode");
         String language = ContactPointUtil.firstNonBlank(languageCode, config.value("CHATAPP_LANGUAGE", "en_US"));
         Map<String, String> safeParams = params == null ? Map.of() : params;
-        SendChatappMessageRequest.Builder builder = baseBuilder(cleanTo)
-                .messageType(config.value("CHATAPP_TEMPLATE_MESSAGE_TYPE", config.value("CHATAPP_MESSAGE_TYPE", "text")))
-                .templateCode(code)
-                .language(language)
-                .templateParams(safeParams);
-        putIfNotBlank(templateName, builder::templateName);
-        putIfNotBlank(clientRequestId, builder::taskId);
+        SendChatappMessageRequest request = buildTemplateRequest(config, cleanTo, code, templateName, language,
+                safeParams, clientRequestId);
 
         try (AsyncClient client = createClient()) {
-            SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
+            SendChatappMessageResponse response = client.sendChatappMessage(request).get();
             String messageId = responseMessageId(response);
             String paramsJson = GSON.toJson(safeParams);
             String raw = outboundTemplateRaw(response, code, templateName, language, paramsJson);
@@ -149,6 +144,27 @@ public class ChatAppSender {
                 .to(required(to, "to"))
                 .channelType(config.value("CHATAPP_CHANNEL_TYPE", "whatsapp"))
                 .type(config.value("CHATAPP_TYPE", "message"));
+    }
+
+    static SendChatappMessageRequest buildTemplateRequest(Config config, String to, String templateCode,
+                                                          String templateName, String language,
+                                                          Map<String, String> params, String clientRequestId) {
+        SendChatappMessageRequest.Builder builder = SendChatappMessageRequest.builder()
+                .custSpaceId(requiredConfig(config, "CUST_SPACE_ID"))
+                .from(requiredConfig(config, "CHATAPP_FROM"))
+                .to(required(to, "to"))
+                .channelType(config.value("CHATAPP_CHANNEL_TYPE", "whatsapp"))
+                .type(templateRequestType(config))
+                .templateCode(required(templateCode, "templateCode"))
+                .language(language)
+                .templateParams(params == null ? Map.of() : params);
+        putIfNotBlank(templateName, builder::templateName);
+        putIfNotBlank(clientRequestId, builder::taskId);
+        return builder.build();
+    }
+
+    static String templateRequestType(Config config) {
+        return config.value("CHATAPP_TEMPLATE_TYPE", "template");
     }
 
     private AsyncClient createClient() {
@@ -240,6 +256,10 @@ public class ChatAppSender {
     }
 
     private String requiredConfig(String key) {
+        return required(config.value(key, ""), key);
+    }
+
+    private static String requiredConfig(Config config, String key) {
         return required(config.value(key, ""), key);
     }
 

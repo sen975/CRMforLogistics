@@ -17,12 +17,12 @@
 3. 企业详情只展示人工关联到该企业的联系人和沟通记录。
 4. 打通 WhatsApp、企业微信客服、邮件的信息收发。
 5. 支持电话聊天记录/电话纪要人工录入。
-6. 基于 Chatwoot 的会话、收件箱、消息、坐席、渠道抽象能力做封装和二次开发接入。
-7. Java 后端作为主业务系统和 API 层，封装 Chatwoot 二开能力并对 React 前端提供稳定业务接口。
+6. 由 Java 后端统一拥有会话、消息、坐席分配、未读和渠道抽象能力。
+7. WhatsApp、企业微信客服和邮件通过薄渠道 adapter 接入统一消息合同。
 
 一句话目标：
 
-> 先做一个 Java 主系统封装 Chatwoot 多渠道能力的跨境物流客服中控，把 WhatsApp、企业微信、邮件和电话记录沉淀到联系人，再由使用者把联系人归属到企业，为后续 AI 协作型 CRM 打基础。
+> 先做一个由 Java 主系统直接拥有业务真相的跨境物流客服中控，把 WhatsApp、企业微信、邮件和电话记录沉淀到联系人，再由使用者把联系人归属到企业，为后续 AI 协作型 CRM 打基础。
 
 ### 1.3 第一阶段范围
 
@@ -40,7 +40,7 @@
 - 邮件信息收发。
 - 电话聊天记录/电话纪要录入。
 - 基础账号、角色、权限和审计。
-- Chatwoot 基础模块 API 封装和企业微信客服二开接入。
+- 统一会话、消息、发送状态、未读、分配和渠道 adapter。
 
 第一阶段不包含：
 
@@ -60,7 +60,7 @@
 
 ### 1.4 本期优先级
 
-P0：Java 主系统、React 前端、Chatwoot API 封装、企业管理、联系人管理、联系人多渠道身份、联系人企业关系、客服中控、企业微信客服收发、WhatsApp 收发、邮件收发、电话记录。
+P0：Java 主系统、React 前端、PostgreSQL 消息中心、企业管理、联系人管理、联系人多渠道身份、联系人企业关系、客服中控、企业微信客服收发、WhatsApp 收发、邮件收发、电话记录。
 
 P1：企业/联系人详情聚合视图、消息归属整理、基础审计、渠道配置管理、失败重试和运维状态。
 
@@ -70,41 +70,37 @@ P2：AI 摘要、AI 归属建议、Topic 时间线、任务阶段、团队看板
 
 ### 2.1 技术路线结论
 
-技术栈保持不变，仍采用“前后端分离 + Java/Spring Boot 模块化单体 + React 前端 + PostgreSQL/pgvector + Redis + RocketMQ + MinIO + Docker Compose 私有化部署”的路线。
+第一阶段采用“前后端分离 + Java/Spring Boot 模块化单体 + React 前端 + PostgreSQL + MinIO + Docker Compose 私有化部署”的路线。
 
 但第一阶段架构主线调整为：
 
 ```text
 React 前端
   -> Java/Spring Boot 业务 API
-  -> CRM 业务数据层（企业、联系人、关系、标签、权限）
-  -> Chatwoot API/二开模块（收件箱、会话、消息、坐席、渠道）
-  -> WhatsApp / 企业微信客服 / 邮件等外部渠道
+  -> PostgreSQL 业务数据层（企业、联系人、会话、消息、权限、审计）
+  -> WhatsApp / 企业微信客服 / 邮件 adapter
+  -> MinIO 附件对象存储
 ```
 
-Java 后端是本项目的主业务 owner，负责向前端提供稳定 API、维护企业/联系人/关系/标签等 CRM 业务真相，并封装 Chatwoot 的会话和渠道能力。Chatwoot 是多渠道客服基础设施，不直接成为 CRM 业务真相 owner。
+Java 后端是本项目的主业务 owner，负责向前端提供稳定 API，维护企业、联系人、关系、标签、会话、消息、权限和审计等业务真相。渠道 adapter 只负责协议映射、同步和发送，不拥有核心业务状态。
 
 P0 技术栈确认如下：
 
 - 前端：React + TypeScript + Vite + Ant Design + TanStack Query + React Router + Axios。
 - 后端：Java 21，最低兼容 Java 17；Spring Boot 3；Spring Security。
-- Chatwoot：作为客服中控基础能力来源，封装其 API，并对企业微信客服做二开渠道接入。
 - ORM：MyBatis-Plus + XML Mapper。
-- 数据库：PostgreSQL，保留 pgvector 扩展能力，为后续 AI/RAG 预留。
-- 缓存与锁：Redis。
-- 异步任务：RocketMQ。
+- 数据库：PostgreSQL，第一阶段不启用 pgvector。
+- 异步可靠性：PostgreSQL 原始事件收件箱、事务型 outbox 和有界 worker。
 - 文件存储：MinIO。
 - 数据库迁移：Flyway。
 - 部署：Docker Compose 单机私有化部署。
 
 技术栈边界：
 
-- PostgreSQL 是 CRM 正式业务真源。
-- Chatwoot 保存客服会话、消息、收件箱和渠道侧客服数据；Java 后端通过同步、映射或 API 查询形成业务视图。
-- Java 后端保存企业、联系人、标签、联系人企业关系、多渠道身份映射、权限和审计。
-- Redis 只做 token、黑名单、分布式锁、限流和短缓存，不保存不可恢复的正式业务数据。
-- RocketMQ 承载渠道同步、Chatwoot 事件同步、消息归属整理、后续 AI 任务等异步流程，不作为业务真源。
-- MinIO 保存附件和导入文件，文件访问必须经过后端鉴权。
+- PostgreSQL 是企业、联系人、渠道身份、会话、消息、状态、权限和审计的正式业务真源。
+- PostgreSQL 同时保存登录会话、渠道同步游标、原始事件收件箱和事务型 outbox；第一阶段不引入 Redis 或消息队列。
+- MinIO 保存所有图片、视频、文档和其他附件本体，PostgreSQL 只保存附件元数据和稳定对象键。
+- 渠道 adapter 不得私建消息、联系人、权限或未读状态的并行真源。
 - pgvector 和 AI 数据平面保留技术能力，但不作为第一阶段 MVP 的验收主线。
 
 ### 2.2 前端技术栈
@@ -149,10 +145,8 @@ P0 技术栈确认如下：
 - Spring Security。
 - MyBatis-Plus + XML Mapper。
 - Flyway 管理数据库迁移。
-- RocketMQ 承载异步任务。
-- Redis 承载 token、黑名单、锁、限流和短缓存。
+- PostgreSQL 原始事件收件箱、事务型 outbox 和有界 worker 承载异步任务。
 - MinIO SDK 管理附件。
-- Chatwoot API Client 封装客服会话、消息、收件箱、联系人、渠道等能力。
 - 企业微信客服 API Client 封装 `sync_msg`、`send_msg` 和回调验签解密。
 - WhatsApp API/服务商 Client 封装消息收发。
 - Mail Client 封装 IMAP/SMTP 或服务商邮件 API。
@@ -169,62 +163,53 @@ P0 技术栈确认如下：
 | company-contact | 联系人与企业关系 |
 | conversation | 客服中控业务视图，会话列表、会话详情、归属关系 |
 | message | 消息展示、发送请求、状态回写 |
+| channel-event | 渠道事件幂等接收、脱敏、处理和失败重试 |
+| outbox | 发送任务领取、有限重试和超时歧义处理 |
 | phone-note | 电话记录/电话纪要 |
 | channel-account | WhatsApp、企业微信、邮件账号配置 |
-| chatwoot | Chatwoot API 封装、事件同步、ID 映射 |
 | wecom | 企业微信客服回调、sync_msg、send_msg、身份映射 |
 | whatsapp | WhatsApp webhook、发送、身份映射 |
 | mail | 邮件接收、发送、线程/会话映射 |
 | audit | 敏感查看、配置变更、归属变更审计 |
 | storage | 附件元数据、MinIO 访问 |
-| mq | RocketMQ producer、consumer、重试、死信和幂等 |
 
 后端约束：
 
-- Java 后端是业务 API owner，Chatwoot 不直接暴露给前端。
+- Java 后端是业务 API 和消息状态机 owner，前端不得直连外部渠道。
 - Controller 只做接口映射、参数校验和响应转换，不承载业务状态机。
 - Service/Domain 层负责企业归属、联系人关系、渠道身份绑定、消息归属、权限和事务边界。
 - Mapper 只做 SQL，不写业务判断。
-- Chatwoot API 调用必须通过 `chatwoot` 模块封装，不得散落在业务模块各处。
+- 外部渠道调用必须通过对应 adapter 封装，不得散落在业务模块各处。
 - 渠道密钥、邮箱授权、WhatsApp token、企业微信 secret 必须加密保存。
 - 所有外部回调必须验签、记录 traceId，并保证幂等。
 
-### 2.4 Chatwoot 封装与二开边界
+### 2.4 消息中心与渠道 adapter 边界
 
-Chatwoot 作为客服中控基础能力来源，第一阶段优先复用：
+Java 消息中心直接拥有：
 
-- Inbox/收件箱。
 - Conversation/会话。
-- Contact/客服联系人基础能力。
-- Contact Inbox/联系人渠道身份关系。
-- Message/消息。
-- Agent/坐席。
-- Assignment/分配。
-- Channel/渠道抽象。
-- Webhook/外部事件入口。
-- API Channel 或标准 Channel 扩展能力。
+- Message/消息及状态历史。
+- 联系人和多渠道身份。
+- 坐席、团队、分配、授权和个人未读。
+- 渠道账号、同步游标、原始事件收件箱和发送 outbox。
+- 附件元数据和 MinIO 访问授权。
 
-本项目在 Chatwoot 之上增加：
+WhatsApp、企业微信客服和邮件 adapter 只负责：
 
-- 企业档案。
-- 企业标签/类型。
-- 联系人标签。
-- 联系人与企业关系。
-- 联系人多渠道身份统一视图。
-- 企业维度沟通归档视图。
-- 跨境物流 CRM 后续 AI/业务字段。
+- 验签、解密、拉取、协议字段解析和发送调用。
+- 将渠道输入投影为共享消息合同。
+- 返回稳定外部消息 ID、状态和结构化错误。
 
 边界规则：
 
-- Chatwoot 负责客服会话运行面。
-- Java 后端负责 CRM 业务真相。
-- React 前端只调用 Java API，不直接调用 Chatwoot API。
-- Chatwoot ID 与本系统 ID 必须建立映射表，例如 `chatwoot_conversation_id`、`chatwoot_contact_id`、`chatwoot_message_id`。
-- 后续裁剪 Chatwoot 无关模块时，不应破坏 Java 业务 API 合同。
+- React 前端只调用 Java API，不直连渠道 API 或对象存储。
+- 底层会话按“渠道账号 + 联系人渠道身份”建立，统一联系人时间线由后端跨会话聚合。
+- 联系人合并或拆分只调整身份归属，不改写历史消息。
+- 渠道原始载荷入库前必须脱敏，不保存密钥、Token 或完整签名 URL。
 
 ### 2.5 认证与权限
 
-认证采用 Spring Security + JWT Access Token + Redis Refresh Token/黑名单。
+认证采用 Spring Security + 本地账号密码 + PostgreSQL 服务端会话。密码只保存强哈希，会话令牌只保存哈希。
 
 权限分两层：
 
@@ -239,15 +224,13 @@ Chatwoot 作为客服中控基础能力来源，第一阶段优先复用：
 - 查看敏感沟通原文必须写审计日志。
 - 前端隐藏按钮不是权限真相。
 
-### 2.6 数据库、Redis、RocketMQ、MinIO
+### 2.6 PostgreSQL 与 MinIO
 
-PostgreSQL：保存 CRM 业务真相，包括企业、联系人、标签、关系、渠道身份、映射、电话记录、渠道配置、审计、异步任务状态。
+PostgreSQL：保存企业、联系人、标签、关系、渠道身份、渠道账号、会话、消息、状态、未读、权限、审计、同步游标、原始事件和 outbox 任务。
 
-Redis：保存登录 token、黑名单、短缓存、分布式锁、渠道同步锁和限流键。
+MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。所有二进制文件统一进入 MinIO；数据库只保存 bucket、object key、类型、大小、哈希和业务关系。
 
-RocketMQ：承载 Chatwoot 事件同步、渠道 webhook 后处理、消息归属整理、发送状态回写、后续 AI 任务。
-
-MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。第一阶段附件可先做元数据和基础上传/下载能力，复杂解析后置。
+渠道账号普通配置和状态保存在 PostgreSQL。密码、Token、AccessKey 等敏感配置以应用密文保存，加密主密钥只通过 Docker Secret 注入。
 
 ## 三、第一阶段数据流
 
@@ -257,9 +240,9 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 
 ```text
 外部渠道消息
-  -> Chatwoot/渠道回调入口
-  -> Java 后端同步或接收事件
-  -> 会话/消息业务视图
+  -> Java 渠道 adapter
+  -> PostgreSQL 原始事件收件箱
+  -> 规范化会话/消息业务表
   -> 联系人渠道身份绑定
   -> 联系人与企业人工关联
   -> 企业/联系人详情聚合展示
@@ -268,9 +251,9 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 ### 3.2 新消息进入系统
 
 1. WhatsApp、企业微信客服或邮件产生新消息。
-2. 消息进入 Chatwoot 会话，或由渠道回调先进入 Java 后端再同步到 Chatwoot。
-3. Java 后端记录 Chatwoot 会话/消息 ID 映射。
-4. 系统根据外部账号查找 `contact_identities`。
+2. adapter 验签、解密并将脱敏事件幂等写入 `channel_events`。
+3. worker 根据渠道账号和外部身份建立或查找 `contact_identities` 与 `conversations`。
+4. 系统写入规范化消息、参与人、状态历史和附件元数据。
 5. 如果身份已绑定联系人，则会话展示联系人信息。
 6. 如果联系人已关联企业，则可在企业详情中展示。
 7. 如果身份未绑定联系人，则进入未知身份/待整理状态。
@@ -295,7 +278,7 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 4. 企业微信走企业微信客服 `send_msg`。
 5. WhatsApp 走 WhatsApp Business/服务商发送接口。
 6. 邮件走 SMTP/服务商邮件发送接口。
-7. Java 后端同步或回写 Chatwoot 消息状态。
+7. Java 后端通过事务型 outbox 发送并回写本地消息状态历史。
 8. 前端展示发送中、成功、失败和重试。
 
 ### 3.5 企业微信客服链路
@@ -317,24 +300,30 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 
 ### 4.1 设计原则
 
-第一阶段数据库只承载 MVP 必需对象：企业、联系人、标签、关系、渠道身份、会话映射、消息映射、电话记录、渠道配置、审计和异步任务。
+第一阶段数据库只承载 MVP 必需对象：企业、联系人、标签、关系、渠道身份、渠道账号、会话、消息、状态、未读、电话记录、审计、原始事件和 outbox 任务。
 
 设计原则：
 
 - 企业和联系人分离。
 - 联系人与企业关系显式建立。
 - 渠道身份与联系人分离。
-- 消息和会话可以复用 Chatwoot，但本系统必须保存业务映射。
+- PostgreSQL 直接拥有会话、消息、状态、权限和未读真相。
 - 企业详情可见性以后端关系数据为准。
 - 可变枚举和标签走配置，不写死在前端。
 - AI、Topic、任务、看板相关表不进入第一阶段核心迁移，可后续追加。
+
+消息中心详细表结构、幂等约束、MinIO 边界、迁移和验收以 `docs/superpowers/specs/2026-07-17-message-center-database-design.md` 为当前真源。
 
 ### 4.2 核心表总览
 
 | 表 | 作用 |
 | --- | --- |
 | `users` | 系统用户 |
+| `roles` | 稳定角色定义 |
+| `user_roles` | 用户与角色关系 |
+| `user_sessions` | 服务端登录会话 |
 | `teams` | 团队和主管关系 |
+| `team_members` | 团队成员关系 |
 | `companies` | 企业档案 |
 | `company_tags` | 企业标签 |
 | `company_taggings` | 企业与标签关系 |
@@ -344,13 +333,21 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 | `company_contacts` | 联系人与企业关系 |
 | `contact_identities` | 联系人多渠道身份 |
 | `channel_accounts` | 渠道账号配置 |
-| `chatwoot_mappings` | 本系统对象与 Chatwoot 对象映射 |
-| `conversation_views` | 会话业务视图/缓存，可选 |
-| `message_mappings` | 消息映射和状态，可选 |
+| `channel_sync_cursors` | 多账号、多文件夹同步游标 |
+| `conversations` | 渠道账号与联系人身份的底层会话 |
+| `conversation_read_states` | 用户独立阅读游标和未读状态 |
+| `conversation_access_grants` | 会话额外授权 |
+| `messages` | 规范化消息和当前状态 |
+| `message_participants` | 发件人、收件人、抄送和密送 |
+| `message_status_events` | 消息状态历史 |
+| `message_templates` | 渠道账号消息模板 |
 | `phone_notes` | 电话聊天记录/电话纪要 |
 | `audit_logs` | 审计日志 |
-| `async_jobs` | 异步任务状态 |
-| `attachments` | 附件元数据，可选 |
+| `channel_events` | 原始渠道事件收件箱 |
+| `outbox_jobs` | 事务型发送任务 |
+| `attachments` | MinIO 附件元数据 |
+| `data_import_batches` | 旧数据导入批次 |
+| `data_import_errors` | 导入失败明细 |
 | `dictionary_categories` | 字典分类 |
 | `dictionary_items` | 字典项 |
 
@@ -458,23 +455,16 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 | account_identifier | varchar(255) | 是 | 邮箱、业务号、open_kfid 等 |
 | auth_status | varchar(30) | 是 | unbound/binding/active/expired/failed/disabled |
 | sync_status | varchar(30) | 是 | idle/syncing/success/failed |
-| encrypted_config | text | 否 | 加密配置 |
+| encrypted_config | jsonb | 否 | 密文、nonce 和密钥版本，不含主密钥 |
 | last_synced_at | timestamptz | 否 | 最近同步时间 |
 | created_at | timestamptz | 是 | 创建时间 |
 | updated_at | timestamptz | 是 | 更新时间 |
 
-### 4.9 Chatwoot 映射表 `chatwoot_mappings`
+### 4.9 会话与消息核心表
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| id | uuid | 是 | 映射 ID |
-| local_type | varchar(50) | 是 | company/contact/conversation/message/channel_account |
-| local_id | uuid | 是 | 本系统 ID |
-| chatwoot_type | varchar(50) | 是 | contact/conversation/message/inbox/channel |
-| chatwoot_id | varchar(100) | 是 | Chatwoot 对象 ID |
-| metadata_json | jsonb | 否 | 扩展映射信息 |
-| created_at | timestamptz | 是 | 创建时间 |
-| updated_at | timestamptz | 是 | 更新时间 |
+`conversations` 以“渠道账号 + 联系人渠道身份”为唯一底层会话。`messages` 保存规范化正文、方向、类型、业务发生时间、接收序列和当前状态；渠道状态变化追加到 `message_status_events`。
+
+外部消息按“渠道账号 + provider_message_id”幂等，主动发送再按“渠道账号 + client_request_id”防止重复提交。每个用户在 `conversation_read_states` 中保存独立阅读序列，历史补录消息不制造未读。
 
 ### 4.10 电话记录表 `phone_notes`
 
@@ -504,7 +494,7 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 规则：
 
 - React 前端只调用 Java API。
-- Java API 封装 Chatwoot API，不向前端暴露 Chatwoot 内部细节。
+- Java API 封装渠道 adapter，不向前端暴露渠道内部协议和凭据。
 - 列表接口必须分页。
 - 写接口必须做参数校验、权限校验、状态校验和幂等校验。
 - 所有响应返回 `traceId`。
@@ -578,20 +568,17 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 | channel-account | PATCH | /api/v1/channel-accounts/{id} | 更新渠道账号 |
 | channel-account | POST | /api/v1/channel-accounts/{id}/test | 测试渠道配置 |
 
-### 5.3 Chatwoot 封装接口边界
+### 5.3 渠道 adapter 接口边界
 
-Java 后端内部封装 Chatwoot API，包括：
+Java 后端内部定义统一渠道合同，包括：
 
-- 创建/查询 Chatwoot contact。
-- 查询 inbox。
-- 查询 conversation。
-- 查询 message。
-- 发送 message。
-- 同步 conversation 状态。
-- 同步 assignee。
-- 处理 Chatwoot webhook 事件。
+- 拉取或接收渠道事件。
+- 将渠道载荷投影为共享消息合同。
+- 发送文本、模板和附件消息。
+- 查询或接收消息状态。
+- 返回稳定外部消息 ID、结构化错误和是否可重试。
 
-这些封装不直接暴露给 React 前端，前端只看到本系统的 `conversation`、`message`、`contact`、`company` 业务 API。
+这些 adapter 不直接暴露给 React 前端，前端只看到本系统的 `conversation`、`message`、`contact`、`company` 业务 API。
 
 ## 六、功能详细说明
 
@@ -712,7 +699,7 @@ MVP 功能：
 
 - 不能使用企业微信自建应用普通消息 API 替代客服 API。
 - 拉取循环以 `has_more` 为停止依据。
-- 消息必须能映射到 Chatwoot 会话或本系统会话视图。
+- 消息必须幂等写入本系统对应的渠道会话，并正确推进 cursor。
 
 ### 6.7 WhatsApp 接入
 
@@ -774,8 +761,8 @@ MVP 功能：
 - Flyway 迁移成功。
 - Docker Compose 启动成功。
 - Java API 可访问。
-- Chatwoot API 封装可调用。
-- Redis、PostgreSQL、RocketMQ、MinIO 健康检查正常。
+- PostgreSQL 原始事件收件箱和 outbox worker 可运行。
+- PostgreSQL、MinIO、Java API 健康检查正常。
 
 ### 7.2 业务验收用例
 
@@ -809,7 +796,7 @@ MVP 功能：
 | CHANNEL_CONFIG_INVALID | 渠道配置错误 |
 | CHANNEL_SEND_FAILED | 渠道发送失败 |
 | CHANNEL_SYNC_FAILED | 渠道同步失败 |
-| CHATWOOT_API_FAILED | Chatwoot API 调用失败 |
+| CHANNEL_ADAPTER_FAILED | 渠道 adapter 调用失败 |
 | STATE_CONFLICT | 状态冲突 |
 | SERVER_ERROR | 服务端异常 |
 
@@ -822,22 +809,21 @@ MVP 功能：
 - nginx：前端静态资源和反向代理。
 - web：React 构建后的前端资源。
 - api：Java Spring Boot 主业务服务。
-- chatwoot：Chatwoot 服务及二开模块。
-- postgres：业务数据库，可按部署方案决定与 Chatwoot DB 分库或同实例分库。
-- redis：缓存、token、锁。
-- rocketmq-namesrv：RocketMQ NameServer。
-- rocketmq-broker：RocketMQ Broker。
+- postgres：联系人、会话、消息、权限、审计和任务业务数据库。
 - minio：附件对象存储。
+- minio-init：一次性创建 bucket 和基础策略。
+- db-migrate：一次性执行 Flyway，成功后退出。
+- backup：按需执行 PostgreSQL 备份和 MinIO 对象镜像。
 
 部署要求：
 
 - 提供 `.env` 示例。
 - 提供数据库初始化和 Flyway 迁移命令。
-- 提供 Chatwoot 初始化和 API token 配置说明。
 - 提供企业微信、WhatsApp、邮件渠道配置说明。
+- 数据库密码、MinIO 凭据和应用加密主密钥通过 Docker Secret 注入。
 - 生产镜像固定 tag，禁止使用 latest。
-- PostgreSQL、Redis、RocketMQ、MinIO、Chatwoot 数据必须配置数据卷。
-- 健康检查覆盖 api、chatwoot、postgres、redis、rocketmq、minio。
+- PostgreSQL 和 MinIO 必须配置独立数据卷。
+- 健康检查覆盖 api、postgres 和 minio，应用等待 Flyway 成功后启动。
 
 ## 九、后续阶段方向
 
@@ -982,4 +968,4 @@ MVP 功能：
 
 当前主线是：
 
-> React 前端 + Java 主业务 API + Chatwoot 封装/二开 + 企业微信客服/WhatsApp/邮件/电话记录，把每条沟通路径沉淀到联系人，再由使用者把联系人归属到企业，为后续 AI 协作型 CRM 打基础。
+> React 前端 + Java 主业务 API + PostgreSQL 消息中心 + MinIO 附件存储 + 企业微信客服/WhatsApp/邮件/电话 adapter，把每条沟通路径沉淀到联系人，再由使用者把联系人归属到企业，为后续 AI 协作型 CRM 打基础。

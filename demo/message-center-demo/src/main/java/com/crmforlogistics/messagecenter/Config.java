@@ -59,6 +59,7 @@ public class Config {
     public Path chatappTemplateFile() { return Path.of(value("CHATAPP_TEMPLATE_FILE", "../chatapp-send-receive-demo/data/templates.json")); }
     public int webPort() { return Integer.parseInt(value("WEB_PORT", value("MESSAGE_CENTER_PORT", "8099"))); }
     public long mediaMaxBytes() { return Long.parseLong(value("MEDIA_MAX_BYTES", "20971520")); }
+    public Path mediaCacheDir() { return Path.of(value("MEDIA_CACHE_DIR", dataDir().resolve("media-cache").toString())); }
 
     private static String stripQuotes(String value) {
         if (value != null && value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
