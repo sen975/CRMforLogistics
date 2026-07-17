@@ -23,18 +23,28 @@ function New-RandomSecret {
     } else {
         $Value = [Convert]::ToBase64String($Bytes)
     }
+
+    $Options = [System.IO.FileStreamOptions]::new()
+    $Options.Mode = [System.IO.FileMode]::CreateNew
+    $Options.Access = [System.IO.FileAccess]::Write
+    $Options.Share = [System.IO.FileShare]::None
+    if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        $Options.UnixCreateMode = [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite
+    }
+
+    $Stream = $null
+    $Writer = $null
     try {
-        $Stream = [System.IO.File]::Open(
-            $Path,
-            [System.IO.FileMode]::CreateNew,
-            [System.IO.FileAccess]::Write,
-            [System.IO.FileShare]::None
-        )
+        $Stream = [System.IO.FileStream]::new($Path, $Options)
     } catch [System.IO.IOException] {
         [Array]::Clear($Bytes, 0, $Bytes.Length)
         $Value = $null
-        Write-Host "exists: $Name"
-        return
+        if ([System.IO.File]::Exists($Path)) {
+            Write-Host "exists: $Name"
+            return
+        }
+        throw
     }
     try {
         $Writer = [System.IO.StreamWriter]::new($Stream, [System.Text.UTF8Encoding]::new($false))
