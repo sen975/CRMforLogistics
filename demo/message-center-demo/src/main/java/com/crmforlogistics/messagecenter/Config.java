@@ -60,6 +60,43 @@ public class Config {
     public int webPort() { return Integer.parseInt(value("WEB_PORT", value("MESSAGE_CENTER_PORT", "8099"))); }
     public long mediaMaxBytes() { return Long.parseLong(value("MEDIA_MAX_BYTES", "20971520")); }
     public Path mediaCacheDir() { return Path.of(value("MEDIA_CACHE_DIR", dataDir().resolve("media-cache").toString())); }
+    public String databaseUrl() { return value("DATABASE_URL", "jdbc:postgresql://localhost:5432/message_center"); }
+    public String databaseUser() { return value("DATABASE_USER", "message_center"); }
+    public Path databasePasswordFile() { return Path.of(value("DATABASE_PASSWORD_FILE", "/run/secrets/postgres_password")); }
+    public Path credentialMasterKeyFile() { return Path.of(value("CREDENTIAL_MASTER_KEY_FILE", "/run/secrets/credential_master_key")); }
+    public String minioEndpoint() { return value("MINIO_ENDPOINT", "http://localhost:9000"); }
+    public Path minioAccessKeyFile() { return Path.of(value("MINIO_ACCESS_KEY_FILE", "/run/secrets/minio_access_key")); }
+    public Path minioSecretKeyFile() { return Path.of(value("MINIO_SECRET_KEY_FILE", "/run/secrets/minio_secret_key")); }
+    public String minioBucket() { return value("MINIO_BUCKET", "message-center"); }
+    public int workerBatchSize() { return boundedInt("WORKER_BATCH_SIZE", 25, 1, 100); }
+    public int workerMaxAttempts() { return boundedInt("WORKER_MAX_ATTEMPTS", 6, 1, 20); }
+
+    public String readSecret(Path path) throws IOException {
+        try {
+            String content = Files.readString(path, StandardCharsets.UTF_8);
+            int end = content.length();
+            while (end > 0 && (content.charAt(end - 1) == '\n' || content.charAt(end - 1) == '\r')) {
+                end--;
+            }
+            return content.substring(0, end);
+        } catch (IOException ex) {
+            throw new IOException("Unable to read secret file: " + path, ex);
+        }
+    }
+
+    private int boundedInt(String key, int fallback, int minimum, int maximum) {
+        String raw = value(key, Integer.toString(fallback));
+        final int parsed;
+        try {
+            parsed = Integer.parseInt(raw);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException(key + " must be an integer between " + minimum + " and " + maximum, ex);
+        }
+        if (parsed < minimum || parsed > maximum) {
+            throw new IllegalArgumentException(key + " must be between " + minimum + " and " + maximum);
+        }
+        return parsed;
+    }
 
     private static String stripQuotes(String value) {
         if (value != null && value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
