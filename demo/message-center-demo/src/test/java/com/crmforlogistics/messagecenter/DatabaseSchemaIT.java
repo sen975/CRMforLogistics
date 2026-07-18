@@ -127,8 +127,8 @@ class DatabaseSchemaIT {
     @Test
     void createsTrigramIndexesForCompanyAndContactTags() throws Exception {
         try (Database database = Database.open(config)) {
-            assertIndex(database, "ix_company_tags_name_trgm");
-            assertIndex(database, "ix_contact_tags_name_trgm");
+            assertIndex(database, "ix_company_tags_name_trgm", "company_tags");
+            assertIndex(database, "ix_contact_tags_name_trgm", "contact_tags");
         }
     }
 
@@ -269,15 +269,19 @@ class DatabaseSchemaIT {
         });
     }
 
-    private static void assertIndex(Database database, String indexName) throws Exception {
+    private static void assertIndex(Database database, String indexName, String tableName) throws Exception {
         database.read(connection -> {
             try (PreparedStatement statement = connection.prepareStatement("""
-                    select 1 from pg_indexes
+                    select tablename, indexdef from pg_indexes
                     where schemaname = 'public' and indexname = ?
                     """)) {
                 statement.setString(1, indexName);
                 try (ResultSet result = statement.executeQuery()) {
                     assertTrue(result.next(), indexName);
+                    assertEquals(tableName, result.getString("tablename"));
+                    String indexDefinition = result.getString("indexdef");
+                    assertTrue(indexDefinition.contains("USING gin"), indexDefinition);
+                    assertTrue(indexDefinition.contains("(name gin_trgm_ops)"), indexDefinition);
                 }
             }
             return null;
