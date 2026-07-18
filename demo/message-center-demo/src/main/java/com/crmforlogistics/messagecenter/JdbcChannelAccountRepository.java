@@ -9,15 +9,18 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 public final class JdbcChannelAccountRepository implements ChannelAccountRepository {
     private final Database database;
+    private final CredentialCipher credentialCipher;
 
-    public JdbcChannelAccountRepository(Database database) {
+    public JdbcChannelAccountRepository(Database database, CredentialCipher credentialCipher) {
         this.database = Objects.requireNonNull(database, "database");
+        this.credentialCipher = Objects.requireNonNull(credentialCipher, "credentialCipher");
     }
 
     @Override
@@ -252,9 +255,20 @@ public final class JdbcChannelAccountRepository implements ChannelAccountReposit
                 template.providerUpdatedAt());
     }
 
-    private static String validateEncryptedConfig(String encryptedConfig) {
-        CredentialCipher.requireEnvelope(encryptedConfig);
-        return encryptedConfig;
+    private String validateEncryptedConfig(String encryptedConfig) {
+        Map<String, String> decrypted = null;
+        try {
+            CredentialCipher.requireEnvelope(encryptedConfig);
+            decrypted = credentialCipher.decrypt(encryptedConfig);
+            return encryptedConfig;
+        } catch (CredentialCipher.CredentialDecryptionException exception) {
+            throw new IllegalArgumentException("Encrypted channel configuration cannot be authenticated");
+        } finally {
+            if (decrypted != null) {
+                decrypted.replaceAll((key, value) -> "");
+                decrypted.clear();
+            }
+        }
     }
 
     private static String normalizedType(String channelType) {

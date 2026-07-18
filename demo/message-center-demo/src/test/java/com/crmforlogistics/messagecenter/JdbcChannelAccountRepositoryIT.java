@@ -41,7 +41,7 @@ class JdbcChannelAccountRepositoryIT {
         database = Database.open(databaseConfig(POSTGRES));
         database.migrate();
         cipher = CredentialCipher.fromBase64Key(testKey());
-        repository = new JdbcChannelAccountRepository(database);
+        repository = new JdbcChannelAccountRepository(database, cipher);
     }
 
     @AfterEach
@@ -87,17 +87,29 @@ class JdbcChannelAccountRepositoryIT {
     }
 
     @Test
+    void rejectsForgedEnvelopeWhoseAuthenticationTagCannotBeVerified() {
+        String forgedEnvelope = """
+                {"algorithm":"AES-256-GCM","keyVersion":1,
+                 "nonce":"AAAAAAAAAAAAAAAA","ciphertext":"cGxhaW50ZXh0LXdpdGhvdXQtYS12YWxpZC10YWc="}
+                """;
+
+        assertThrows(IllegalArgumentException.class, () -> repository.create(
+                new ChannelAccountDraft("chatapp", "Forged", unique("forged")), forgedEnvelope));
+    }
+
+    @Test
     void normalizesAccountIdentifierForScopedUniqueness() throws Exception {
-        String identifier = unique("Case-Sensitive");
+        String suffix = UUID.randomUUID().toString();
+        String identifier = "ＡＣＣＯＵＮＴ-" + suffix;
         String encrypted = cipher.encrypt(Map.of("secret", "value"));
         repository.create(new ChannelAccountDraft("chatapp", "First", "  " + identifier + "  "), encrypted);
 
         Exception duplicate = assertThrows(Exception.class, () -> repository.create(
-                new ChannelAccountDraft("chatapp", "Duplicate", identifier.toLowerCase()), encrypted));
+                new ChannelAccountDraft("chatapp", "Duplicate", "account-" + suffix), encrypted));
         assertSqlState("23505", duplicate);
 
         ChannelAccount differentChannel = repository.create(
-                new ChannelAccountDraft("email", "Email", identifier.toLowerCase()), encrypted);
+                new ChannelAccountDraft("email", "Email", "account-" + suffix), encrypted);
         assertEquals("email", differentChannel.channelType());
         assertTrue(repository.list().stream().anyMatch(account -> account.id().equals(differentChannel.id())));
     }
@@ -146,7 +158,7 @@ class JdbcChannelAccountRepositoryIT {
 
     @Test
     void validationDecryptsOnlyForCallbackAndClearsTemporaryMap() throws Exception {
-        String encrypted = cipher.encrypt(Map.of("accessKeySecret", "callback-secret"));
+        String encrypted = cipher.encrypt(Map.of("accessKeySecret", "SECRET_CODE"));
         ChannelAccount account = repository.create(
                 new ChannelAccountDraft("chatapp", "Validate", unique("validate")), encrypted);
         ChannelAccountService service = new ChannelAccountService(repository, cipher);
@@ -154,17 +166,67 @@ class JdbcChannelAccountRepositoryIT {
 
         ValidationResult result = service.validate(account.id(), (candidate, secrets) -> {
             assertEquals(account.id(), candidate.id());
-            assertEquals("callback-secret", secrets.get("accessKeySecret"));
+            assertEquals("", candidate.encryptedConfig());
+            assertEquals("SECRET_CODE", secrets.get("accessKeySecret"));
             receivedSecrets.set(secrets);
-            return new ValidationResult(true, "VALID", "Credentials are valid");
+            return new ValidationResult(false, "SECRET_CODE",
+                    "SECRET prefix " + account.encryptedConfig());
         });
 
-        assertTrue(result.valid());
+        assertFalse(result.valid());
+        assertEquals("INVALID_CREDENTIALS", result.code());
+        assertEquals("Channel credentials are invalid", result.message());
         assertNotNull(receivedSecrets.get());
         assertTrue(receivedSecrets.get().isEmpty());
         assertFalse(service.validate(UUID.randomUUID(), (candidate, secrets) -> {
             throw new AssertionError("validator must not run");
         }).valid());
+    }
+
+    @Test
+    void chatAppValidationUsesControlledReadOnlyCamsProbe() throws Exception {
+        String encrypted = cipher.encrypt(Map.of(
+                "accessKeyId", "test-access-key-id",
+                "accessKeySecret", "test-access-key-secret"));
+        ChannelAccount account = repository.create(
+                new ChannelAccountDraft("chatapp", "CAMS", unique("cust-space")), encrypted);
+        AtomicReference<ChatAppValidationRequest> captured = new AtomicReference<>();
+        ChannelAccountService service = new ChannelAccountService(
+                repository,
+                cipher,
+                request -> {
+                    captured.set(request);
+                    assertEquals(account.accountIdentifier(), request.custSpaceId());
+                    assertEquals("test-access-key-id", request.accessKeyId());
+                    assertEquals("test-access-key-secret", new String(request.accessKeySecret()));
+                    assertEquals(1, request.pageIndex());
+                    assertEquals(1, request.pageSize());
+                    return new ChatAppValidationResponse(true);
+                });
+
+        ValidationResult result = service.validateChatApp(account.id());
+
+        assertTrue(result.valid());
+        assertEquals("VALID", result.code());
+        assertEquals("Channel credentials are valid", result.message());
+        assertTrue(allZero(captured.get().accessKeySecret()));
+    }
+
+    @Test
+    void validatorNullAndExceptionReturnFixedFailure() throws Exception {
+        String encrypted = cipher.encrypt(Map.of("accessKeySecret", "never-return-this"));
+        ChannelAccount account = repository.create(
+                new ChannelAccountDraft("chatapp", "Failure", unique("failure")), encrypted);
+        ChannelAccountService service = new ChannelAccountService(repository, cipher);
+
+        ValidationResult nullResult = service.validate(account.id(), (candidate, secrets) -> null);
+        ValidationResult exceptionResult = service.validate(account.id(), (candidate, secrets) -> {
+            throw new IllegalStateException("never-return-this");
+        });
+
+        assertEquals("CHANNEL_VALIDATION_FAILED", nullResult.code());
+        assertEquals("Unable to validate channel credentials", nullResult.message());
+        assertEquals(nullResult, exceptionResult);
     }
 
     private String storedEncryptedConfig(UUID accountId) throws Exception {
@@ -262,5 +324,14 @@ class JdbcChannelAccountRepositoryIT {
             current = current.getCause();
         }
         throw new AssertionError("Expected SQL state " + expected, failure);
+    }
+
+    private static boolean allZero(char[] value) {
+        for (char character : value) {
+            if (character != '\0') {
+                return false;
+            }
+        }
+        return true;
     }
 }

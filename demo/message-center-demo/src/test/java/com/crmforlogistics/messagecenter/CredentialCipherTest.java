@@ -11,6 +11,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class CredentialCipherTest {
@@ -44,6 +45,41 @@ class CredentialCipherTest {
         assertEquals("CREDENTIAL_DECRYPTION_FAILED", failure.code());
         assertFalse(failure.getMessage().contains(encrypted));
         assertFalse(failure.getMessage().contains("never-leak-this"));
+        assertNull(failure.getCause());
+    }
+
+    @Test
+    void rejectsNonIntegerKeyVersionEvenWhenCiphertextIsOtherwiseValid() throws Exception {
+        CredentialCipher cipher = CredentialCipher.fromBase64Key(testKey("primary-master-key"));
+        JsonObject envelope = JsonParser.parseString(
+                cipher.encrypt(Map.of("accessKeySecret", "secret-value"))).getAsJsonObject();
+        envelope.addProperty("keyVersion", 1.5);
+
+        assertThrows(CredentialCipher.CredentialDecryptionException.class,
+                () -> cipher.decrypt(envelope.toString()));
+    }
+
+    @Test
+    void rejectsTamperedAlgorithmNonceAndCiphertext() throws Exception {
+        CredentialCipher cipher = CredentialCipher.fromBase64Key(testKey("primary-master-key"));
+        String encrypted = cipher.encrypt(Map.of("accessKeySecret", "secret-value"));
+
+        JsonObject changedAlgorithm = JsonParser.parseString(encrypted).getAsJsonObject();
+        changedAlgorithm.addProperty("algorithm", "AES-256-CBC");
+        assertThrows(CredentialCipher.CredentialDecryptionException.class,
+                () -> cipher.decrypt(changedAlgorithm.toString()));
+
+        JsonObject changedNonce = JsonParser.parseString(encrypted).getAsJsonObject();
+        changedNonce.addProperty("nonce", Base64.getEncoder().encodeToString(new byte[11]));
+        assertThrows(CredentialCipher.CredentialDecryptionException.class,
+                () -> cipher.decrypt(changedNonce.toString()));
+
+        JsonObject changedCiphertext = JsonParser.parseString(encrypted).getAsJsonObject();
+        byte[] ciphertext = Base64.getDecoder().decode(changedCiphertext.get("ciphertext").getAsString());
+        ciphertext[ciphertext.length - 1] ^= 1;
+        changedCiphertext.addProperty("ciphertext", Base64.getEncoder().encodeToString(ciphertext));
+        assertThrows(CredentialCipher.CredentialDecryptionException.class,
+                () -> cipher.decrypt(changedCiphertext.toString()));
     }
 
     @Test

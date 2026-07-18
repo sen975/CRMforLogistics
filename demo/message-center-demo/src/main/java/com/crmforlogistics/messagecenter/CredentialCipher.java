@@ -105,9 +105,9 @@ public final class CredentialCipher {
             plaintext = cipher.doFinal(ciphertext);
             return parseSecrets(plaintext);
         } catch (AEADBadTagException exception) {
-            throw decryptionFailure(exception);
+            throw decryptionFailure();
         } catch (GeneralSecurityException | RuntimeException exception) {
-            throw decryptionFailure(exception);
+            throw decryptionFailure();
         } finally {
             if (nonce != null) {
                 Arrays.fill(nonce, (byte) 0);
@@ -172,9 +172,19 @@ public final class CredentialCipher {
                 || !stringField(object, "ciphertext")) {
             throw new IllegalArgumentException("Credential envelope is unsupported");
         }
+        final int keyVersion;
+        try {
+            java.math.BigDecimal versionValue = object.get("keyVersion").getAsBigDecimal();
+            if (versionValue.scale() != 0) {
+                throw new ArithmeticException("Credential key version must be an integer");
+            }
+            keyVersion = versionValue.intValueExact();
+        } catch (ArithmeticException | NumberFormatException exception) {
+            throw new IllegalArgumentException("Credential envelope is unsupported");
+        }
         EncryptedConfig envelope = new EncryptedConfig(
                 object.get("algorithm").getAsString(),
-                object.get("keyVersion").getAsInt(),
+                keyVersion,
                 object.get("nonce").getAsString(),
                 object.get("ciphertext").getAsString());
         if (!ALGORITHM.equals(envelope.algorithm()) || envelope.keyVersion() != KEY_VERSION) {
@@ -213,8 +223,8 @@ public final class CredentialCipher {
         return secrets;
     }
 
-    private static CredentialDecryptionException decryptionFailure(Throwable cause) {
-        return new CredentialDecryptionException("CREDENTIAL_DECRYPTION_FAILED", cause);
+    private static CredentialDecryptionException decryptionFailure() {
+        return new CredentialDecryptionException("CREDENTIAL_DECRYPTION_FAILED");
     }
 
     record EncryptedConfig(String algorithm, int keyVersion, String nonce, String ciphertext) {}
@@ -235,8 +245,8 @@ public final class CredentialCipher {
     public static final class CredentialDecryptionException extends Exception {
         private final String code;
 
-        CredentialDecryptionException(String code, Throwable cause) {
-            super("Unable to decrypt channel credentials", cause);
+        CredentialDecryptionException(String code) {
+            super("Unable to decrypt channel credentials");
             this.code = code;
         }
 
