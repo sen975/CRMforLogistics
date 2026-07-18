@@ -124,6 +124,14 @@ class DatabaseSchemaIT {
         }
     }
 
+    @Test
+    void createsTrigramIndexesForCompanyAndContactTags() throws Exception {
+        try (Database database = Database.open(config)) {
+            assertIndex(database, "ix_company_tags_name_trgm");
+            assertIndex(database, "ix_contact_tags_name_trgm");
+        }
+    }
+
     private Fixture createFixture(Connection connection) throws Exception {
         UUID firstContactId = insertContact(connection, "Buyer");
         UUID secondContactId = insertContact(connection, "Buyer WA");
@@ -255,6 +263,21 @@ class DatabaseSchemaIT {
                         assertTrue(result.next());
                         assertNotNull(result.getString(1), tableName);
                     }
+                }
+            }
+            return null;
+        });
+    }
+
+    private static void assertIndex(Database database, String indexName) throws Exception {
+        database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select 1 from pg_indexes
+                    where schemaname = 'public' and indexname = ?
+                    """)) {
+                statement.setString(1, indexName);
+                try (ResultSet result = statement.executeQuery()) {
+                    assertTrue(result.next(), indexName);
                 }
             }
             return null;
