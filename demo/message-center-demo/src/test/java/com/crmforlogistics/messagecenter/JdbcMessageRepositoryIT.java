@@ -94,10 +94,15 @@ class JdbcMessageRepositoryIT {
         MessageWriteResult clientTwo = messages.insert(new MessageDraft(conversation, accountId, null,
                 null, "client-2", "outbound", "text", null, "two", null,
                 occurredAt.plusSeconds(2), false, userId));
+        MessageWriteResult clientOneReplay = messages.insert(new MessageDraft(conversation, accountId, null,
+                null, "client-1", "outbound", "text", null, "changed", null,
+                occurredAt.plusSeconds(30), false, userId));
 
         assertEquals(first.messageId(), duplicate.messageId());
         assertFalse(duplicate.inserted());
         assertFalse(clientOne.messageId().equals(clientTwo.messageId()));
+        assertEquals(clientOne.messageId(), clientOneReplay.messageId());
+        assertFalse(clientOneReplay.inserted());
 
         messages.appendStatus(clientOne.messageId(),
                 new MessageStatusEvent("delivered", occurredAt.plusSeconds(10), "status-new", null, null));

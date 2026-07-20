@@ -117,6 +117,19 @@ class JdbcCompanyPhoneNoteRepositoryIT {
                 new CompanyQuery("", Instant.parse("2026-07-03T00:00:00Z"), newerCompany, 1)).getFirst();
         assertEquals(olderCompany, secondCompanyPage.id());
 
+        UUID sameTimeA = companies.create(new CompanyDraft("Same A", null, null, null,
+                null, userId, null), userId);
+        UUID sameTimeB = companies.create(new CompanyDraft("Same B", null, null, null,
+                null, userId, null), userId);
+        Instant sameTime = Instant.parse("2026-07-04T00:00:00Z");
+        updateCompanyTime(sameTimeA, sameTime);
+        updateCompanyTime(sameTimeB, sameTime);
+        Company sameTimeFirst = companies.listForUser(userId,
+                new CompanyQuery("Same", null, null, 1)).getFirst();
+        Company sameTimeSecond = companies.listForUser(userId,
+                new CompanyQuery("Same", sameTime, sameTimeFirst.id(), 1)).getFirst();
+        assertTrue(!sameTimeFirst.id().equals(sameTimeSecond.id()));
+
         assertNotNull(companies.create(new CompanyDraft("Unassigned", null, null, null,
                 null, null, null), null));
     }

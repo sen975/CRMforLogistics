@@ -28,7 +28,7 @@ public final class JdbcCompanyRepository implements CompanyRepository {
                     + (search.isBlank() ? "" : "and (name ilike ? or coalesce(remark,'') ilike ?) ")
                     + (safe.beforeUpdatedAt() != null && safe.beforeId() != null
                        ? "and (updated_at < ? or (updated_at = ? and id < ?)) " : "")
-                    + "order by updated_at desc,id limit ?";
+                    + "order by updated_at desc,id desc limit ?";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 int i = 1;
                 statement.setObject(i++, userId);
