@@ -1,0 +1,1262 @@
+openapi: 3.1.0
+info:
+  title: CRM for Logistics Message Center API
+  version: 1.0.0
+  description: Versioned HTTP contract for the message center frontend and backend.
+  contact:
+    name: CRM for Logistics Engineering
+servers:
+  - url: /
+tags:
+  - name: Auth
+  - name: Contacts
+  - name: Companies
+  - name: Messaging
+  - name: Media
+  - name: Channels
+  - name: Events
+security:
+  - sessionCookie: []
+paths:
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      description: Authenticate credentials and create an opaque server-side session.
+      tags:
+        - Auth
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated session
+          headers:
+            Set-Cookie:
+              description: Opaque session cookie with HttpOnly; Secure; SameSite=Strict attributes.
+              schema:
+                type: string
+                example: MESSAGE_CENTER_SESSION=opaque; Path=/; HttpOnly; Secure; SameSite=Strict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      description: Revoke the current opaque session and clear its secure cookie.
+      tags:
+        - Auth
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      responses:
+        '200':
+          description: Session revoked and cookie cleared
+          headers:
+            Set-Cookie:
+              description: Clears the opaque session cookie using its secure attributes.
+              schema:
+                type: string
+                example: MESSAGE_CENTER_SESSION=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/auth/session:
+    get:
+      operationId: getSession
+      description: Return the active user and role projection for the current session.
+      tags:
+        - Auth
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: Current authenticated session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/auth/csrf:
+    get:
+      operationId: getCsrfToken
+      description: Issue the bounded CSRF token required by state-changing requests.
+      tags:
+        - Auth
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: CSRF token for same-origin state-changing requests
+          headers:
+            Set-Cookie:
+              description: Non-HttpOnly CSRF cookie readable by the same-origin frontend.
+              schema:
+                type: string
+                example: XSRF-TOKEN=csrf-token; Path=/; Secure; SameSite=Strict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfTokenResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contacts:
+    get:
+      operationId: listContacts
+      description: List contacts visible to the authenticated user using bounded cursor pagination.
+      tags:
+        - Contacts
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CursorParameter'
+        - $ref: '#/components/parameters/LimitParameter'
+        - $ref: '#/components/parameters/SearchParameter'
+      responses:
+        '200':
+          description: Authorized contact page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactPage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contacts/{contactId}:
+    get:
+      operationId: getContact
+      description: Return one authorized contact and its channel identities.
+      tags:
+        - Contacts
+      parameters:
+        - $ref: '#/components/parameters/ContactId'
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: Contact detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+    patch:
+      operationId: updateContact
+      description: Update mutable profile fields for one contact.
+      tags:
+        - Contacts
+      parameters:
+        - $ref: '#/components/parameters/ContactId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContactRequest'
+      responses:
+        '200':
+          description: Updated contact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contacts/{contactId}/merge:
+    post:
+      operationId: mergeContact
+      description: Merge a source contact into the contact identified by the path.
+      tags:
+        - Contacts
+      parameters:
+        - $ref: '#/components/parameters/ContactId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergeContactRequest'
+      responses:
+        '200':
+          description: Canonical merged contact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contact-identities/{identityId}/split:
+    post:
+      operationId: splitContactIdentity
+      description: Split one identity into a new contact without duplicating the identity.
+      tags:
+        - Contacts
+      parameters:
+        - $ref: '#/components/parameters/IdentityId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitContactIdentityRequest'
+      responses:
+        '200':
+          description: Contact created from the split identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/companies:
+    get:
+      operationId: listCompanies
+      description: Search companies using bounded cursor pagination.
+      tags:
+        - Companies
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CursorParameter'
+        - $ref: '#/components/parameters/LimitParameter'
+        - $ref: '#/components/parameters/SearchParameter'
+      responses:
+        '200':
+          description: Company page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyPage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+    post:
+      operationId: createCompany
+      description: Create a company and its explicit contact relationships.
+      tags:
+        - Companies
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCompanyRequest'
+      responses:
+        '201':
+          description: Created company
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/conversations/{conversationId}/messages:
+    get:
+      operationId: listMessages
+      description: List messages from an authorized conversation using bounded cursor pagination.
+      tags:
+        - Messaging
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CursorParameter'
+        - $ref: '#/components/parameters/LimitParameter'
+      responses:
+        '200':
+          description: Authorized conversation message page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+    post:
+      operationId: sendMessage
+      description: Atomically queue a pending outbound message without calling a channel directly.
+      tags:
+        - Messaging
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '202':
+          description: Pending message and outbox job committed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuedMessage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/conversations/{conversationId}/read:
+    post:
+      operationId: markConversationRead
+      description: Advance the authenticated user's read state for an authorized conversation.
+      tags:
+        - Messaging
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      responses:
+        '200':
+          description: Updated conversation read state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationReadState'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/attachments/{attachmentId}/content:
+    get:
+      operationId: getAttachmentContent
+      description: Stream an authorized attachment through the backend within the media limit.
+      tags:
+        - Media
+      parameters:
+        - $ref: '#/components/parameters/AttachmentId'
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: Authorized attachment stream, limited to 20 MiB
+          x-max-response-bytes: 20971520
+          headers:
+            Content-Disposition:
+              description: Safe attachment filename
+              schema:
+                type: string
+                maxLength: 1024
+            Content-Length:
+              description: Stream length in bytes
+              schema:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 20971520
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+            image/png:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/channel-accounts:
+    get:
+      operationId: listChannelAccounts
+      description: List channel account projections without credential or encrypted config fields.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: Configured channel accounts without credential material
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: '#/components/schemas/ChannelAccount'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/sync/{channelType}:
+    post:
+      operationId: synchronizeChannel
+      description: Queue a bounded synchronization job for one channel account.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/ChannelType'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SynchronizeChannelRequest'
+      responses:
+        '202':
+          description: Bounded synchronization job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SynchronizationJob'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/events:
+    get:
+      operationId: streamEvents
+      description: Stream versioned resource-change notifications without becoming a data source.
+      tags:
+        - Events
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          description: Versioned resource-change event stream
+          headers:
+            Cache-Control:
+              description: Prevents intermediaries from caching event data
+              schema:
+                type: string
+                const: no-cache
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE framing bytes. The shared SSE adapter MUST validate each frame against SseEvent before publishing resource changes.
+                x-sse-event-schema: '#/components/schemas/SseEvent'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/webhooks/{channelType}:
+    post:
+      operationId: receiveChannelWebhook
+      description: Based on channelType, the adapter requires the matching signature plus timestamp and nonce. It verifies the signature over channelType and the exact raw body bytes before parsing, rejects timestamps older than five minutes and any previously used nonce, and records replay rejection. OpenAPI cannot express the alternative conditional parameter sets, so the server enforces these conditional parameters.
+      tags:
+        - Events
+      security:
+        - webhookSignature: []
+        - weComSignature: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelType'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/WebhookContentLength'
+        - $ref: '#/components/parameters/WebhookTimestampHeader'
+        - $ref: '#/components/parameters/WebhookNonceHeader'
+        - $ref: '#/components/parameters/WeComTimestampQuery'
+        - $ref: '#/components/parameters/WeComNonceQuery'
+      requestBody:
+        required: true
+        x-max-body-bytes: 1048576
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RawWebhookBody'
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/RawWebhookBody'
+      responses:
+        '202':
+          description: Raw event accepted into the bounded event inbox
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookReceipt'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: MESSAGE_CENTER_SESSION
+      description: Opaque session token. The server stores only its SHA-256 digest.
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Webhook-Signature
+      description: Header signature scheme. The adapter also requires X-Webhook-Timestamp and X-Webhook-Nonce for applicable channel types and verifies the exact raw body before parsing.
+    weComSignature:
+      type: apiKey
+      in: query
+      name: msg_signature
+      description: WeCom query signature scheme. The adapter also requires timestamp and nonce query parameters and verifies the exact raw XML body before parsing.
+  parameters:
+    TraceRequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CsrfTokenHeader:
+      name: X-XSRF-TOKEN
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 512
+    CursorParameter:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    LimitParameter:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 50
+    SearchParameter:
+      name: search
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 200
+    ContactId:
+      name: contactId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdentityId:
+      name: identityId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChannelType:
+      name: channelType
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ChannelType'
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    WebhookContentLength:
+      name: Content-Length
+      in: header
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        maximum: 1048576
+    WebhookTimestampHeader:
+      name: X-Webhook-Timestamp
+      in: header
+      required: false
+      description: Required with webhookSignature for channel types using header authentication.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 20
+        pattern: '^[0-9]{1,20}$'
+    WebhookNonceHeader:
+      name: X-Webhook-Nonce
+      in: header
+      required: false
+      description: Required with webhookSignature and rejected after its first accepted use.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    WeComTimestampQuery:
+      name: timestamp
+      in: query
+      required: false
+      description: Required with weComSignature and limited to the five-minute verification window.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 20
+        pattern: '^[0-9]{1,20}$'
+    WeComNonceQuery:
+      name: nonce
+      in: query
+      required: false
+      description: Required with weComSignature and rejected after its first accepted use.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  responses:
+    ApiErrorResponse:
+      description: Structured failure with no credential or signed URL material
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [code, message, traceId, fieldErrors]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 100
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        traceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        fieldErrors:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/FieldError'
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 200
+        code:
+          type: string
+          minLength: 1
+          maxLength: 100
+        message:
+          type: string
+          minLength: 1
+          maxLength: 500
+    EmptyResponse:
+      type: object
+      additionalProperties: false
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 1024
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/SessionUser'
+    SessionUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName, roles]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          maxLength: 100
+        displayName:
+          type: string
+          maxLength: 100
+        roles:
+          type: array
+          uniqueItems: true
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 50
+    CsrfTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [headerName, cookieName, token]
+      properties:
+        headerName:
+          type: string
+          const: X-XSRF-TOKEN
+        cookieName:
+          type: string
+          const: XSRF-TOKEN
+        token:
+          type: string
+          minLength: 16
+          maxLength: 512
+    ContactPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Contact'
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 2048
+    Contact:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, status, identities, tags, messageCount, unreadCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        remark:
+          type: [string, 'null']
+          maxLength: 2000
+        status:
+          type: string
+          enum: [active, disabled, merged]
+        identities:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ContactIdentity'
+        tags:
+          type: array
+          uniqueItems: true
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        messageCount:
+          type: integer
+          format: int64
+          minimum: 0
+        unreadCount:
+          type: integer
+          format: int64
+          minimum: 0
+        lastMessageAt:
+          type: [string, 'null']
+          format: date-time
+    ContactIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, channelType, value, primary, verificationStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelType:
+          $ref: '#/components/schemas/ChannelType'
+        value:
+          type: string
+          minLength: 1
+          maxLength: 255
+        displayName:
+          type: [string, 'null']
+          maxLength: 100
+        primary:
+          type: boolean
+        verificationStatus:
+          type: string
+          enum: [unverified, verified]
+    UpdateContactRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        remark:
+          type: [string, 'null']
+          maxLength: 2000
+        tags:
+          type: array
+          uniqueItems: true
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+    MergeContactRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceContactId]
+      properties:
+        sourceContactId:
+          type: string
+          format: uuid
+    SplitContactIdentityRequest:
+      type: object
+      additionalProperties: false
+      required: [displayName]
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 100
+    CompanyPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Company'
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 2048
+    Company:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, contactIds]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        typeCode:
+          type: [string, 'null']
+          maxLength: 50
+        country:
+          type: [string, 'null']
+          maxLength: 100
+        city:
+          type: [string, 'null']
+          maxLength: 100
+        website:
+          type: [string, 'null']
+          maxLength: 500
+        remark:
+          type: [string, 'null']
+          maxLength: 2000
+        status:
+          type: string
+          enum: [active, disabled]
+        contactIds:
+          type: array
+          uniqueItems: true
+          maxItems: 1000
+          items:
+            type: string
+            format: uuid
+    CreateCompanyRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        typeCode:
+          type: [string, 'null']
+          maxLength: 50
+        country:
+          type: [string, 'null']
+          maxLength: 100
+        city:
+          type: [string, 'null']
+          maxLength: 100
+        website:
+          type: [string, 'null']
+          maxLength: 500
+        remark:
+          type: [string, 'null']
+          maxLength: 2000
+        contactIds:
+          type: array
+          uniqueItems: true
+          maxItems: 1000
+          items:
+            type: string
+            format: uuid
+    MessagePage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Message'
+        nextCursor:
+          type: [string, 'null']
+          maxLength: 2048
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, conversationId, channelAccountId, direction, messageKind,
+        occurredAt, currentStatus, ingestSequence, countsAsUnread, attachments]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        channelAccountId:
+          type: string
+          format: uuid
+        providerMessageId:
+          type: [string, 'null']
+          maxLength: 255
+        clientRequestId:
+          type: [string, 'null']
+          maxLength: 255
+        direction:
+          type: string
+          enum: [inbound, outbound, system]
+        messageKind:
+          $ref: '#/components/schemas/MessageKind'
+        subject:
+          type: [string, 'null']
+          maxLength: 1000
+        bodyText:
+          type: [string, 'null']
+          maxLength: 100000
+        occurredAt:
+          type: string
+          format: date-time
+        currentStatus:
+          $ref: '#/components/schemas/MessageStatus'
+        ingestSequence:
+          type: integer
+          format: int64
+          minimum: 1
+        countsAsUnread:
+          type: boolean
+        attachments:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/Attachment'
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [channelAccountId, clientRequestId, messageKind, attachmentIds]
+      properties:
+        channelAccountId:
+          type: string
+          format: uuid
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        messageKind:
+          $ref: '#/components/schemas/MessageKind'
+        subject:
+          type: [string, 'null']
+          maxLength: 1000
+        bodyText:
+          type: [string, 'null']
+          maxLength: 100000
+        attachmentIds:
+          type: array
+          uniqueItems: true
+          maxItems: 10
+          items:
+            type: string
+            format: uuid
+    QueuedMessage:
+      type: object
+      additionalProperties: false
+      required: [messageId, status, clientRequestId]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: pending
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+    ConversationReadState:
+      type: object
+      additionalProperties: false
+      required: [conversationId, lastReadSequence, readAt]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        lastReadSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        readAt:
+          type: string
+          format: date-time
+    Attachment:
+      type: object
+      additionalProperties: false
+      required: [id, fileName, contentType, sizeBytes, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 500
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, video/mp4, application/pdf, application/octet-stream]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 20971520
+        status:
+          type: string
+          enum: [pending, ready, failed, deleted]
+    ChannelAccount:
+      type: object
+      additionalProperties: false
+      required: [id, channelType, name, accountIdentifier, authStatus, syncStatus,
+        capabilities]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelType:
+          $ref: '#/components/schemas/ChannelType'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        accountIdentifier:
+          type: string
+          minLength: 1
+          maxLength: 255
+        authStatus:
+          type: string
+          enum: [unbound, active, expired, failed, disabled]
+        syncStatus:
+          type: string
+          enum: [idle, syncing, success, failed]
+        capabilities:
+          type: array
+          uniqueItems: true
+          maxItems: 20
+          items:
+            type: string
+            enum: [send_text, send_template, send_image, send_video, send_document,
+              receive, synchronize]
+    SynchronizeChannelRequest:
+      type: object
+      additionalProperties: false
+      required: [channelAccountId]
+      properties:
+        channelAccountId:
+          type: string
+          format: uuid
+    SynchronizationJob:
+      type: object
+      additionalProperties: false
+      required: [jobId, channelAccountId, status, acceptedAt]
+      properties:
+        jobId:
+          type: string
+          format: uuid
+        channelAccountId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        acceptedAt:
+          type: string
+          format: date-time
+    SseEvent:
+      type: object
+      additionalProperties: false
+      required: [type, version, resourceId, sequence, occurredAt, payload]
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 100
+        version:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        occurredAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          maxProperties: 20
+          propertyNames:
+            type: string
+            maxLength: 100
+            pattern: '^[A-Za-z][A-Za-z0-9_.-]{0,99}$'
+          additionalProperties:
+            oneOf:
+              - type: string
+                maxLength: 2048
+              - type: integer
+                format: int64
+                minimum: -9007199254740991
+                maximum: 9007199254740991
+              - type: number
+                format: double
+                minimum: -1000000000000
+                maximum: 1000000000000
+                not:
+                  type: integer
+              - type: boolean
+              - type: 'null'
+    RawWebhookBody:
+      type: string
+      format: binary
+      maxLength: 1048576
+      description: Exact request bytes used for signature verification before provider-specific parsing.
+    WebhookReceipt:
+      type: object
+      additionalProperties: false
+      required: [eventId, accepted]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        accepted:
+          type: boolean
+          const: true
+    ChannelType:
+      type: string
+      enum: [email, chatapp, wecom]
+    MessageKind:
+      type: string
+      enum: [text, template, image, video, document, email, system]
+    MessageStatus:
+      type: string
+      enum: [pending, processing, submission_unknown, submitted, sent, delivered,
+        read, failed, cancelled]
