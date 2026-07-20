@@ -21,4 +21,5 @@ public class UnifiedMessage {
     public String mimeType;
     public String fileName;
     public String raw;
+    public boolean countsAsUnread;
 }

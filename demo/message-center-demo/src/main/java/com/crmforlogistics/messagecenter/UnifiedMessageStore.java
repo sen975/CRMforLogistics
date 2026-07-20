@@ -21,19 +21,43 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 public class UnifiedMessageStore {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
 
     private final Config config;
     private final TemplateStore templateStore;
+    private final ContactRepository contactRepository;
+    private final MessageRepository messageRepository;
+    private final UUID userId;
 
     public UnifiedMessageStore(Config config) {
-        this.config = config;
+        this.config = Objects.requireNonNull(config, "config");
         this.templateStore = new TemplateStore(config.chatappTemplateFile());
+        this.contactRepository = null;
+        this.messageRepository = null;
+        this.userId = null;
+    }
+
+    public UnifiedMessageStore(ContactRepository contactRepository,
+                               MessageRepository messageRepository,
+                               UUID userId) {
+        this.config = null;
+        this.templateStore = null;
+        this.contactRepository = Objects.requireNonNull(contactRepository, "contactRepository");
+        this.messageRepository = Objects.requireNonNull(messageRepository, "messageRepository");
+        this.userId = Objects.requireNonNull(userId, "userId");
     }
 
     public List<UnifiedContact> contacts() throws IOException {
+        if (databaseBacked()) {
+            try {
+                return contactRepository.listForUser(userId, new ContactQuery("", null, null, 100));
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to query contacts", exception);
+            }
+        }
         Map<String, List<String>> groups = contactGroups();
         Map<String, String> remarks = contactRemarks();
         Map<String, List<String>> tags = contactTags();
@@ -60,6 +84,9 @@ public class UnifiedMessageStore {
     }
 
     public List<UnifiedMessage> messages() throws IOException {
+        if (databaseBacked()) {
+            throw new IOException("Database-backed message queries require a contact or conversation scope");
+        }
         List<UnifiedMessage> result = new ArrayList<>();
         result.addAll(readEmailMessages());
         result.addAll(readChatAppMessages());
@@ -70,6 +97,13 @@ public class UnifiedMessageStore {
     }
 
     public List<UnifiedMessage> thread(String contactPointId) throws IOException {
+        if (databaseBacked()) {
+            try {
+                return messageRepository.unifiedTimeline(userId, UUID.fromString(contactPointId), null, 100);
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to query contact timeline", exception);
+            }
+        }
         Set<String> points = new LinkedHashSet<>(contactGroup(contactPointId));
         List<UnifiedMessage> result = new ArrayList<>();
         for (UnifiedMessage message : messages()) {
@@ -87,6 +121,13 @@ public class UnifiedMessageStore {
         if (id == null || id.isBlank()) {
             return null;
         }
+        if (databaseBacked()) {
+            try {
+                return messageRepository.findAuthorized(userId, UUID.fromString(id)).orElse(null);
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to query message", exception);
+            }
+        }
         for (UnifiedMessage message : messages()) {
             if (id.equals(message.id) || id.equals(message.sourceId)) {
                 return message;
@@ -96,6 +137,9 @@ public class UnifiedMessageStore {
     }
 
     public List<String> contactGroup(String contactPointId) throws IOException {
+        if (databaseBacked()) {
+            return List.of(UUID.fromString(contactPointId).toString());
+        }
         String point = ContactPointUtil.normalizePointId(contactPointId);
         Map<String, List<String>> groups = contactGroups();
         String primary = primaryFor(point, groups);
@@ -103,6 +147,14 @@ public class UnifiedMessageStore {
     }
 
     public void mergeContacts(String primaryPointId, String mergedPointId) throws IOException {
+        if (databaseBacked()) {
+            try {
+                contactRepository.merge(UUID.fromString(primaryPointId), UUID.fromString(mergedPointId), userId);
+                return;
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to merge contacts", exception);
+            }
+        }
         String primary = ContactPointUtil.normalizePointId(primaryPointId);
         String merged = ContactPointUtil.normalizePointId(mergedPointId);
         if (primary.isBlank() || merged.isBlank() || primary.equals(merged)) {
@@ -138,6 +190,16 @@ public class UnifiedMessageStore {
     }
 
     public void splitContact(String primaryPointId, String pointToSplit) throws IOException {
+        if (databaseBacked()) {
+            try {
+                ContactIdentity identity = contactRepository.findIdentity(UUID.fromString(pointToSplit));
+                String displayName = ContactPointUtil.firstNonBlank(identity.displayName(), identity.identityValue(), "Split contact");
+                contactRepository.splitIdentity(identity.id(), displayName, userId);
+                return;
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to split contact identity", exception);
+            }
+        }
         String primary = ContactPointUtil.normalizePointId(primaryPointId);
         String split = ContactPointUtil.normalizePointId(pointToSplit);
         if (primary.isBlank() || split.isBlank()) {
@@ -169,6 +231,10 @@ public class UnifiedMessageStore {
     }
 
     public void updateContactRemark(String contactPointId, String remark) throws IOException {
+        if (databaseBacked()) {
+            updateDatabaseProfile(contactPointId, remark, remark, List.of());
+            return;
+        }
         String point = ContactPointUtil.normalizePointId(contactPointId);
         if (point.isBlank()) {
             return;
@@ -179,6 +245,10 @@ public class UnifiedMessageStore {
     }
 
     public void updateContactProfile(String contactPointId, String nickname, List<String> newTags) throws IOException {
+        if (databaseBacked()) {
+            updateDatabaseProfile(contactPointId, nickname, nickname, cleanTags(newTags));
+            return;
+        }
         String point = ContactPointUtil.normalizePointId(contactPointId);
         if (point.isBlank()) {
             return;
@@ -204,6 +274,10 @@ public class UnifiedMessageStore {
     }
 
     public ChannelCapability channelCapability(String channel) {
+        if (databaseBacked()) {
+            return new ChannelCapability(channel == null ? "" : channel, false,
+                    "Channel capabilities are provided by channel account services");
+        }
         String normalized = channel == null ? "" : channel.trim().toLowerCase(Locale.ROOT);
         if ("email".equals(normalized)) {
             boolean available = !config.value("SMTP_HOST", "").isBlank()
@@ -225,7 +299,29 @@ public class UnifiedMessageStore {
     }
 
     public List<TemplateStore.TemplateRecord> templates() throws IOException {
+        if (databaseBacked()) {
+            return List.of();
+        }
         return templateStore.readAll();
+    }
+
+    private boolean databaseBacked() {
+        return contactRepository != null;
+    }
+
+    private void updateDatabaseProfile(String contactPointId, String displayName,
+                                       String remark, List<String> tags) throws IOException {
+        try {
+            UUID contactId = UUID.fromString(contactPointId);
+            String name = displayName == null || displayName.isBlank() ? contactId.toString() : displayName.trim();
+            contactRepository.updateProfile(contactId, name, remark, tags, userId);
+        } catch (Exception exception) {
+            throw databaseFailure("Unable to update contact profile", exception);
+        }
+    }
+
+    private static IOException databaseFailure(String message, Exception cause) {
+        return new IOException(message, cause);
     }
 
     private List<UnifiedMessage> readEmailMessages() throws IOException {
