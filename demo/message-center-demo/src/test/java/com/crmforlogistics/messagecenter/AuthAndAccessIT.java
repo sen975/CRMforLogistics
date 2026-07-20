@@ -15,6 +15,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -77,6 +78,9 @@ class AuthAndAccessIT {
         assertFalse(sessions.bootstrapAdmin("ignored", () -> {
             throw new AssertionError("password must not be read when users already exist");
         }).created());
+        assertFalse(sessions.bootstrapAdmin("", () -> {
+            throw new AssertionError("password must not be read before the existing-user no-op");
+        }).created());
         assertEquals(1, passwordReads.get());
         Config missingBootstrapSecret = new Config(Map.of(
                 "DATABASE_URL", databaseConfig.databaseUrl(),
@@ -110,6 +114,11 @@ class AuthAndAccessIT {
         sessions.logout(issued.rawToken());
         assertThrows(SessionService.AuthenticationException.class,
                 () -> sessions.authenticate(issued.rawToken()));
+        long successfulLogouts = auditActionResultCount("auth.logout", "success");
+        assertThrows(SessionService.AuthenticationException.class,
+                () -> sessions.logout(issued.rawToken()));
+        assertEquals(successfulLogouts, auditActionResultCount("auth.logout", "success"));
+        assertTrue(auditActionResultCount("auth.logout", "denied") >= 1);
 
         IssuedSession expiring = sessions.login("agent", "correct-password".toCharArray());
         SessionService future = new SessionService(auth, hasher, audit,
@@ -128,7 +137,14 @@ class AuthAndAccessIT {
         assertFalse(access.canRead(admin, sensitiveConversation));
         access.grant(sensitiveConversation, admin, supervisor, "incident review");
         assertTrue(access.canRead(admin, sensitiveConversation));
-        access.requireSensitiveRead(admin, sensitiveConversation, "message", UUID.randomUUID());
+        UUID sensitiveMessage = insertInbound(sensitiveConversation, true, "sensitive inbound");
+        UUID sensitiveAttachment = createAttachment(sensitiveMessage);
+        assertThrows(AccessControlService.AccessDeniedException.class,
+                () -> access.requireSensitiveRead(admin, sensitiveConversation, "message", UUID.randomUUID()));
+        assertThrows(AccessControlService.AccessDeniedException.class,
+                () -> access.requireSensitiveRead(admin, sensitiveConversation, "attachment", UUID.randomUUID()));
+        access.requireSensitiveRead(admin, sensitiveConversation, "message", sensitiveMessage);
+        access.requireSensitiveRead(admin, sensitiveConversation, "attachment", sensitiveAttachment);
         access.assign(sensitiveConversation, admin, null, supervisor);
 
         insertInbound(assignedConversation, true, "new inbound");
@@ -144,6 +160,16 @@ class AuthAndAccessIT {
                 "config", Map.of("apiToken", "nested-secret", "items", List.of(
                         Map.of("databasePassword", "nested-password", "safe", "visible")))), "success");
         assertAuditRedacted();
+        Map<String, Object> oversized = new LinkedHashMap<>();
+        for (int outer = 0; outer < 100; outer++) {
+            Map<String, Object> branch = new LinkedHashMap<>();
+            for (int inner = 0; inner < 100; inner++) branch.put("key-" + inner, "x".repeat(500));
+            oversized.put("branch-" + outer, branch);
+        }
+        oversized.put("k".repeat(300), "must-not-appear");
+        audit.record(agent, "test.bounded_redaction", "user", agent,
+                Map.of(), oversized, "success");
+        assertAuditSummaryBounded();
         assertTrue(auditActionCount("message.read_sensitive") >= 1);
         assertTrue(auditActionCount("conversation.assign") >= 1);
 
@@ -234,10 +260,11 @@ class AuthAndAccessIT {
         return conversation;
     }
 
-    private static void insertInbound(UUID conversation, boolean countsAsUnread, String body) throws Exception {
-        database.transaction(connection -> {
+    private static UUID insertInbound(UUID conversation, boolean countsAsUnread, String body) throws Exception {
+        return database.transaction(connection -> {
             UUID account;
             long sequence;
+            UUID messageId = UUID.randomUUID();
             try (PreparedStatement statement = connection.prepareStatement("""
                     update conversations set next_ingest_sequence=next_ingest_sequence+1
                     where id=? returning channel_account_id,next_ingest_sequence
@@ -251,18 +278,41 @@ class AuthAndAccessIT {
             }
             try (PreparedStatement statement = connection.prepareStatement("""
                     insert into messages
-                        (conversation_id,channel_account_id,direction,message_kind,body_text,
+                        (id,conversation_id,channel_account_id,direction,message_kind,body_text,
                          occurred_at,ingest_sequence,counts_as_unread,current_status,current_status_at)
-                    values (?,?,'inbound','text',?,now(),?,?,'delivered',now())
+                    values (?,?,?,'inbound','text',?,now(),?,?,'delivered',now())
                     """)) {
-                statement.setObject(1, conversation);
-                statement.setObject(2, account);
-                statement.setString(3, body);
-                statement.setLong(4, sequence);
-                statement.setBoolean(5, countsAsUnread);
+                statement.setObject(1, messageId);
+                statement.setObject(2, conversation);
+                statement.setObject(3, account);
+                statement.setString(4, body);
+                statement.setLong(5, sequence);
+                statement.setBoolean(6, countsAsUnread);
                 statement.executeUpdate();
             }
-            return null;
+            return messageId;
+        });
+    }
+
+    private static UUID createAttachment(UUID messageId) throws Exception {
+        return database.transaction(connection -> {
+            UUID attachmentId = UUID.randomUUID();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    insert into attachments
+                        (id,message_id,bucket,object_key,original_name,mime_type,size_bytes,sha256,media_kind,storage_status)
+                    values (?,?,? ,?,?,?,?,'0000000000000000000000000000000000000000000000000000000000000000',
+                            'document','ready')
+                    """)) {
+                statement.setObject(1, attachmentId);
+                statement.setObject(2, messageId);
+                statement.setString(3, "message-center-test");
+                statement.setString(4, "attachments/" + attachmentId);
+                statement.setString(5, "fixture.txt");
+                statement.setString(6, "text/plain");
+                statement.setLong(7, 1);
+                statement.executeUpdate();
+            }
+            return attachmentId;
         });
     }
 
@@ -292,6 +342,20 @@ class AuthAndAccessIT {
         });
     }
 
+    private static long auditActionResultCount(String action, String result) throws Exception {
+        return database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select count(*) from audit_logs where action=? and result=?")) {
+                statement.setString(1, action);
+                statement.setString(2, result);
+                try (var rows = statement.executeQuery()) {
+                    rows.next();
+                    return rows.getLong(1);
+                }
+            }
+        });
+    }
+
     private static void assertAuditRedacted() throws Exception {
         database.read(connection -> {
             try (PreparedStatement statement = connection.prepareStatement("""
@@ -305,6 +369,24 @@ class AuthAndAccessIT {
                     assertFalse(summary.contains("nested-password"));
                     assertTrue(summary.contains("[REDACTED]"));
                     assertTrue(summary.contains("visible"));
+                }
+            }
+            return null;
+        });
+    }
+
+    private static void assertAuditSummaryBounded() throws Exception {
+        database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select after_summary_jsonb::text from audit_logs
+                    where action='test.bounded_redaction' order by occurred_at desc,id desc limit 1
+                    """)) {
+                try (var rows = statement.executeQuery()) {
+                    rows.next();
+                    String summary = rows.getString(1);
+                    assertTrue(summary.length() <= 30_000, "audit summary exceeded its global budget");
+                    assertFalse(summary.contains("must-not-appear"));
+                    assertTrue(summary.contains("[TRUNCATED]"));
                 }
             }
             return null;

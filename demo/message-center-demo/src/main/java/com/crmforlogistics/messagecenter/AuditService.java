@@ -18,6 +18,9 @@ public final class AuditService {
     private static final int MAX_DEPTH = 8;
     private static final int MAX_ENTRIES = 100;
     private static final int MAX_TEXT_LENGTH = 500;
+    private static final int MAX_KEY_LENGTH = 100;
+    private static final int MAX_TOTAL_NODES = 1_000;
+    private static final int MAX_TOTAL_TEXT_LENGTH = 20_000;
     private final Database database;
 
     public AuditService(Database database) {
@@ -57,33 +60,44 @@ public final class AuditService {
     private static Map<String, Object> redact(Map<String, ?> source) {
         Map<String, Object> result = new LinkedHashMap<>();
         if (source == null) return result;
+        RedactionBudget budget = new RedactionBudget();
         int count = 0;
         for (Map.Entry<String, ?> entry : source.entrySet()) {
-            if (count++ >= MAX_ENTRIES) break;
-            String key = entry.getKey();
-            result.put(key, sensitive(key) ? "[REDACTED]" : safeValue(entry.getValue(), 1));
+            if (count++ >= MAX_ENTRIES || !budget.consumeNode()) {
+                result.put("[TRUNCATED]", "[TRUNCATED]");
+                break;
+            }
+            String key = safeKey(entry.getKey());
+            result.put(key, sensitive(entry.getKey()) ? "[REDACTED]" : safeValue(entry.getValue(), 1, budget));
         }
         return result;
     }
 
-    private static Object safeValue(Object value, int depth) {
+    private static Object safeValue(Object value, int depth, RedactionBudget budget) {
         if (value == null || value instanceof Number || value instanceof Boolean || value instanceof UUID) return value;
-        if (depth > MAX_DEPTH) return "[TRUNCATED]";
+        if (depth > MAX_DEPTH || !budget.consumeNode()) return "[TRUNCATED]";
         if (value instanceof Map<?, ?> map) {
             Map<String, Object> nested = new LinkedHashMap<>();
             int count = 0;
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (count++ >= MAX_ENTRIES) break;
+                if (count++ >= MAX_ENTRIES || budget.exhausted()) {
+                    nested.put("[TRUNCATED]", "[TRUNCATED]");
+                    break;
+                }
                 String key = String.valueOf(entry.getKey());
-                nested.put(key, sensitive(key) ? "[REDACTED]" : safeValue(entry.getValue(), depth + 1));
+                nested.put(safeKey(key), sensitive(key) ? "[REDACTED]"
+                        : safeValue(entry.getValue(), depth + 1, budget));
             }
             return nested;
         }
         if (value instanceof Iterable<?> iterable) {
             List<Object> nested = new ArrayList<>();
             for (Object item : iterable) {
-                if (nested.size() >= MAX_ENTRIES) break;
-                nested.add(safeValue(item, depth + 1));
+                if (nested.size() >= MAX_ENTRIES || budget.exhausted()) {
+                    nested.add("[TRUNCATED]");
+                    break;
+                }
+                nested.add(safeValue(item, depth + 1, budget));
             }
             return nested;
         }
@@ -91,19 +105,57 @@ public final class AuditService {
             List<Object> nested = new ArrayList<>();
             int length = Math.min(Array.getLength(value), MAX_ENTRIES);
             for (int index = 0; index < length; index++) {
-                nested.add(safeValue(Array.get(value, index), depth + 1));
+                if (budget.exhausted()) {
+                    nested.add("[TRUNCATED]");
+                    break;
+                }
+                nested.add(safeValue(Array.get(value, index), depth + 1, budget));
             }
+            if (Array.getLength(value) > MAX_ENTRIES) nested.add("[TRUNCATED]");
             return nested;
         }
         String text = String.valueOf(value);
-        return text.length() <= MAX_TEXT_LENGTH ? text : text.substring(0, MAX_TEXT_LENGTH);
+        int permitted = Math.min(MAX_TEXT_LENGTH, budget.remainingText());
+        if (permitted <= 0) return "[TRUNCATED]";
+        int length = Math.min(text.length(), permitted);
+        budget.consumeText(length);
+        return length == text.length() ? text : text.substring(0, length);
     }
 
     private static boolean sensitive(String key) {
+        if (key != null && key.length() > MAX_KEY_LENGTH) return true;
         String normalized = key == null ? "" : key.toLowerCase(Locale.ROOT);
         return normalized.contains("password") || normalized.contains("secret")
                 || normalized.contains("token") || normalized.contains("authorization")
                 || normalized.contains("credential") || normalized.contains("encrypted");
+    }
+
+    private static String safeKey(String key) {
+        if (key == null) return "null";
+        return key.length() <= MAX_KEY_LENGTH ? key : "[TRUNCATED_KEY]";
+    }
+
+    private static final class RedactionBudget {
+        private int nodes;
+        private int textLength;
+
+        boolean consumeNode() {
+            if (nodes >= MAX_TOTAL_NODES) return false;
+            nodes++;
+            return true;
+        }
+
+        void consumeText(int length) {
+            textLength += length;
+        }
+
+        int remainingText() {
+            return Math.max(0, MAX_TOTAL_TEXT_LENGTH - textLength);
+        }
+
+        boolean exhausted() {
+            return nodes >= MAX_TOTAL_NODES || textLength >= MAX_TOTAL_TEXT_LENGTH;
+        }
     }
 
     private static String required(String value, String field, int max) {

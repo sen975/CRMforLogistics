@@ -86,10 +86,8 @@ public final class SessionService {
     }
 
     public BootstrapResult bootstrapAdmin(String username, PasswordSupplier passwordSupplier) throws Exception {
-        JdbcAuthRepository.normalizeUsername(username);
         Objects.requireNonNull(passwordSupplier, "passwordSupplier");
-        String displayName = username.trim();
-        return repository.bootstrapAdmin(new UserDraft(displayName, displayName, "active", "owner"), () -> {
+        return repository.bootstrapAdmin(username, () -> {
             char[] password = null;
             try {
                 password = passwordSupplier.get();

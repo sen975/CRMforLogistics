@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class JdbcAuthRepository {
+    private static final long USER_BOOTSTRAP_LOCK = 6_648_201L;
     private final Database database;
 
     public JdbcAuthRepository(Database database) {
@@ -22,7 +23,10 @@ public final class JdbcAuthRepository {
     }
 
     public UUID createUser(UserDraft draft, String passwordHash) throws Exception {
-        return database.transaction(connection -> insertUser(connection, draft, passwordHash));
+        return database.transaction(connection -> {
+            acquireUserBootstrapLock(connection);
+            return insertUser(connection, draft, passwordHash);
+        });
     }
 
     public Optional<AuthUser> findUser(String username) throws Exception {
@@ -30,16 +34,12 @@ public final class JdbcAuthRepository {
         return database.read(connection -> findUser(connection, normalized));
     }
 
-    public BootstrapResult bootstrapAdmin(UserDraft draft, PasswordHashSupplier passwordHashSupplier,
+    public BootstrapResult bootstrapAdmin(String username, PasswordHashSupplier passwordHashSupplier,
                                           AuditService audit) throws Exception {
-        Objects.requireNonNull(draft, "draft");
         Objects.requireNonNull(passwordHashSupplier, "passwordHashSupplier");
         Objects.requireNonNull(audit, "audit");
         return database.transaction(connection -> {
-            try (PreparedStatement statement = connection.prepareStatement("select pg_advisory_xact_lock(?)")) {
-                statement.setLong(1, 6_648_201L);
-                statement.executeQuery();
-            }
+            acquireUserBootstrapLock(connection);
             try (PreparedStatement statement = connection.prepareStatement("select count(*) from users")) {
                 try (ResultSet rows = statement.executeQuery()) {
                     rows.next();
@@ -52,6 +52,8 @@ public final class JdbcAuthRepository {
                 }
             }
             String passwordHash = Objects.requireNonNull(passwordHashSupplier.get(), "passwordHash");
+            String displayName = Objects.requireNonNull(username, "username").trim();
+            UserDraft draft = new UserDraft(displayName, displayName, "active", "owner");
             UUID userId = insertUser(connection, draft, passwordHash);
             BootstrapResult result = new BootstrapResult(true, userId, "CREATED");
             audit.record(connection, userId, "auth.bootstrap", "user", userId,
@@ -96,19 +98,34 @@ public final class JdbcAuthRepository {
                                                         AuditService audit) throws Exception {
         Objects.requireNonNull(audit, "audit");
         return database.transaction(connection -> {
-            Optional<AuthenticatedSession> session = findSession(connection, tokenHash, now);
-            if (session.isEmpty()) return Optional.empty();
-            try (PreparedStatement statement = connection.prepareStatement(
-                    "update user_sessions set revoked_at=? where token_hash=? and revoked_at is null")) {
+            AuthenticatedSession authenticated;
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    update user_sessions s set revoked_at=?
+                    where s.token_hash=? and s.revoked_at is null and s.expires_at>?
+                      and exists (select 1 from users u where u.id=s.user_id
+                                  and u.status='active' and u.deleted_at is null)
+                    returning s.id,s.user_id,s.expires_at
+                    """)) {
                 statement.setTimestamp(1, Timestamp.from(now));
                 statement.setBytes(2, tokenHash);
-                statement.executeUpdate();
+                statement.setTimestamp(3, Timestamp.from(now));
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) return Optional.empty();
+                    authenticated = new AuthenticatedSession(rows.getObject(1, UUID.class),
+                            rows.getObject(2, UUID.class), rows.getTimestamp(3).toInstant());
+                }
             }
-            AuthenticatedSession authenticated = session.orElseThrow();
             audit.record(connection, authenticated.userId(), "auth.logout", "session",
                     authenticated.sessionId(), Map.of(), Map.of(), "success");
-            return session;
+            return Optional.of(authenticated);
         });
+    }
+
+    private static void acquireUserBootstrapLock(Connection connection) throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement("select pg_advisory_xact_lock(?)")) {
+            statement.setLong(1, USER_BOOTSTRAP_LOCK);
+            statement.executeQuery();
+        }
     }
 
     private static Optional<AuthenticatedSession> findSession(Connection connection, byte[] tokenHash,

@@ -49,12 +49,32 @@ public final class AccessControlService {
             throw new IllegalArgumentException("Sensitive resource type is invalid");
         }
         boolean allowed = database.transaction(connection -> {
-            boolean canRead = canRead(connection, userId, conversationId);
+            boolean canRead = canRead(connection, userId, conversationId)
+                    && resourceBelongsToConversation(connection, conversationId, resourceType, resourceId);
             audit.record(connection, userId, resourceType + ".read_sensitive", resourceType, resourceId,
                     Map.of(), Map.of("conversationId", conversationId), canRead ? "success" : "denied");
             return canRead;
         });
         if (!allowed) throw denied();
+    }
+
+    private static boolean resourceBelongsToConversation(Connection connection, UUID conversationId,
+                                                         String resourceType, UUID resourceId) throws Exception {
+        if ("conversation".equals(resourceType)) return conversationId.equals(resourceId);
+        String sql = "message".equals(resourceType)
+                ? "select exists(select 1 from messages where id=? and conversation_id=?)"
+                : """
+                  select exists(select 1 from attachments a join messages m on m.id=a.message_id
+                                where a.id=? and a.deleted_at is null and m.conversation_id=?)
+                  """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setObject(1, resourceId);
+            statement.setObject(2, conversationId);
+            try (ResultSet rows = statement.executeQuery()) {
+                rows.next();
+                return rows.getBoolean(1);
+            }
+        }
     }
 
     public void requireConversationSend(UUID userId, UUID conversationId) throws Exception {
