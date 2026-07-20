@@ -10,6 +10,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.math.BigInteger;
 import java.sql.PreparedStatement;
 import java.time.Clock;
 import java.time.Duration;
@@ -161,12 +162,13 @@ class AuthAndAccessIT {
                         Map.of("databasePassword", "nested-password", "safe", "visible")))), "success");
         assertAuditRedacted();
         Map<String, Object> oversized = new LinkedHashMap<>();
+        oversized.put("k".repeat(300), "must-not-appear");
+        oversized.put("oversizedNumber", BigInteger.TEN.pow(10_000));
         for (int outer = 0; outer < 100; outer++) {
             Map<String, Object> branch = new LinkedHashMap<>();
             for (int inner = 0; inner < 100; inner++) branch.put("key-" + inner, "x".repeat(500));
             oversized.put("branch-" + outer, branch);
         }
-        oversized.put("k".repeat(300), "must-not-appear");
         audit.record(agent, "test.bounded_redaction", "user", agent,
                 Map.of(), oversized, "success");
         assertAuditSummaryBounded();
@@ -386,6 +388,8 @@ class AuthAndAccessIT {
                     String summary = rows.getString(1);
                     assertTrue(summary.length() <= 30_000, "audit summary exceeded its global budget");
                     assertFalse(summary.contains("must-not-appear"));
+                    assertTrue(summary.contains("\"oversizedNumber\": \"[TRUNCATED]\""));
+                    assertTrue(summary.contains("[TRUNCATED_KEY]"));
                     assertTrue(summary.contains("[TRUNCATED]"));
                 }
             }

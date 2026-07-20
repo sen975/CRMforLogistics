@@ -3,6 +3,8 @@ package com.crmforlogistics.messagecenter;
 import com.google.gson.Gson;
 
 import java.lang.reflect.Array;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.PreparedStatement;
 import java.sql.Types;
 import java.util.ArrayList;
@@ -67,25 +69,27 @@ public final class AuditService {
                 result.put("[TRUNCATED]", "[TRUNCATED]");
                 break;
             }
-            String key = safeKey(entry.getKey());
-            result.put(key, sensitive(entry.getKey()) ? "[REDACTED]" : safeValue(entry.getValue(), 1, budget));
+            String key = safeKey(entry.getKey(), budget);
+            result.put(key, sensitive(entry.getKey()) ? redactedValue(budget)
+                    : safeValue(entry.getValue(), 1, budget));
         }
         return result;
     }
 
     private static Object safeValue(Object value, int depth, RedactionBudget budget) {
-        if (value == null || value instanceof Number || value instanceof Boolean || value instanceof UUID) return value;
-        if (depth > MAX_DEPTH || !budget.consumeNode()) return "[TRUNCATED]";
+        if (!budget.consumeNode() || depth > MAX_DEPTH) return "[TRUNCATED]";
+        if (value == null || value instanceof Boolean || value instanceof UUID) return value;
+        if (value instanceof Number number) return safeNumber(number);
         if (value instanceof Map<?, ?> map) {
             Map<String, Object> nested = new LinkedHashMap<>();
             int count = 0;
             for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (count++ >= MAX_ENTRIES || budget.exhausted()) {
+                if (count++ >= MAX_ENTRIES || !budget.consumeNode() || budget.exhausted()) {
                     nested.put("[TRUNCATED]", "[TRUNCATED]");
                     break;
                 }
                 String key = String.valueOf(entry.getKey());
-                nested.put(safeKey(key), sensitive(key) ? "[REDACTED]"
+                nested.put(safeKey(key, budget), sensitive(key) ? redactedValue(budget)
                         : safeValue(entry.getValue(), depth + 1, budget));
             }
             return nested;
@@ -130,9 +134,26 @@ public final class AuditService {
                 || normalized.contains("credential") || normalized.contains("encrypted");
     }
 
-    private static String safeKey(String key) {
-        if (key == null) return "null";
-        return key.length() <= MAX_KEY_LENGTH ? key : "[TRUNCATED_KEY]";
+    private static Object safeNumber(Number number) {
+        if (number instanceof Byte || number instanceof Short || number instanceof Integer
+                || number instanceof Long || number instanceof Float || number instanceof Double) {
+            return number;
+        }
+        if (number instanceof BigInteger integer && integer.bitLength() <= 256) return integer;
+        if (number instanceof BigDecimal decimal
+                && decimal.precision() <= 100 && Math.abs((long) decimal.scale()) <= 100) return decimal;
+        return "[TRUNCATED]";
+    }
+
+    private static String safeKey(String key, RedactionBudget budget) {
+        String safe = key == null ? "null" : key.length() <= MAX_KEY_LENGTH ? key : "[TRUNCATED_KEY]";
+        if (!budget.consumeText(safe.length())) return "[TRUNCATED_KEY]";
+        return safe;
+    }
+
+    private static String redactedValue(RedactionBudget budget) {
+        budget.consumeNode();
+        return "[REDACTED]";
     }
 
     private static final class RedactionBudget {
@@ -145,8 +166,13 @@ public final class AuditService {
             return true;
         }
 
-        void consumeText(int length) {
+        boolean consumeText(int length) {
+            if (length > remainingText()) {
+                textLength = MAX_TOTAL_TEXT_LENGTH;
+                return false;
+            }
             textLength += length;
+            return true;
         }
 
         int remainingText() {
