@@ -1,5 +1,7 @@
 # Message Center PostgreSQL and MinIO Implementation Plan
 
+> **执行状态（2026-07-20）：** Task 1–6 保留为历史执行依据；Task 7–12 已被 `docs/superpowers/plans/2026-07-20-message-center-master-roadmap.md` 及其两个子计划替代。禁止继续按本文旧 package 路径实现 Task 7–12。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 `demo/message-center-demo` 从 JSONL 文件真源迁移为 PostgreSQL + MinIO 的单租户多人消息中心，并闭合多账号、权限、未读、幂等、outbox、数据导入和 Docker Compose 运行链路。

@@ -316,6 +316,8 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 
 消息中心详细表结构、幂等约束、MinIO 边界、数据迁移和数据验收以 `docs/superpowers/specs/2026-07-17-message-center-database-design.md` 为当前数据真源。
 
+消息中心当前执行顺序、阶段门禁和有效子计划以 `docs/superpowers/plans/2026-07-20-message-center-master-roadmap.md` 为当前计划真源。
+
 ### 4.2 核心表总览
 
 | 表 | 作用 |
