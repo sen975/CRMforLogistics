@@ -312,7 +312,9 @@ MinIO：保存邮件附件、聊天附件、导入文件和后续背调资料。
 - 可变枚举和标签走配置，不写死在前端。
 - AI、Topic、任务、看板相关表不进入第一阶段核心迁移，可后续追加。
 
-消息中心详细表结构、幂等约束、MinIO 边界、迁移和验收以 `docs/superpowers/specs/2026-07-17-message-center-database-design.md` 为当前真源。
+消息中心前后端分离、业务模块分层、OpenAPI、Spring Security、React 工程结构和迁移边界以 `docs/superpowers/specs/2026-07-20-message-center-modular-frontend-backend-architecture.md` 为当前架构真源。
+
+消息中心详细表结构、幂等约束、MinIO 边界、数据迁移和数据验收以 `docs/superpowers/specs/2026-07-17-message-center-database-design.md` 为当前数据真源。
 
 ### 4.2 核心表总览
 
