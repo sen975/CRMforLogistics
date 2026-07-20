@@ -153,6 +153,7 @@ public final class JdbcMessageRepository implements MessageRepository {
             throw new IllegalArgumentException("Message status event is invalid");
         }
         database.transaction(connection -> {
+            int inserted;
             try (PreparedStatement statement = connection.prepareStatement("""
                     insert into message_status_events
                         (message_id,status,occurred_at,provider_event_id,reason_code,reason_message)
@@ -164,8 +165,9 @@ public final class JdbcMessageRepository implements MessageRepository {
                 setText(statement, 4, event.providerEventId());
                 setText(statement, 5, event.reasonCode());
                 setText(statement, 6, event.reasonMessage());
-                statement.executeUpdate();
+                inserted = statement.executeUpdate();
             }
+            if (inserted == 0) return null;
             String currentStatus;
             Instant currentAt;
             try (PreparedStatement statement = connection.prepareStatement(
@@ -209,8 +211,9 @@ public final class JdbcMessageRepository implements MessageRepository {
         return database.read(connection -> {
             String sql = baseSelect() + " where m.id=? and " + authorizedSql("cv");
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                statement.setObject(1, messageId);
-                bindAuthorization(statement, 2, userId);
+                statement.setObject(1, userId);
+                statement.setObject(2, messageId);
+                bindAuthorization(statement, 3, userId);
                 try (ResultSet rows = statement.executeQuery()) {
                     return rows.next() ? Optional.of(readMessage(rows)) : Optional.empty();
                 }
@@ -228,9 +231,10 @@ public final class JdbcMessageRepository implements MessageRepository {
             else sql.append("ci.contact_id=?");
             sql.append(" and ").append(authorizedSql("cv"));
             if (cursor != null) sql.append(" and (m.occurred_at < ? or (m.occurred_at = ? and m.id < ?))");
-            sql.append(" order by m.occurred_at,m.id limit ?");
+            sql.append(" order by m.occurred_at desc,m.id desc limit ?");
             try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
                 int i = 1;
+                statement.setObject(i++, userId);
                 statement.setObject(i++, conversationId != null ? conversationId : contactId);
                 i = bindAuthorization(statement, i, userId);
                 if (cursor != null) {
@@ -242,6 +246,7 @@ public final class JdbcMessageRepository implements MessageRepository {
                 try (ResultSet rows = statement.executeQuery()) {
                     List<UnifiedMessage> result = new ArrayList<>();
                     while (rows.next()) result.add(readMessage(rows));
+                    java.util.Collections.reverse(result);
                     return result;
                 }
             }
@@ -252,7 +257,9 @@ public final class JdbcMessageRepository implements MessageRepository {
         return """
                 select m.id,m.provider_message_id,ca.channel_type,ci.id,m.direction,m.occurred_at,
                        m.subject,m.body_text,m.current_status,m.current_status_at,m.message_kind,
-                       m.counts_as_unread
+                       m.counts_as_unread,m.ingest_sequence,
+                       coalesce((select crs.last_read_sequence from conversation_read_states crs
+                                 where crs.conversation_id=m.conversation_id and crs.user_id=?),0)
                 from messages m
                 join conversations cv on cv.id=m.conversation_id
                 join channel_accounts ca on ca.id=m.channel_account_id
@@ -288,6 +295,11 @@ public final class JdbcMessageRepository implements MessageRepository {
         message.statusTimestamp = rows.getTimestamp(10).toInstant().toString();
         message.mediaType = rows.getString(11);
         message.countsAsUnread = rows.getBoolean(12);
+        message.ingestSequence = rows.getLong(13);
+        long lastReadSequence = rows.getLong(14);
+        message.unread = "inbound".equals(message.direction)
+                && message.countsAsUnread
+                && message.ingestSequence > lastReadSequence;
         return message;
     }
 

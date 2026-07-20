@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 class JdbcMessageRepositoryIT {
@@ -102,6 +103,8 @@ class JdbcMessageRepositoryIT {
                 new MessageStatusEvent("delivered", occurredAt.plusSeconds(10), "status-new", null, null));
         messages.appendStatus(clientOne.messageId(),
                 new MessageStatusEvent("sent", occurredAt.plusSeconds(5), "status-old", null, null));
+        messages.appendStatus(clientOne.messageId(),
+                new MessageStatusEvent("read", occurredAt.plusSeconds(20), "status-new", null, null));
 
         List<UnifiedMessage> thread = messages.thread(userId, conversation, null, 20);
         assertEquals(List.of("hello", "one", "two"), thread.stream().map(message -> message.bodyText).toList());
@@ -109,10 +112,56 @@ class JdbcMessageRepositoryIT {
         assertEquals("delivered", outbound.status);
         assertFalse(outbound.countsAsUnread);
 
-        UnifiedMessageStore store = new UnifiedMessageStore(new JdbcContactRepository(database), messages, userId);
-        assertEquals(3, store.thread(contactId.toString()).size());
+        setReadSequence(conversation, userId, 1L);
+        MessageWriteResult late = messages.insert(new MessageDraft(conversation, accountId, null,
+                "provider-late", null, "inbound", "text", null, "late", null,
+                occurredAt.minusSeconds(60), true, null));
+        UnifiedMessage lateProjection = messages.thread(userId, conversation, null, 20).stream()
+                .filter(message -> late.messageId().toString().equals(message.id)).findFirst().orElseThrow();
+        assertEquals(4L, lateProjection.ingestSequence);
+        assertTrue(lateProjection.unread);
+
+        JdbcContactRepository contactRepository = new JdbcContactRepository(database);
+        contactRepository.updateProfile(contactId, "Buyer Alias", "keep remark", List.of("VIP"), userId);
+        UnifiedMessageStore store = new UnifiedMessageStore(contactRepository, messages, userId);
+        assertEquals(4, store.thread(contactId.toString()).size());
         assertEquals(clientOne.messageId().toString(), store.findMessage(clientOne.messageId().toString()).id);
-        assertEquals(contactId.toString(), store.contacts().getFirst().id);
+        UnifiedContact projectedContact = store.contacts().getFirst();
+        assertEquals(contactId.toString(), projectedContact.id);
+        assertEquals("two", projectedContact.lastText);
+        assertEquals(4, projectedContact.messageCount);
+        assertEquals(List.of("VIP"), projectedContact.tags);
+        assertEquals(identityId.toString(), projectedContact.points.getFirst().id);
+        assertTrue(store.contactGroup(contactId.toString()).contains(identityId.toString()));
+
+        store.updateContactRemark(contactId.toString(), "new remark");
+        store.updateContactProfile(contactId.toString(), "Buyer Updated", List.of("VIP", "Hot"));
+        UnifiedContact updated = store.contacts().getFirst();
+        assertEquals("Buyer Updated", updated.displayName);
+        assertEquals("new remark", updated.remark);
+        assertEquals(List.of("Hot", "VIP"), updated.tags);
+
+        List<UnifiedMessage> latestTwo = messages.thread(userId, conversation, null, 2);
+        assertEquals(List.of("one", "two"), latestTwo.stream().map(message -> message.bodyText).toList());
+        UnifiedMessage firstLatest = latestTwo.getFirst();
+        List<UnifiedMessage> older = messages.thread(userId, conversation,
+                new MessageCursor(Instant.parse(firstLatest.timestamp), UUID.fromString(firstLatest.id)), 2);
+        assertEquals(List.of("late", "hello"), older.stream().map(message -> message.bodyText).toList());
+
+        UUID newerContact = contactRepository.create("Newer Buyer", userId);
+        UUID newerIdentity = contactRepository.attachIdentity(newerContact,
+                new ContactIdentityDraft("whatsapp", "global", "8613900000000", "Newer Buyer"));
+        UUID newerConversation = messages.getOrCreateConversation(accountId, newerIdentity);
+        assign(newerConversation, userId);
+        messages.insert(new MessageDraft(newerConversation, accountId, null,
+                "provider-newer-contact", null, "inbound", "text", null, "newest", null,
+                occurredAt.plusSeconds(100), true, null));
+        UnifiedContact firstContactPage = contactRepository.listForUser(userId,
+                new ContactQuery("", null, null, 1)).getFirst();
+        assertEquals(newerContact.toString(), firstContactPage.id);
+        UnifiedContact secondContactPage = contactRepository.listForUser(userId,
+                new ContactQuery("", Instant.parse(firstContactPage.lastTime), UUID.fromString(firstContactPage.id), 1)).getFirst();
+        assertEquals(contactId.toString(), secondContactPage.id);
     }
 
     private static void assign(UUID conversationId, UUID assigneeId) throws Exception {
@@ -121,6 +170,22 @@ class JdbcMessageRepositoryIT {
                     "update conversations set assigned_user_id=? where id=?")) {
                 statement.setObject(1, assigneeId);
                 statement.setObject(2, conversationId);
+                statement.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    private static void setReadSequence(UUID conversationId, UUID readerId, long sequence) throws Exception {
+        database.transaction(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    insert into conversation_read_states (conversation_id,user_id,last_read_sequence)
+                    values (?,?,?) on conflict (conversation_id,user_id)
+                    do update set last_read_sequence=excluded.last_read_sequence
+                    """)) {
+                statement.setObject(1, conversationId);
+                statement.setObject(2, readerId);
+                statement.setLong(3, sequence);
                 statement.executeUpdate();
             }
             return null;

@@ -26,6 +26,7 @@ class JdbcCompanyPhoneNoteRepositoryIT {
 
     private static Database database;
     private static UUID userId;
+    private static UUID otherUserId;
 
     @BeforeAll
     static void openDatabase() throws Exception {
@@ -38,6 +39,7 @@ class JdbcCompanyPhoneNoteRepositoryIT {
                 "DATABASE_PASSWORD_FILE", password.toString())));
         database.migrate();
         userId = UUID.randomUUID();
+        otherUserId = UUID.randomUUID();
         database.transaction(connection -> {
             try (PreparedStatement statement = connection.prepareStatement("""
                     insert into users (id,username,username_normalized,password_hash,display_name)
@@ -48,6 +50,17 @@ class JdbcCompanyPhoneNoteRepositoryIT {
                 statement.setString(3, "company-it");
                 statement.setString(4, "fixture-only");
                 statement.setString(5, "Company IT");
+                statement.executeUpdate();
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    insert into users (id,username,username_normalized,password_hash,display_name)
+                    values (?,?,?,?,?)
+                    """)) {
+                statement.setObject(1, otherUserId);
+                statement.setString(2, "other-it");
+                statement.setString(3, "other-it");
+                statement.setString(4, "fixture-only");
+                statement.setString(5, "Other IT");
                 statement.executeUpdate();
             }
             return null;
@@ -83,11 +96,29 @@ class JdbcCompanyPhoneNoteRepositoryIT {
 
         UUID noteId = notes.create(new PhoneNoteDraft(contact, company, phoneIdentity,
                 Instant.parse("2026-07-01T01:00:00Z"), "Called buyer", "Send quote"), userId);
+        assertTrue(notes.listByContact(otherUserId, contact, null, 20).isEmpty());
         companies.unlinkContact(company, contact, userId);
 
         assertTrue(companies.detailsForUser(userId, company).contacts().isEmpty());
         assertTrue(companies.detailsForUser(userId, company).conversationIds().isEmpty());
         assertEquals(noteId, notes.listByContact(userId, contact, null, 20).getFirst().id());
+
+        UUID olderCompany = companies.create(new CompanyDraft("Older", null, null, null,
+                null, userId, null), userId);
+        UUID newerCompany = companies.create(new CompanyDraft("Newer", null, null, null,
+                null, userId, null), userId);
+        updateCompanyTime(company, Instant.parse("2026-07-01T00:00:00Z"));
+        updateCompanyTime(olderCompany, Instant.parse("2026-07-02T00:00:00Z"));
+        updateCompanyTime(newerCompany, Instant.parse("2026-07-03T00:00:00Z"));
+        Company firstCompanyPage = companies.listForUser(userId,
+                new CompanyQuery("", null, null, 1)).getFirst();
+        assertEquals(newerCompany, firstCompanyPage.id());
+        Company secondCompanyPage = companies.listForUser(userId,
+                new CompanyQuery("", Instant.parse("2026-07-03T00:00:00Z"), newerCompany, 1)).getFirst();
+        assertEquals(olderCompany, secondCompanyPage.id());
+
+        assertNotNull(companies.create(new CompanyDraft("Unassigned", null, null, null,
+                null, null, null), null));
     }
 
     private static UUID insertAccount() throws Exception {
@@ -114,6 +145,18 @@ class JdbcCompanyPhoneNoteRepositoryIT {
                     "update conversations set assigned_user_id=? where id=?")) {
                 statement.setObject(1, assigneeId);
                 statement.setObject(2, conversationId);
+                statement.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    private static void updateCompanyTime(UUID companyId, Instant updatedAt) throws Exception {
+        database.transaction(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "update companies set updated_at=? where id=?")) {
+                statement.setTimestamp(1, java.sql.Timestamp.from(updatedAt));
+                statement.setObject(2, companyId);
                 statement.executeUpdate();
             }
             return null;

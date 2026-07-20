@@ -22,4 +22,6 @@ public class UnifiedMessage {
     public String fileName;
     public String raw;
     public boolean countsAsUnread;
+    public long ingestSequence;
+    public boolean unread;
 }

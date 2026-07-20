@@ -26,6 +26,8 @@ public final class JdbcCompanyRepository implements CompanyRepository {
             String sql = "select id,name,type_code,country,city,website,owner_id,remark,status from companies "
                     + "where deleted_at is null and owner_id = ? "
                     + (search.isBlank() ? "" : "and (name ilike ? or coalesce(remark,'') ilike ?) ")
+                    + (safe.beforeUpdatedAt() != null && safe.beforeId() != null
+                       ? "and (updated_at < ? or (updated_at = ? and id < ?)) " : "")
                     + "order by updated_at desc,id limit ?";
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 int i = 1;
@@ -33,6 +35,11 @@ public final class JdbcCompanyRepository implements CompanyRepository {
                 if (!search.isBlank()) {
                     statement.setString(i++, "%" + search + "%");
                     statement.setString(i++, "%" + search + "%");
+                }
+                if (safe.beforeUpdatedAt() != null && safe.beforeId() != null) {
+                    statement.setTimestamp(i++, java.sql.Timestamp.from(safe.beforeUpdatedAt()));
+                    statement.setTimestamp(i++, java.sql.Timestamp.from(safe.beforeUpdatedAt()));
+                    statement.setObject(i++, safe.beforeId());
                 }
                 statement.setInt(i, limit);
                 try (ResultSet rows = statement.executeQuery()) {
@@ -108,13 +115,13 @@ public final class JdbcCompanyRepository implements CompanyRepository {
                     """)) {
                 statement.setObject(1, id);
                 statement.setString(2, text(draft.name(), "name", 255));
-                setNullable(statement, 3, draft.typeCode());
-                setNullable(statement, 4, draft.country());
-                setNullable(statement, 5, draft.city());
-                setNullable(statement, 6, draft.website());
-                setNullable(statement, 7, draft.ownerId());
-                setNullable(statement, 8, draft.remark());
-                setNullable(statement, 9, actorId);
+                setText(statement, 3, draft.typeCode());
+                setText(statement, 4, draft.country());
+                setText(statement, 5, draft.city());
+                setText(statement, 6, draft.website());
+                setUuid(statement, 7, draft.ownerId());
+                setText(statement, 8, draft.remark());
+                setUuid(statement, 9, actorId);
                 statement.executeUpdate();
             }
             return null;
@@ -131,16 +138,16 @@ public final class JdbcCompanyRepository implements CompanyRepository {
                     where id=? and (owner_id=? or created_by=?) and deleted_at is null
                     """)) {
                 statement.setString(1, text(patch.name(), "name", 255));
-                setNullable(statement, 2, patch.typeCode());
-                setNullable(statement, 3, patch.country());
-                setNullable(statement, 4, patch.city());
-                setNullable(statement, 5, patch.website());
-                setNullable(statement, 6, patch.ownerId());
-                setNullable(statement, 7, patch.remark());
+                setText(statement, 2, patch.typeCode());
+                setText(statement, 3, patch.country());
+                setText(statement, 4, patch.city());
+                setText(statement, 5, patch.website());
+                setUuid(statement, 6, patch.ownerId());
+                setText(statement, 7, patch.remark());
                 statement.setString(8, patch.status() == null || patch.status().isBlank() ? "active" : patch.status());
                 statement.setObject(9, companyId);
-                setNullable(statement, 10, actorId);
-                setNullable(statement, 11, actorId);
+                setUuid(statement, 10, actorId);
+                setUuid(statement, 11, actorId);
                 if (statement.executeUpdate() == 0) throw new IllegalArgumentException("Company not found or unauthorized");
             }
             return null;
@@ -161,8 +168,8 @@ public final class JdbcCompanyRepository implements CompanyRepository {
                 statement.setObject(2, contactId);
                 statement.setString(3, relationType == null || relationType.isBlank() ? "contact" : relationType);
                 statement.setBoolean(4, primary);
-                setNullable(statement, 5, remark);
-                setNullable(statement, 6, actorId);
+                setText(statement, 5, remark);
+                setUuid(statement, 6, actorId);
                 statement.executeUpdate();
             }
             return null;
@@ -224,7 +231,11 @@ public final class JdbcCompanyRepository implements CompanyRepository {
         return value.trim();
     }
 
-    private static void setNullable(PreparedStatement statement, int index, Object value) throws Exception {
-        if (value == null) statement.setNull(index, value instanceof UUID ? Types.OTHER : Types.VARCHAR); else statement.setObject(index, value);
+    private static void setUuid(PreparedStatement statement, int index, UUID value) throws Exception {
+        if (value == null) statement.setNull(index, Types.OTHER); else statement.setObject(index, value);
+    }
+
+    private static void setText(PreparedStatement statement, int index, String value) throws Exception {
+        if (value == null) statement.setNull(index, Types.VARCHAR); else statement.setString(index, value);
     }
 }

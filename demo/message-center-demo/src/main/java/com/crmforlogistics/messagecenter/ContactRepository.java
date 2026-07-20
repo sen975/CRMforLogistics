@@ -5,6 +5,7 @@ import java.util.UUID;
 
 public interface ContactRepository {
     List<UnifiedContact> listForUser(UUID userId, ContactQuery query) throws Exception;
+    UnifiedContact findForUser(UUID userId, UUID contactId) throws Exception;
     UUID create(String displayName, UUID actorId) throws Exception;
     UUID attachIdentity(UUID contactId, ContactIdentityDraft identity) throws Exception;
     ContactIdentity findIdentity(UUID identityId) throws Exception;

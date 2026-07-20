@@ -138,7 +138,8 @@ public class UnifiedMessageStore {
 
     public List<String> contactGroup(String contactPointId) throws IOException {
         if (databaseBacked()) {
-            return List.of(UUID.fromString(contactPointId).toString());
+            UnifiedContact contact = databaseContact(contactPointId);
+            return contact.points.stream().map(point -> point.id).toList();
         }
         String point = ContactPointUtil.normalizePointId(contactPointId);
         Map<String, List<String>> groups = contactGroups();
@@ -232,7 +233,8 @@ public class UnifiedMessageStore {
 
     public void updateContactRemark(String contactPointId, String remark) throws IOException {
         if (databaseBacked()) {
-            updateDatabaseProfile(contactPointId, remark, remark, List.of());
+            UnifiedContact contact = databaseContact(contactPointId);
+            updateDatabaseProfile(contact, contact.displayName, remark, contact.tags);
             return;
         }
         String point = ContactPointUtil.normalizePointId(contactPointId);
@@ -246,7 +248,9 @@ public class UnifiedMessageStore {
 
     public void updateContactProfile(String contactPointId, String nickname, List<String> newTags) throws IOException {
         if (databaseBacked()) {
-            updateDatabaseProfile(contactPointId, nickname, nickname, cleanTags(newTags));
+            UnifiedContact contact = databaseContact(contactPointId);
+            String displayName = nickname == null || nickname.isBlank() ? contact.displayName : nickname.trim();
+            updateDatabaseProfile(contact, displayName, contact.remark, cleanTags(newTags));
             return;
         }
         String point = ContactPointUtil.normalizePointId(contactPointId);
@@ -309,12 +313,20 @@ public class UnifiedMessageStore {
         return contactRepository != null;
     }
 
-    private void updateDatabaseProfile(String contactPointId, String displayName,
+    private UnifiedContact databaseContact(String contactId) throws IOException {
+        try {
+            UnifiedContact contact = contactRepository.findForUser(userId, UUID.fromString(contactId));
+            if (contact == null) throw new IllegalArgumentException("Contact not found or unauthorized");
+            return contact;
+        } catch (Exception exception) {
+            throw databaseFailure("Unable to query contact profile", exception);
+        }
+    }
+
+    private void updateDatabaseProfile(UnifiedContact contact, String displayName,
                                        String remark, List<String> tags) throws IOException {
         try {
-            UUID contactId = UUID.fromString(contactPointId);
-            String name = displayName == null || displayName.isBlank() ? contactId.toString() : displayName.trim();
-            contactRepository.updateProfile(contactId, name, remark, tags, userId);
+            contactRepository.updateProfile(UUID.fromString(contact.id), displayName, remark, tags, userId);
         } catch (Exception exception) {
             throw databaseFailure("Unable to update contact profile", exception);
         }
