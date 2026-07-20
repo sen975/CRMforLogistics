@@ -34,29 +34,31 @@ public final class SessionService {
     }
 
     public IssuedSession login(String username, char[] password) throws Exception {
-        Instant now = clock.instant();
-        AuthUser user = repository.findUser(username).orElse(null);
-        boolean valid = user != null && "active".equals(user.status())
-                && passwordHasher.verify(user.passwordHash(), password);
-        if (!valid) {
-            if (password != null) Arrays.fill(password, '\0');
-            audit.record(user == null ? null : user.id(), "auth.login", "user",
-                    user == null ? null : user.id(), Map.of(), Map.of("username", safeUsername(username)), "denied");
-            throw new AuthenticationException("INVALID_CREDENTIALS");
-        }
-        byte[] raw = new byte[TOKEN_BYTES];
-        byte[] tokenHash = null;
-        secureRandom.nextBytes(raw);
-        String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
         try {
-            tokenHash = sha256(rawToken);
-            Instant expiresAt = now.plus(sessionTtl);
-            repository.createSession(user.id(), tokenHash, now, expiresAt);
-            audit.record(user.id(), "auth.login", "user", user.id(), Map.of(), Map.of(), "success");
-            return new IssuedSession(rawToken, expiresAt, user.id());
+            Instant now = clock.instant();
+            AuthUser user = repository.findUser(username).orElse(null);
+            boolean valid = user != null && "active".equals(user.status())
+                    && passwordHasher.verify(user.passwordHash(), password);
+            if (!valid) {
+                audit.record(null, "auth.login", "user", user == null ? null : user.id(),
+                        Map.of(), Map.of("username", safeUsername(username)), "denied");
+                throw new AuthenticationException("INVALID_CREDENTIALS");
+            }
+            byte[] raw = new byte[TOKEN_BYTES];
+            byte[] tokenHash = null;
+            secureRandom.nextBytes(raw);
+            String rawToken = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+            try {
+                tokenHash = sha256(rawToken);
+                Instant expiresAt = now.plus(sessionTtl);
+                repository.createSession(user.id(), tokenHash, now, expiresAt, audit);
+                return new IssuedSession(rawToken, expiresAt, user.id());
+            } finally {
+                Arrays.fill(raw, (byte) 0);
+                if (tokenHash != null) Arrays.fill(tokenHash, (byte) 0);
+            }
         } finally {
-            Arrays.fill(raw, (byte) 0);
-            if (tokenHash != null) Arrays.fill(tokenHash, (byte) 0);
+            if (password != null) Arrays.fill(password, '\0');
         }
     }
 
@@ -73,22 +75,29 @@ public final class SessionService {
     public void logout(String rawToken) throws Exception {
         byte[] tokenHash = sha256(rawToken);
         try {
-            AuthenticatedSession session = repository.findSession(tokenHash, clock.instant()).orElse(null);
-            repository.revokeSession(tokenHash, clock.instant());
-            audit.record(session == null ? null : session.userId(), "auth.logout", "session",
-                    session == null ? null : session.sessionId(), Map.of(), Map.of(), "success");
+            if (repository.revokeSession(tokenHash, clock.instant(), audit).isEmpty()) {
+                audit.record(null, "auth.logout", "session", null,
+                        Map.of(), Map.of(), "denied");
+                throw new AuthenticationException("INVALID_SESSION");
+            }
         } finally {
             Arrays.fill(tokenHash, (byte) 0);
         }
     }
 
-    public BootstrapResult bootstrapAdmin(String username, char[] password) throws Exception {
-        String passwordHash = passwordHasher.hash(password);
-        BootstrapResult result = repository.bootstrapAdmin(
-                new UserDraft(username, username, "active", "owner"), passwordHash);
-        audit.record(result.userId(), "auth.bootstrap", "user", result.userId(),
-                Map.of(), Map.of("code", result.code()), "success");
-        return result;
+    public BootstrapResult bootstrapAdmin(String username, PasswordSupplier passwordSupplier) throws Exception {
+        JdbcAuthRepository.normalizeUsername(username);
+        Objects.requireNonNull(passwordSupplier, "passwordSupplier");
+        String displayName = username.trim();
+        return repository.bootstrapAdmin(new UserDraft(displayName, displayName, "active", "owner"), () -> {
+            char[] password = null;
+            try {
+                password = passwordSupplier.get();
+                return passwordHasher.hash(password);
+            } finally {
+                if (password != null) Arrays.fill(password, '\0');
+            }
+        }, audit);
     }
 
     private static byte[] sha256(String rawToken) throws Exception {
@@ -122,3 +131,8 @@ public final class SessionService {
 
 record IssuedSession(String rawToken, Instant expiresAt, UUID userId) {}
 record AuthenticatedSession(UUID sessionId, UUID userId, Instant expiresAt) {}
+
+@FunctionalInterface
+interface PasswordSupplier {
+    char[] get() throws Exception;
+}

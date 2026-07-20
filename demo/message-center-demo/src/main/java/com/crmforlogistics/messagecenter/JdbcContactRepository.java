@@ -16,9 +16,11 @@ import java.util.UUID;
 public final class JdbcContactRepository implements ContactRepository {
     private static final int MAX_LIMIT = 100;
     private final Database database;
+    private final AuditService audit;
 
     public JdbcContactRepository(Database database) {
         this.database = Objects.requireNonNull(database, "database");
+        this.audit = new AuditService(database);
     }
 
     @Override
@@ -302,6 +304,9 @@ public final class JdbcContactRepository implements ContactRepository {
                 statement.setObject(1, sourceContactId);
                 statement.executeUpdate();
             }
+            audit.record(connection, actorId, "contact.merge", "contact", sourceContactId,
+                    java.util.Map.of("sourceContactId", sourceContactId, "targetContactId", targetContactId),
+                    java.util.Map.of("mergedToContactId", targetContactId), "success");
             return null;
         });
     }
@@ -312,11 +317,13 @@ public final class JdbcContactRepository implements ContactRepository {
         String name = requireText(displayName, "displayName", 100);
         UUID newContact = UUID.randomUUID();
         database.transaction(connection -> {
+            UUID previousContact;
             try (PreparedStatement statement = connection.prepareStatement(
-                    "select id from contact_identities where id = ? and deleted_at is null for update")) {
+                    "select contact_id from contact_identities where id = ? and deleted_at is null for update")) {
                 statement.setObject(1, identityId);
                 try (ResultSet rows = statement.executeQuery()) {
                     if (!rows.next()) throw new IllegalArgumentException("Contact identity not found");
+                    previousContact = rows.getObject(1, UUID.class);
                 }
             }
             try (PreparedStatement statement = connection.prepareStatement(
@@ -332,6 +339,9 @@ public final class JdbcContactRepository implements ContactRepository {
                 statement.setObject(2, identityId);
                 statement.executeUpdate();
             }
+            audit.record(connection, actorId, "contact.split", "contact_identity", identityId,
+                    java.util.Map.of("contactId", previousContact),
+                    java.util.Map.of("contactId", newContact), "success");
             return null;
         });
         return newContact;

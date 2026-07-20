@@ -7,6 +7,7 @@ import java.sql.Types;
 import java.text.Normalizer;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -17,10 +18,12 @@ import java.util.UUID;
 public final class JdbcChannelAccountRepository implements ChannelAccountRepository {
     private final Database database;
     private final CredentialCipher credentialCipher;
+    private final AuditService audit;
 
     public JdbcChannelAccountRepository(Database database, CredentialCipher credentialCipher) {
         this.database = Objects.requireNonNull(database, "database");
         this.credentialCipher = Objects.requireNonNull(credentialCipher, "credentialCipher");
+        this.audit = new AuditService(database);
     }
 
     @Override
@@ -43,7 +46,10 @@ public final class JdbcChannelAccountRepository implements ChannelAccountReposit
                 statement.setString(5, config);
                 try (ResultSet result = statement.executeQuery()) {
                     result.next();
-                    return account(result);
+                    ChannelAccount account = account(result);
+                    audit.record(connection, null, "channel_account.create", "channel_account", account.id(),
+                            Map.of(), channelAuditSummary(account), "success");
+                    return account;
                 }
             }
         });
@@ -55,6 +61,20 @@ public final class JdbcChannelAccountRepository implements ChannelAccountReposit
         ValidatedPatch valid = validatePatch(patch);
         String config = validateEncryptedConfig(encryptedConfig);
         return database.transaction(connection -> {
+            Map<String, Object> before = new LinkedHashMap<>();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select name,account_identifier,auth_status,encrypted_config::text
+                    from channel_accounts where id=? and deleted_at is null for update
+                    """)) {
+                statement.setObject(1, id);
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) throw new ChannelAccountNotFoundException();
+                    before.put("name", result.getString(1));
+                    before.put("accountIdentifier", result.getString(2));
+                    before.put("authStatus", result.getString(3));
+                    before.put("encryptedConfig", result.getString(4));
+                }
+            }
             try (PreparedStatement statement = connection.prepareStatement("""
                     update channel_accounts
                     set name = ?, account_identifier = ?, account_identifier_normalized = ?,
@@ -74,7 +94,10 @@ public final class JdbcChannelAccountRepository implements ChannelAccountReposit
                     if (!result.next()) {
                         throw new ChannelAccountNotFoundException();
                     }
-                    return account(result);
+                    ChannelAccount account = account(result);
+                    audit.record(connection, null, "channel_account.update", "channel_account", account.id(),
+                            before, channelAuditSummary(account), "success");
+                    return account;
                 }
             }
         });
@@ -269,6 +292,15 @@ public final class JdbcChannelAccountRepository implements ChannelAccountReposit
                 decrypted.clear();
             }
         }
+    }
+
+    private static Map<String, Object> channelAuditSummary(ChannelAccount account) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("name", account.name());
+        summary.put("accountIdentifier", account.accountIdentifier());
+        summary.put("authStatus", account.authStatus());
+        summary.put("encryptedConfig", account.encryptedConfig());
+        return summary;
     }
 
     private static String normalizedType(String channelType) {

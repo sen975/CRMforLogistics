@@ -68,6 +68,10 @@ public class Config {
     public Path minioAccessKeyFile() { return Path.of(value("MINIO_ACCESS_KEY_FILE", "/run/secrets/minio_access_key")); }
     public Path minioSecretKeyFile() { return Path.of(value("MINIO_SECRET_KEY_FILE", "/run/secrets/minio_secret_key")); }
     public String minioBucket() { return value("MINIO_BUCKET", "message-center"); }
+    public String bootstrapAdminUsername() { return value("BOOTSTRAP_ADMIN_USERNAME", ""); }
+    public Path bootstrapAdminPasswordFile() {
+        return Path.of(value("BOOTSTRAP_ADMIN_PASSWORD_FILE", "/run/secrets/bootstrap_admin_password"));
+    }
     public int workerBatchSize() { return boundedInt("WORKER_BATCH_SIZE", 25, 1, 100); }
     public int workerMaxAttempts() { return boundedInt("WORKER_MAX_ATTEMPTS", 6, 1, 20); }
 

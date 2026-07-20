@@ -21,23 +21,23 @@ final class Argon2idPasswordHasher implements PasswordHasher {
 
     @Override
     public String hash(char[] password) {
-        if (password == null || password.length == 0) throw new IllegalArgumentException("Password is required");
-        Argon2 argon2 = Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id);
         try {
+            if (password == null || password.length == 0) throw new IllegalArgumentException("Password is required");
+            Argon2 argon2 = Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id);
             return argon2.hash(ITERATIONS, MEMORY_KIB, PARALLELISM, password);
         } finally {
-            Arrays.fill(password, '\0');
+            if (password != null) Arrays.fill(password, '\0');
         }
     }
 
     @Override
     public boolean verify(String encodedHash, char[] password) {
-        if (encodedHash == null || password == null) return false;
-        Argon2 argon2 = Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id);
         try {
+            if (encodedHash == null || password == null) return false;
+            Argon2 argon2 = Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id);
             return argon2.verify(encodedHash, password);
         } finally {
-            Arrays.fill(password, '\0');
+            if (password != null) Arrays.fill(password, '\0');
         }
     }
 }

@@ -9,6 +9,7 @@ import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,7 +17,12 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,6 +38,14 @@ public class App {
         String command = args.length == 0 ? "web" : args[0];
         if ("web".equalsIgnoreCase(command)) {
             startWeb(config);
+            return;
+        }
+        if ("bootstrap-admin".equalsIgnoreCase(command)) {
+            BootstrapResult result = bootstrapAdmin(config);
+            System.out.println(GSON.toJson(Map.of(
+                    "created", result.created(),
+                    "userId", result.userId() == null ? "" : result.userId().toString(),
+                    "code", result.code())));
             return;
         }
         if ("contacts".equalsIgnoreCase(command)) {
@@ -50,7 +64,44 @@ public class App {
             System.out.println(GSON.toJson(new ChatAppHistorySyncService(config).syncTemplates()));
             return;
         }
-        System.out.println("Usage: ./message-center-demo.ps1 web|contacts|receive|sync|sync-templates");
+        System.out.println("Usage: ./message-center-demo.ps1 web|bootstrap-admin|contacts|receive|sync|sync-templates");
+    }
+
+    static BootstrapResult bootstrapAdmin(Config config) throws Exception {
+        try (Database database = Database.open(config)) {
+            database.migrate();
+            SessionService sessions = new SessionService(
+                    new JdbcAuthRepository(database),
+                    PasswordHasher.argon2id(),
+                    new AuditService(database),
+                    Clock.systemUTC(),
+                    Duration.ofHours(8));
+            return sessions.bootstrapAdmin(config.bootstrapAdminUsername(),
+                    () -> readSecretChars(config.bootstrapAdminPasswordFile()));
+        }
+    }
+
+    static char[] readSecretChars(Path path) throws IOException {
+        final int maximumCharacters = 1024;
+        char[] buffer = new char[maximumCharacters + 1];
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            int count = 0;
+            while (count < buffer.length) {
+                int read = reader.read(buffer, count, buffer.length - count);
+                if (read < 0) break;
+                count += read;
+            }
+            if (count > maximumCharacters || reader.read() >= 0) {
+                throw new IOException("Bootstrap admin password file is too large");
+            }
+            while (count > 0 && (buffer[count - 1] == '\n' || buffer[count - 1] == '\r')) count--;
+            if (count == 0) throw new IOException("Bootstrap admin password file is empty");
+            return Arrays.copyOf(buffer, count);
+        } catch (IOException exception) {
+            throw new IOException("Unable to read bootstrap admin password file: " + path, exception);
+        } finally {
+            Arrays.fill(buffer, '\0');
+        }
     }
 
     private static void startWeb(Config config) throws Exception {

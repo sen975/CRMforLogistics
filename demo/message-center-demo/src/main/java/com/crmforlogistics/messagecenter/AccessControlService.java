@@ -3,7 +3,10 @@ package com.crmforlogistics.messagecenter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Types;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -34,7 +37,24 @@ public final class AccessControlService {
     }
 
     public void requireConversationRead(UUID userId, UUID conversationId) throws Exception {
-        if (!canRead(userId, conversationId)) throw denied();
+        requireSensitiveRead(userId, conversationId, "conversation", conversationId);
+    }
+
+    public void requireSensitiveRead(UUID userId, UUID conversationId,
+                                     String resourceType, UUID resourceId) throws Exception {
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(conversationId, "conversationId");
+        Objects.requireNonNull(resourceId, "resourceId");
+        if (!List.of("conversation", "message", "attachment").contains(resourceType)) {
+            throw new IllegalArgumentException("Sensitive resource type is invalid");
+        }
+        boolean allowed = database.transaction(connection -> {
+            boolean canRead = canRead(connection, userId, conversationId);
+            audit.record(connection, userId, resourceType + ".read_sensitive", resourceType, resourceId,
+                    Map.of(), Map.of("conversationId", conversationId), canRead ? "success" : "denied");
+            return canRead;
+        });
+        if (!allowed) throw denied();
     }
 
     public void requireConversationSend(UUID userId, UUID conversationId) throws Exception {
@@ -76,6 +96,51 @@ public final class AccessControlService {
             }
             audit.record(connection, grantedBy, "conversation.grant", "conversation", conversationId,
                     Map.of(), Map.of("grantee", userId), "success");
+            return null;
+        });
+    }
+
+    public void assign(UUID conversationId, UUID assignedUserId, UUID assignedTeamId,
+                       UUID actorId) throws Exception {
+        Objects.requireNonNull(conversationId, "conversationId");
+        Objects.requireNonNull(actorId, "actorId");
+        if (assignedUserId != null && assignedTeamId != null) {
+            throw new IllegalArgumentException("Conversation can be assigned to a user or team, not both");
+        }
+        database.transaction(connection -> {
+            if (!canRead(connection, actorId, conversationId)) throw denied();
+            validateAssignmentTarget(connection, assignedUserId, assignedTeamId);
+            UUID previousUser;
+            UUID previousTeam;
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select assigned_user_id,assigned_team_id from conversations
+                    where id=? for update
+                    """)) {
+                statement.setObject(1, conversationId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) throw new IllegalArgumentException("Conversation not found");
+                    previousUser = rows.getObject(1, UUID.class);
+                    previousTeam = rows.getObject(2, UUID.class);
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    update conversations
+                    set assigned_user_id=?,assigned_team_id=?,updated_at=now(),version=version+1
+                    where id=?
+                    """)) {
+                setUuid(statement, 1, assignedUserId);
+                setUuid(statement, 2, assignedTeamId);
+                statement.setObject(3, conversationId);
+                statement.executeUpdate();
+            }
+            Map<String, Object> before = new LinkedHashMap<>();
+            before.put("assignedUserId", previousUser);
+            before.put("assignedTeamId", previousTeam);
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("assignedUserId", assignedUserId);
+            after.put("assignedTeamId", assignedTeamId);
+            audit.record(connection, actorId, "conversation.assign", "conversation", conversationId,
+                    before, after, "success");
             return null;
         });
     }
@@ -167,6 +232,37 @@ public final class AccessControlService {
                 return rows.getBoolean(1);
             }
         }
+    }
+
+    private static void validateAssignmentTarget(Connection connection, UUID assignedUserId,
+                                                 UUID assignedTeamId) throws Exception {
+        if (assignedUserId != null) {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select exists(select 1 from users
+                                  where id=? and status='active' and deleted_at is null)
+                    """)) {
+                statement.setObject(1, assignedUserId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    rows.next();
+                    if (!rows.getBoolean(1)) throw new IllegalArgumentException("Assigned user is unavailable");
+                }
+            }
+        }
+        if (assignedTeamId != null) {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select exists(select 1 from teams where id=? and status='active')
+                    """)) {
+                statement.setObject(1, assignedTeamId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    rows.next();
+                    if (!rows.getBoolean(1)) throw new IllegalArgumentException("Assigned team is unavailable");
+                }
+            }
+        }
+    }
+
+    private static void setUuid(PreparedStatement statement, int index, UUID value) throws Exception {
+        if (value == null) statement.setNull(index, Types.OTHER); else statement.setObject(index, value);
     }
 
     private static AccessDeniedException denied() {

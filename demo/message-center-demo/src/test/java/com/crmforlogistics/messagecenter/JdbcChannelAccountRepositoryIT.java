@@ -53,6 +53,8 @@ class JdbcChannelAccountRepositoryIT {
 
     @Test
     void storesOnlyCiphertextAndFindsActiveAccount() throws Exception {
+        long createAuditsBefore = auditCount("channel_account.create");
+        long updateAuditsBefore = auditCount("channel_account.update");
         String identifier = unique("CUST-SPACE");
         String encrypted = cipher.encrypt(Map.of(
                 "accessKeyId", "test-access-key",
@@ -73,6 +75,9 @@ class JdbcChannelAccountRepositoryIT {
                 new ChannelAccountPatch("Primary ChatApp", identifier, "active"), encrypted);
         assertEquals("active", active.authStatus());
         assertEquals(created.id(), repository.findActive(created.id()).orElseThrow().id());
+        assertEquals(createAuditsBefore + 1, auditCount("channel_account.create"));
+        assertEquals(updateAuditsBefore + 1, auditCount("channel_account.update"));
+        assertFalse(auditPayloadContains("plaintext-secret"));
     }
 
     @Test
@@ -227,6 +232,35 @@ class JdbcChannelAccountRepositoryIT {
         assertEquals("CHANNEL_VALIDATION_FAILED", nullResult.code());
         assertEquals("Unable to validate channel credentials", nullResult.message());
         assertEquals(nullResult, exceptionResult);
+    }
+
+    private long auditCount(String action) throws Exception {
+        return database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select count(*) from audit_logs where action=?")) {
+                statement.setString(1, action);
+                try (ResultSet rows = statement.executeQuery()) {
+                    rows.next();
+                    return rows.getLong(1);
+                }
+            }
+        });
+    }
+
+    private boolean auditPayloadContains(String text) throws Exception {
+        return database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select exists(select 1 from audit_logs
+                                  where before_summary_jsonb::text like ? or after_summary_jsonb::text like ?)
+                    """)) {
+                statement.setString(1, "%" + text + "%");
+                statement.setString(2, "%" + text + "%");
+                try (ResultSet rows = statement.executeQuery()) {
+                    rows.next();
+                    return rows.getBoolean(1);
+                }
+            }
+        });
     }
 
     private String storedEncryptedConfig(UUID accountId) throws Exception {

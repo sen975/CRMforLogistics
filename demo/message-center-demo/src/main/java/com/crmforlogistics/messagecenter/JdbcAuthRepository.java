@@ -8,6 +8,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -29,7 +30,11 @@ public final class JdbcAuthRepository {
         return database.read(connection -> findUser(connection, normalized));
     }
 
-    public BootstrapResult bootstrapAdmin(UserDraft draft, String passwordHash) throws Exception {
+    public BootstrapResult bootstrapAdmin(UserDraft draft, PasswordHashSupplier passwordHashSupplier,
+                                          AuditService audit) throws Exception {
+        Objects.requireNonNull(draft, "draft");
+        Objects.requireNonNull(passwordHashSupplier, "passwordHashSupplier");
+        Objects.requireNonNull(audit, "audit");
         return database.transaction(connection -> {
             try (PreparedStatement statement = connection.prepareStatement("select pg_advisory_xact_lock(?)")) {
                 statement.setLong(1, 6_648_201L);
@@ -38,15 +43,26 @@ public final class JdbcAuthRepository {
             try (PreparedStatement statement = connection.prepareStatement("select count(*) from users")) {
                 try (ResultSet rows = statement.executeQuery()) {
                     rows.next();
-                    if (rows.getLong(1) > 0) return new BootstrapResult(false, null, "USERS_EXIST");
+                    if (rows.getLong(1) > 0) {
+                        BootstrapResult result = new BootstrapResult(false, null, "USERS_EXIST");
+                        audit.record(connection, null, "auth.bootstrap", "user", null,
+                                Map.of(), Map.of("code", result.code()), "success");
+                        return result;
+                    }
                 }
             }
+            String passwordHash = Objects.requireNonNull(passwordHashSupplier.get(), "passwordHash");
             UUID userId = insertUser(connection, draft, passwordHash);
-            return new BootstrapResult(true, userId, "CREATED");
+            BootstrapResult result = new BootstrapResult(true, userId, "CREATED");
+            audit.record(connection, userId, "auth.bootstrap", "user", userId,
+                    Map.of(), Map.of("code", result.code()), "success");
+            return result;
         });
     }
 
-    public void createSession(UUID userId, byte[] tokenHash, Instant issuedAt, Instant expiresAt) throws Exception {
+    public void createSession(UUID userId, byte[] tokenHash, Instant issuedAt, Instant expiresAt,
+                              AuditService audit) throws Exception {
+        Objects.requireNonNull(audit, "audit");
         database.transaction(connection -> {
             try (PreparedStatement statement = connection.prepareStatement("""
                     insert into user_sessions (user_id,token_hash,issued_at,expires_at,last_seen_at)
@@ -66,39 +82,51 @@ public final class JdbcAuthRepository {
                 statement.setObject(3, userId);
                 statement.executeUpdate();
             }
+            audit.record(connection, userId, "auth.login", "user", userId,
+                    Map.of(), Map.of(), "success");
             return null;
         });
     }
 
     public Optional<AuthenticatedSession> findSession(byte[] tokenHash, Instant now) throws Exception {
-        return database.read(connection -> {
-            try (PreparedStatement statement = connection.prepareStatement("""
-                    select s.id,s.user_id,s.expires_at
-                    from user_sessions s join users u on u.id=s.user_id
-                    where s.token_hash=? and s.revoked_at is null and s.expires_at>?
-                      and u.status='active' and u.deleted_at is null
-                    """)) {
-                statement.setBytes(1, tokenHash);
-                statement.setTimestamp(2, Timestamp.from(now));
-                try (ResultSet rows = statement.executeQuery()) {
-                    if (!rows.next()) return Optional.empty();
-                    return Optional.of(new AuthenticatedSession(rows.getObject(1, UUID.class),
-                            rows.getObject(2, UUID.class), rows.getTimestamp(3).toInstant()));
-                }
-            }
-        });
+        return database.read(connection -> findSession(connection, tokenHash, now));
     }
 
-    public void revokeSession(byte[] tokenHash, Instant now) throws Exception {
-        database.transaction(connection -> {
+    public Optional<AuthenticatedSession> revokeSession(byte[] tokenHash, Instant now,
+                                                        AuditService audit) throws Exception {
+        Objects.requireNonNull(audit, "audit");
+        return database.transaction(connection -> {
+            Optional<AuthenticatedSession> session = findSession(connection, tokenHash, now);
+            if (session.isEmpty()) return Optional.empty();
             try (PreparedStatement statement = connection.prepareStatement(
                     "update user_sessions set revoked_at=? where token_hash=? and revoked_at is null")) {
                 statement.setTimestamp(1, Timestamp.from(now));
                 statement.setBytes(2, tokenHash);
                 statement.executeUpdate();
             }
-            return null;
+            AuthenticatedSession authenticated = session.orElseThrow();
+            audit.record(connection, authenticated.userId(), "auth.logout", "session",
+                    authenticated.sessionId(), Map.of(), Map.of(), "success");
+            return session;
         });
+    }
+
+    private static Optional<AuthenticatedSession> findSession(Connection connection, byte[] tokenHash,
+                                                               Instant now) throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select s.id,s.user_id,s.expires_at
+                from user_sessions s join users u on u.id=s.user_id
+                where s.token_hash=? and s.revoked_at is null and s.expires_at>?
+                  and u.status='active' and u.deleted_at is null
+                """)) {
+            statement.setBytes(1, tokenHash);
+            statement.setTimestamp(2, Timestamp.from(now));
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) return Optional.empty();
+                return Optional.of(new AuthenticatedSession(rows.getObject(1, UUID.class),
+                        rows.getObject(2, UUID.class), rows.getTimestamp(3).toInstant()));
+            }
+        }
     }
 
     private static Optional<AuthUser> findUser(Connection connection, String normalized) throws Exception {
@@ -163,3 +191,8 @@ record UserDraft(String username, String displayName, String status, String role
 record AuthUser(UUID id, String username, String passwordHash, String displayName,
                 String status, Set<String> roles) {}
 record BootstrapResult(boolean created, UUID userId, String code) {}
+
+@FunctionalInterface
+interface PasswordHashSupplier {
+    String get() throws Exception;
+}

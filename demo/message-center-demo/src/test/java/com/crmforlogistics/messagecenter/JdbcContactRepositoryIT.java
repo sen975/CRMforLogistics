@@ -66,6 +66,8 @@ class JdbcContactRepositoryIT {
         UUID split = contacts.splitIdentity(identity, "Buyer WA", actor);
         assertEquals(split, contacts.findIdentity(identity).contactId());
         assertTrue(messageExists(messageId));
+        assertEquals(1, auditCount("contact.merge"));
+        assertEquals(1, auditCount("contact.split"));
     }
 
     private static UUID insertAccount() throws Exception {
@@ -94,6 +96,19 @@ class JdbcContactRepositoryIT {
                 try (var rows = statement.executeQuery()) {
                     rows.next();
                     return rows.getBoolean(1);
+                }
+            }
+        });
+    }
+
+    private static long auditCount(String action) throws Exception {
+        return database.read(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select count(*) from audit_logs where action=?")) {
+                statement.setString(1, action);
+                try (var rows = statement.executeQuery()) {
+                    rows.next();
+                    return rows.getLong(1);
                 }
             }
         });
