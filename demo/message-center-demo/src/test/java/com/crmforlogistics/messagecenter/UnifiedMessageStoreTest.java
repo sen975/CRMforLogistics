@@ -2,12 +2,22 @@ package com.crmforlogistics.messagecenter;
 
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageRequest;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,6 +67,7 @@ public class UnifiedMessageStoreTest {
         chatAppTemplateRequestsOmitMessageType();
         rendersWebShellWithChineseCopyAndUnifiedSendActions();
         rendersWebShellWithPagedThreadRequestContract();
+        apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit();
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
@@ -869,6 +880,37 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "'/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE");
     }
 
+    private static void apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-thread-route-test");
+        Path emailData = dir.resolve("email");
+        Path chatFile = dir.resolve("chatapp/messages.jsonl");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatFile.getParent());
+        Config config = testConfig(dir, emailData, chatFile);
+        RecordingThreadPageStore store = new RecordingThreadPageStore(config);
+        FakeHttpExchange exchange = new FakeHttpExchange(
+                "GET", "/api/threads?contactPointId=contact-1&limit=12&cursor=cursor-1");
+
+        invokeRoute(exchange, config, store);
+
+        assertEquals(200, exchange.responseCode);
+        assertEquals("contact-1", store.contactPointId);
+        assertEquals("cursor-1", store.cursor);
+        assertEquals(12, store.limit);
+        assertContains(exchange.responseText(), "\"items\"");
+        assertContains(exchange.responseText(), "\"nextCursor\": \"older-cursor\"");
+        assertContains(exchange.responseText(), "\"text\": \"hello\"");
+
+        FakeHttpExchange invalidLimit = new FakeHttpExchange(
+                "GET", "/api/threads?contactPointId=contact-2&limit=bad");
+        invokeRoute(invalidLimit, config, store);
+
+        assertEquals(200, invalidLimit.responseCode);
+        assertEquals("contact-2", store.contactPointId);
+        assertEquals("", store.cursor);
+        assertEquals(10, store.limit);
+    }
+
     private static void chatAppTextMessagesUseMessageBodyAsContactPreview() throws Exception {
         Path dir = Files.createTempDirectory("message-center-chat-preview-test");
         Path emailData = dir.resolve("email");
@@ -1216,6 +1258,84 @@ public class UnifiedMessageStoreTest {
         message.saveChanges();
         message.setHeader("Message-ID", messageId);
         return message;
+    }
+
+    private static void invokeRoute(FakeHttpExchange exchange, Config config, UnifiedMessageStore store) throws Exception {
+        java.lang.reflect.Method route = Stream.of(App.class.getDeclaredMethods())
+                .filter(method -> "route".equals(method.getName()))
+                .findFirst()
+                .orElseThrow();
+        route.setAccessible(true);
+        Object[] args = new Object[route.getParameterCount()];
+        args[0] = exchange;
+        args[1] = config;
+        args[2] = store;
+        try {
+            route.invoke(null, args);
+        } catch (java.lang.reflect.InvocationTargetException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof Exception checked) throw checked;
+            if (cause instanceof Error error) throw error;
+            throw exception;
+        }
+    }
+
+    private static class RecordingThreadPageStore extends UnifiedMessageStore {
+        String contactPointId;
+        String cursor;
+        int limit;
+
+        RecordingThreadPageStore(Config config) {
+            super(config);
+        }
+
+        @Override
+        public ThreadPage threadPage(String contactPointId, String cursor, int limit) {
+            this.contactPointId = contactPointId;
+            this.cursor = cursor;
+            this.limit = limit;
+            UnifiedMessage message = new UnifiedMessage();
+            message.id = "message-1";
+            message.text = "hello";
+            return new ThreadPage(List.of(message), "older-cursor");
+        }
+    }
+
+    private static class FakeHttpExchange extends HttpExchange {
+        private final String method;
+        private final URI uri;
+        private final Headers requestHeaders = new Headers();
+        private final Headers responseHeaders = new Headers();
+        private final ByteArrayInputStream requestBody = new ByteArrayInputStream(new byte[0]);
+        private final ByteArrayOutputStream responseBody = new ByteArrayOutputStream();
+        int responseCode;
+
+        FakeHttpExchange(String method, String uri) {
+            this.method = method;
+            this.uri = URI.create(uri);
+        }
+
+        String responseText() {
+            return responseBody.toString(StandardCharsets.UTF_8);
+        }
+
+        @Override public Headers getRequestHeaders() { return requestHeaders; }
+        @Override public Headers getResponseHeaders() { return responseHeaders; }
+        @Override public URI getRequestURI() { return uri; }
+        @Override public String getRequestMethod() { return method; }
+        @Override public HttpContext getHttpContext() { return null; }
+        @Override public void close() {}
+        @Override public InputStream getRequestBody() { return requestBody; }
+        @Override public OutputStream getResponseBody() { return responseBody; }
+        @Override public void sendResponseHeaders(int responseCode, long responseLength) { this.responseCode = responseCode; }
+        @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(0); }
+        @Override public int getResponseCode() { return responseCode; }
+        @Override public InetSocketAddress getLocalAddress() { return new InetSocketAddress(0); }
+        @Override public String getProtocol() { return "HTTP/1.1"; }
+        @Override public Object getAttribute(String name) { return null; }
+        @Override public void setAttribute(String name, Object value) {}
+        @Override public void setStreams(InputStream input, OutputStream output) {}
+        @Override public HttpPrincipal getPrincipal() { return null; }
     }
 
     private static void assertEquals(String expected, String actual) {
