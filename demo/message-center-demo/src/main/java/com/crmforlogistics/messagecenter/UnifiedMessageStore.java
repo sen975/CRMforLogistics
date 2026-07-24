@@ -416,7 +416,7 @@ public class UnifiedMessageStore {
             JsonObject object = JsonParser.parseString(new String(decoded, StandardCharsets.UTF_8)).getAsJsonObject();
             String timestamp = JsonSupport.string(object, "timestamp");
             String id = JsonSupport.string(object, "id");
-            if (timestamp.isBlank() || id.isBlank()) return null;
+            if (timestamp.isBlank() || id.isBlank()) throw new IllegalArgumentException("invalid thread cursor");
             return new ThreadCursor(MessageTime.parseInstant(timestamp), id);
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("invalid thread cursor");

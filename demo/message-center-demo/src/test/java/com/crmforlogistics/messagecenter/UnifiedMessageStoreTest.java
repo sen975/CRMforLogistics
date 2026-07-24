@@ -14,12 +14,15 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.HashMap;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +36,8 @@ public class UnifiedMessageStoreTest {
         splitsMergedContactPointWithoutDeletingRawMessages();
         splitsLegacyEmailContactGroupWhenOnlyOnePointRemains();
         threadPageReturnsRecentTenMessagesAndCursor();
+        databaseThreadPageUsesLimitPlusOneAndUuidCursor();
+        threadPageRejectsNonEmptyCursorMissingRequiredFields();
         exposesWecomAdapterPlaceholderAsUnavailableChannel();
         chatAppStatusRecordsUpdateOriginalMessageInsteadOfCreatingMessages();
         chatAppMediaJsonMessagesRenderCaptionAndAttachment();
@@ -248,6 +253,95 @@ public class UnifiedMessageStoreTest {
         assertEquals("message-1", thirdPage.items.getFirst().text);
         assertEquals("message-5", thirdPage.items.getLast().text);
         assertNull(thirdPage.nextCursor, "oldest page must not expose nextCursor");
+    }
+
+    private static void databaseThreadPageUsesLimitPlusOneAndUuidCursor() throws Exception {
+        UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID contactId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        UUID oldestId = UUID.fromString("00000000-0000-0000-0000-000000000010");
+        UUID cursorId = UUID.fromString("00000000-0000-0000-0000-000000000011");
+        UUID newestId = UUID.fromString("00000000-0000-0000-0000-000000000012");
+        Instant cursorTimestamp = Instant.parse("2026-07-10T01:01:00Z");
+        List<Integer> receivedLimits = new ArrayList<>();
+        List<MessageCursor> receivedCursors = new ArrayList<>();
+        AtomicInteger calls = new AtomicInteger();
+        MessageRepository repository = new MessageRepository() {
+            @Override
+            public List<UnifiedMessage> unifiedTimeline(
+                    UUID receivedUserId, UUID receivedContactId, MessageCursor cursor, int limit) {
+                assertEquals(userId.toString(), receivedUserId.toString());
+                assertEquals(contactId.toString(), receivedContactId.toString());
+                receivedLimits.add(limit);
+                receivedCursors.add(cursor);
+                if (calls.getAndIncrement() == 0) {
+                    return List.of(
+                            threadMessage(oldestId, "2026-07-10T01:00:00Z", "oldest-extra"),
+                            threadMessage(cursorId, cursorTimestamp.toString(), "page-one-first"),
+                            threadMessage(newestId, cursorTimestamp.toString(), "page-one-last"));
+                }
+                return List.of(
+                        threadMessage(oldestId, "2026-07-10T01:00:00Z", "page-two-first"),
+                        threadMessage(UUID.fromString("00000000-0000-0000-0000-000000000009"),
+                                "2026-07-10T01:00:00Z", "page-two-last"));
+            }
+
+            @Override public UUID getOrCreateConversation(UUID accountId, UUID identityId) { throw unsupported(); }
+            @Override public MessageWriteResult insert(MessageDraft draft) { throw unsupported(); }
+            @Override public void appendStatus(UUID messageId, MessageStatusEvent event) { throw unsupported(); }
+            @Override public List<UnifiedMessage> thread(UUID uid, UUID conversationId, MessageCursor cursor, int limit) { throw unsupported(); }
+            @Override public Optional<UnifiedMessage> findAuthorized(UUID uid, UUID messageId) { throw unsupported(); }
+        };
+        ContactRepository contacts = (ContactRepository) java.lang.reflect.Proxy.newProxyInstance(
+                ContactRepository.class.getClassLoader(), new Class<?>[]{ContactRepository.class},
+                (proxy, method, args) -> { throw unsupported(); });
+        UnifiedMessageStore store = new UnifiedMessageStore(contacts, repository, userId);
+
+        UnifiedMessageStore.ThreadPage firstPage = store.threadPage(contactId.toString(), "", 2);
+
+        assertEquals(3, receivedLimits.getFirst());
+        assertNull(receivedCursors.getFirst(), "first database page must not have a repository cursor");
+        assertEquals(2, firstPage.items.size());
+        assertEquals(cursorId.toString(), firstPage.items.getFirst().id);
+        assertEquals(newestId.toString(), firstPage.items.getLast().id);
+        assertTrue(firstPage.nextCursor != null && !firstPage.nextCursor.isBlank(),
+                "database page with an extra row must expose nextCursor");
+
+        UnifiedMessageStore.ThreadPage secondPage = store.threadPage(contactId.toString(), firstPage.nextCursor, 2);
+
+        assertEquals(3, receivedLimits.getLast());
+        assertEquals(cursorTimestamp.toString(), receivedCursors.getLast().occurredAt().toString());
+        assertEquals(cursorId.toString(), receivedCursors.getLast().id().toString());
+        assertEquals(2, secondPage.items.size());
+        assertNull(secondPage.nextCursor, "final database page must not expose nextCursor");
+    }
+
+    private static void threadPageRejectsNonEmptyCursorMissingRequiredFields() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-invalid-thread-cursor-test");
+        Path emailData = dir.resolve("email");
+        Path chatFile = dir.resolve("chatapp/messages.jsonl");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatFile.getParent());
+        String cursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "{\"timestamp\":\"2026-07-10T01:00:00Z\"}".getBytes(StandardCharsets.UTF_8));
+
+        try {
+            testStore(dir, emailData, chatFile).threadPage("chatapp:whatsapp:8613800000000", cursor, 2);
+            throw new AssertionError("non-empty cursor missing id must be rejected");
+        } catch (IllegalArgumentException expected) {
+            assertEquals("invalid thread cursor", expected.getMessage());
+        }
+    }
+
+    private static UnifiedMessage threadMessage(UUID id, String timestamp, String text) {
+        UnifiedMessage message = new UnifiedMessage();
+        message.id = id.toString();
+        message.timestamp = timestamp;
+        message.text = text;
+        return message;
+    }
+
+    private static UnsupportedOperationException unsupported() {
+        return new UnsupportedOperationException("not used by thread page test");
     }
 
     private static void exposesWecomAdapterPlaceholderAsUnavailableChannel() throws Exception {
