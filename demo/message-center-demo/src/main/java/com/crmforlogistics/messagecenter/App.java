@@ -826,7 +826,10 @@ public class App {
     function bindScrollSurfaces() {
       ['contacts', 'thread', 'detail', 'composer'].forEach(id => {
         const el = $(id);
-        if (el) el.onscroll = () => markScrollSurfaceScrolling(el);
+        if (el) el.onscroll = () => {
+          markScrollSurfaceScrolling(el);
+          if (id === 'thread') loadOlderThreadMessages();
+        };
       });
     }
 
@@ -1084,24 +1087,9 @@ public class App {
       renderContactDetail(contact);
     }
 
-    async function loadThread(id, keepScroll) {
-      const threadEl = $('thread');
-      const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
-      const contact = state.contacts.find(c => c.id === id);
-      const page = await api(threadPageUrl(id));
-      const messages = page.items || [];
-      state.threadPages[id] = {
-        items: messages,
-        nextCursor: page.nextCursor || null,
-        isLoadingOlder: false,
-        hasLoadedInitial: true
-      };
-      const key = threadRenderKey(contact, messages);
-      if (keepScroll && key === state.threadRenderKeyByContact[id]) {
-        return;
-      }
-      state.threadRenderKeyByContact[id] = key;
+    function renderThreadMessages(contact, messages) {
       updateContactHeader(contact);
+      const threadEl = $('thread');
       threadEl.innerHTML = messages.map(m => {
         const direction = m.direction === 'outbound' ? 'outbound' : 'inbound';
         const meta = [
@@ -1125,8 +1113,61 @@ public class App {
       }).join('') || '<div class="empty">暂无消息</div>';
       document.querySelectorAll('.msg[data-id]').forEach(item => item.onclick = () => selectMessage(item.dataset.id));
       document.querySelectorAll('[data-open-media]').forEach(item => item.onclick = event => openAttachment(event, item.dataset.openMedia, item.dataset.fileName));
+    }
+
+    async function loadThread(id, keepScroll) {
+      const threadEl = $('thread');
+      const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
+      const contact = state.contacts.find(c => c.id === id);
+      const page = await api(threadPageUrl(id));
+      const messages = page.items || [];
+      const existing = state.threadPages[id];
+      const merged = keepScroll && existing && existing.hasLoadedInitial
+        ? mergeThreadMessages([...existing.items, ...messages])
+        : messages;
+      state.threadPages[id] = {
+        items: merged,
+        nextCursor: page.nextCursor || null,
+        isLoadingOlder: false,
+        hasLoadedInitial: true
+      };
+      if (existing && keepScroll) state.threadPages[id].nextCursor = existing.nextCursor;
+      const messagesForRender = state.threadPages[id].items;
+      const key = threadRenderKey(contact, messagesForRender);
+      if (keepScroll && key === state.threadRenderKeyByContact[id]) {
+        return;
+      }
+      state.threadRenderKeyByContact[id] = key;
+      renderThreadMessages(contact, messagesForRender);
       if (keepScroll) requestAnimationFrame(() => threadEl.scrollTop = Math.max(0, threadEl.scrollHeight - threadEl.clientHeight - oldBottom));
       else requestAnimationFrame(() => threadEl.scrollTop = threadEl.scrollHeight);
+    }
+
+    async function loadOlderThreadMessages() {
+      const id = state.selectedPointId;
+      if (!id) return;
+      const page = state.threadPages[id];
+      if (!page || !page.nextCursor || page.isLoadingOlder) return;
+      const threadEl = $('thread');
+      if (!threadEl || threadEl.scrollTop > 24) return;
+      page.isLoadingOlder = true;
+      const oldScrollHeight = threadEl.scrollHeight;
+      const oldScrollTop = threadEl.scrollTop;
+      try {
+        const older = await api(threadPageUrl(id, page.nextCursor));
+        page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
+        page.nextCursor = older.nextCursor || null;
+        const contact = state.contacts.find(c => c.id === id);
+        state.threadRenderKeyByContact[id] = threadRenderKey(contact, page.items);
+        renderThreadMessages(contact, page.items);
+        requestAnimationFrame(() => {
+          threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;
+        });
+      } catch (err) {
+        toast(`加载历史消息失败：${err.message}`);
+      } finally {
+        page.isLoadingOlder = false;
+      }
     }
 
     function threadRenderKey(contact, messages) {
@@ -1144,6 +1185,19 @@ public class App {
         m.objectKey || '',
         m.fileName || ''
       ].join('~')).join('|');
+    }
+
+    function mergeThreadMessages(messages) {
+      const byId = new Map();
+      messages.forEach(message => {
+        const key = message.id || message.sourceId || `${message.timestamp || ''}:${message.channel || ''}:${message.text || message.summary || ''}`;
+        byId.set(key, message);
+      });
+      return Array.from(byId.values()).sort((a, b) => {
+        const time = new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
+        if (time !== 0) return time;
+        return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
+      });
     }
 
     function updateContactHeader(contact) {

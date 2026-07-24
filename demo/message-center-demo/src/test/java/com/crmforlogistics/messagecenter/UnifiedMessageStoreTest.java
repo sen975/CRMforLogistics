@@ -68,6 +68,7 @@ public class UnifiedMessageStoreTest {
         rendersWebShellWithChineseCopyAndUnifiedSendActions();
         rendersWebShellWithPagedThreadRequestContract();
         apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit();
+        rendersWebShellWithOlderThreadScrollLoader();
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
@@ -909,6 +910,19 @@ public class UnifiedMessageStoreTest {
         assertEquals("contact-2", store.contactPointId);
         assertEquals("", store.cursor);
         assertEquals(10, store.limit);
+    }
+
+    private static void rendersWebShellWithOlderThreadScrollLoader() {
+        String html = App.pageHtml();
+
+        assertContains(html, "loadOlderThreadMessages();");
+        assertContains(html, "async function loadOlderThreadMessages()");
+        assertContains(html, "if (!page || !page.nextCursor || page.isLoadingOlder) return;");
+        assertContains(html, "const oldScrollHeight = threadEl.scrollHeight;");
+        assertContains(html, "page.items = mergeThreadMessages([...(older.items || []), ...page.items]);");
+        assertContains(html, "threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;");
+        assertContains(html, "function mergeThreadMessages(messages)");
+        assertContains(html, "renderThreadMessages(contact, page.items);");
     }
 
     private static void chatAppTextMessagesUseMessageBodyAsContactPreview() throws Exception {
