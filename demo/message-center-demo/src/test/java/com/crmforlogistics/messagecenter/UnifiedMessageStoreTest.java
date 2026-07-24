@@ -32,6 +32,7 @@ public class UnifiedMessageStoreTest {
         storesContactGroupProfileWithoutLosingMergedPoints();
         splitsMergedContactPointWithoutDeletingRawMessages();
         splitsLegacyEmailContactGroupWhenOnlyOnePointRemains();
+        threadPageReturnsRecentTenMessagesAndCursor();
         exposesWecomAdapterPlaceholderAsUnavailableChannel();
         chatAppStatusRecordsUpdateOriginalMessageInsteadOfCreatingMessages();
         chatAppMediaJsonMessagesRenderCaptionAndAttachment();
@@ -201,6 +202,52 @@ public class UnifiedMessageStoreTest {
         assertEquals("email:a@example.com", store.contactGroup("email:a@example.com").get(0));
         assertEquals("1", Integer.toString(store.contactGroup("email:b@example.com").size()));
         assertEquals("email:b@example.com", store.contactGroup("email:b@example.com").get(0));
+    }
+
+    private static void threadPageReturnsRecentTenMessagesAndCursor() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-thread-page-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        StringBuilder jsonl = new StringBuilder();
+        for (int i = 1; i <= 25; i++) {
+            jsonl.append("{")
+                    .append("\"id\":\"chat-").append(i).append("\",")
+                    .append("\"direction\":\"inbound\",")
+                    .append("\"timestamp\":\"2026-07-10T01:")
+                    .append(String.format("%02d", i)).append(":00Z\",")
+                    .append("\"from\":\"8613800000000\",")
+                    .append("\"to\":\"8613266259485\",")
+                    .append("\"text\":\"message-").append(i).append("\",")
+                    .append("\"raw\":\"{}\"")
+                    .append("}\n");
+        }
+        Files.writeString(chatData.resolve("messages.jsonl"), jsonl.toString(), StandardCharsets.UTF_8);
+
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        UnifiedMessageStore.ThreadPage firstPage = store.threadPage("chatapp:whatsapp:8613800000000", "", 10);
+
+        assertEquals(10, firstPage.items.size());
+        assertEquals("message-16", firstPage.items.getFirst().text);
+        assertEquals("message-25", firstPage.items.getLast().text);
+        assertTrue(firstPage.nextCursor != null && !firstPage.nextCursor.isBlank(),
+                "first page must expose nextCursor for older messages");
+
+        UnifiedMessageStore.ThreadPage secondPage = store.threadPage(
+                "chatapp:whatsapp:8613800000000", firstPage.nextCursor, 10);
+        assertEquals(10, secondPage.items.size());
+        assertEquals("message-6", secondPage.items.getFirst().text);
+        assertEquals("message-15", secondPage.items.getLast().text);
+        assertTrue(secondPage.nextCursor != null && !secondPage.nextCursor.isBlank(),
+                "second page must expose nextCursor for the oldest remaining messages");
+
+        UnifiedMessageStore.ThreadPage thirdPage = store.threadPage(
+                "chatapp:whatsapp:8613800000000", secondPage.nextCursor, 10);
+        assertEquals(5, thirdPage.items.size());
+        assertEquals("message-1", thirdPage.items.getFirst().text);
+        assertEquals("message-5", thirdPage.items.getLast().text);
+        assertNull(thirdPage.nextCursor, "oldest page must not expose nextCursor");
     }
 
     private static void exposesWecomAdapterPlaceholderAsUnavailableChannel() throws Exception {
@@ -1067,6 +1114,12 @@ public class UnifiedMessageStoreTest {
 
     private static void assertEquals(String expected, String actual) {
         if (!expected.equals(actual)) {
+            throw new AssertionError("Expected [" + expected + "] but got [" + actual + "]");
+        }
+    }
+
+    private static void assertEquals(int expected, int actual) {
+        if (expected != actual) {
             throw new AssertionError("Expected [" + expected + "] but got [" + actual + "]");
         }
     }

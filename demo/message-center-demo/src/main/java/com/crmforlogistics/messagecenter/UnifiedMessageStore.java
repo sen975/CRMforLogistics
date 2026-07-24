@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -25,12 +26,26 @@ import java.util.UUID;
 
 public class UnifiedMessageStore {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final int DEFAULT_THREAD_LIMIT = 10;
+    private static final int MAX_THREAD_LIMIT = 50;
 
     private final Config config;
     private final TemplateStore templateStore;
     private final ContactRepository contactRepository;
     private final MessageRepository messageRepository;
     private final UUID userId;
+
+    public static class ThreadPage {
+        public final List<UnifiedMessage> items;
+        public final String nextCursor;
+
+        ThreadPage(List<UnifiedMessage> items, String nextCursor) {
+            this.items = items;
+            this.nextCursor = nextCursor;
+        }
+    }
+
+    private record ThreadCursor(Instant timestamp, String messageId) {}
 
     public UnifiedMessageStore(Config config) {
         this.config = Objects.requireNonNull(config, "config");
@@ -115,6 +130,39 @@ public class UnifiedMessageStore {
                 .comparing((UnifiedMessage message) -> MessageTime.parseInstant(message.timestamp))
                 .thenComparing(message -> ContactPointUtil.firstNonBlank(message.id, message.sourceId)));
         return result;
+    }
+
+    public ThreadPage threadPage(String contactPointId, String cursor, int limit) throws IOException {
+        int safeLimit = threadLimit(limit);
+        if (databaseBacked()) {
+            try {
+                ThreadCursor decoded = decodeThreadCursor(cursor);
+                MessageCursor messageCursor = decoded == null ? null
+                        : new MessageCursor(decoded.timestamp(), UUID.fromString(decoded.messageId()));
+                List<UnifiedMessage> fetched = messageRepository.unifiedTimeline(
+                        userId, UUID.fromString(contactPointId), messageCursor, safeLimit + 1);
+                return toThreadPage(fetched, safeLimit);
+            } catch (Exception exception) {
+                throw databaseFailure("Unable to query contact timeline page", exception);
+            }
+        }
+
+        List<UnifiedMessage> all = thread(contactPointId);
+        ThreadCursor decoded = decodeThreadCursor(cursor);
+        int endExclusive = all.size();
+        if (decoded != null) {
+            endExclusive = 0;
+            for (int i = 0; i < all.size(); i++) {
+                if (compareMessageToCursor(all.get(i), decoded) >= 0) {
+                    endExclusive = i;
+                    break;
+                }
+            }
+        }
+        int startInclusive = Math.max(0, endExclusive - safeLimit);
+        List<UnifiedMessage> items = new ArrayList<>(all.subList(startInclusive, endExclusive));
+        String nextCursor = startInclusive > 0 && !items.isEmpty() ? encodeThreadCursor(items.getFirst()) : null;
+        return new ThreadPage(items, nextCursor);
     }
 
     public UnifiedMessage findMessage(String id) throws IOException {
@@ -334,6 +382,55 @@ public class UnifiedMessageStore {
 
     private static IOException databaseFailure(String message, Exception cause) {
         return new IOException(message, cause);
+    }
+
+    private static int threadLimit(int limit) {
+        if (limit <= 0) return DEFAULT_THREAD_LIMIT;
+        return Math.max(1, Math.min(MAX_THREAD_LIMIT, limit));
+    }
+
+    private static ThreadPage toThreadPage(List<UnifiedMessage> fetched, int safeLimit) {
+        boolean hasMore = fetched.size() > safeLimit;
+        List<UnifiedMessage> items = hasMore
+                ? new ArrayList<>(fetched.subList(1, fetched.size()))
+                : new ArrayList<>(fetched);
+        String nextCursor = hasMore && !items.isEmpty() ? encodeThreadCursor(items.getFirst()) : null;
+        return new ThreadPage(items, nextCursor);
+    }
+
+    private static String encodeThreadCursor(UnifiedMessage message) {
+        if (message == null || message.timestamp == null || message.timestamp.isBlank()) return null;
+        String id = stableMessageId(message);
+        if (id.isBlank()) return null;
+        JsonObject object = new JsonObject();
+        object.addProperty("timestamp", MessageTime.parseInstant(message.timestamp).toString());
+        object.addProperty("id", id);
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(object.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static ThreadCursor decodeThreadCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return null;
+        try {
+            byte[] decoded = Base64.getUrlDecoder().decode(cursor);
+            JsonObject object = JsonParser.parseString(new String(decoded, StandardCharsets.UTF_8)).getAsJsonObject();
+            String timestamp = JsonSupport.string(object, "timestamp");
+            String id = JsonSupport.string(object, "id");
+            if (timestamp.isBlank() || id.isBlank()) return null;
+            return new ThreadCursor(MessageTime.parseInstant(timestamp), id);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("invalid thread cursor");
+        }
+    }
+
+    private static int compareMessageToCursor(UnifiedMessage message, ThreadCursor cursor) {
+        int time = MessageTime.parseInstant(message.timestamp).compareTo(cursor.timestamp());
+        if (time != 0) return time;
+        return stableMessageId(message).compareTo(cursor.messageId());
+    }
+
+    private static String stableMessageId(UnifiedMessage message) {
+        return ContactPointUtil.firstNonBlank(message.id, message.sourceId);
     }
 
     private List<UnifiedMessage> readEmailMessages() throws IOException {
