@@ -921,7 +921,13 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "const oldScrollHeight = threadEl.scrollHeight;");
         assertContains(html, "page.items = mergeThreadMessages([...(older.items || []), ...page.items]);");
         assertContains(html, "threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;");
+        assertContains(html, "if (state.selectedPointId !== id || state.threadPages[id] !== page) return;");
+        assertContains(html, "if (existing && keepScroll && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;");
+        assertContains(html, "if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;");
         assertContains(html, "function mergeThreadMessages(messages)");
+        assertContains(html, "const seen = new Set();");
+        assertContains(html, "return merged;");
+        assertNotContains(html, ".sort((a, b) =>");
         assertContains(html, "renderThreadMessages(contact, page.items);");
     }
 

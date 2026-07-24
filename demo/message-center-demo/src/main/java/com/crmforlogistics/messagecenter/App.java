@@ -1131,7 +1131,8 @@ public class App {
         isLoadingOlder: false,
         hasLoadedInitial: true
       };
-      if (existing && keepScroll) state.threadPages[id].nextCursor = existing.nextCursor;
+      if (existing && keepScroll && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
+      if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;
       const messagesForRender = state.threadPages[id].items;
       const key = threadRenderKey(contact, messagesForRender);
       if (keepScroll && key === state.threadRenderKeyByContact[id]) {
@@ -1155,6 +1156,7 @@ public class App {
       const oldScrollTop = threadEl.scrollTop;
       try {
         const older = await api(threadPageUrl(id, page.nextCursor));
+        if (state.selectedPointId !== id || state.threadPages[id] !== page) return;
         page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
         page.nextCursor = older.nextCursor || null;
         const contact = state.contacts.find(c => c.id === id);
@@ -1188,16 +1190,20 @@ public class App {
     }
 
     function mergeThreadMessages(messages) {
-      const byId = new Map();
+      const seen = new Set();
+      const indexByKey = new Map();
+      const merged = [];
       messages.forEach(message => {
         const key = message.id || message.sourceId || `${message.timestamp || ''}:${message.channel || ''}:${message.text || message.summary || ''}`;
-        byId.set(key, message);
+        if (seen.has(key)) {
+          merged[indexByKey.get(key)] = message;
+          return;
+        }
+        seen.add(key);
+        indexByKey.set(key, merged.length);
+        merged.push(message);
       });
-      return Array.from(byId.values()).sort((a, b) => {
-        const time = new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
-        if (time !== 0) return time;
-        return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
-      });
+      return merged;
     }
 
     function updateContactHeader(contact) {
