@@ -234,24 +234,24 @@ public class UnifiedMessageStoreTest {
         UnifiedMessageStore.ThreadPage firstPage = store.threadPage("chatapp:whatsapp:8613800000000", "", 10);
 
         assertEquals(10, firstPage.items.size());
-        assertEquals("message-16", firstPage.items.getFirst().text);
-        assertEquals("message-25", firstPage.items.getLast().text);
+        assertEquals("message-16", firstPage.items.get(0).text);
+        assertEquals("message-25", firstPage.items.get(firstPage.items.size() - 1).text);
         assertTrue(firstPage.nextCursor != null && !firstPage.nextCursor.isBlank(),
                 "first page must expose nextCursor for older messages");
 
         UnifiedMessageStore.ThreadPage secondPage = store.threadPage(
                 "chatapp:whatsapp:8613800000000", firstPage.nextCursor, 10);
         assertEquals(10, secondPage.items.size());
-        assertEquals("message-6", secondPage.items.getFirst().text);
-        assertEquals("message-15", secondPage.items.getLast().text);
+        assertEquals("message-6", secondPage.items.get(0).text);
+        assertEquals("message-15", secondPage.items.get(secondPage.items.size() - 1).text);
         assertTrue(secondPage.nextCursor != null && !secondPage.nextCursor.isBlank(),
                 "second page must expose nextCursor for the oldest remaining messages");
 
         UnifiedMessageStore.ThreadPage thirdPage = store.threadPage(
                 "chatapp:whatsapp:8613800000000", secondPage.nextCursor, 10);
         assertEquals(5, thirdPage.items.size());
-        assertEquals("message-1", thirdPage.items.getFirst().text);
-        assertEquals("message-5", thirdPage.items.getLast().text);
+        assertEquals("message-1", thirdPage.items.get(0).text);
+        assertEquals("message-5", thirdPage.items.get(thirdPage.items.size() - 1).text);
         assertNull(thirdPage.nextCursor, "oldest page must not expose nextCursor");
     }
 
@@ -298,19 +298,19 @@ public class UnifiedMessageStoreTest {
 
         UnifiedMessageStore.ThreadPage firstPage = store.threadPage(contactId.toString(), "", 2);
 
-        assertEquals(3, receivedLimits.getFirst());
-        assertNull(receivedCursors.getFirst(), "first database page must not have a repository cursor");
+        assertEquals(3, receivedLimits.get(0));
+        assertNull(receivedCursors.get(0), "first database page must not have a repository cursor");
         assertEquals(2, firstPage.items.size());
-        assertEquals(cursorId.toString(), firstPage.items.getFirst().id);
-        assertEquals(newestId.toString(), firstPage.items.getLast().id);
+        assertEquals(cursorId.toString(), firstPage.items.get(0).id);
+        assertEquals(newestId.toString(), firstPage.items.get(firstPage.items.size() - 1).id);
         assertTrue(firstPage.nextCursor != null && !firstPage.nextCursor.isBlank(),
                 "database page with an extra row must expose nextCursor");
 
         UnifiedMessageStore.ThreadPage secondPage = store.threadPage(contactId.toString(), firstPage.nextCursor, 2);
 
-        assertEquals(3, receivedLimits.getLast());
-        assertEquals(cursorTimestamp.toString(), receivedCursors.getLast().occurredAt().toString());
-        assertEquals(cursorId.toString(), receivedCursors.getLast().id().toString());
+        assertEquals(3, receivedLimits.get(receivedLimits.size() - 1));
+        assertEquals(cursorTimestamp.toString(), receivedCursors.get(receivedCursors.size() - 1).occurredAt().toString());
+        assertEquals(cursorId.toString(), receivedCursors.get(receivedCursors.size() - 1).id().toString());
         assertEquals(2, secondPage.items.size());
         assertNull(secondPage.nextCursor, "final database page must not expose nextCursor");
     }

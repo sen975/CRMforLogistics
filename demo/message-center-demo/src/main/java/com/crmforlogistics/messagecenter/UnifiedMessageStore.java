@@ -161,7 +161,7 @@ public class UnifiedMessageStore {
         }
         int startInclusive = Math.max(0, endExclusive - safeLimit);
         List<UnifiedMessage> items = new ArrayList<>(all.subList(startInclusive, endExclusive));
-        String nextCursor = startInclusive > 0 && !items.isEmpty() ? encodeThreadCursor(items.getFirst()) : null;
+        String nextCursor = startInclusive > 0 && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
         return new ThreadPage(items, nextCursor);
     }
 
@@ -394,7 +394,7 @@ public class UnifiedMessageStore {
         List<UnifiedMessage> items = hasMore
                 ? new ArrayList<>(fetched.subList(1, fetched.size()))
                 : new ArrayList<>(fetched);
-        String nextCursor = hasMore && !items.isEmpty() ? encodeThreadCursor(items.getFirst()) : null;
+        String nextCursor = hasMore && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
         return new ThreadPage(items, nextCursor);
     }
 
