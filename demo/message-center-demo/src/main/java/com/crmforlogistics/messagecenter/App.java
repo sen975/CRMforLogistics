@@ -145,7 +145,11 @@ public class App {
             return;
         }
         if ("GET".equals(method) && "/api/threads".equals(path)) {
-            writeJson(exchange, 200, store.thread(query(exchange).getOrDefault("contactPointId", "")));
+            Map<String, String> params = query(exchange);
+            writeJson(exchange, 200, store.threadPage(
+                    params.getOrDefault("contactPointId", ""),
+                    params.getOrDefault("cursor", ""),
+                    intQuery(params, "limit", 10)));
             return;
         }
         if ("GET".equals(method) && "/api/messages".equals(path)) {
@@ -279,6 +283,16 @@ public class App {
             return "";
         }
         return value.isJsonPrimitive() ? value.getAsString() : value.toString();
+    }
+
+    private static int intQuery(Map<String, String> query, String name, int defaultValue) {
+        String value = query.get(name);
+        if (value == null || value.isBlank()) return defaultValue;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException exception) {
+            return defaultValue;
+        }
     }
 
     private static List<String> splitTags(String raw) {
@@ -621,7 +635,8 @@ public class App {
   </div>
   <div class="toast" id="toast"></div>
   <script>
-    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
+    const THREAD_PAGE_SIZE = 10;
+    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -641,6 +656,11 @@ public class App {
     const timeText = value => value ? new Date(value).toLocaleString() : '';
     const initials = name => (name || '?').trim().slice(0, 2).toUpperCase();
     const requestId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    function threadPageUrl(id, cursor = '') {
+      let url = '/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE;
+      if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
+      return url;
+    }
     function formatDuration(millis) {
       return `${(Number(millis || 0) / 1000).toFixed(1)}s`;
     }
@@ -1068,7 +1088,14 @@ public class App {
       const threadEl = $('thread');
       const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
       const contact = state.contacts.find(c => c.id === id);
-      const messages = await api('/api/threads?contactPointId=' + encodeURIComponent(id));
+      const page = await api(threadPageUrl(id));
+      const messages = page.items || [];
+      state.threadPages[id] = {
+        items: messages,
+        nextCursor: page.nextCursor || null,
+        isLoadingOlder: false,
+        hasLoadedInitial: true
+      };
       const key = threadRenderKey(contact, messages);
       if (keepScroll && key === state.threadRenderKeyByContact[id]) {
         return;

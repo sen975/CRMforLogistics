@@ -56,6 +56,7 @@ public class UnifiedMessageStoreTest {
         chatAppTemplateMessagesUseTemplateRequestType();
         chatAppTemplateRequestsOmitMessageType();
         rendersWebShellWithChineseCopyAndUnifiedSendActions();
+        rendersWebShellWithPagedThreadRequestContract();
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
@@ -855,6 +856,17 @@ public class UnifiedMessageStoreTest {
         assertNotContains(html, "缁熶竴");
         assertNotContains(html, "閭欢");
         assertNotContains(html, "宸插彂");
+    }
+
+    private static void rendersWebShellWithPagedThreadRequestContract() {
+        String html = App.pageHtml();
+
+        assertContains(html, "const THREAD_PAGE_SIZE = 10;");
+        assertContains(html, "const page = await api(threadPageUrl(id));");
+        assertContains(html, "const messages = page.items || [];");
+        assertContains(html, "nextCursor: page.nextCursor || null");
+        assertContains(html, "function threadPageUrl(id, cursor = '')");
+        assertContains(html, "'/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE");
     }
 
     private static void chatAppTextMessagesUseMessageBodyAsContactPreview() throws Exception {
