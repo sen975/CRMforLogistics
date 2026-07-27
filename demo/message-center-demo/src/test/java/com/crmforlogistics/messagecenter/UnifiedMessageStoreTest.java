@@ -922,7 +922,10 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "page.items = mergeThreadMessages([...(older.items || []), ...page.items]);");
         assertContains(html, "threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;");
         assertContains(html, "if (state.selectedPointId !== id || state.threadPages[id] !== page) return;");
-        assertContains(html, "if (existing && keepScroll && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;");
+        assertContains(html, "const contactMessageCount = Number(contact?.messageCount || 0);");
+        assertContains(html, "const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;");
+        assertContains(html, "contactMessageCount,");
+        assertContains(html, "if (existing && keepScroll && existing.nextCursor && previousContactMessageCount === contactMessageCount) state.threadPages[id].nextCursor = existing.nextCursor;");
         assertContains(html, "if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;");
         assertContains(html, "function mergeThreadMessages(messages)");
         assertContains(html, "const seen = new Set();");

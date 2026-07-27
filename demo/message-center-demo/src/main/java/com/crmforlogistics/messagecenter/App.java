@@ -1122,6 +1122,8 @@ public class App {
       const page = await api(threadPageUrl(id));
       const messages = page.items || [];
       const existing = state.threadPages[id];
+      const contactMessageCount = Number(contact?.messageCount || 0);
+      const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;
       const merged = keepScroll && existing && existing.hasLoadedInitial
         ? mergeThreadMessages([...existing.items, ...messages])
         : messages;
@@ -1129,9 +1131,10 @@ public class App {
         items: merged,
         nextCursor: page.nextCursor || null,
         isLoadingOlder: false,
-        hasLoadedInitial: true
+        hasLoadedInitial: true,
+        contactMessageCount,
       };
-      if (existing && keepScroll && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
+      if (existing && keepScroll && existing.nextCursor && previousContactMessageCount === contactMessageCount) state.threadPages[id].nextCursor = existing.nextCursor;
       if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;
       const messagesForRender = state.threadPages[id].items;
       const key = threadRenderKey(contact, messagesForRender);
