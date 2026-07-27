@@ -155,11 +155,9 @@ public class UnifiedMessageStore {
                 UUID contactId = UUID.fromString(contactPointId);
                 MessageCursor messageCursor = decoded == null ? null
                         : new MessageCursor(decoded.timestamp(), UUID.fromString(decoded.messageId()));
-                int messageCount = messageRepository.unifiedTimelineCount(userId, contactId);
-                String threadRevision = messageRepository.unifiedTimelineRevision(userId, contactId);
-                List<UnifiedMessage> fetched = messageRepository.unifiedTimeline(
+                UnifiedTimelineSnapshot snapshot = messageRepository.unifiedTimelinePage(
                         userId, contactId, messageCursor, safeLimit + 1);
-                return toThreadPage(fetched, safeLimit, messageCount, threadRevision);
+                return toThreadPage(snapshot.fetched(), safeLimit, snapshot.messageCount(), snapshot.threadRevision());
             } catch (Exception exception) {
                 throw databaseFailure("Unable to query contact timeline page", exception);
             }

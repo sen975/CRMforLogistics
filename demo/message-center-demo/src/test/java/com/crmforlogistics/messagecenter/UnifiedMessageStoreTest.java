@@ -71,6 +71,7 @@ public class UnifiedMessageStoreTest {
         rendersWebShellWithPagedThreadRequestContract();
         apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit();
         rendersWebShellWithOlderThreadScrollLoader();
+        frontendThreadPaginationBehaviorLoadsOlderPages();
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
@@ -368,34 +369,38 @@ public class UnifiedMessageStoreTest {
             @Override
             public List<UnifiedMessage> unifiedTimeline(
                     UUID receivedUserId, UUID receivedContactId, MessageCursor cursor, int limit) {
+                throw unsupported();
+            }
+
+            @Override
+            public UnifiedTimelineSnapshot unifiedTimelinePage(
+                    UUID receivedUserId, UUID receivedContactId, MessageCursor cursor, int limit) {
                 assertEquals(userId.toString(), receivedUserId.toString());
                 assertEquals(contactId.toString(), receivedContactId.toString());
                 receivedLimits.add(limit);
                 receivedCursors.add(cursor);
                 if (calls.getAndIncrement() == 0) {
-                    return List.of(
+                    return new UnifiedTimelineSnapshot(List.of(
                             threadMessage(oldestId, "2026-07-10T01:00:00Z", "oldest-extra"),
                             threadMessage(cursorId, cursorTimestamp.toString(), "page-one-first"),
-                            threadMessage(newestId, cursorTimestamp.toString(), "page-one-last"));
+                            threadMessage(newestId, cursorTimestamp.toString(), "page-one-last")),
+                            3, "db-revision-1");
                 }
-                return List.of(
+                return new UnifiedTimelineSnapshot(List.of(
                         threadMessage(oldestId, "2026-07-10T01:00:00Z", "page-two-first"),
                         threadMessage(UUID.fromString("00000000-0000-0000-0000-000000000009"),
-                                "2026-07-10T01:00:00Z", "page-two-last"));
+                                "2026-07-10T01:00:00Z", "page-two-last")),
+                        3, "db-revision-1");
             }
 
             @Override
             public int unifiedTimelineCount(UUID receivedUserId, UUID receivedContactId) {
-                assertEquals(userId.toString(), receivedUserId.toString());
-                assertEquals(contactId.toString(), receivedContactId.toString());
-                return 3;
+                throw unsupported();
             }
 
             @Override
             public String unifiedTimelineRevision(UUID receivedUserId, UUID receivedContactId) {
-                assertEquals(userId.toString(), receivedUserId.toString());
-                assertEquals(contactId.toString(), receivedContactId.toString());
-                return "db-revision-1";
+                throw unsupported();
             }
 
             @Override public UUID getOrCreateConversation(UUID accountId, UUID identityId) { throw unsupported(); }
@@ -1075,6 +1080,178 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "return merged;");
         assertNotContains(html, ".sort((a, b) =>");
         assertContains(html, "renderThreadMessages(contact, page.items);");
+    }
+
+    private static void frontendThreadPaginationBehaviorLoadsOlderPages() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-frontend-thread-pagination-test");
+        Path html = dir.resolve("page.html");
+        Path probe = dir.resolve("probe.mjs");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Files.writeString(probe, frontendThreadPaginationProbe(), StandardCharsets.UTF_8);
+
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("frontend thread pagination probe timed out");
+        }
+        if (process.exitValue() != 0) {
+            throw new AssertionError("frontend thread pagination probe failed:\n" + output);
+        }
+    }
+
+    private static String frontendThreadPaginationProbe() {
+        return """
+                import assert from 'node:assert/strict';
+                import fs from 'node:fs';
+                import vm from 'node:vm';
+
+                const html = fs.readFileSync(process.argv[2], 'utf8');
+                let script = html.match(/<script>([\\s\\S]*?)<\\/script>/)?.[1];
+                assert.ok(script, 'page must contain the embedded script');
+                script = script.replace(/\\n\\s*init\\(\\)\\.catch\\(err => toast\\(err\\.message\\)\\);\\s*$/, '');
+
+                const requests = [];
+                const responses = [
+                  page(11, 20, 'cursor-older', 'rev-1', 20),
+                  page(1, 10, null, 'rev-1', 20),
+                  page(1, 10, null, 'rev-stale', 20),
+                  page(21, 30, 'cursor-fresh', 'rev-2', 30)
+                ];
+                const elements = new Map();
+
+                function page(start, end, nextCursor, threadRevision, messageCount) {
+                  const items = [];
+                  for (let i = start; i <= end; i++) {
+                    items.push({ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:`2026-07-10T01:${String(i).padStart(2, '0')}:00Z`, text:`message-${i}` });
+                  }
+                  return { items, nextCursor, threadRevision, messageCount };
+                }
+
+                function classList() {
+                  const values = new Set();
+                  return {
+                    add: value => values.add(value),
+                    remove: value => values.delete(value),
+                    contains: value => values.has(value),
+                    toggle: (value, force) => force === undefined ? (values.has(value) ? values.delete(value) : values.add(value)) : (force ? values.add(value) : values.delete(value))
+                  };
+                }
+
+                function element(id) {
+                  if (elements.has(id)) return elements.get(id);
+                  const el = {
+                    id,
+                    dataset: {},
+                    style: { display:'', setProperty() {} },
+                    classList: classList(),
+                    hidden: false,
+                    disabled: false,
+                    textContent: '',
+                    value: '',
+                    clientHeight: id === 'thread' ? 120 : 0,
+                    scrollHeight: id === 'thread' ? 120 : 0,
+                    scrollTop: 0,
+                    querySelectorAll: () => [],
+                    closest: () => null,
+                    appendChild() {},
+                    remove() {},
+                    click() {},
+                    addEventListener() {},
+                    focus() {}
+                  };
+                  Object.defineProperty(el, 'innerHTML', {
+                    get() { return this._innerHTML || ''; },
+                    set(value) {
+                      this._innerHTML = String(value || '');
+                      if (id === 'thread') {
+                        const count = (this._innerHTML.match(/class="message-row/g) || []).length;
+                        this.scrollHeight = Math.max(120, count * 40);
+                      }
+                    }
+                  });
+                  elements.set(id, el);
+                  return el;
+                }
+
+                const document = {
+                  activeElement: null,
+                  body: { appendChild() {} },
+                  addEventListener() {},
+                  createElement: tag => element(`created-${tag}-${elements.size}`),
+                  getElementById: id => element(id),
+                  querySelectorAll(selector) {
+                    if (selector === '.msg[data-id]') {
+                      const thread = element('thread');
+                      return [...thread.innerHTML.matchAll(/data-id="([^"]+)"/g)].map(match => ({
+                        dataset: { id: match[1] },
+                        classList: classList(),
+                        onclick: null
+                      }));
+                    }
+                    return [];
+                  }
+                };
+
+                const context = {
+                  assert,
+                  console,
+                  document,
+                  requests,
+                  fetch: async url => {
+                    requests.push(String(url));
+                    const body = responses.shift();
+                    assert.ok(body, `unexpected fetch ${url}`);
+                    return { ok: true, json: async () => body, headers: { get: () => '' }, blob: async () => ({ type:'' }) };
+                  },
+                  setTimeout,
+                  clearTimeout,
+                  requestAnimationFrame: callback => callback(),
+                  window: { crypto: { randomUUID: () => 'uuid-1' }, open: () => null, toastTimer: null },
+                  crypto: { randomUUID: () => 'uuid-1' },
+                  URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+                  Notification: function Notification() {}
+                };
+                context.window.document = document;
+                context.globalThis = context;
+                vm.createContext(context);
+
+                await vm.runInContext(script + `
+                (async () => {
+                  state.contacts = [{ id:'contact-1', displayName:'Buyer', channels:['chatapp'], points:[{ id:'contact-1', channel:'chatapp', value:'8613000000000' }] }];
+                  state.selectedPointId = 'contact-1';
+
+                  await loadThread('contact-1', false);
+                  assert.equal(requests[0], '/api/threads?contactPointId=contact-1&limit=10');
+                  assert.equal(state.threadPages['contact-1'].items.length, 10);
+                  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.id)), JSON.stringify(['m11','m12','m13','m14','m15','m16','m17','m18','m19','m20']));
+                  assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-1');
+                  assert.equal($('thread').scrollTop, $('thread').scrollHeight);
+
+                  $('thread').scrollTop = 0;
+                  const oldScrollHeight = $('thread').scrollHeight;
+                  await loadOlderThreadMessages();
+                  assert.equal(requests[1], '/api/threads?contactPointId=contact-1&limit=10&cursor=cursor-older');
+                  assert.equal(state.threadPages['contact-1'].items.length, 20);
+                  assert.equal(state.threadPages['contact-1'].items[0].id, 'm1');
+                  assert.equal(state.threadPages['contact-1'].items[19].id, 'm20');
+                  assert.equal($('thread').scrollTop, $('thread').scrollHeight - oldScrollHeight);
+
+                  state.threadPages['contact-1'].nextCursor = 'stale-cursor';
+                  $('thread').scrollTop = 0;
+                  await loadOlderThreadMessages();
+                  assert.equal(requests[2], '/api/threads?contactPointId=contact-1&limit=10&cursor=stale-cursor');
+                  assert.equal(requests[3], '/api/threads?contactPointId=contact-1&limit=10');
+                  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.id)), JSON.stringify(['m21','m22','m23','m24','m25','m26','m27','m28','m29','m30']));
+                  assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-2');
+                  assert.equal(state.threadPages['contact-1'].nextCursor, 'cursor-fresh');
+                })()
+                `, context);
+
+                console.log('frontend thread pagination behavior ok');
+                """;
     }
 
     private static void chatAppTextMessagesUseMessageBodyAsContactPreview() throws Exception {

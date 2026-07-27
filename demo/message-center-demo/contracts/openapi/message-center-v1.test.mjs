@@ -97,6 +97,16 @@ for (const path of ['/api/v1/contacts', '/api/v1/companies',
 }
 assert.match(contract, /^        maxLength: 2048$/m, 'cursor length must be bounded');
 assert.match(contract, /^        maximum: 100$/m, 'page size must have an upper bound');
+const messagePage = schema(contract, 'MessagePage');
+assert.match(messagePage,
+  /^      required: \[items, nextCursor, messageCount, threadRevision\]$/m,
+  'message page must expose the thread freshness contract');
+assert.match(messagePage,
+  /^        messageCount:\n          type: integer\n          minimum: 0$/m,
+  'message page must include a bounded message count from the same snapshot');
+assert.match(messagePage,
+  /^        threadRevision:\n          type: string\n          minLength: 1\n          maxLength: 128$/m,
+  'message page must include an opaque thread revision');
 
 const media = operation(operations, 'get', '/api/v1/attachments/{attachmentId}/content');
 for (const contentType of [

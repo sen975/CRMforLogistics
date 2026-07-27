@@ -205,6 +205,91 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
+    public UnifiedTimelineSnapshot unifiedTimelinePage(UUID userId, UUID contactId, MessageCursor cursor, int limit) throws Exception {
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(contactId, "contactId");
+        int safeLimit = Math.max(1, Math.min(MAX_LIMIT, limit <= 0 ? 50 : limit));
+        return database.read(connection -> {
+            String sql = """
+                    with authorized_messages as (
+                        select m.id,m.provider_message_id,ca.channel_type,ci.id as contact_identity_id,
+                               m.direction,m.occurred_at,m.subject,m.body_text,m.current_status,
+                               m.current_status_at,m.message_kind,m.counts_as_unread,m.ingest_sequence,
+                               coalesce((select crs.last_read_sequence
+                                         from conversation_read_states crs
+                                         where crs.conversation_id=m.conversation_id and crs.user_id=?),0) as last_read_sequence
+                        from messages m
+                        join conversations cv on cv.id=m.conversation_id
+                        join channel_accounts ca on ca.id=m.channel_account_id
+                        join contact_identities ci on ci.id=cv.contact_identity_id
+                        where ci.contact_id=? and
+                    """ + authorizedSql("cv") + """
+                    ),
+                    metadata as (
+                        select count(*)::int as message_count,
+                               md5(coalesce(string_agg(
+                                   id::text || ':' ||
+                                   coalesce(provider_message_id,'') || ':' ||
+                                   extract(epoch from occurred_at)::text || ':' ||
+                                   ingest_sequence::text || ':' ||
+                                   coalesce(current_status,'') || ':' ||
+                                   extract(epoch from current_status_at)::text || ':' ||
+                                   coalesce(message_kind,'') || ':' ||
+                                   coalesce(subject,'') || ':' ||
+                                   coalesce(body_text,''),
+                                   '|' order by occurred_at,id), '')) as thread_revision
+                        from authorized_messages
+                    )
+                    select p.id,p.provider_message_id,p.channel_type,p.contact_identity_id,p.direction,p.occurred_at,
+                           p.subject,p.body_text,p.current_status,p.current_status_at,p.message_kind,
+                           p.counts_as_unread,p.ingest_sequence,p.last_read_sequence,
+                           metadata.message_count,metadata.thread_revision
+                    from metadata
+                    left join lateral (
+                        select *
+                        from authorized_messages
+                        where (? = false or occurred_at < ? or (occurred_at = ? and id < ?))
+                        order by occurred_at desc,id desc
+                        limit ?
+                    ) p on true
+                    order by p.occurred_at asc nulls first,p.id asc nulls first
+                    """;
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                int i = 1;
+                statement.setObject(i++, userId);
+                statement.setObject(i++, contactId);
+                i = bindAuthorization(statement, i, userId);
+                if (cursor == null) {
+                    statement.setBoolean(i++, false);
+                    statement.setNull(i++, Types.TIMESTAMP_WITH_TIMEZONE);
+                    statement.setNull(i++, Types.TIMESTAMP_WITH_TIMEZONE);
+                    statement.setNull(i++, Types.OTHER);
+                } else {
+                    statement.setBoolean(i++, true);
+                    statement.setTimestamp(i++, Timestamp.from(cursor.occurredAt()));
+                    statement.setTimestamp(i++, Timestamp.from(cursor.occurredAt()));
+                    statement.setObject(i++, cursor.id());
+                }
+                statement.setInt(i, safeLimit);
+                try (ResultSet rows = statement.executeQuery()) {
+                    int messageCount = 0;
+                    String threadRevision = "";
+                    List<UnifiedMessage> fetched = new ArrayList<>();
+                    while (rows.next()) {
+                        messageCount = rows.getInt(15);
+                        String rowRevision = rows.getString(16);
+                        threadRevision = rowRevision == null ? "" : rowRevision;
+                        if (rows.getObject(1) != null) {
+                            fetched.add(readMessage(rows));
+                        }
+                    }
+                    return new UnifiedTimelineSnapshot(fetched, messageCount, threadRevision);
+                }
+            }
+        });
+    }
+
+    @Override
     public int unifiedTimelineCount(UUID userId, UUID contactId) throws Exception {
         Objects.requireNonNull(userId, "userId");
         Objects.requireNonNull(contactId, "contactId");

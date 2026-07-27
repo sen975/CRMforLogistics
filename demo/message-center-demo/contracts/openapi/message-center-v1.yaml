@@ -990,7 +990,7 @@ components:
     MessagePage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required: [items, nextCursor, messageCount, threadRevision]
       properties:
         items:
           type: array
@@ -1000,6 +1000,13 @@ components:
         nextCursor:
           type: [string, 'null']
           maxLength: 2048
+        messageCount:
+          type: integer
+          minimum: 0
+        threadRevision:
+          type: string
+          minLength: 1
+          maxLength: 128
     Message:
       type: object
       additionalProperties: false

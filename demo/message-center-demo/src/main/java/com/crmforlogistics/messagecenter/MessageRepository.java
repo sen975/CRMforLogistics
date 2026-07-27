@@ -11,12 +11,14 @@ public interface MessageRepository {
     void appendStatus(UUID messageId, MessageStatusEvent event) throws Exception;
     List<UnifiedMessage> thread(UUID userId, UUID conversationId, MessageCursor cursor, int limit) throws Exception;
     List<UnifiedMessage> unifiedTimeline(UUID userId, UUID contactId, MessageCursor cursor, int limit) throws Exception;
+    UnifiedTimelineSnapshot unifiedTimelinePage(UUID userId, UUID contactId, MessageCursor cursor, int limit) throws Exception;
     int unifiedTimelineCount(UUID userId, UUID contactId) throws Exception;
     String unifiedTimelineRevision(UUID userId, UUID contactId) throws Exception;
     Optional<UnifiedMessage> findAuthorized(UUID userId, UUID messageId) throws Exception;
 }
 
 record MessageCursor(Instant occurredAt, UUID id) {}
+record UnifiedTimelineSnapshot(List<UnifiedMessage> fetched, int messageCount, String threadRevision) {}
 
 record MessageDraft(UUID conversationId, UUID channelAccountId, UUID sourceEventId,
                     String providerMessageId, String clientRequestId, String direction,

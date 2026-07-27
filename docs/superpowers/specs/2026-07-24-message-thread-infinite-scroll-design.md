@@ -48,13 +48,17 @@ GET /api/threads?contactPointId=<id>&limit=10&cursor=<cursor>
 ```json
 {
   "items": [],
-  "nextCursor": null
+  "nextCursor": null,
+  "messageCount": 0,
+  "threadRevision": "opaque-thread-version"
 }
 ```
 
 - `items` 按时间正序返回，便于前端直接渲染聊天时间线。
 - 首次无 `cursor` 时返回最近 `limit` 条消息。
 - `nextCursor` 指向本页最早消息之前的历史位置；为 `null` 表示没有更早消息。
+- `messageCount` 是同一后端读取快照中的授权线程消息总数。
+- `threadRevision` 是同一后端读取快照中的不透明线程版本，前端只用于相等性比较，不解析内容。
 - `limit` 默认 10，服务端设置上限，避免异常请求一次拉大量消息。
 
 ### 4.2 Cursor 规则
@@ -81,9 +85,10 @@ timestamp ASC, stable id ASC
 - `nextCursor`：下一次向上加载的 cursor。
 - `isLoadingOlder`：防止连续滚动重复请求。
 - `hasLoadedInitial`：避免重复初始化。
-- `renderKey`：用于判断静默刷新是否需要更新。
+- `pageMessageCount`：最近一次线程页返回的同快照消息总数。
+- `threadRevision`：最近一次线程页返回的同快照线程版本。
 
-切换联系人时只初始化该联系人最近 10 条。用户返回同一联系人时，可以复用已加载页；如果联系人 `lastTime` 或 `messageCount` 变化，再按当前选中联系人做轻量刷新。
+切换联系人时只初始化该联系人最近 10 条。用户返回同一联系人或静默刷新当前联系人时，前端请求最新页并比较 `threadRevision`；版本一致才复用已加载历史窗口，版本变化则丢弃旧窗口并以最新页为准。联系人摘要中的 `lastTime` 或 `messageCount` 只能作为列表提示，不能作为线程窗口新鲜度真相。
 
 ### 4.4 交互
 
@@ -102,10 +107,10 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 
 静默刷新或同步收到新消息时：
 
-- 当前选中联系人只请求最新页或比较联系人摘要。
+- 当前选中联系人请求最新页，并使用页对象里的 `threadRevision` 判断当前已加载窗口是否仍可复用。
 - 如果用户正在底部附近，则合并新增消息并滚到底部。
 - 如果用户正在上翻历史，则不强制滚动，保留当前位置，并沿用现有“有新消息”提示。
-- 不因为新消息到达清空已加载的历史页。
+- `threadRevision` 一致时不因为新消息到达清空已加载的历史页；`threadRevision` 变化时重新加载最新页，避免把不同版本的窗口拼在一起。
 
 ## 5. 备选方案与取舍
 
@@ -124,6 +129,7 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 ## 6. Owner 与边界
 
 - 消息排序、cursor、limit、是否还有历史消息由 `UnifiedMessageStore` / 后续 `messaging` 模块负责。
+- 数据库模式下 `items`、`messageCount` 和 `threadRevision` 必须来自同一个 repository 读取快照，不能由 service 层三次独立查询拼装。
 - HTTP 路由只做参数解析和页对象返回，不拥有消息分页真相。
 - 前端只负责触发分页、合并页数据和保持滚动位置。
 - OpenAPI v1 的 `MessagePage` 是后续前后端分离后的合同参照。
@@ -142,7 +148,8 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 
 - 后端单元测试：构造同一联系人 25 条消息，验证无 cursor 返回最近 10 条且 `nextCursor` 存在；使用 cursor 再取 10 条更早消息；最后一页返回 `nextCursor = null`。
 - 后端排序测试：同一时间戳多条消息按稳定 id 排序，cursor 不重复、不漏消息。
-- 前端交互测试或手工浏览器验收：打开联系人、顶部滚动加载、加载后保持滚动位置、切换联系人后仍默认 10 条。
+- 数据库模式测试：`threadPage` 必须只调用同快照 repository 页接口，不能分别调用 count、revision 和 items 查询。
+- 前端行为探针或浏览器验收：打开联系人、顶部滚动加载、加载后保持滚动位置、`threadRevision` 不一致时重拉最新页、切换联系人后仍默认 10 条。
 - 回归命令：`cd demo/message-center-demo && mvn -q -Dtest=UnifiedMessageStoreTest test`。
 - 若启动页面验收：使用非用户端口，例如 `WEB_PORT=8100`，验收结束后关闭服务并确认端口无监听。
 
