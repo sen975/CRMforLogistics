@@ -924,9 +924,11 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "if (state.selectedPointId !== id || state.threadPages[id] !== page) return;");
         assertContains(html, "const contactMessageCount = Number(contact?.messageCount || 0);");
         assertContains(html, "const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;");
+        assertContains(html, "const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousContactMessageCount === contactMessageCount;");
+        assertContains(html, "const merged = shouldKeepLoadedThread");
         assertContains(html, "contactMessageCount,");
-        assertContains(html, "if (existing && keepScroll && existing.nextCursor && previousContactMessageCount === contactMessageCount) state.threadPages[id].nextCursor = existing.nextCursor;");
-        assertContains(html, "if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;");
+        assertContains(html, "if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;");
+        assertContains(html, "if (shouldKeepLoadedThread && !existing.nextCursor && contactMessageCount <= merged.length) state.threadPages[id].nextCursor = null;");
         assertContains(html, "function mergeThreadMessages(messages)");
         assertContains(html, "const seen = new Set();");
         assertContains(html, "return merged;");

@@ -1124,7 +1124,8 @@ public class App {
       const existing = state.threadPages[id];
       const contactMessageCount = Number(contact?.messageCount || 0);
       const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;
-      const merged = keepScroll && existing && existing.hasLoadedInitial
+      const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousContactMessageCount === contactMessageCount;
+      const merged = shouldKeepLoadedThread
         ? mergeThreadMessages([...existing.items, ...messages])
         : messages;
       state.threadPages[id] = {
@@ -1134,8 +1135,8 @@ public class App {
         hasLoadedInitial: true,
         contactMessageCount,
       };
-      if (existing && keepScroll && existing.nextCursor && previousContactMessageCount === contactMessageCount) state.threadPages[id].nextCursor = existing.nextCursor;
-      if (existing && keepScroll && !existing.nextCursor && contact && Number(contact.messageCount || 0) <= merged.length) state.threadPages[id].nextCursor = null;
+      if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
+      if (shouldKeepLoadedThread && !existing.nextCursor && contactMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
       const messagesForRender = state.threadPages[id].items;
       const key = threadRenderKey(contact, messagesForRender);
       if (keepScroll && key === state.threadRenderKeyByContact[id]) {
