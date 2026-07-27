@@ -205,6 +205,30 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
+    public int unifiedTimelineCount(UUID userId, UUID contactId) throws Exception {
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(contactId, "contactId");
+        return database.read(connection -> {
+            String sql = """
+                    select count(*)
+                    from messages m
+                    join conversations cv on cv.id=m.conversation_id
+                    join contact_identities ci on ci.id=cv.contact_identity_id
+                    where ci.contact_id=? and
+                    """ + authorizedSql("cv");
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                int i = 1;
+                statement.setObject(i++, contactId);
+                i = bindAuthorization(statement, i, userId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) return 0;
+                    return rows.getInt(1);
+                }
+            }
+        });
+    }
+
+    @Override
     public Optional<UnifiedMessage> findAuthorized(UUID userId, UUID messageId) throws Exception {
         Objects.requireNonNull(userId, "userId");
         Objects.requireNonNull(messageId, "messageId");

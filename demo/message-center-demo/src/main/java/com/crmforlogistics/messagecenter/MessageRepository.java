@@ -11,6 +11,7 @@ public interface MessageRepository {
     void appendStatus(UUID messageId, MessageStatusEvent event) throws Exception;
     List<UnifiedMessage> thread(UUID userId, UUID conversationId, MessageCursor cursor, int limit) throws Exception;
     List<UnifiedMessage> unifiedTimeline(UUID userId, UUID contactId, MessageCursor cursor, int limit) throws Exception;
+    int unifiedTimelineCount(UUID userId, UUID contactId) throws Exception;
     Optional<UnifiedMessage> findAuthorized(UUID userId, UUID messageId) throws Exception;
 }
 

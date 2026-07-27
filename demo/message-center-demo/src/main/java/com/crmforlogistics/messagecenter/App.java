@@ -636,7 +636,7 @@ public class App {
   <div class="toast" id="toast"></div>
   <script>
     const THREAD_PAGE_SIZE = 10;
-    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
+    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -830,7 +830,25 @@ public class App {
           markScrollSurfaceScrolling(el);
           if (id === 'thread') loadOlderThreadMessages();
         };
+        if (id === 'thread' && el) {
+          el.onwheel = event => { if (event.deltaY < 0) loadOlderThreadMessages(); };
+          el.ontouchstart = event => { state.threadTouchY = event.touches?.[0]?.clientY || 0; };
+          el.ontouchmove = event => {
+            const y = event.touches?.[0]?.clientY || 0;
+            if (y > state.threadTouchY + 8) loadOlderThreadMessages();
+            state.threadTouchY = y;
+          };
+        }
       });
+    }
+
+    function nextThreadLoadSeq(id) {
+      state.threadLoadSeqByContact[id] = currentThreadLoadSeq(id) + 1;
+      return state.threadLoadSeqByContact[id];
+    }
+
+    function currentThreadLoadSeq(id) {
+      return state.threadLoadSeqByContact[id] || 0;
     }
 
     function markScrollSurfaceScrolling(el) {
@@ -1119,12 +1137,14 @@ public class App {
       const threadEl = $('thread');
       const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
       const contact = state.contacts.find(c => c.id === id);
+      const requestSeq = nextThreadLoadSeq(id);
       const page = await api(threadPageUrl(id));
+      if (state.selectedPointId !== id || currentThreadLoadSeq(id) !== requestSeq) return;
       const messages = page.items || [];
       const existing = state.threadPages[id];
-      const contactMessageCount = Number(contact?.messageCount || 0);
-      const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;
-      const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousContactMessageCount === contactMessageCount;
+      const pageMessageCount = Number((page.messageCount ?? contact?.messageCount ?? messages.length) || 0);
+      const previousPageMessageCount = existing ? existing.pageMessageCount || 0 : 0;
+      const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousPageMessageCount === pageMessageCount;
       const merged = shouldKeepLoadedThread
         ? mergeThreadMessages([...existing.items, ...messages])
         : messages;
@@ -1133,10 +1153,10 @@ public class App {
         nextCursor: page.nextCursor || null,
         isLoadingOlder: false,
         hasLoadedInitial: true,
-        contactMessageCount,
+        pageMessageCount,
       };
       if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
-      if (shouldKeepLoadedThread && !existing.nextCursor && contactMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
+      if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
       const messagesForRender = state.threadPages[id].items;
       const key = threadRenderKey(contact, messagesForRender);
       if (keepScroll && key === state.threadRenderKeyByContact[id]) {
@@ -1155,12 +1175,13 @@ public class App {
       if (!page || !page.nextCursor || page.isLoadingOlder) return;
       const threadEl = $('thread');
       if (!threadEl || threadEl.scrollTop > 24) return;
+      const requestSeq = currentThreadLoadSeq(id);
       page.isLoadingOlder = true;
       const oldScrollHeight = threadEl.scrollHeight;
       const oldScrollTop = threadEl.scrollTop;
       try {
         const older = await api(threadPageUrl(id, page.nextCursor));
-        if (state.selectedPointId !== id || state.threadPages[id] !== page) return;
+        if (state.selectedPointId !== id || state.threadPages[id] !== page || currentThreadLoadSeq(id) !== requestSeq) return;
         page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
         page.nextCursor = older.nextCursor || null;
         const contact = state.contacts.find(c => c.id === id);
@@ -1198,7 +1219,8 @@ public class App {
       const indexByKey = new Map();
       const merged = [];
       messages.forEach(message => {
-        const key = message.id || message.sourceId || `${message.timestamp || ''}:${message.channel || ''}:${message.text || message.summary || ''}`;
+        const key = message.id || message.sourceId;
+        if (!key) { merged.push(message); return; }
         if (seen.has(key)) {
           merged[indexByKey.get(key)] = message;
           return;

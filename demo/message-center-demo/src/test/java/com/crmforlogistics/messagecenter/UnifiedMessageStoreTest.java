@@ -46,6 +46,7 @@ public class UnifiedMessageStoreTest {
         splitsMergedContactPointWithoutDeletingRawMessages();
         splitsLegacyEmailContactGroupWhenOnlyOnePointRemains();
         threadPageReturnsRecentTenMessagesAndCursor();
+        threadPageUsesDeletedCursorAsTimelineBoundary();
         databaseThreadPageUsesLimitPlusOneAndUuidCursor();
         threadPageRejectsNonEmptyCursorMissingRequiredFields();
         exposesWecomAdapterPlaceholderAsUnavailableChannel();
@@ -268,6 +269,58 @@ public class UnifiedMessageStoreTest {
         assertNull(thirdPage.nextCursor, "oldest page must not expose nextCursor");
     }
 
+    private static void threadPageUsesDeletedCursorAsTimelineBoundary() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-deleted-thread-cursor-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        StringBuilder jsonl = new StringBuilder();
+        for (int i = 1; i <= 16; i++) {
+            jsonl.append("{")
+                    .append("\"id\":\"chat-").append(i).append("\",")
+                    .append("\"direction\":\"inbound\",")
+                    .append("\"timestamp\":\"2026-07-10T01:")
+                    .append(String.format("%02d", i)).append(":00Z\",")
+                    .append("\"from\":\"8613800000000\",")
+                    .append("\"to\":\"8613266259485\",")
+                    .append("\"text\":\"message-").append(i).append("\",")
+                    .append("\"raw\":\"{}\"")
+                    .append("}\n");
+        }
+        Path chatFile = chatData.resolve("messages.jsonl");
+        Files.writeString(chatFile, jsonl.toString(), StandardCharsets.UTF_8);
+
+        UnifiedMessageStore store = testStore(dir, emailData, chatFile);
+        UnifiedMessageStore.ThreadPage firstPage = store.threadPage("chatapp:whatsapp:8613800000000", "", 10);
+        assertEquals(10, firstPage.items.size());
+        assertEquals("message-7", firstPage.items.get(0).text);
+        assertEquals(16, firstPage.messageCount);
+
+        StringBuilder remainingOlder = new StringBuilder();
+        for (int i = 1; i <= 6; i++) {
+            remainingOlder.append("{")
+                    .append("\"id\":\"chat-").append(i).append("\",")
+                    .append("\"direction\":\"inbound\",")
+                    .append("\"timestamp\":\"2026-07-10T01:")
+                    .append(String.format("%02d", i)).append(":00Z\",")
+                    .append("\"from\":\"8613800000000\",")
+                    .append("\"to\":\"8613266259485\",")
+                    .append("\"text\":\"message-").append(i).append("\",")
+                    .append("\"raw\":\"{}\"")
+                    .append("}\n");
+        }
+        Files.writeString(chatFile, remainingOlder.toString(), StandardCharsets.UTF_8);
+
+        UnifiedMessageStore.ThreadPage olderPage = store.threadPage(
+                "chatapp:whatsapp:8613800000000", firstPage.nextCursor, 10);
+        assertEquals(6, olderPage.items.size());
+        assertEquals("message-1", olderPage.items.get(0).text);
+        assertEquals("message-6", olderPage.items.get(olderPage.items.size() - 1).text);
+        assertEquals(6, olderPage.messageCount);
+        assertNull(olderPage.nextCursor, "deleted cursor should not permanently hide older messages");
+    }
+
     private static void databaseThreadPageUsesLimitPlusOneAndUuidCursor() throws Exception {
         UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000001");
         UUID contactId = UUID.fromString("00000000-0000-0000-0000-000000000002");
@@ -298,6 +351,13 @@ public class UnifiedMessageStoreTest {
                                 "2026-07-10T01:00:00Z", "page-two-last"));
             }
 
+            @Override
+            public int unifiedTimelineCount(UUID receivedUserId, UUID receivedContactId) {
+                assertEquals(userId.toString(), receivedUserId.toString());
+                assertEquals(contactId.toString(), receivedContactId.toString());
+                return 3;
+            }
+
             @Override public UUID getOrCreateConversation(UUID accountId, UUID identityId) { throw unsupported(); }
             @Override public MessageWriteResult insert(MessageDraft draft) { throw unsupported(); }
             @Override public void appendStatus(UUID messageId, MessageStatusEvent event) { throw unsupported(); }
@@ -316,6 +376,7 @@ public class UnifiedMessageStoreTest {
         assertEquals(2, firstPage.items.size());
         assertEquals(cursorId.toString(), firstPage.items.get(0).id);
         assertEquals(newestId.toString(), firstPage.items.get(firstPage.items.size() - 1).id);
+        assertEquals(3, firstPage.messageCount);
         assertTrue(firstPage.nextCursor != null && !firstPage.nextCursor.isBlank(),
                 "database page with an extra row must expose nextCursor");
 
@@ -877,6 +938,12 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "const page = await api(threadPageUrl(id));");
         assertContains(html, "const messages = page.items || [];");
         assertContains(html, "nextCursor: page.nextCursor || null");
+        assertContains(html, "threadLoadSeqByContact:{}");
+        assertContains(html, "function nextThreadLoadSeq(id)");
+        assertContains(html, "function currentThreadLoadSeq(id)");
+        assertContains(html, "const requestSeq = nextThreadLoadSeq(id);");
+        assertContains(html, "if (state.selectedPointId !== id || currentThreadLoadSeq(id) !== requestSeq) return;");
+        assertContains(html, "const pageMessageCount = Number((page.messageCount ?? contact?.messageCount ?? messages.length) || 0);");
         assertContains(html, "function threadPageUrl(id, cursor = '')");
         assertContains(html, "'/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE");
     }
@@ -900,6 +967,7 @@ public class UnifiedMessageStoreTest {
         assertEquals(12, store.limit);
         assertContains(exchange.responseText(), "\"items\"");
         assertContains(exchange.responseText(), "\"nextCursor\": \"older-cursor\"");
+        assertContains(exchange.responseText(), "\"messageCount\": 1");
         assertContains(exchange.responseText(), "\"text\": \"hello\"");
 
         FakeHttpExchange invalidLimit = new FakeHttpExchange(
@@ -918,19 +986,26 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "loadOlderThreadMessages();");
         assertContains(html, "async function loadOlderThreadMessages()");
         assertContains(html, "if (!page || !page.nextCursor || page.isLoadingOlder) return;");
+        assertContains(html, "const requestSeq = currentThreadLoadSeq(id);");
         assertContains(html, "const oldScrollHeight = threadEl.scrollHeight;");
         assertContains(html, "page.items = mergeThreadMessages([...(older.items || []), ...page.items]);");
         assertContains(html, "threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;");
-        assertContains(html, "if (state.selectedPointId !== id || state.threadPages[id] !== page) return;");
-        assertContains(html, "const contactMessageCount = Number(contact?.messageCount || 0);");
-        assertContains(html, "const previousContactMessageCount = existing ? existing.contactMessageCount || 0 : 0;");
-        assertContains(html, "const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousContactMessageCount === contactMessageCount;");
+        assertContains(html, "if (state.selectedPointId !== id || state.threadPages[id] !== page || currentThreadLoadSeq(id) !== requestSeq) return;");
+        assertContains(html, "const previousPageMessageCount = existing ? existing.pageMessageCount || 0 : 0;");
+        assertContains(html, "const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousPageMessageCount === pageMessageCount;");
         assertContains(html, "const merged = shouldKeepLoadedThread");
-        assertContains(html, "contactMessageCount,");
+        assertContains(html, "pageMessageCount,");
         assertContains(html, "if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;");
-        assertContains(html, "if (shouldKeepLoadedThread && !existing.nextCursor && contactMessageCount <= merged.length) state.threadPages[id].nextCursor = null;");
+        assertContains(html, "if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;");
+        assertContains(html, "el.onwheel = event => { if (event.deltaY < 0) loadOlderThreadMessages(); };");
+        assertContains(html, "el.ontouchstart = event => { state.threadTouchY = event.touches?.[0]?.clientY || 0; };");
+        assertContains(html, "el.ontouchmove = event => {");
+        assertContains(html, "if (y > state.threadTouchY + 8) loadOlderThreadMessages();");
         assertContains(html, "function mergeThreadMessages(messages)");
         assertContains(html, "const seen = new Set();");
+        assertContains(html, "const key = message.id || message.sourceId;");
+        assertContains(html, "if (!key) { merged.push(message); return; }");
+        assertNotContains(html, "`${message.timestamp || ''}:${message.channel || ''}:${message.text || message.summary || ''}`");
         assertContains(html, "return merged;");
         assertNotContains(html, ".sort((a, b) =>");
         assertContains(html, "renderThreadMessages(contact, page.items);");

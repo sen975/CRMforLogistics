@@ -38,10 +38,16 @@ public class UnifiedMessageStore {
     public static class ThreadPage {
         public final List<UnifiedMessage> items;
         public final String nextCursor;
+        public final int messageCount;
 
         ThreadPage(List<UnifiedMessage> items, String nextCursor) {
+            this(items, nextCursor, items == null ? 0 : items.size());
+        }
+
+        ThreadPage(List<UnifiedMessage> items, String nextCursor, int messageCount) {
             this.items = items;
             this.nextCursor = nextCursor;
+            this.messageCount = messageCount;
         }
     }
 
@@ -137,11 +143,13 @@ public class UnifiedMessageStore {
         if (databaseBacked()) {
             try {
                 ThreadCursor decoded = decodeThreadCursor(cursor);
+                UUID contactId = UUID.fromString(contactPointId);
                 MessageCursor messageCursor = decoded == null ? null
                         : new MessageCursor(decoded.timestamp(), UUID.fromString(decoded.messageId()));
+                int messageCount = messageRepository.unifiedTimelineCount(userId, contactId);
                 List<UnifiedMessage> fetched = messageRepository.unifiedTimeline(
-                        userId, UUID.fromString(contactPointId), messageCursor, safeLimit + 1);
-                return toThreadPage(fetched, safeLimit);
+                        userId, contactId, messageCursor, safeLimit + 1);
+                return toThreadPage(fetched, safeLimit, messageCount);
             } catch (Exception exception) {
                 throw databaseFailure("Unable to query contact timeline page", exception);
             }
@@ -151,7 +159,6 @@ public class UnifiedMessageStore {
         ThreadCursor decoded = decodeThreadCursor(cursor);
         int endExclusive = all.size();
         if (decoded != null) {
-            endExclusive = 0;
             for (int i = 0; i < all.size(); i++) {
                 if (compareMessageToCursor(all.get(i), decoded) >= 0) {
                     endExclusive = i;
@@ -162,7 +169,7 @@ public class UnifiedMessageStore {
         int startInclusive = Math.max(0, endExclusive - safeLimit);
         List<UnifiedMessage> items = new ArrayList<>(all.subList(startInclusive, endExclusive));
         String nextCursor = startInclusive > 0 && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
-        return new ThreadPage(items, nextCursor);
+        return new ThreadPage(items, nextCursor, all.size());
     }
 
     public UnifiedMessage findMessage(String id) throws IOException {
@@ -389,13 +396,13 @@ public class UnifiedMessageStore {
         return Math.max(1, Math.min(MAX_THREAD_LIMIT, limit));
     }
 
-    private static ThreadPage toThreadPage(List<UnifiedMessage> fetched, int safeLimit) {
+    private static ThreadPage toThreadPage(List<UnifiedMessage> fetched, int safeLimit, int messageCount) {
         boolean hasMore = fetched.size() > safeLimit;
         List<UnifiedMessage> items = hasMore
                 ? new ArrayList<>(fetched.subList(1, fetched.size()))
                 : new ArrayList<>(fetched);
         String nextCursor = hasMore && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
-        return new ThreadPage(items, nextCursor);
+        return new ThreadPage(items, nextCursor, messageCount);
     }
 
     private static String encodeThreadCursor(UnifiedMessage message) {
