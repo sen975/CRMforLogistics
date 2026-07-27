@@ -11,10 +11,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -39,15 +42,21 @@ public class UnifiedMessageStore {
         public final List<UnifiedMessage> items;
         public final String nextCursor;
         public final int messageCount;
+        public final String threadRevision;
 
         ThreadPage(List<UnifiedMessage> items, String nextCursor) {
             this(items, nextCursor, items == null ? 0 : items.size());
         }
 
         ThreadPage(List<UnifiedMessage> items, String nextCursor, int messageCount) {
+            this(items, nextCursor, messageCount, threadRevision(items));
+        }
+
+        ThreadPage(List<UnifiedMessage> items, String nextCursor, int messageCount, String threadRevision) {
             this.items = items;
             this.nextCursor = nextCursor;
             this.messageCount = messageCount;
+            this.threadRevision = threadRevision == null ? "" : threadRevision;
         }
     }
 
@@ -147,9 +156,10 @@ public class UnifiedMessageStore {
                 MessageCursor messageCursor = decoded == null ? null
                         : new MessageCursor(decoded.timestamp(), UUID.fromString(decoded.messageId()));
                 int messageCount = messageRepository.unifiedTimelineCount(userId, contactId);
+                String threadRevision = messageRepository.unifiedTimelineRevision(userId, contactId);
                 List<UnifiedMessage> fetched = messageRepository.unifiedTimeline(
                         userId, contactId, messageCursor, safeLimit + 1);
-                return toThreadPage(fetched, safeLimit, messageCount);
+                return toThreadPage(fetched, safeLimit, messageCount, threadRevision);
             } catch (Exception exception) {
                 throw databaseFailure("Unable to query contact timeline page", exception);
             }
@@ -169,7 +179,7 @@ public class UnifiedMessageStore {
         int startInclusive = Math.max(0, endExclusive - safeLimit);
         List<UnifiedMessage> items = new ArrayList<>(all.subList(startInclusive, endExclusive));
         String nextCursor = startInclusive > 0 && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
-        return new ThreadPage(items, nextCursor, all.size());
+        return new ThreadPage(items, nextCursor, all.size(), threadRevision(all));
     }
 
     public UnifiedMessage findMessage(String id) throws IOException {
@@ -396,13 +406,14 @@ public class UnifiedMessageStore {
         return Math.max(1, Math.min(MAX_THREAD_LIMIT, limit));
     }
 
-    private static ThreadPage toThreadPage(List<UnifiedMessage> fetched, int safeLimit, int messageCount) {
+    private static ThreadPage toThreadPage(List<UnifiedMessage> fetched, int safeLimit, int messageCount,
+                                           String threadRevision) {
         boolean hasMore = fetched.size() > safeLimit;
         List<UnifiedMessage> items = hasMore
                 ? new ArrayList<>(fetched.subList(1, fetched.size()))
                 : new ArrayList<>(fetched);
         String nextCursor = hasMore && !items.isEmpty() ? encodeThreadCursor(items.get(0)) : null;
-        return new ThreadPage(items, nextCursor, messageCount);
+        return new ThreadPage(items, nextCursor, messageCount, threadRevision);
     }
 
     private static String encodeThreadCursor(UnifiedMessage message) {
@@ -438,6 +449,38 @@ public class UnifiedMessageStore {
 
     private static String stableMessageId(UnifiedMessage message) {
         return ContactPointUtil.firstNonBlank(message.id, message.sourceId);
+    }
+
+    private static String threadRevision(List<UnifiedMessage> messages) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            if (messages != null) {
+                for (UnifiedMessage message : messages) {
+                    digestPart(digest, stableMessageId(message));
+                    digestPart(digest, message.channel);
+                    digestPart(digest, message.direction);
+                    digestPart(digest, message.timestamp);
+                    digestPart(digest, message.status);
+                    digestPart(digest, message.statusTimestamp);
+                    digestPart(digest, message.title);
+                    digestPart(digest, message.text);
+                    digestPart(digest, message.summary);
+                    digestPart(digest, message.bodyText);
+                    digestPart(digest, message.mediaType);
+                    digestPart(digest, message.mediaUrl);
+                    digestPart(digest, message.objectKey);
+                    digestPart(digest, message.fileName);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
+    }
+
+    private static void digestPart(MessageDigest digest, String value) {
+        digest.update((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+        digest.update((byte) 0);
     }
 
     private List<UnifiedMessage> readEmailMessages() throws IOException {

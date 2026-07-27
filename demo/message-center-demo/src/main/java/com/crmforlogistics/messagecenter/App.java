@@ -1142,9 +1142,11 @@ public class App {
       if (state.selectedPointId !== id || currentThreadLoadSeq(id) !== requestSeq) return;
       const messages = page.items || [];
       const existing = state.threadPages[id];
-      const pageMessageCount = Number((page.messageCount ?? contact?.messageCount ?? messages.length) || 0);
-      const previousPageMessageCount = existing ? existing.pageMessageCount || 0 : 0;
-      const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousPageMessageCount === pageMessageCount;
+      const pageMessageCount = Number(page.messageCount);
+      const threadRevision = String(page.threadRevision || '');
+      if (!Number.isFinite(pageMessageCount) || !threadRevision) throw new Error('线程页合同缺少版本信息');
+      const previousThreadRevision = existing ? existing.threadRevision || '' : '';
+      const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousThreadRevision === threadRevision;
       const merged = shouldKeepLoadedThread
         ? mergeThreadMessages([...existing.items, ...messages])
         : messages;
@@ -1154,6 +1156,7 @@ public class App {
         isLoadingOlder: false,
         hasLoadedInitial: true,
         pageMessageCount,
+        threadRevision: page.threadRevision,
       };
       if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
       if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
@@ -1182,6 +1185,10 @@ public class App {
       try {
         const older = await api(threadPageUrl(id, page.nextCursor));
         if (state.selectedPointId !== id || state.threadPages[id] !== page || currentThreadLoadSeq(id) !== requestSeq) return;
+        if ((older.threadRevision || '') !== (page.threadRevision || '')) {
+          await loadThread(id, false);
+          return;
+        }
         page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
         page.nextCursor = older.nextCursor || null;
         const contact = state.contacts.find(c => c.id === id);

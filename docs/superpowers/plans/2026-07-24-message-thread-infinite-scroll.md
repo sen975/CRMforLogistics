@@ -4,7 +4,7 @@
 
 **Goal:** 让 `demo/message-center-demo` 当前消息展示页默认每个联系人只加载最近 10 条消息，并在消息窗口向上滚到顶部时继续加载更早消息。
 
-**Architecture:** 后端 `UnifiedMessageStore` 增加稳定的线程页模型，旧 `/api/threads` 返回 `{ items, nextCursor }` 页对象；前端内嵌 JS 只保存当前联系人已加载页，并在 `#thread` 滚动到顶部附近时请求更早一页。旧 `thread(String)` 保持原行为供现有测试和调用链使用，分页语义贴近 OpenAPI v1 的 `MessagePage`。
+**Architecture:** 后端 `UnifiedMessageStore` 增加稳定的线程页模型，旧 `/api/threads` 返回 `{ items, nextCursor, messageCount, threadRevision }` 页对象；前端内嵌 JS 只保存当前联系人已加载页，并在 `#thread` 滚动到顶部附近时请求更早一页。旧 `thread(String)` 保持原行为供现有测试和调用链使用，分页语义贴近 OpenAPI v1 的 `MessagePage`。
 
 **Tech Stack:** Java 17、JDK `HttpServer`、Gson、Maven、内嵌 HTML/CSS/JavaScript、`UnifiedMessageStoreTest` 自运行测试入口。
 
@@ -14,7 +14,7 @@
 - 保护当前工作区已有未提交改动，尤其是 `App.java` 中企业微信路由、`bubbleText`、邮件发送校验，以及 `UnifiedMessageStore.java` 中企业微信消息读取。
 - 不重写 React，不引入虚拟列表库，不改变联系人合并、拆分、未读、发送、附件预览和媒体代理语义。
 - 默认线程页大小是 10，向上滚动每次加载更早 10 条。
-- 后端拥有消息排序、cursor、limit 和 `nextCursor` 真相；前端不得用数组下标伪造全局分页。
+- 后端拥有消息排序、cursor、limit、`nextCursor`、`messageCount` 和 `threadRevision` 真相；前端不得用数组下标或联系人列表旧快照伪造全局分页。
 - 不使用深层 `offset` 分页。
 - 修改同一文件前先查看当前 diff，避免覆盖用户改动。
 
@@ -45,7 +45,7 @@
 - Consumes: `List<UnifiedMessage> thread(String contactPointId)` existing full ascending timeline.
 - Consumes: `MessageRepository.unifiedTimeline(UUID userId, UUID contactId, MessageCursor cursor, int limit)` existing database-backed timeline query.
 - Produces: `public ThreadPage threadPage(String contactPointId, String cursor, int limit) throws IOException`.
-- Produces: `public static class ThreadPage { public List<UnifiedMessage> items; public String nextCursor; }`.
+- Produces: `public static class ThreadPage { public List<UnifiedMessage> items; public String nextCursor; public int messageCount; public String threadRevision; }`.
 
 - [ ] **Step 1: 写失败测试：首次只返回最近 10 条并给出 cursor**
 

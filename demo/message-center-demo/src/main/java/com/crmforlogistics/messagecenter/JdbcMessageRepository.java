@@ -229,6 +229,41 @@ public final class JdbcMessageRepository implements MessageRepository {
     }
 
     @Override
+    public String unifiedTimelineRevision(UUID userId, UUID contactId) throws Exception {
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(contactId, "contactId");
+        return database.read(connection -> {
+            String sql = """
+                    select md5(coalesce(string_agg(
+                        m.id::text || ':' ||
+                        coalesce(m.provider_message_id,'') || ':' ||
+                        extract(epoch from m.occurred_at)::text || ':' ||
+                        m.ingest_sequence::text || ':' ||
+                        coalesce(m.current_status,'') || ':' ||
+                        extract(epoch from m.current_status_at)::text || ':' ||
+                        coalesce(m.message_kind,'') || ':' ||
+                        coalesce(m.subject,'') || ':' ||
+                        coalesce(m.body_text,''),
+                        '|' order by m.occurred_at,m.id), ''))
+                    from messages m
+                    join conversations cv on cv.id=m.conversation_id
+                    join contact_identities ci on ci.id=cv.contact_identity_id
+                    where ci.contact_id=? and
+                    """ + authorizedSql("cv");
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                int i = 1;
+                statement.setObject(i++, contactId);
+                i = bindAuthorization(statement, i, userId);
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (!rows.next()) return "";
+                    String revision = rows.getString(1);
+                    return revision == null ? "" : revision;
+                }
+            }
+        });
+    }
+
+    @Override
     public Optional<UnifiedMessage> findAuthorized(UUID userId, UUID messageId) throws Exception {
         Objects.requireNonNull(userId, "userId");
         Objects.requireNonNull(messageId, "messageId");
