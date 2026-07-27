@@ -131,7 +131,7 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 - 消息排序、cursor、limit、是否还有历史消息由 `UnifiedMessageStore` / 后续 `messaging` 模块负责。
 - 数据库模式下 `items`、`messageCount` 和 `threadRevision` 必须来自同一个 repository 读取快照，不能由 service 层三次独立查询拼装。
 - HTTP 路由只做参数解析和页对象返回，不拥有消息分页真相。
-- 前端只负责触发分页、合并页数据和保持滚动位置。
+- 前端只负责触发分页、合并页数据、保持滚动位置和维护有上界的页面缓存。单浏览器会话最多保留最近 20 个联系人线程页，每个线程最多保留 200 条已渲染消息；该上限只约束当前页面窗口，不改变后端消息真相。
 - OpenAPI v1 的 `MessagePage` 是后续前后端分离后的合同参照。
 
 ## 7. 验收标准
@@ -141,6 +141,8 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 - 多次向上滚动可以继续加载，直到 `nextCursor` 为 `null`。
 - 历史消息插入顶部后，当前阅读位置不跳动。
 - 切换联系人后，新联系人仍只加载最近 10 条。
+- 单页面访问超过 20 个联系人线程时，只保留最近访问的 20 个线程页缓存。
+- 单线程累计加载超过 200 条时，页面只保留最近 200 条渲染消息，并停止继续从当前窗口向更早消息扩展。
 - 静默刷新或新消息到达时，不清空当前已加载历史页；用户在底部附近时新消息可自动滚到底部。
 - 附件预览、点击消息详情、发送消息、联系人合并/拆分仍按现有行为工作。
 
@@ -149,7 +151,7 @@ scrollTop = newScrollHeight - oldScrollHeight + oldScrollTop
 - 后端单元测试：构造同一联系人 25 条消息，验证无 cursor 返回最近 10 条且 `nextCursor` 存在；使用 cursor 再取 10 条更早消息；最后一页返回 `nextCursor = null`。
 - 后端排序测试：同一时间戳多条消息按稳定 id 排序，cursor 不重复、不漏消息。
 - 数据库模式测试：`threadPage` 必须只调用同快照 repository 页接口，不能分别调用 count、revision 和 items 查询。
-- 前端行为探针或浏览器验收：打开联系人、顶部滚动加载、加载后保持滚动位置、`threadRevision` 不一致时重拉最新页、切换联系人后仍默认 10 条。
+- 前端行为探针或浏览器验收：打开联系人、顶部滚动加载、加载后保持滚动位置、`threadRevision` 不一致时重拉最新页、切换联系人后仍默认 10 条，并验证线程页缓存和单线程消息窗口不会无界增长。
 - 回归命令：`cd demo/message-center-demo && mvn -q -Dtest=UnifiedMessageStoreTest test`。
 - 若启动页面验收：使用非用户端口，例如 `WEB_PORT=8100`，验收结束后关闭服务并确认端口无监听。
 

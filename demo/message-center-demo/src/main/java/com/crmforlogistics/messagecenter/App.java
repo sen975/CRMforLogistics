@@ -636,7 +636,9 @@ public class App {
   <div class="toast" id="toast"></div>
   <script>
     const THREAD_PAGE_SIZE = 10;
-    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
+    const THREAD_PAGE_CACHE_LIMIT = 20;
+    const THREAD_PAGE_MAX_MESSAGES = 200;
+    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -660,6 +662,37 @@ public class App {
       let url = '/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE;
       if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
       return url;
+    }
+    function rememberThreadPageAccess(id) {
+      if (!id) return;
+      state.threadPageAccessOrder = state.threadPageAccessOrder.filter(item => item !== id);
+      state.threadPageAccessOrder.push(id);
+      trimThreadPageCache();
+    }
+    function trimThreadPageCache() {
+      const seen = new Set();
+      const liveIds = [];
+      state.threadPageAccessOrder.forEach(id => {
+        if (!id || !state.threadPages[id] || seen.has(id)) return;
+        seen.add(id);
+        liveIds.push(id);
+      });
+      while (liveIds.length > THREAD_PAGE_CACHE_LIMIT) {
+        const index = liveIds.findIndex(id => id !== state.selectedPointId);
+        const evicted = liveIds.splice(index >= 0 ? index : 0, 1)[0];
+        delete state.threadPages[evicted];
+        delete state.threadRenderKeyByContact[evicted];
+      }
+      state.threadPageAccessOrder = liveIds;
+    }
+    function limitThreadPageMessages(page) {
+      if (!page || !Array.isArray(page.items)) return page;
+      if (page.items.length > THREAD_PAGE_MAX_MESSAGES) {
+        page.items = page.items.slice(page.items.length - THREAD_PAGE_MAX_MESSAGES);
+        page.nextCursor = null;
+      }
+      if (page.items.length >= THREAD_PAGE_MAX_MESSAGES && page.nextCursor) page.nextCursor = null;
+      return page;
     }
     function formatDuration(millis) {
       return `${(Number(millis || 0) / 1000).toFixed(1)}s`;
@@ -1160,6 +1193,8 @@ public class App {
       };
       if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
       if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
+      limitThreadPageMessages(state.threadPages[id]);
+      rememberThreadPageAccess(id);
       const messagesForRender = state.threadPages[id].items;
       const key = threadRenderKey(contact, messagesForRender);
       if (keepScroll && key === state.threadRenderKeyByContact[id]) {
@@ -1191,6 +1226,8 @@ public class App {
         }
         page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
         page.nextCursor = older.nextCursor || null;
+        limitThreadPageMessages(page);
+        rememberThreadPageAccess(id);
         const contact = state.contacts.find(c => c.id === id);
         state.threadRenderKeyByContact[id] = threadRenderKey(contact, page.items);
         renderThreadMessages(contact, page.items);

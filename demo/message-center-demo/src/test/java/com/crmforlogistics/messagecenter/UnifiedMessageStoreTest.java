@@ -50,6 +50,7 @@ public class UnifiedMessageStoreTest {
         threadPageRevisionChangesWhenMessagesChangeWithoutCountChange();
         databaseThreadPageUsesLimitPlusOneAndUuidCursor();
         threadPageRejectsNonEmptyCursorMissingRequiredFields();
+        frontendThreadPageCacheIsBounded();
         exposesWecomAdapterPlaceholderAsUnavailableChannel();
         chatAppStatusRecordsUpdateOriginalMessageInsteadOfCreatingMessages();
         chatAppMediaJsonMessagesRenderCaptionAndAttachment();
@@ -1251,6 +1252,176 @@ public class UnifiedMessageStoreTest {
                 `, context);
 
                 console.log('frontend thread pagination behavior ok');
+                """;
+    }
+
+    private static void frontendThreadPageCacheIsBounded() throws Exception {
+        String html = App.pageHtml();
+
+        assertContains(html, "const THREAD_PAGE_CACHE_LIMIT = 20;");
+        assertContains(html, "const THREAD_PAGE_MAX_MESSAGES = 200;");
+        assertContains(html, "threadPageAccessOrder:[]");
+        assertContains(html, "function rememberThreadPageAccess(id)");
+        assertContains(html, "function limitThreadPageMessages(page)");
+        assertContains(html, "limitThreadPageMessages(state.threadPages[id]);");
+        assertContains(html, "rememberThreadPageAccess(id);");
+
+        Path dir = Files.createTempDirectory("message-center-frontend-cache-bound-test");
+        Path pageHtml = dir.resolve("page.html");
+        Path probe = dir.resolve("probe.mjs");
+        Files.writeString(pageHtml, html, StandardCharsets.UTF_8);
+        Files.writeString(probe, frontendThreadPageCacheProbe(), StandardCharsets.UTF_8);
+
+        Process process = new ProcessBuilder("node", probe.toString(), pageHtml.toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("frontend thread cache probe timed out");
+        }
+        if (process.exitValue() != 0) {
+            throw new AssertionError("frontend thread cache probe failed:\n" + output);
+        }
+    }
+
+    private static String frontendThreadPageCacheProbe() {
+        return """
+                import assert from 'node:assert/strict';
+                import fs from 'node:fs';
+                import vm from 'node:vm';
+
+                const html = fs.readFileSync(process.argv[2], 'utf8');
+                let script = html.match(/<script>([\\s\\S]*?)<\\/script>/)?.[1];
+                assert.ok(script, 'page must contain the embedded script');
+                script = script.replace(/\\n\\s*init\\(\\)\\.catch\\(err => toast\\(err\\.message\\)\\);\\s*$/, '');
+
+                const requests = [];
+                const responses = [];
+                const elements = new Map();
+
+                function page(start, end, nextCursor, threadRevision, messageCount) {
+                  const items = [];
+                  for (let i = start; i <= end; i++) {
+                    items.push({ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:`2026-07-10T01:${String(i).padStart(2, '0')}:00Z`, text:`message-${i}` });
+                  }
+                  return { items, nextCursor, threadRevision, messageCount };
+                }
+
+                function classList() {
+                  const values = new Set();
+                  return {
+                    add: value => values.add(value),
+                    remove: value => values.delete(value),
+                    contains: value => values.has(value),
+                    toggle: (value, force) => force === undefined ? (values.has(value) ? values.delete(value) : values.add(value)) : (force ? values.add(value) : values.delete(value))
+                  };
+                }
+
+                function element(id) {
+                  if (elements.has(id)) return elements.get(id);
+                  const el = {
+                    id,
+                    dataset: {},
+                    style: { display:'', setProperty() {} },
+                    classList: classList(),
+                    hidden: false,
+                    disabled: false,
+                    textContent: '',
+                    value: '',
+                    clientHeight: id === 'thread' ? 120 : 0,
+                    scrollHeight: id === 'thread' ? 120 : 0,
+                    scrollTop: 0,
+                    querySelectorAll: () => [],
+                    closest: () => null,
+                    appendChild() {},
+                    remove() {},
+                    click() {},
+                    addEventListener() {},
+                    focus() {}
+                  };
+                  Object.defineProperty(el, 'innerHTML', {
+                    get() { return this._innerHTML || ''; },
+                    set(value) {
+                      this._innerHTML = String(value || '');
+                      if (id === 'thread') {
+                        const count = (this._innerHTML.match(/class="message-row/g) || []).length;
+                        this.scrollHeight = Math.max(120, count * 40);
+                      }
+                    }
+                  });
+                  elements.set(id, el);
+                  return el;
+                }
+
+                const document = {
+                  activeElement: null,
+                  body: { appendChild() {} },
+                  addEventListener() {},
+                  createElement: tag => element(`created-${tag}-${elements.size}`),
+                  getElementById: id => element(id),
+                  querySelectorAll(selector) {
+                    if (selector === '.msg[data-id]') {
+                      const thread = element('thread');
+                      return [...thread.innerHTML.matchAll(/data-id="([^"]+)"/g)].map(match => ({
+                        dataset: { id: match[1] },
+                        classList: classList(),
+                        onclick: null
+                      }));
+                    }
+                    return [];
+                  }
+                };
+
+                const context = {
+                  assert,
+                  console,
+                  document,
+                  page,
+                  requests,
+                  responses,
+                  fetch: async url => {
+                    requests.push(String(url));
+                    const body = responses.shift();
+                    assert.ok(body, `unexpected fetch ${url}`);
+                    return { ok: true, json: async () => body, headers: { get: () => '' }, blob: async () => ({ type:'' }) };
+                  },
+                  setTimeout,
+                  clearTimeout,
+                  requestAnimationFrame: callback => callback(),
+                  window: { crypto: { randomUUID: () => 'uuid-1' }, open: () => null, toastTimer: null },
+                  crypto: { randomUUID: () => 'uuid-1' },
+                  URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+                  Notification: function Notification() {}
+                };
+                context.window.document = document;
+                context.globalThis = context;
+                vm.createContext(context);
+
+                await vm.runInContext(script + `
+                (async () => {
+                  for (let i = 1; i <= 25; i++) {
+                    const id = 'contact-' + i;
+                    state.contacts.push({ id, displayName:'Buyer ' + i, channels:['chatapp'], points:[{ id, channel:'chatapp', value:'86130000000' + i }] });
+                    state.selectedPointId = id;
+                    responses.push(page(i * 10 + 1, i * 10 + 10, null, 'rev-' + i, 10));
+                    await loadThread(id, false);
+                  }
+
+                  assert.equal(Object.keys(state.threadPages).length, THREAD_PAGE_CACHE_LIMIT);
+                  assert.equal(state.threadPages['contact-1'], undefined);
+                  assert.ok(state.threadPages['contact-25']);
+                  assert.equal(state.threadLoadSeqByContact['contact-1'], 1);
+
+                  const oversized = limitThreadPageMessages(page(1, 250, 'too-old', 'rev-long', 250));
+                  assert.equal(oversized.items.length, THREAD_PAGE_MAX_MESSAGES);
+                  assert.equal(oversized.items[0].id, 'm51');
+                  assert.equal(oversized.items[199].id, 'm250');
+                  assert.equal(oversized.nextCursor, null);
+                })()
+                `, context);
+
+                console.log('frontend thread cache bounds ok');
                 """;
     }
 
