@@ -1,0 +1,44 @@
+--- a/src/main/java/mytype/mycom/mygroup/RequestProcessor.java
++++ b/src/main/java/mytype/mycom/mygroup/RequestProcessor.java
+@@ -221,17 +221,9 @@
+             }
+             else
+             {
+-                //打印解密后的请求参数
+                 SpecUtil.WWSpecLogInfoWithReqId(ctx.getReqid(),
+-                        "req args corpId = " + callback.GetCorpId(),
+-                        "agentId = " + callback.GetAgentId(),
+-                        "callType = " + callback.GetCallType(),
+-                        "isAsync = " + callback.GetIsAsync(),
+-                        "jobInfo = " + callback.GetJobInfo(),
+-                        "abilityId = " + callback.GetAbilityId(),
+-                        "notifyId = " + callback.GetNotifyId(),
+-                        "data = " + callback.GetData());
+-
++                        "request accepted",
++                        "callType = " + callback.GetCallType());
+ 
+                 //根据callType来分别调用不同的用户业务逻辑处理类
+                 switch ((int) callback.GetCallType()) {
+@@ -244,9 +236,8 @@
+                     }
+                     // 专区后台通知专区程序，详见：https://developer.work.weixin.qq.com/document/53419
+                     case 2: {
+-                        DemoReceiveCallBackHandler receiveCallBackHandler = new DemoReceiveCallBackHandler();
+-                        responseContent = receiveCallBackHandler.process(callback);
+-                        break;
++                        responseContent = CommonUtils.getErrorResponse("callback notifications are unsupported");
++                        break;
+                     }
+                     default:
+                         responseContent = CommonUtils.getErrorResponse("unknown call type: " + callback.GetCallType());
+@@ -254,7 +245,8 @@
+                 }
+             }
+ 
+-            SpecUtil.WWSpecLogInfoWithReqId(ctx.getReqid(), "sdk_ver:"+ SpecUtil.GetSDKVersion(), "sz "+ responseContent.length() + " rsp " + responseContent);
++            SpecUtil.WWSpecLogInfoWithReqId(ctx.getReqid(), "sdk_ver:"+ SpecUtil.GetSDKVersion(),
++                    "response size " + responseContent.length());
+             FullHttpResponse response = buildFullResponse(callback, responseContent);
+             RequestProcessor.this.sendResponse(ctx, response);
+         }

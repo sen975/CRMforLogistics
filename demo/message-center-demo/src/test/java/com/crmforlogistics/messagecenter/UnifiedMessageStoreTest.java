@@ -2,6 +2,8 @@ package com.crmforlogistics.messagecenter;
 
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageRequest;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpContext;
 import com.sun.net.httpserver.HttpExchange;
@@ -16,13 +18,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
@@ -33,6 +38,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.HashMap;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
@@ -51,7 +57,14 @@ public class UnifiedMessageStoreTest {
         databaseThreadPageUsesLimitPlusOneAndUuidCursor();
         threadPageRejectsNonEmptyCursorMissingRequiredFields();
         frontendThreadPageCacheIsBounded();
-        exposesWecomAdapterPlaceholderAsUnavailableChannel();
+        eventHubRemovesDeadClientsWithoutWaitingForBusinessMessages();
+        eventHubSerializesWritesPerSseClient();
+        wecomViewerSignatureUsesOfficialJsapiAlgorithmAndOriginAllowlist();
+        wecomViewerSessionsAreBoundedUserScopedAndReadMessageReferences();
+        wecomViewerLoginExchangeDoesNotPublishTokenWhenAuditFails();
+        wecomViewerRoutesReturnBoundedConfigAndSessionPayloads();
+        wecomSimulationRoutesAreNotExposedAtRuntime();
+        exposesWecomAdapterAsAvailableViewerChannel();
         chatAppStatusRecordsUpdateOriginalMessageInsteadOfCreatingMessages();
         chatAppMediaJsonMessagesRenderCaptionAndAttachment();
         chatAppMediaPlaceholderTextShowsCaptionWithoutImagePrefix();
@@ -68,11 +81,19 @@ public class UnifiedMessageStoreTest {
         rendersChatAppTemplateMessagesFromTemplateCache();
         chatAppTemplateMessagesUseTemplateRequestType();
         chatAppTemplateRequestsOmitMessageType();
+        frontendAddsWeComViewerPanelWithoutReplacingExistingInteractions();
         rendersWebShellWithChineseCopyAndUnifiedSendActions();
         rendersWebShellWithPagedThreadRequestContract();
         apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit();
         rendersWebShellWithOlderThreadScrollLoader();
         frontendThreadPaginationBehaviorLoadsOlderPages();
+        emailMessagesKeepBodyTextOutOfTimelineBubble();
+        emailSendShowsValidationAndFailureFeedback();
+        mailSenderUsesSenderDomainForMessageId();
+        emailSync139DirectModeConfiguresImapsTlsProfile();
+        emailSync139DirectModeInstallsDedicatedSocketFactory();
+        emailSync139UsesOpenSslImapFallback();
+        openSslImapClientExtractsRfc822Literals();
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
@@ -482,7 +503,363 @@ public class UnifiedMessageStoreTest {
         return new UnsupportedOperationException("not used by thread page test");
     }
 
-    private static void exposesWecomAdapterPlaceholderAsUnavailableChannel() throws Exception {
+    private static void wecomViewerSignatureUsesOfficialJsapiAlgorithmAndOriginAllowlist() throws Exception {
+        Config config = new Config(Map.of(
+                "WECOM_CORP_ID", "ww-test-corp",
+                "WECOM_AGENT_ID", "1000247",
+                "WECOM_SECRET", "secret",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099,https://crm.example.com"
+        ));
+        WeComViewerService service = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(1414587457), ZoneOffset.UTC),
+                () -> "Wm3WZYTPz0wzccnW",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+
+        assertEquals("c97d4ff7bc7e97cd2e0222f9c69ee8bf2fcc3bfe",
+                WeComViewerService.makeSignature("sM4AOVdWfPE4DxkXGEs8VMP",
+                        "http://mp.weixin.qq.com?params=value",
+                        1414587457L,
+                        "Wm3WZYTPz0wzccnW"));
+
+        WeComViewerService.JsSdkConfig js = service.jsSdkConfig("http://localhost:8099/?a=1#ignored");
+        assertEquals("ww-test-corp", js.corpId());
+        assertEquals("1000247", js.agentId());
+        assertTrue(js.jsApiList().contains("wwapp.invokeJsApiByCallInfo"),
+                "conversation viewer must request wwapp.invokeJsApiByCallInfo");
+        assertEquals("1414587457", js.configSignature().timestamp());
+        assertEquals("Wm3WZYTPz0wzccnW", js.configSignature().nonceStr());
+        assertFalse(js.configSignature().signature().isBlank(), "config signature must be populated");
+        assertFalse(js.agentConfigSignature().signature().isBlank(), "agent signature must be populated");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.jsSdkConfig("https://evil.example.com/page"));
+    }
+
+    private static void wecomViewerSessionsAreBoundedUserScopedAndReadMessageReferences() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-viewer-test");
+        Path dataFile = dir.resolve("wecom-messages.jsonl");
+        Files.writeString(dataFile, ""
+                + "{\"msgid\":\"m1\",\"secret_key\":\"s1\",\"external_userid\":\"ext-1\",\"userid\":\"user-1\",\"open_kfid\":\"kf-1\",\"send_time\":1,\"msgtype\":\"text\",\"text\":{\"content\":\"one\"}}\n"
+                + "not-json\n"
+                + "{\"msgid\":\"m2\",\"secretKey\":\"s2\",\"external_userid\":\"ext-1\",\"wecom_userid\":\"user-1\",\"open_kfid\":\"kf-1\",\"send_time\":2,\"msgtype\":\"text\",\"text\":{\"content\":\"two\"}}\n"
+                + "{\"msgid\":\"m4\",\"secret_key\":\"s4\",\"external_userid\":\"ext-1\",\"userid\":\"user-1\",\"open_kfid\":\"kf-1\",\"send_time\":4,\"msgtype\":\"text\",\"text\":{\"content\":\"four\"}}\n"
+                + "{\"msgid\":\"m3\",\"secret_key\":\"s3\",\"external_userid\":\"ext-1\",\"userid\":\"user-1\",\"open_kfid\":\"kf-1\",\"send_time\":3,\"msgtype\":\"text\",\"text\":{\"content\":\"three\"}}\n"
+                + "{\"msgid\":\"m3\",\"secret_key\":\"s3\",\"external_userid\":\"ext-2\",\"userid\":\"user-2\",\"open_kfid\":\"kf-1\",\"send_time\":3,\"msgtype\":\"text\",\"text\":{\"content\":\"three\"}}\n",
+                StandardCharsets.UTF_8);
+        Config config = new Config(Map.of(
+                "DATA_DIR", dir.toString(),
+                "WECOM_DATA_FILE", dataFile.toString(),
+                "WECOM_CORP_ID", "ww-test-corp",
+                "WECOM_AGENT_ID", "1000247",
+                "WECOM_SECRET", "secret",
+                "WECOM_VIEWER_SESSION_TTL_SECONDS", "60",
+                "WECOM_VIEWER_MAX_MESSAGES", "2",
+                "WECOM_VIEWER_SESSION_RATE_LIMIT", "4"
+        ));
+        WeComViewerService service = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
+                () -> "nonce",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+
+        WeComViewerService.LoginExchangeResponse login = service.exchangeLoginCode("code-1");
+        assertEquals("user-1", login.wecomUserId());
+        assertFalse(login.viewerAuthToken().isBlank(), "login exchange must return a bounded viewer auth token");
+        WeComViewerService.LoginExchangeResponse secondLogin = service.exchangeLoginCode("code-2");
+
+        WeComViewerService.ViewerSessionResponse created = service.createViewerSession(
+                "wecom:ext-1", login.viewerAuthToken());
+        assertEquals(60, created.expiresIn());
+        assertFalse(created.viewerSessionId().isBlank(), "viewer session id must be generated");
+
+        assertThrows(SecurityException.class,
+                () -> service.createViewerSession("wecom:ext-2", login.viewerAuthToken()));
+        assertThrows(SecurityException.class,
+                () -> service.viewerSession(created.viewerSessionId(), secondLogin.viewerAuthToken()));
+
+        WeComViewerService.ViewerSessionDetail detail = service.viewerSession(
+                created.viewerSessionId(), login.viewerAuthToken());
+        assertEquals("ww-test-corp", detail.corpId());
+        assertEquals("1000247", detail.agentId());
+        assertEquals(2, detail.messages().size());
+        assertEquals("m3", detail.messages().get(0).msgid());
+        assertEquals("s3", detail.messages().get(0).secretKey());
+        assertEquals("m4", detail.messages().get(1).msgid());
+        assertEquals("s4", detail.messages().get(1).secretKey());
+
+        assertThrows(SecurityException.class,
+                () -> service.viewerSession(created.viewerSessionId(), "other-token"));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.viewerSession(created.viewerSessionId(), login.viewerAuthToken()));
+
+        WeComViewerService.ViewerSessionResponse firstViewed = service.createViewerSession(
+                "wecom:ext-1", secondLogin.viewerAuthToken());
+        service.viewerSession(firstViewed.viewerSessionId(), secondLogin.viewerAuthToken());
+        WeComViewerService.ViewerSessionResponse latestViewed = service.createViewerSession(
+                "wecom:ext-1", secondLogin.viewerAuthToken());
+        service.viewerSession(latestViewed.viewerSessionId(), secondLogin.viewerAuthToken());
+        assertThrows(SecurityException.class,
+                () -> service.recordClientEvent("component_error", firstViewed.viewerSessionId(),
+                        secondLogin.viewerAuthToken()));
+        service.recordClientEvent("component_error", latestViewed.viewerSessionId(),
+                secondLogin.viewerAuthToken());
+        assertThrows(SecurityException.class,
+                () -> service.recordClientEvent("component_error", latestViewed.viewerSessionId(),
+                        secondLogin.viewerAuthToken()));
+
+        assertThrows(WeComViewerService.RateLimitException.class,
+                () -> service.createViewerSession("wecom:ext-1", login.viewerAuthToken()));
+
+        String audit = Files.readString(config.wecomViewerAuditFile(), StandardCharsets.UTF_8);
+        assertContains(audit, "wecom.viewer.login_exchange");
+        assertContains(audit, "wecom.viewer.session_create");
+        assertContains(audit, "\"result\":\"denied\"");
+        assertContains(audit, "\"result\":\"rate_limited\"");
+        assertNotContains(audit, login.viewerAuthToken());
+        assertNotContains(audit, "\"secretKey\"");
+
+        WeComViewerService empty = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(2000), ZoneOffset.UTC),
+                () -> "nonce",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+        assertThrows(SecurityException.class,
+                () -> empty.viewerSession(created.viewerSessionId(), login.viewerAuthToken()));
+    }
+
+    private static void wecomViewerLoginExchangeDoesNotPublishTokenWhenAuditFails() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-viewer-audit-failure-test");
+        Path auditFile = dir.resolve("wecom-viewer-audit.jsonl");
+        Files.write(auditFile, new byte[4096]);
+        Config config = new Config(Map.of(
+                "DATA_DIR", dir.toString(),
+                "WECOM_VIEWER_AUDIT_FILE", auditFile.toString(),
+                "WECOM_VIEWER_AUDIT_MAX_BYTES", "4096"
+        ));
+        WeComViewerService service = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
+                () -> "nonce",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+
+        assertThrows(IOException.class, () -> service.exchangeLoginCode("code-1"));
+        assertEquals(0, service.activeViewerAuthTokenCount());
+    }
+
+    private static void wecomViewerRoutesReturnBoundedConfigAndSessionPayloads() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-viewer-route-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Path wecomData = dir.resolve("wecom.jsonl");
+        Path chatDataPrivateKey = dir.resolve("wecom-chatdata-private-key.pem");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Files.writeString(chatDataPrivateKey, "test-key", StandardCharsets.UTF_8);
+        Files.writeString(wecomData, ""
+                + "{\"msgid\":\"m1\",\"secret_key\":\"s1\",\"external_userid\":\"ext-1\",\"userid\":\"user-1\",\"open_kfid\":\"kf-1\",\"send_time\":1,\"msgtype\":\"text\"}\n"
+                + "{\"msgid\":\"m2\",\"secret_key\":\"s2\",\"external_userid\":\"ext-2\",\"userid\":\"user-2\",\"open_kfid\":\"kf-1\",\"send_time\":2,\"msgtype\":\"text\"}\n",
+                StandardCharsets.UTF_8);
+        Config config = new Config(Map.ofEntries(
+                Map.entry("DATA_DIR", dir.toString()),
+                Map.entry("EMAIL_DATA_DIR", emailData.toString()),
+                Map.entry("CHATAPP_DATA_FILE", chatData.resolve("messages.jsonl").toString()),
+                Map.entry("CHATAPP_TEMPLATE_FILE", dir.resolve("templates.json").toString()),
+                Map.entry("WECOM_DATA_FILE", wecomData.toString()),
+                Map.entry("WECOM_SUITE_ID", "dk-test-suite"),
+                Map.entry("WECOM_LOGIN_AUTH_CORP_ID", "ww-test-corp"),
+                Map.entry("WECOM_CHATDATA_PROGRAM_ID", "program-1"),
+                Map.entry("WECOM_CHATDATA_ABILITY_ID", "ability-1"),
+                Map.entry("WECOM_CHATDATA_PRIVATE_KEY_FILE", chatDataPrivateKey.toString()),
+                Map.entry("WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099")
+        ));
+        byte[] installationKey = new byte[32];
+        java.util.Arrays.fill(installationKey, (byte) 7);
+        WeComAuthorizationStore authorizationStore = WeComAuthorizationStore.forTests(
+                dir.resolve("wecom-authorizations.jsonl"),
+                CredentialCipher.fromBase64Key(Base64.getEncoder().encodeToString(installationKey)),
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC));
+        authorizationStore.upsertActive("dk-test-suite", "ww-test-corp", "1000247", "permanent-code");
+        UnifiedMessageStore store = new UnifiedMessageStore(config);
+        WeComViewerService viewer = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
+                () -> "nonce",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                authorizationStore);
+        WeComLoginAttemptService loginAttempts = WeComLoginAttemptService.forTests(config, authorizationStore,
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
+                () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        FakeHttpExchange configExchange = new FakeHttpExchange(
+                "GET", "/api/v1/wecom/js-sdk-config?url=http%3A%2F%2Flocalhost%3A8099%2F");
+        App.routeForTests(configExchange, config, store, viewer);
+        assertEquals(403, configExchange.responseCode);
+
+        FakeHttpExchange attemptExchange = new FakeHttpExchange("POST", "/api/v1/wecom/login/attempts");
+        attemptExchange.requestBodyJson("{}");
+        App.routeForTests(attemptExchange, config, store, viewer, loginAttempts);
+        assertEquals(200, attemptExchange.responseCode);
+        JsonObject attempt = JsonParser.parseString(attemptExchange.responseText()).getAsJsonObject();
+        assertContains(attemptExchange.responseText(), "\"corpId\": \"ww-test-corp\"");
+        assertContains(attemptExchange.responseText(), "\"redirectUri\": \"http://localhost:8099/\"");
+        assertNotContains(attemptExchange.responseText(), "secret");
+        String loginState = attempt.get("state").getAsString();
+
+        FakeHttpExchange loginExchange = new FakeHttpExchange("POST", "/api/v1/wecom/login/exchange");
+        loginExchange.requestBodyJson("{\"code\":\"code-1\",\"state\":\"" + loginState + "\"}");
+        App.routeForTests(loginExchange, config, store, viewer, loginAttempts);
+        assertEquals(200, loginExchange.responseCode);
+        assertContains(loginExchange.responseText(), "\"wecomUserId\": \"user-1\"");
+        String viewerAuthToken = JsonParser.parseString(loginExchange.responseText()).getAsJsonObject()
+                .get("viewerAuthToken").getAsString();
+
+        FakeHttpExchange authenticatedConfig = new FakeHttpExchange(
+                "GET", "/api/v1/wecom/js-sdk-config?url=http%3A%2F%2Flocalhost%3A8099%2F");
+        authenticatedConfig.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        App.routeForTests(authenticatedConfig, config, store, viewer);
+        assertEquals(200, authenticatedConfig.responseCode);
+        assertContains(authenticatedConfig.responseText(), "\"corpId\": \"ww-test-corp\"");
+        assertContains(authenticatedConfig.responseText(), "wwapp.invokeJsApiByCallInfo");
+        assertNotContains(authenticatedConfig.responseText(), "permanent-code");
+
+        FakeHttpExchange replayedLogin = new FakeHttpExchange("POST", "/api/v1/wecom/login/exchange");
+        replayedLogin.requestBodyJson("{\"code\":\"code-2\",\"state\":\"" + loginState + "\"}");
+        App.routeForTests(replayedLogin, config, store, viewer, loginAttempts);
+        assertEquals(403, replayedLogin.responseCode);
+        assertContains(replayedLogin.responseText(), "\"code\": \"FORBIDDEN\"");
+
+        FakeHttpExchange missingStateLogin = new FakeHttpExchange("POST", "/api/v1/wecom/login/exchange");
+        missingStateLogin.requestBodyJson("{\"code\":\"code-3\"}");
+        App.routeForTests(missingStateLogin, config, store, viewer, loginAttempts);
+        assertEquals(403, missingStateLogin.responseCode);
+
+        FakeHttpExchange secretAttempt = new FakeHttpExchange("POST", "/api/v1/wecom/login/attempts");
+        secretAttempt.requestBodyJson("{\"secret\":\"must-not-be-accepted\"}");
+        App.routeForTests(secretAttempt, config, store, viewer, loginAttempts);
+        assertEquals(400, secretAttempt.responseCode);
+
+        AtomicInteger syncCalls = new AtomicInteger();
+        WeComChatDataSyncService syncService = WeComChatDataSyncService.forTests(config,
+                (installation, cursor, limit, timeout) -> {
+                    syncCalls.incrementAndGet();
+                    return new WeComChatDataGateway.ProgramPage(false, "cursor-1", List.of());
+                },
+                (version, encrypted) -> "unused",
+                new WeComChatDataSyncService.StoreAccess() {
+                    @Override public String cursor(WeComChatDataStore.SyncKey key) {
+                        return "";
+                    }
+
+                    @Override public WeComChatDataStore.PublishResult publish(
+                            WeComChatDataStore.SyncKey key, String nextCursor,
+                            List<WeComChatDataStore.DecryptedMessage> messages) {
+                        return new WeComChatDataStore.PublishResult(0, 0);
+                    }
+                },
+                (action, result, userId) -> { });
+        FakeHttpExchange missingSyncExchange = new FakeHttpExchange(
+                "POST", "/api/v1/wecom/conversation-view/sessions");
+        missingSyncExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\","
+                + "\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
+        App.routeForTests(missingSyncExchange, config, store, viewer, loginAttempts);
+        assertEquals(503, missingSyncExchange.responseCode);
+        assertContains(missingSyncExchange.responseText(), "WECOM_CHATDATA_NOT_CONFIGURED");
+        assertEquals(0, syncCalls.get());
+
+        FakeHttpExchange createExchange = new FakeHttpExchange("POST", "/api/v1/wecom/conversation-view/sessions");
+        createExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\",\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
+        App.routeForTests(createExchange, config, store, viewer, loginAttempts, syncService);
+        assertEquals(200, createExchange.responseCode);
+        assertEquals(1, syncCalls.get());
+        String sessionId = JsonParser.parseString(createExchange.responseText()).getAsJsonObject()
+                .get("viewerSessionId").getAsString();
+
+        FakeHttpExchange detailExchange = new FakeHttpExchange(
+                "GET", "/api/v1/wecom/conversation-view/sessions/" + sessionId);
+        detailExchange.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        App.routeForTests(detailExchange, config, store, viewer);
+        assertEquals(200, detailExchange.responseCode);
+        assertContains(detailExchange.responseText(), "\"msgid\": \"m1\"");
+        assertContains(detailExchange.responseText(), "\"secretKey\": \"s1\"");
+
+        FakeHttpExchange eventWithSecret = new FakeHttpExchange(
+                "POST", "/api/v1/wecom/conversation-view/events");
+        eventWithSecret.requestBodyJson("{\"eventType\":\"component_error\","
+                + "\"viewerSessionId\":\"" + sessionId + "\",\"secretKey\":\"must-not-be-accepted\"}");
+        eventWithSecret.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        App.routeForTests(eventWithSecret, config, store, viewer);
+        assertEquals(400, eventWithSecret.responseCode);
+        assertContains(eventWithSecret.responseText(), "\"code\": \"INVALID_REQUEST\"");
+
+        FakeHttpExchange componentErrorExchange = new FakeHttpExchange(
+                "POST", "/api/v1/wecom/conversation-view/events");
+        componentErrorExchange.requestBodyJson("{\"eventType\":\"component_error\","
+                + "\"viewerSessionId\":\"" + sessionId + "\"}");
+        componentErrorExchange.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        App.routeForTests(componentErrorExchange, config, store, viewer);
+        assertEquals(202, componentErrorExchange.responseCode);
+
+        FakeHttpExchange replayedComponentError = new FakeHttpExchange(
+                "POST", "/api/v1/wecom/conversation-view/events");
+        replayedComponentError.requestBodyJson("{\"eventType\":\"component_error\","
+                + "\"viewerSessionId\":\"" + sessionId + "\"}");
+        replayedComponentError.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        App.routeForTests(replayedComponentError, config, store, viewer);
+        assertEquals(403, replayedComponentError.responseCode);
+
+        FakeHttpExchange otherOwnerExchange = new FakeHttpExchange("POST", "/api/v1/wecom/conversation-view/sessions");
+        otherOwnerExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-2\",\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
+        App.routeForTests(otherOwnerExchange, config, store, viewer, loginAttempts, syncService);
+        assertEquals(403, otherOwnerExchange.responseCode);
+        assertContains(otherOwnerExchange.responseText(), "\"code\": \"FORBIDDEN\"");
+
+        FakeHttpExchange missingPointExchange = new FakeHttpExchange("POST", "/api/v1/wecom/conversation-view/sessions");
+        missingPointExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-missing\",\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
+        App.routeForTests(missingPointExchange, config, store, viewer);
+        assertEquals(403, missingPointExchange.responseCode);
+        assertContains(missingPointExchange.responseText(), "\"code\": \"FORBIDDEN\"");
+        assertContains(Files.readString(config.wecomViewerAuditFile(), StandardCharsets.UTF_8),
+                "wecom.viewer.access_check");
+
+        FakeHttpExchange oversizedLogin = new FakeHttpExchange("POST", "/api/v1/wecom/login/exchange");
+        oversizedLogin.requestBodyJson("{\"code\":\"" + "x".repeat(4097) + "\"}");
+        App.routeForTests(oversizedLogin, config, store, viewer);
+        assertEquals(400, oversizedLogin.responseCode);
+        assertContains(oversizedLogin.responseText(), "\"code\": \"INVALID_REQUEST\"");
+    }
+
+    private static void wecomSimulationRoutesAreNotExposedAtRuntime() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-token-route-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Config config = testConfig(dir, emailData, chatData.resolve("messages.jsonl"));
+        UnifiedMessageStore store = new UnifiedMessageStore(config);
+        WeComViewerService viewer = WeComViewerService.forTests(
+                config,
+                Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
+                () -> "nonce",
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+        for (String route : List.of(
+                "/webhook/wecom",
+                "/api/wecom/sync_msg", "/api/v1/wecom/sync_msg",
+                "/api/wecom/messages", "/api/v1/wecom/messages",
+                "/api/wecom/gettoken", "/api/v1/wecom/gettoken",
+                "/api/wecom/login/attempts")) {
+            String method = route.endsWith("gettoken") ? "GET" : "POST";
+            FakeHttpExchange exchange = new FakeHttpExchange(method, route);
+            if ("POST".equals(method)) exchange.requestBodyJson("{}");
+
+            App.routeForTests(exchange, config, store, viewer);
+
+            assertEquals(404, exchange.responseCode);
+        }
+        assertFalse(Files.exists(config.wecomDataFile()), "simulation routes must not write WECOM_DATA_FILE");
+    }
+
+    private static void exposesWecomAdapterAsAvailableViewerChannel() throws Exception {
         Path dir = Files.createTempDirectory("message-center-wecom-test");
         Path emailData = dir.resolve("email");
         Path chatData = dir.resolve("chatapp");
@@ -493,8 +870,7 @@ public class UnifiedMessageStoreTest {
         ChannelCapability capability = store.channelCapability("wecom");
 
         assertEquals("wecom", capability.channel);
-        assertEquals("false", Boolean.toString(capability.available));
-        assertContains(capability.reason, "reserved");
+        assertEquals("true", Boolean.toString(capability.available));
     }
 
     private static void chatAppStatusRecordsUpdateOriginalMessageInsteadOfCreatingMessages() throws Exception {
@@ -989,10 +1365,64 @@ public class UnifiedMessageStoreTest {
         assertNotContains(html, "href=\"${esc(m.mediaUrl)}\"");
         assertNotContains(html, "target=\"_blank\" rel=\"noreferrer\">打开附件</a>");
         assertNotContains(html, "::-webkit-scrollbar { width:0; height:0; }");
-        assertContains(html, "企业微信 API 接入位已预留");
+        assertNotContains(html, "企业微信 API 接入位已预留");
         assertNotContains(html, "缁熶竴");
         assertNotContains(html, "閭欢");
         assertNotContains(html, "宸插彂");
+    }
+
+    private static void frontendAddsWeComViewerPanelWithoutReplacingExistingInteractions() {
+        String html = App.pageHtml();
+
+        assertContains(html, "id=\"wecomLoginScreen\"");
+        assertContains(html, "id=\"wwLoginPanel\"");
+        assertContains(html, "id=\"shell\" hidden");
+        assertContains(html, "function initWeComLogin()");
+        assertContains(html, "ww.createWWLoginPanel({");
+        assertContains(html, "redirect_type: 'callback'");
+        assertContains(html, "onLoginSuccess({ code })");
+        assertContains(html, "/api/v1/wecom/login/attempts");
+        assertContains(html, "/api/v1/wecom/login/exchange");
+        assertContains(html, "function currentWeComAuth()");
+        assertContains(html, "function renderWeComViewerPanel(contact)");
+        assertContains(html, "function loadWeComViewer(contact)");
+        assertContains(html, "function ensureWeComViewerSdk(config)");
+        assertContains(html, "function loadWeComSdk()");
+        assertContains(html, "const WECOM_SDK_SRC = 'https://wwcdn.weixin.qq.com/node/open/js/wecom-jssdk-2.3.4.js'");
+        assertContains(html, "const WECOM_JWXWORK_SRC = 'https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js'");
+        assertContains(html, "const WECOM_LOGIN_EXPIRED_MARKERS = ['42006','42003','40029','Missing open sid']");
+        assertNotContains(html, "<script src=\"https://wwcdn.weixin.qq.com/node/open/js/wecom-jssdk-2.3.4.js\"></script>");
+        assertContains(html, "企业微信 JS-SDK 加载超时");
+        assertContains(html, "weComSdkLoadPromise = null;");
+        assertContains(html, "button.disabled = true;");
+        assertContains(html, "正在同步企业微信会话");
+        assertContains(html, "button.disabled = false;");
+        assertContains(html, "function mountWeComOpenDataFrame(detail, viewerAuthToken)");
+        assertContains(html, "ww.register({");
+        assertContains(html, "await ww.initOpenData();");
+        assertContains(html, "ww.createOpenDataFrameFactory()");
+        assertContains(html, "/api/v1/wecom/js-sdk-config");
+        assertContains(html, "/api/v1/wecom/conversation-view/sessions");
+        assertContains(html, "/api/v1/wecom/conversation-view/events");
+        assertContains(html, "reportWeComViewerEvent");
+        assertContains(html, "'wwapp.invokeJsApiByCallInfo'");
+        assertContains(html, "binderror=\"handleMessageError\"");
+        assertContains(html, "handleModal({ modalUrl, modalSize })");
+        assertContains(html, "X-WeCom-Viewer-Auth");
+        assertNotContains(html, "企业微信 API 接入位已预留");
+        assertContains(html, "renderChatMode(state.selectedMode, point?.value || '');");
+        assertContains(html, "if (state.selectedChannel === 'email')");
+        assertContains(html, "if (state.selectedChannel === 'chatapp')");
+        assertNotContains(html, "${ch==='wecom'?'disabled':''}");
+        assertNotContains(html, "demo-local-code");
+        assertNotContains(html, "?viewerAuthToken=");
+        assertNotContains(html, "function wecomAuthCode()");
+        assertNotContains(html, "new URLSearchParams(window.location.search).get('code')");
+        assertNotContains(html, "localStorage");
+        assertNotContains(html, "sessionStorage");
+        assertNotContains(html, "init().catch(err => toast(err.message))");
+        assertTrue(html.indexOf("initWeComLogin().catch") >= 0,
+                "WeCom login must be the page bootstrap entry");
     }
 
     private static void rendersWebShellWithPagedThreadRequestContract() {
@@ -1113,6 +1543,7 @@ public class UnifiedMessageStoreTest {
                 let script = html.match(/<script>([\\s\\S]*?)<\\/script>/)?.[1];
                 assert.ok(script, 'page must contain the embedded script');
                 script = script.replace(/\\n\\s*init\\(\\)\\.catch\\(err => toast\\(err\\.message\\)\\);\\s*$/, '');
+                script = script.replace(/\\n\\s*initWeComLogin\\(\\)\\.catch\\(showWeComLoginError\\);\\s*$/, '');
 
                 const requests = [];
                 const responses = [
@@ -1200,7 +1631,9 @@ public class UnifiedMessageStoreTest {
                   assert,
                   console,
                   document,
+                  page,
                   requests,
+                  responses,
                   fetch: async url => {
                     requests.push(String(url));
                     const body = responses.shift();
@@ -1295,6 +1728,7 @@ public class UnifiedMessageStoreTest {
                 let script = html.match(/<script>([\\s\\S]*?)<\\/script>/)?.[1];
                 assert.ok(script, 'page must contain the embedded script');
                 script = script.replace(/\\n\\s*init\\(\\)\\.catch\\(err => toast\\(err\\.message\\)\\);\\s*$/, '');
+                script = script.replace(/\\n\\s*initWeComLogin\\(\\)\\.catch\\(showWeComLoginError\\);\\s*$/, '');
 
                 const requests = [];
                 const responses = [];
@@ -1425,6 +1859,111 @@ public class UnifiedMessageStoreTest {
                 """;
     }
 
+    private static void eventHubRemovesDeadClientsWithoutWaitingForBusinessMessages() throws Exception {
+        Class<?> eventHubClass = Class.forName(App.class.getName() + "$EventHub");
+        java.lang.reflect.Constructor<?> constructor = eventHubClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        Object hub = constructor.newInstance();
+        java.lang.reflect.Method connect = eventHubClass.getDeclaredMethod("connect", HttpExchange.class);
+        java.lang.reflect.Method heartbeat = eventHubClass.getDeclaredMethod("heartbeat");
+        java.lang.reflect.Method close = eventHubClass.getDeclaredMethod("close");
+        java.lang.reflect.Field clients = eventHubClass.getDeclaredField("clients");
+        connect.setAccessible(true);
+        heartbeat.setAccessible(true);
+        close.setAccessible(true);
+        clients.setAccessible(true);
+
+        try {
+            CloseAwareHttpExchange healthy = new CloseAwareHttpExchange("GET", "/events");
+            connect.invoke(hub, healthy);
+            assertEquals(1, ((List<?>) clients.get(hub)).size());
+
+            healthy.failWrites = true;
+            heartbeat.invoke(hub);
+            assertEquals(0, ((List<?>) clients.get(hub)).size());
+            assertTrue(healthy.closed, "heartbeat should close stale SSE exchange");
+
+            CloseAwareHttpExchange failingInitialWrite = new CloseAwareHttpExchange("GET", "/events");
+            failingInitialWrite.failWrites = true;
+            try {
+                connect.invoke(hub, failingInitialWrite);
+                throw new AssertionError("connect should surface initial SSE write failure");
+            } catch (java.lang.reflect.InvocationTargetException exception) {
+                assertTrue(exception.getCause() instanceof IOException, "connect failure should be an IOException");
+            }
+            assertEquals(0, ((List<?>) clients.get(hub)).size());
+            assertTrue(failingInitialWrite.closed, "failed initial SSE exchange should be closed");
+
+            HeaderFailingHttpExchange failingHeaders = new HeaderFailingHttpExchange("GET", "/events");
+            try {
+                connect.invoke(hub, failingHeaders);
+                throw new AssertionError("connect should surface SSE header failure");
+            } catch (java.lang.reflect.InvocationTargetException exception) {
+                Throwable cause = exception.getCause();
+                assertTrue(cause instanceof IOException, "header failure should be an IOException but was " + cause);
+            }
+            assertEquals(0, ((List<?>) clients.get(hub)).size());
+            assertTrue(failingHeaders.closed, "failed SSE header exchange should be closed");
+        } finally {
+            close.invoke(hub);
+        }
+    }
+
+    private static void eventHubSerializesWritesPerSseClient() throws Exception {
+        Class<?> eventHubClass = Class.forName(App.class.getName() + "$EventHub");
+        java.lang.reflect.Constructor<?> constructor = eventHubClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        Object hub = constructor.newInstance();
+        java.lang.reflect.Method connect = eventHubClass.getDeclaredMethod("connect", HttpExchange.class);
+        java.lang.reflect.Method heartbeat = eventHubClass.getDeclaredMethod("heartbeat");
+        java.lang.reflect.Method publish = eventHubClass.getDeclaredMethod("publish", UnifiedMessage.class);
+        java.lang.reflect.Method close = eventHubClass.getDeclaredMethod("close");
+        connect.setAccessible(true);
+        heartbeat.setAccessible(true);
+        publish.setAccessible(true);
+        close.setAccessible(true);
+
+        ConcurrentWriteHttpExchange exchange = new ConcurrentWriteHttpExchange("GET", "/events");
+        try {
+            connect.invoke(hub, exchange);
+            exchange.blockWrites = true;
+            Thread heartbeatThread = new Thread(() -> invokeUnchecked(heartbeat, hub), "sse-heartbeat-test");
+            heartbeatThread.start();
+            assertTrue(exchange.firstWriteEntered.await(2, TimeUnit.SECONDS), "heartbeat write should enter response stream");
+
+            Thread publishThread = new Thread(() -> invokeUnchecked(publish, hub, testSseMessage()), "sse-publish-test");
+            publishThread.start();
+            assertFalse(exchange.secondWriteEntered.await(150, TimeUnit.MILLISECONDS),
+                    "business publish must not enter the same SSE stream while heartbeat write is active");
+
+            exchange.releaseWrites.countDown();
+            heartbeatThread.join(2000);
+            publishThread.join(2000);
+            assertFalse(heartbeatThread.isAlive(), "heartbeat test thread should finish");
+            assertFalse(publishThread.isAlive(), "publish test thread should finish");
+            assertFalse(exchange.concurrentWriteDetected.get(), "SSE response writes must be serialized per client");
+        } finally {
+            exchange.releaseWrites.countDown();
+            close.invoke(hub);
+        }
+    }
+
+    private static UnifiedMessage testSseMessage() {
+        UnifiedMessage message = new UnifiedMessage();
+        message.id = "sse-message-1";
+        message.channel = "chatapp";
+        message.text = "hello";
+        return message;
+    }
+
+    private static void invokeUnchecked(java.lang.reflect.Method method, Object target, Object... args) {
+        try {
+            method.invoke(target, args);
+        } catch (Exception exception) {
+            throw new RuntimeException(exception);
+        }
+    }
+
     private static void chatAppTextMessagesUseMessageBodyAsContactPreview() throws Exception {
         Path dir = Files.createTempDirectory("message-center-chat-preview-test");
         Path emailData = dir.resolve("email");
@@ -1445,6 +1984,119 @@ public class UnifiedMessageStoreTest {
 
         List<UnifiedContact> contacts = store.contacts();
         assertEquals("Actual WhatsApp body", contacts.get(0).lastText);
+    }
+
+    private static void emailMessagesKeepBodyTextOutOfTimelineBubble() {
+        String html = App.pageHtml();
+
+        assertContains(html, "function bubbleText(m)");
+        assertContains(html, "m.channel === 'email'");
+        assertContains(html, "const text = bubbleText(m)");
+        assertContains(html, "${text ? `<div class=\"msg-text\">${esc(text)}</div>` : ''}");
+        assertContains(html, "<h3>内容</h3><div class=\"msg-text\">${esc(m.bodyText || m.text || '')}</div>");
+        assertNotContains(html, "<div class=\"msg-text\">${esc(m.text || m.summary || '')}</div>");
+    }
+
+    private static void emailSendShowsValidationAndFailureFeedback() {
+        String html = App.pageHtml();
+
+        assertContains(html, "if (!to) { toast('请选择收件人'); return; }");
+        assertContains(html, "if (!subject) { toast('请输入邮件主题'); return; }");
+        assertContains(html, "button.disabled = true");
+        assertContains(html, "toast(`邮件发送失败：${err.message}`)");
+        assertContains(html, "button.disabled = false");
+    }
+
+    private static void mailSenderUsesSenderDomainForMessageId() throws Exception {
+        assertEquals("139.com", MailSender.messageIdDomain("13266259485@139.com", "smtp.139.com"));
+        String messageId = MailSender.messageIdHeader("13266259485@139.com", "smtp.139.com");
+        assertContains(messageId, "@139.com>");
+        assertNotContains(messageId, "@localhost");
+        assertEquals("smtp.139.com", MailSender.smtpServername("smtp.139.com", "13266259485@139.com"));
+        assertEquals("smtp.139.com", MailSender.smtpServername("10.0.0.8", "13266259485@139.com"));
+        assertEquals("203.0.113.10", MailSender.firstIpv4Address(List.of(
+                InetAddress.getByName("2001:db8::1"),
+                InetAddress.getByName("203.0.113.10"))));
+    }
+
+    private static void emailSync139DirectModeConfiguresImapsTlsProfile() {
+        Config config = new Config(Map.of(
+                "MAIL_PROVIDER", "139",
+                "IMAP_HOST", "imap.139.com",
+                "IMAP_PORT", "993",
+                "IMAP_SSL", "true",
+                "IMAP_USERNAME", "sender@139.com",
+                "IMAP_PASSWORD", "secret"
+        ));
+        Properties props = new EmailSyncService(config).imapProperties();
+
+        assertEquals("imap.139.com", props.getProperty("mail.imaps.host"));
+        assertEquals("993", props.getProperty("mail.imaps.port"));
+        assertEquals("true", props.getProperty("mail.imaps.ssl.enable"));
+        assertEquals("TLSv1.2", props.getProperty("mail.imaps.ssl.protocols"));
+        assertEquals("TLS_RSA_WITH_AES_256_GCM_SHA384", props.getProperty("mail.imaps.ssl.ciphersuites"));
+    }
+
+    private static void emailSync139DirectModeInstallsDedicatedSocketFactory() {
+        Config config = new Config(Map.of(
+                "MAIL_PROVIDER", "139",
+                "IMAP_HOST", "imap.139.com",
+                "IMAP_PORT", "993",
+                "IMAP_SSL", "true",
+                "IMAP_USERNAME", "sender@139.com",
+                "IMAP_PASSWORD", "secret"
+        ));
+        Properties props = new EmailSyncService(config).imapProperties();
+
+        assertContains(props.get("mail.imaps.ssl.socketFactory").getClass().getName(), "BouncyCastle");
+
+        Properties defaultProps = new EmailSyncService(new Config(Map.of(
+                "MAIL_PROVIDER", "default",
+                "IMAP_HOST", "imap.qq.com",
+                "IMAP_PORT", "993",
+                "IMAP_SSL", "true",
+                "IMAP_USERNAME", "sender@qq.com",
+                "IMAP_PASSWORD", "secret"
+        ))).imapProperties();
+        assertNull(defaultProps.get("mail.imaps.ssl.socketFactory"), "default provider must use the JDK socket factory");
+    }
+
+    private static void emailSync139UsesOpenSslImapFallback() {
+        Config config = new Config(Map.of(
+                "MAIL_PROVIDER", "139",
+                "IMAP_HOST", "imap.139.com",
+                "IMAP_PORT", "993",
+                "IMAP_SSL", "true",
+                "IMAP_USERNAME", "sender@139.com",
+                "IMAP_PASSWORD", "secret"
+        ));
+
+        assertTrue(new EmailSyncService(config).usesOpenSslImapFallback(), "139 should bypass JavaMail IMAP login");
+        assertFalse(new EmailSyncService(new Config(Map.of(
+                "MAIL_PROVIDER", "default",
+                "IMAP_HOST", "imap.qq.com",
+                "IMAP_PORT", "993",
+                "IMAP_SSL", "true",
+                "IMAP_USERNAME", "sender@qq.com",
+                "IMAP_PASSWORD", "secret"
+        ))).usesOpenSslImapFallback(), "default provider should keep JavaMail IMAP");
+    }
+
+    private static void openSslImapClientExtractsRfc822Literals() throws Exception {
+        String first = "Subject: One\r\n\r\nBody one";
+        String second = "Subject: Two\r\n\r\nBody two";
+        byte[] response = ("* 1 FETCH (RFC822 {" + first.getBytes(StandardCharsets.UTF_8).length + "}\r\n"
+                + first + "\r\n)\r\n"
+                + "* 2 FETCH (RFC822 {" + second.getBytes(StandardCharsets.UTF_8).length + "}\r\n"
+                + second + "\r\n)\r\n"
+                + "A004 OK FETCH completed\r\n").getBytes(StandardCharsets.UTF_8);
+
+        List<byte[]> messages = OpenSslImapClient.extractLiterals(
+                new java.io.ByteArrayInputStream(response), "A004");
+
+        assertEquals(2, messages.size());
+        assertEquals(first, new String(messages.get(0), StandardCharsets.UTF_8));
+        assertEquals(second, new String(messages.get(1), StandardCharsets.UTF_8));
     }
 
     private static void emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat() throws Exception {
@@ -1820,7 +2472,7 @@ public class UnifiedMessageStoreTest {
         private final URI uri;
         private final Headers requestHeaders = new Headers();
         private final Headers responseHeaders = new Headers();
-        private final ByteArrayInputStream requestBody = new ByteArrayInputStream(new byte[0]);
+        private ByteArrayInputStream requestBody = new ByteArrayInputStream(new byte[0]);
         private final ByteArrayOutputStream responseBody = new ByteArrayOutputStream();
         int responseCode;
 
@@ -1833,6 +2485,11 @@ public class UnifiedMessageStoreTest {
             return responseBody.toString(StandardCharsets.UTF_8);
         }
 
+        void requestBodyJson(String json) {
+            requestHeaders.set("Content-Type", "application/json");
+            requestBody = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8));
+        }
+
         @Override public Headers getRequestHeaders() { return requestHeaders; }
         @Override public Headers getResponseHeaders() { return responseHeaders; }
         @Override public URI getRequestURI() { return uri; }
@@ -1841,7 +2498,7 @@ public class UnifiedMessageStoreTest {
         @Override public void close() {}
         @Override public InputStream getRequestBody() { return requestBody; }
         @Override public OutputStream getResponseBody() { return responseBody; }
-        @Override public void sendResponseHeaders(int responseCode, long responseLength) { this.responseCode = responseCode; }
+        @Override public void sendResponseHeaders(int responseCode, long responseLength) throws IOException { this.responseCode = responseCode; }
         @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(0); }
         @Override public int getResponseCode() { return responseCode; }
         @Override public InetSocketAddress getLocalAddress() { return new InetSocketAddress(0); }
@@ -1850,6 +2507,95 @@ public class UnifiedMessageStoreTest {
         @Override public void setAttribute(String name, Object value) {}
         @Override public void setStreams(InputStream input, OutputStream output) {}
         @Override public HttpPrincipal getPrincipal() { return null; }
+    }
+
+    private static class CloseAwareHttpExchange extends FakeHttpExchange {
+        private final OutputStream failingResponseBody = new OutputStream() {
+            @Override public void write(int b) throws IOException {
+                if (failWrites) {
+                    throw new IOException("client disconnected");
+                }
+            }
+
+            @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+                if (failWrites) {
+                    throw new IOException("client disconnected");
+                }
+            }
+
+            @Override public void flush() throws IOException {
+                if (failWrites) {
+                    throw new IOException("client disconnected");
+                }
+            }
+        };
+        boolean closed;
+        private boolean failWrites;
+
+        CloseAwareHttpExchange(String method, String uri) {
+            super(method, uri);
+        }
+
+        @Override public OutputStream getResponseBody() {
+            return failingResponseBody;
+        }
+
+        @Override public void close() {
+            closed = true;
+        }
+    }
+
+    private static class HeaderFailingHttpExchange extends CloseAwareHttpExchange {
+        HeaderFailingHttpExchange(String method, String uri) {
+            super(method, uri);
+        }
+
+        @Override public void sendResponseHeaders(int responseCode, long responseLength) throws IOException {
+            throw new IOException("client disconnected before headers");
+        }
+    }
+
+    private static class ConcurrentWriteHttpExchange extends FakeHttpExchange {
+        private final CountDownLatch firstWriteEntered = new CountDownLatch(1);
+        private final CountDownLatch secondWriteEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseWrites = new CountDownLatch(1);
+        private final AtomicInteger activeWrites = new AtomicInteger();
+        private final AtomicBoolean concurrentWriteDetected = new AtomicBoolean();
+        private boolean blockWrites;
+
+        ConcurrentWriteHttpExchange(String method, String uri) {
+            super(method, uri);
+        }
+
+        @Override public OutputStream getResponseBody() {
+            return new OutputStream() {
+                @Override public void write(int b) throws IOException {
+                    write(new byte[] { (byte) b }, 0, 1);
+                }
+
+                @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+                    if (!blockWrites) {
+                        return;
+                    }
+                    if (activeWrites.incrementAndGet() > 1) {
+                        concurrentWriteDetected.set(true);
+                        secondWriteEntered.countDown();
+                    } else {
+                        firstWriteEntered.countDown();
+                    }
+                    try {
+                        try {
+                            releaseWrites.await(2, TimeUnit.SECONDS);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("interrupted", interrupted);
+                        }
+                    } finally {
+                        activeWrites.decrementAndGet();
+                    }
+                }
+            };
+        }
     }
 
     private static void assertEquals(String expected, String actual) {
@@ -1886,6 +2632,29 @@ public class UnifiedMessageStoreTest {
         if (!condition) {
             throw new AssertionError(message);
         }
+    }
+
+    private static void assertFalse(boolean condition, String message) {
+        if (condition) {
+            throw new AssertionError(message);
+        }
+    }
+
+    private static void assertThrows(Class<? extends Throwable> expectedType, ThrowingRunnable runnable) {
+        try {
+            runnable.run();
+        } catch (Throwable actual) {
+            if (expectedType.isInstance(actual)) {
+                return;
+            }
+            throw new AssertionError("Expected " + expectedType.getSimpleName()
+                    + " but got " + actual.getClass().getSimpleName(), actual);
+        }
+        throw new AssertionError("Expected " + expectedType.getSimpleName() + " to be thrown");
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     private static int emojiSetSize(String html) {

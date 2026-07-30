@@ -20,6 +20,13 @@ const requiredPaths = [
   '/api/v1/channel-accounts',
   '/api/v1/sync/{channelType}',
   '/api/v1/events',
+  '/api/v1/wecom/js-sdk-config',
+  '/api/v1/wecom/authorization/callback',
+  '/api/v1/wecom/login/attempts',
+  '/api/v1/wecom/login/exchange',
+  '/api/v1/wecom/conversation-view/sessions',
+  '/api/v1/wecom/conversation-view/sessions/{viewerSessionId}',
+  '/api/v1/wecom/conversation-view/events',
   '/api/v1/webhooks/{channelType}'
 ];
 
@@ -186,6 +193,76 @@ assert.match(rawWebhookBody,
 assert.doesNotMatch(rawWebhookBody, /additionalProperties: true/);
 assert.doesNotMatch(contract, /^    ChannelWebhookRequest:$/m,
   'deserialized arbitrary webhook schema is forbidden');
+
+const wecomConfig = operation(operations, 'get', '/api/v1/wecom/js-sdk-config');
+assert.match(wecomConfig.body, /operationId: getWeComJsSdkConfig/);
+assert.match(wecomConfig.body, /WECOM_ALLOWED_JSAPI_ORIGINS/);
+assert.match(wecomConfig.body, /wwapp\.invokeJsApiByCallInfo/);
+assert.match(wecomConfig.body, /^        - name: X-WeCom-Viewer-Auth$/m);
+
+const wecomAuthorizationCallback = operation(operations, 'post',
+  '/api/v1/wecom/authorization/callback');
+assert.match(wecomAuthorizationCallback.body, /operationId: receiveWeComAuthorizationCallback/);
+assert.match(wecomAuthorizationCallback.body, /^      security: \[\]$/m);
+for (const parameter of ['msg_signature', 'timestamp', 'nonce']) {
+  assert.match(wecomAuthorizationCallback.body, new RegExp(`^        - name: ${parameter}$`, 'm'));
+}
+assert.match(wecomAuthorizationCallback.body, /application\/xml:/);
+assert.match(wecomAuthorizationCallback.body, /text\/plain:/);
+const wecomAuthorizationCallbackBody = schema(contract, 'WeComAuthorizationCallbackBody');
+assert.match(wecomAuthorizationCallbackBody, /maxLength: 1048576/);
+assert.doesNotMatch(wecomAuthorizationCallbackBody,
+  /permanent_code|suite_ticket|access_token|secret/i);
+assert.doesNotMatch(
+  wecomAuthorizationCallback.body.match(/^      responses:([\s\S]*)$/m)?.[1] ?? '',
+  /permanent_code|suite_ticket|access_token|secret/i,
+  'callback responses must not expose credential material');
+const wecomAuthorizationCallbackVerification = operation(operations, 'get',
+  '/api/v1/wecom/authorization/callback');
+assert.match(wecomAuthorizationCallbackVerification.body,
+  /operationId: verifyWeComAuthorizationCallback/);
+assert.match(wecomAuthorizationCallbackVerification.body, /^      security: \[\]$/m);
+for (const parameter of ['msg_signature', 'timestamp', 'nonce', 'echostr']) {
+  assert.match(wecomAuthorizationCallbackVerification.body,
+    new RegExp(`^        - name: ${parameter}$`, 'm'));
+}
+assert.match(wecomAuthorizationCallbackVerification.body, /text\/plain:/);
+
+const wecomAttempt = operation(operations, 'post', '/api/v1/wecom/login/attempts');
+assert.match(wecomAttempt.body, /operationId: createWeComLoginAttempt/);
+assert.match(wecomAttempt.body, /^      security: \[\]$/m);
+assert.match(schema(contract, 'WeComLoginAttemptResponse'),
+  /required: \[corpId, agentId, redirectUri, state, expiresIn\]/);
+assert.doesNotMatch(schema(contract, 'WeComLoginAttemptResponse'),
+  /secret|access_token|ticket|signature|viewerAuthToken/i);
+
+const wecomExchange = operation(operations, 'post', '/api/v1/wecom/login/exchange');
+assert.match(wecomExchange.body, /^      security: \[\]$/m);
+assert.match(schema(contract, 'WeComLoginExchangeRequest'), /required: \[code, state\]/);
+assert.match(schema(contract, 'WeComLoginExchangeRequest'), /^        state:$/m);
+
+const wecomSession = operation(operations, 'post', '/api/v1/wecom/conversation-view/sessions');
+assert.match(wecomSession.body, /operationId: createWeComConversationViewerSession/);
+assert.match(wecomSession.body, /read permission/);
+assert.match(wecomSession.body, /Synchronize bounded WeCom chatdata indexes/);
+for (const status of ['409', '429', '500', '502', '503', '504']) {
+  assert.match(wecomSession.body, new RegExp(`^        '${status}':$`, 'm'));
+}
+assert.match(schema(contract, 'WeComViewerSessionCreateRequest'), /required: \[contactPointId, viewerAuthToken\]/);
+assert.match(schema(contract, 'WeComViewerSessionCreateRequest'), /^        viewerAuthToken:$/m);
+assert.doesNotMatch(schema(contract, 'WeComViewerSessionCreateRequest'), /^        wecomUserId:$/m);
+const wecomSessionDetail = operation(operations, 'get', '/api/v1/wecom/conversation-view/sessions/{viewerSessionId}');
+assert.match(wecomSessionDetail.body, /^        - name: X-WeCom-Viewer-Auth$/m);
+assert.match(wecomSessionDetail.body, /^          in: header$/m);
+assert.doesNotMatch(wecomSessionDetail.body, /^        - name: viewerAuthToken$/m);
+assert.match(contract, /^    WeComViewerMessage:$/m);
+assert.match(schema(contract, 'WeComViewerMessage'), /required: \[msgid, secretKey\]/);
+assert.doesNotMatch(schema(contract, 'WeComViewerMessage'), /access_token|corpsecret|jsapi_ticket/i);
+const wecomViewerEvent = operation(operations, 'post', '/api/v1/wecom/conversation-view/events');
+assert.match(wecomViewerEvent.body, /^        - name: X-WeCom-Viewer-Auth$/m);
+assert.match(schema(contract, 'WeComViewerEventRequest'), /const: component_error/);
+assert.doesNotMatch(schema(contract, 'WeComViewerEventRequest'), /viewerAuthToken|secretKey/);
+assert.equal(operations.length, 27);
 
 console.log(`validated ${operations.length} OpenAPI operations`);
 

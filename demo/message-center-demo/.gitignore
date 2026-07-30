@@ -2,3 +2,8 @@ target/
 .verify/
 .env
 data/
+credential_master_key
+message-center-runtime.tar.gz
+release/
+workwx.py
+workwx_local.py

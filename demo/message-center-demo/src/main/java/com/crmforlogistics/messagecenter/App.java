@@ -29,9 +29,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class App {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
+    private static final int WECOM_VIEWER_REQUEST_MAX_BYTES = 4096;
 
     public static void main(String[] args) throws Exception {
         Config config = Config.load(java.nio.file.Path.of(".env"));
@@ -110,28 +113,68 @@ public class App {
         ChatAppSender chatAppSender = new ChatAppSender(config);
         EmailSyncService emailSyncService = new EmailSyncService(config);
         ChatAppHistorySyncService chatAppSyncService = new ChatAppHistorySyncService(config);
+        WeComReceiver weComReceiver = new WeComReceiver(config);
+        WeComAuthorizationStore authorizationStore = null;
+        if (Files.exists(config.credentialMasterKeyFile())) {
+            authorizationStore = new WeComAuthorizationStore(config);
+        }
+        WeComAuthorizationService authorizationService = null;
+        WeComAuthorizationGateway authorizationGateway = null;
+        WeComCallbackCodec callbackCodec = null;
+        if (!config.wecomSuiteId().isBlank()) {
+            callbackCodec = new WeComCallbackCodec(config);
+            if (authorizationStore != null) {
+                authorizationGateway = new WeComAuthorizationGateway(config);
+                authorizationService = new WeComAuthorizationService(config, authorizationStore,
+                        authorizationGateway);
+            }
+        }
+        WeComAccessTokenService accessTokens = authorizationGateway == null
+                ? null : new WeComAccessTokenService(config, authorizationGateway);
+        WeComViewerService weComViewer = accessTokens == null
+                ? new WeComViewerService(config, authorizationStore)
+                : new WeComViewerService(config, authorizationStore, accessTokens);
+        WeComLoginAttemptService weComLoginAttempts = new WeComLoginAttemptService(config, authorizationStore);
+        WeComChatDataSyncService chatDataSync = accessTokens == null ? null
+                : new WeComChatDataSyncService(config, new WeComChatDataGateway(config, accessTokens));
+        WeComDailySummaryRuntime dailySummary = WeComDailySummaryRuntime.open(
+                config, authorizationStore, accessTokens);
+        WeComAuthorizationService finalAuthorizationService = authorizationService;
+        WeComCallbackCodec finalCallbackCodec = callbackCodec;
+        WeComChatDataSyncService finalChatDataSync = chatDataSync;
         EventHub events = new EventHub();
         HttpServer server = HttpServer.create(new InetSocketAddress(config.webPort()), 0);
         server.createContext("/", exchange -> {
             try {
-                route(exchange, config, store, mailSender, chatAppSender, emailSyncService, chatAppSyncService, events);
+                route(exchange, config, store, mailSender, chatAppSender, emailSyncService,
+                        chatAppSyncService, weComReceiver, weComViewer, weComLoginAttempts,
+                        finalChatDataSync, finalCallbackCodec, finalAuthorizationService, events);
             } catch (Exception ex) {
-                writeJson(exchange, 500, Map.of("error", ex.getClass().getSimpleName(),
-                        "message", ex.getMessage() == null ? "" : ex.getMessage()));
+                writeRouteError(exchange, ex);
             }
         });
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
+        WeComDailySummaryRuntime finalDailySummary = dailySummary;
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            finalDailySummary.close();
+            events.close();
+            server.stop(0);
+        }, "message-center-shutdown"));
         System.out.println("Message center demo started: http://localhost:" + config.webPort());
         System.out.println("ChatApp webhook endpoint: http://localhost:" + config.webPort() + "/webhook/chatapp");
-        System.out.println("WeCom webhook placeholder: http://localhost:" + config.webPort() + "/webhook/wecom");
     }
 
     private static void route(HttpExchange exchange, Config config, UnifiedMessageStore store, MailSender mailSender,
                               ChatAppSender chatAppSender, EmailSyncService emailSyncService,
-                              ChatAppHistorySyncService chatAppSyncService, EventHub events) throws Exception {
+                              ChatAppHistorySyncService chatAppSyncService, WeComReceiver weComReceiver,
+                              WeComViewerService weComViewer, WeComLoginAttemptService weComLoginAttempts,
+                              WeComChatDataSyncService chatDataSync,
+                              WeComCallbackCodec callbackCodec, WeComAuthorizationService authorizationService,
+                              EventHub events) throws Exception {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
+        String weComPath = path;
         if ("GET".equals(method) && "/".equals(path)) {
             writeHtml(exchange, pageHtml());
             return;
@@ -251,12 +294,187 @@ public class App {
             writeJson(exchange, 200, Map.of("ok", true));
             return;
         }
-        if ("POST".equals(method) && "/webhook/wecom".equals(path)) {
-            writeJson(exchange, 501, Map.of("error", "WeComReserved",
-                    "message", "企业微信 API 接入位已预留，当前 demo 未启用。"));
+        if ("GET".equals(method) && "/api/v1/wecom/authorization/callback".equals(weComPath)) {
+            if (callbackCodec == null) {
+                throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                        "企业微信授权服务尚未配置");
+            }
+            Map<String, String> params = query(exchange);
+            String echo = callbackCodec.verifyAndDecryptEcho(
+                    params.getOrDefault("msg_signature", ""), params.getOrDefault("timestamp", ""),
+                    params.getOrDefault("nonce", ""), params.getOrDefault("echostr", ""));
+            writeText(exchange, 200, echo);
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/authorization/callback".equals(weComPath)) {
+            if (callbackCodec == null || authorizationService == null) {
+                throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                        "企业微信授权服务尚未配置");
+            }
+            Map<String, String> params = query(exchange);
+            byte[] bytes = exchange.getRequestBody().readNBytes(1_048_577);
+            if (bytes.length > 1_048_576) {
+                throw new IllegalArgumentException("授权回调请求体过大");
+            }
+            WeComCallbackCodec.DecodedCallback callback = callbackCodec.decode(
+                    params.getOrDefault("msg_signature", ""), params.getOrDefault("timestamp", ""),
+                    params.getOrDefault("nonce", ""), new String(bytes, StandardCharsets.UTF_8));
+            WeComAuthorizationService.CallbackAck ack = authorizationService.handle(callback);
+            if (!ack.success()) {
+                throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                        "企业微信授权事件队列已满");
+            }
+            writeText(exchange, 200, "success");
+            return;
+        }
+        if ("GET".equals(method) && "/api/v1/wecom/js-sdk-config".equals(weComPath)) {
+            writeJson(exchange, 200, weComViewer.jsSdkConfig(
+                    query(exchange).getOrDefault("url", ""), viewerAuthToken(exchange)));
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/login/attempts".equals(weComPath)) {
+            readViewerJson(exchange);
+            writeJson(exchange, 200, weComLoginAttempts.createAttempt());
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/login/exchange".equals(weComPath)) {
+            JsonObject body = readViewerJson(exchange, "code", "state");
+            WeComLoginAttemptService.InstallationBinding binding = weComLoginAttempts.consume(json(body, "state"));
+            writeJson(exchange, 200, weComViewer.exchangeLoginCode(json(body, "code"), binding));
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/conversation-view/sessions".equals(weComPath)) {
+            JsonObject body = readViewerJson(exchange, "conversationId", "contactPointId", "viewerAuthToken");
+            String contactPointId = json(body, "contactPointId");
+            String viewerAuthToken = json(body, "viewerAuthToken");
+            try {
+                requireReadableContactPoint(store, contactPointId);
+            } catch (SecurityException denied) {
+                try {
+                    weComViewer.recordAccessDenied(contactPointId, viewerAuthToken);
+                } catch (Exception auditFailure) {
+                    denied.addSuppressed(auditFailure);
+                }
+                throw denied;
+            }
+            WeComViewerService.ViewerSyncContext syncContext = weComViewer.viewerSyncContext(viewerAuthToken);
+            if (chatDataSync == null) {
+                throw new WeComChatDataException("WECOM_CHATDATA_NOT_CONFIGURED", 503,
+                        "企业微信会话同步尚未配置");
+            }
+            chatDataSync.sync(syncContext);
+            writeJson(exchange, 200, weComViewer.createViewerSession(
+                    contactPointId, viewerAuthToken));
+            return;
+        }
+        if ("GET".equals(method) && weComPath.startsWith("/api/v1/wecom/conversation-view/sessions/")) {
+            String sessionId = weComPath.substring("/api/v1/wecom/conversation-view/sessions/".length());
+            writeJson(exchange, 200, weComViewer.viewerSession(sessionId, viewerAuthToken(exchange)));
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/conversation-view/events".equals(weComPath)) {
+            JsonObject body = readViewerJson(exchange, "eventType", "viewerSessionId");
+            weComViewer.recordClientEvent(json(body, "eventType"), json(body, "viewerSessionId"),
+                    viewerAuthToken(exchange));
+            writeJson(exchange, 202, Map.of("accepted", true));
             return;
         }
         writeJson(exchange, 404, Map.of("error", "NotFound", "message", path));
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              WeComViewerService weComViewer) throws Exception {
+        routeForTests(exchange, config, store, weComViewer, null);
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              WeComViewerService weComViewer,
+                              WeComLoginAttemptService weComLoginAttempts) throws Exception {
+        routeForTests(exchange, config, store, weComViewer, weComLoginAttempts, null, null, null);
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              WeComViewerService weComViewer,
+                              WeComLoginAttemptService weComLoginAttempts,
+                              WeComChatDataSyncService chatDataSync) throws Exception {
+        routeForTests(exchange, config, store, weComViewer, weComLoginAttempts,
+                chatDataSync, null, null);
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              WeComViewerService weComViewer,
+                              WeComLoginAttemptService weComLoginAttempts,
+                              WeComCallbackCodec callbackCodec,
+                              WeComAuthorizationService authorizationService) throws Exception {
+        routeForTests(exchange, config, store, weComViewer, weComLoginAttempts,
+                null, callbackCodec, authorizationService);
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              WeComViewerService weComViewer,
+                              WeComLoginAttemptService weComLoginAttempts,
+                              WeComChatDataSyncService chatDataSync,
+                              WeComCallbackCodec callbackCodec,
+                              WeComAuthorizationService authorizationService) throws Exception {
+        EventHub events = new EventHub();
+        try {
+            route(exchange, config, store, new MailSender(config), new ChatAppSender(config),
+                    new EmailSyncService(config), new ChatAppHistorySyncService(config),
+                    new WeComReceiver(config), weComViewer, weComLoginAttempts, chatDataSync, callbackCodec,
+                    authorizationService, events);
+        } catch (Exception exception) {
+            writeRouteError(exchange, exception);
+        } finally {
+            events.close();
+        }
+    }
+
+    private static void writeRouteError(HttpExchange exchange, Exception exception) throws IOException {
+        int status;
+        String code;
+        if (exception instanceof WeComChatDataException chatDataException) {
+            status = chatDataException.httpStatus();
+            code = chatDataException.code();
+        } else if (exception instanceof WeComAuthorizationException authorizationException) {
+            status = authorizationException.httpStatus();
+            code = authorizationException.code();
+        } else if (exception instanceof WeComViewerService.RateLimitException
+                || exception instanceof WeComLoginAttemptService.PendingLimitException) {
+            status = 429;
+            code = "RATE_LIMITED";
+        } else if (exception instanceof SecurityException) {
+            status = 403;
+            code = "FORBIDDEN";
+        } else if (exception instanceof IllegalArgumentException) {
+            status = 400;
+            code = "INVALID_REQUEST";
+        } else {
+            status = 500;
+            code = "INTERNAL_ERROR";
+        }
+        writeJson(exchange, status, Map.of(
+                "code", code,
+                "message", exception.getMessage() == null ? "" : exception.getMessage(),
+                "traceId", java.util.UUID.randomUUID().toString(),
+                "fieldErrors", List.of()));
+    }
+
+    private static void requireReadableContactPoint(UnifiedMessageStore store, String contactPointId) throws IOException {
+        if (contactPointId == null || contactPointId.isBlank()) {
+            throw new SecurityException("WeCom contact point is not readable");
+        }
+        for (UnifiedContact contact : store.contacts()) {
+            for (ContactPoint point : contact.points) {
+                if (contactPointId.equals(point.id)) {
+                    return;
+                }
+            }
+        }
+        throw new SecurityException("WeCom contact point is not readable");
+    }
+
+    private static String viewerAuthToken(HttpExchange exchange) {
+        return ContactPointUtil.firstNonBlank(exchange.getRequestHeaders().getFirst("X-WeCom-Viewer-Auth"));
     }
 
     private static UnifiedMessage syncEvent(String channel, String messageText) {
@@ -275,6 +493,22 @@ public class App {
             return new JsonObject();
         }
         return JsonParser.parseString(body).getAsJsonObject();
+    }
+
+    private static JsonObject readViewerJson(HttpExchange exchange, String... allowedFields) throws IOException {
+        byte[] bytes = exchange.getRequestBody().readNBytes(WECOM_VIEWER_REQUEST_MAX_BYTES + 1);
+        if (bytes.length > WECOM_VIEWER_REQUEST_MAX_BYTES) {
+            throw new IllegalArgumentException("WeCom viewer request body is too large");
+        }
+        String raw = new String(bytes, StandardCharsets.UTF_8);
+        JsonObject body = raw.isBlank() ? new JsonObject() : JsonParser.parseString(raw).getAsJsonObject();
+        List<String> allowed = List.of(allowedFields);
+        for (String field : body.keySet()) {
+            if (!allowed.contains(field)) {
+                throw new IllegalArgumentException("Unexpected WeCom viewer request field: " + field);
+            }
+        }
+        return body;
     }
 
     private static String json(JsonObject object, String key) {
@@ -332,6 +566,15 @@ public class App {
         byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
         exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
+    private static void writeText(HttpExchange exchange, int status, String value) throws IOException {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+        exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(bytes);
         }
@@ -541,6 +784,17 @@ public class App {
     .account-item { display:flex; justify-content:space-between; gap:8px; align-items:center; padding:8px; border:1px solid var(--hairline); border-radius:6px; overflow-wrap:anywhere; }
     .account-actions { display:flex; gap:6px; align-items:center; flex:0 0 auto; }
     .account-split-button { width:30px; height:30px; flex:0 0 auto; }
+    .wecom-viewer-panel { display:grid; gap:10px; }
+    .wecom-viewer-actions { display:flex; justify-content:flex-end; gap:8px; align-items:center; }
+    .wecom-viewer-container { min-height:160px; border:1px solid var(--hairline); border-radius:6px; background:#fff; overflow:auto; }
+    .wecom-login-screen { min-height:100vh; display:grid; place-items:center; padding:24px; background:#f7f7f8; }
+    .wecom-login-screen[hidden], .shell[hidden] { display:none; }
+    .wecom-login-card { width:min(392px,100%); min-width:0; display:grid; justify-items:center; gap:14px; padding:28px 24px; background:#fff; border:1px solid var(--line); border-radius:12px; box-shadow:0 18px 50px rgba(32,33,36,.10); }
+    .wecom-login-brand { font-size:20px; font-weight:750; }
+    .wecom-login-panel { width:min(320px,100%); min-width:0; min-height:380px; max-width:100%; overflow:hidden; }
+    .wecom-login-status { min-height:18px; text-align:center; }
+    .wecom-open-modal { width:min(960px,calc(100vw - 40px)); height:min(720px,calc(100vh - 40px)); padding:0; overflow:hidden; }
+    .wecom-open-modal iframe { width:100%; height:100%; border:0; display:block; }
     .profile-save-state { min-width:68px; text-align:right; }
     .tag-preview { display:flex; gap:6px; flex-wrap:wrap; }
     .tag-pill { color:#047857; background:#ecfdf3; border:1px solid #9ed8b8; border-radius:999px; padding:2px 7px; font-size:11px; }
@@ -580,7 +834,16 @@ public class App {
   </style>
 </head>
 <body>
-  <main class="shell" id="shell">
+  <section class="wecom-login-screen" id="wecomLoginScreen">
+    <div class="wecom-login-card">
+      <div class="wecom-login-brand">统一消息中心</div>
+      <div class="small">使用企业微信扫码后查看会话消息</div>
+      <div class="wecom-login-panel" id="wwLoginPanel"><div class="empty">正在加载企业微信登录组件</div></div>
+      <div class="wecom-login-status small" id="wecomLoginStatus" role="status">正在准备二维码</div>
+      <button id="wecomLoginRetry" type="button" hidden>重新加载二维码</button>
+    </div>
+  </section>
+  <main class="shell" id="shell" hidden>
     <header class="workspace-topbar">
       <div class="workspace-section">
         <div class="workspace-title"><div class="brand">统一消息中心</div><div class="small" id="contactCount">0 个联系人</div></div>
@@ -633,12 +896,22 @@ public class App {
       <img id="previewImageEl" alt="图片预览">
     </div>
   </div>
+  <div class="modal-backdrop" id="wecomOpenModal" hidden>
+    <div class="profile-modal wecom-open-modal" role="dialog" aria-modal="true" aria-label="企业微信会话详情">
+      <iframe id="wecomOpenFrame" title="企业微信会话详情"></iframe>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
   <script>
     const THREAD_PAGE_SIZE = 10;
     const THREAD_PAGE_CACHE_LIMIT = 20;
     const THREAD_PAGE_MAX_MESSAGES = 200;
-    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false };
+    const WECOM_SDK_SRC = 'https://wwcdn.weixin.qq.com/node/open/js/wecom-jssdk-2.3.4.js';
+    const WECOM_JWXWORK_SRC = 'https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js';
+    const WECOM_LOGIN_EXPIRED_MARKERS = ['42006','42003','40029','Missing open sid'];
+    let weComSdkLoadPromise = null;
+    let weComJwxworkLoadPromise = null;
+    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, messageCenterInitialized:false, eventSource:null, refreshTimer:null };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -650,7 +923,12 @@ public class App {
     const api = async (url, options = {}) => {
       const response = await fetch(url, options);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || data.error || response.statusText);
+      if (!response.ok) {
+        const error = new Error(data.message || data.code || data.error || response.statusText);
+        error.code = data.code || '';
+        error.status = response.status;
+        throw error;
+      }
       return data;
     };
     const postJson = (url, body) => api(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
@@ -699,32 +977,126 @@ public class App {
     }
     const toast = text => { const el=$('toast'); el.textContent=text; el.style.display='block'; clearTimeout(window.toastTimer); window.toastTimer=setTimeout(()=>el.style.display='none',2600); };
 
-    async function init() {
+    function setWeComLoginStatus(message, retryable = false) {
+      $('wecomLoginStatus').textContent = message;
+      $('wecomLoginRetry').hidden = !retryable;
+    }
+
+    async function initWeComLogin() {
+      if (window.top !== window.self) throw new Error('企业微信登录和会话组件必须运行在顶层页面');
+      $('shell').hidden = true;
+      $('wecomLoginScreen').hidden = false;
+      $('wwLoginPanel').innerHTML = '<div class="empty">正在准备登录配置</div>';
+      setWeComLoginStatus('正在准备二维码');
+      const attempt = await postJson('/api/v1/wecom/login/attempts', {});
+      state.wecomLoginAttempt = attempt;
+      $('wwLoginPanel').innerHTML = '<div class="empty">正在加载企业微信登录组件</div>';
+      const ww = await loadWeComSdk();
+      $('wwLoginPanel').innerHTML = '';
+      ww.createWWLoginPanel({
+        el: '#wwLoginPanel',
+        params: {
+          login_type: 'CorpApp',
+          appid: attempt.corpId,
+          agentid: attempt.agentId,
+          redirect_uri: attempt.redirectUri,
+          state: attempt.state,
+          redirect_type: 'callback',
+          panel_size: 'small',
+          lang: 'zh'
+        },
+        onCheckWeComLogin({ isWeComLogin }) {
+          setWeComLoginStatus(isWeComLogin ? '请在企业微信中确认登录' : '请使用企业微信扫码登录');
+        },
+        onLoginSuccess({ code }) {
+          completeWeComLogin(code)
+            .catch(error => setWeComLoginStatus(`登录失败：${error.message}`, true));
+        },
+        onLoginFail({ errCode, errMsg }) {
+          setWeComLoginStatus(`企业微信登录失败：${errMsg || errCode || '未知错误'}`, true);
+        }
+      });
+    }
+
+    async function completeWeComLogin(code) {
+      const attempt = state.wecomLoginAttempt;
+      if (!attempt?.state || !code) throw new Error('企业微信登录结果无效，请重新扫码');
+      setWeComLoginStatus('正在进入消息中心');
+      const login = await postJson('/api/v1/wecom/login/exchange', { code, state:attempt.state });
+      state.wecomLoginAttempt = null;
+      state.wecomAuth = login;
+      state.wecomAuthExpiresAt = Date.now() + Number(login.expiresIn || 0) * 1000;
+      $('wwLoginPanel').innerHTML = '';
+      $('wecomLoginScreen').hidden = true;
+      $('shell').hidden = false;
+      try {
+        await enterMessageCenter();
+      } catch (error) {
+        state.wecomAuth = null;
+        state.wecomAuthExpiresAt = 0;
+        $('shell').hidden = true;
+        $('wecomLoginScreen').hidden = false;
+        throw error;
+      }
+    }
+
+    function currentWeComAuth() {
+      if (!state.wecomAuth?.viewerAuthToken || Date.now() >= state.wecomAuthExpiresAt) {
+        throw new Error('企业微信登录已过期，请重新扫码');
+      }
+      return state.wecomAuth;
+    }
+
+    async function returnToWeComLogin(message) {
+      state.wecomAuth = null;
+      state.wecomAuthExpiresAt = 0;
+      state.wecomLoginAttempt = null;
+      if (state.eventSource) state.eventSource.close();
+      state.eventSource = null;
+      if (state.refreshTimer) clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+      $('shell').hidden = true;
+      $('wecomLoginScreen').hidden = false;
+      setWeComLoginStatus(message || '请重新扫码登录');
+      await initWeComLogin();
+    }
+
+    async function enterMessageCenter() {
       const caps = await api('/api/channel-capabilities');
       caps.forEach(item => state.capabilities[item.channel] = item);
-	      state.templates = await api('/api/templates');
-	      await loadContacts(false);
-	      $('refreshBtn').onclick = () => refreshAll(false);
-	      $('syncEmailBtn').onclick = syncEmail;
-	      $('syncChatBtn').onclick = syncChatApp;
-	      $('searchInput').oninput = renderContacts;
-	      bindScrollSurfaces();
-	      $('detailToggleBtn').onclick = toggleDetailPane;
-	      $('editProfileBtn').onclick = openProfileModal;
-	      $('profileCloseBtn').onclick = closeProfileModal;
-	      $('profileCancelBtn').onclick = closeProfileModal;
-	      $('profileSaveBtn').onclick = saveContactProfile;
-	      $('profileNicknameInput').oninput = markProfileDirty;
-	      $('profileTagsInput').oninput = markProfileDirty;
-	      $('profileNicknameInput').onkeydown = profileEnterSave;
-	      $('profileTagsInput').onkeydown = profileEnterSave;
-	      $('profileModal').onclick = event => { if (event.target === $('profileModal')) closeProfileModal(); };
-	      $('previewImageCloseBtn').onclick = closeImagePreview;
-	      $('previewImageModal').onclick = event => { if (event.target === $('previewImageModal')) closeImagePreview(); };
-	      document.addEventListener('keydown', event => { if (event.key === 'Escape') closeImagePreview(); });
-      $('notifyBtn').onclick = enableNotifications;
+      state.templates = await api('/api/templates');
+      await loadContacts(false);
+      if (!state.messageCenterInitialized) {
+        state.messageCenterInitialized = true;
+        $('refreshBtn').onclick = () => refreshAll(false);
+        $('syncEmailBtn').onclick = syncEmail;
+        $('syncChatBtn').onclick = syncChatApp;
+        $('searchInput').oninput = renderContacts;
+        bindScrollSurfaces();
+        $('detailToggleBtn').onclick = toggleDetailPane;
+        $('editProfileBtn').onclick = openProfileModal;
+        $('profileCloseBtn').onclick = closeProfileModal;
+        $('profileCancelBtn').onclick = closeProfileModal;
+        $('profileSaveBtn').onclick = saveContactProfile;
+        $('profileNicknameInput').oninput = markProfileDirty;
+        $('profileTagsInput').oninput = markProfileDirty;
+        $('profileNicknameInput').onkeydown = profileEnterSave;
+        $('profileTagsInput').onkeydown = profileEnterSave;
+        $('profileModal').onclick = event => { if (event.target === $('profileModal')) closeProfileModal(); };
+        $('previewImageCloseBtn').onclick = closeImagePreview;
+        $('previewImageModal').onclick = event => { if (event.target === $('previewImageModal')) closeImagePreview(); };
+        $('wecomOpenModal').onclick = event => { if (event.target === $('wecomOpenModal')) closeWeComModal(); };
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape') {
+            closeImagePreview();
+            closeWeComModal();
+          }
+        });
+        $('notifyBtn').onclick = enableNotifications;
+      }
       connectEvents();
-      setInterval(() => refreshAll(true), 5000);
+      if (state.refreshTimer) clearInterval(state.refreshTimer);
+      state.refreshTimer = setInterval(() => refreshAll(true), 5000);
     }
 
 	    async function refreshAll(silent) {
@@ -1092,6 +1464,11 @@ public class App {
       return `<div class="msg-media"><div class="msg-media-file"><span class="tool-icon file"></span><span>${name}</span></div>${fail}</div>`;
     }
 
+    function bubbleText(m) {
+      if (m.channel === 'email') return '';
+      return m.text || m.summary || '';
+    }
+
     function selectedContact() {
       return state.contacts.find(c => c.id === state.selectedPointId);
     }
@@ -1149,13 +1526,14 @@ public class App {
           `<span class="status-icon ${esc(statusClass(m))}" title="${esc(statusText(m))}" aria-label="${esc(statusText(m))}"></span>`,
           hasMedia(m) ? `<button class="media-open-link" type="button" data-open-media="${esc(mediaUrl(m))}" data-file-name="${esc(m.fileName || 'attachment')}">打开附件</button>` : ''
         ].filter(Boolean).join('');
+        const text = bubbleText(m);
         return `
           <div class="message-row ${esc(direction)}">
             <div class="msg-avatar"><span class="avatar-icon ${esc(m.channel || '')}"></span></div>
             <div class="msg-stack">
               <article class="msg ${esc(direction)} ${hasMedia(m) ? 'has-media' : ''} ${m.id === state.selectedMessageId ? 'active' : ''}" data-id="${esc(m.id)}">
                 ${m.title ? `<div class="msg-title">${esc(m.title)}</div>` : ''}
-                <div class="msg-text">${esc(m.text || m.summary || '')}</div>
+                ${text ? `<div class="msg-text">${esc(text)}</div>` : ''}
                 ${mediaPreviewHtml(m)}
               </article>
               <div class="msg-meta-line">${meta}</div>
@@ -1438,10 +1816,236 @@ public class App {
       const channels = [...contact.channels, 'wecom'].filter((v,i,a)=>a.indexOf(v)===i);
       if (!channels.includes(state.selectedChannel)) state.selectedChannel = channels[0];
       $('composer').innerHTML = `
-        <div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}" ${ch==='wecom'?'disabled':''}>${esc(label(ch))}</button>`).join('')}</div>
+        <div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}</div>
         <div id="sendPanel"></div>`;
       document.querySelectorAll('[data-channel]').forEach(btn => btn.onclick = () => { state.selectedChannel = btn.dataset.channel; renderComposer(); });
       renderSendPanel(contact);
+    }
+
+    function wecomPoint(contact) {
+      return sendPointForChannel(contact, 'wecom');
+    }
+
+    function renderWeComViewerPanel(contact) {
+      const point = wecomPoint(contact);
+      const disabled = !point ? 'disabled' : '';
+      $('sendPanel').innerHTML = `
+        <div class="wecom-viewer-panel">
+          <div class="readonly-row">
+            <div class="small">企业微信账号</div>
+            <div class="readonly-value">${esc(point?.value || point?.id || '无可用账号')}</div>
+          </div>
+          <div class="wecom-viewer-actions">
+            <button class="primary" id="openWeComViewer" type="button" ${disabled}>打开企业微信会话</button>
+          </div>
+          <div class="wecom-viewer-container" id="wecomViewerContainer"><div class="empty">点击后加载企业微信会话展示组件</div></div>
+        </div>`;
+      const button = $('openWeComViewer');
+      if (button) button.onclick = () => loadWeComViewer(contact);
+    }
+
+    async function loadWeComViewer(contact) {
+      const point = wecomPoint(contact);
+      if (!point) { toast('当前联系人没有企业微信账号'); return; }
+      const container = $('wecomViewerContainer');
+      const button = $('openWeComViewer');
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
+      container.innerHTML = '<div class="empty">正在同步企业微信会话</div>';
+      try {
+        const login = currentWeComAuth();
+        const currentUrl = window.location.href.split('#')[0];
+        const config = await api('/api/v1/wecom/js-sdk-config?url=' + encodeURIComponent(currentUrl), {
+          headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
+        });
+        await ensureWeComViewerSdk(config);
+        const created = await postJson('/api/v1/wecom/conversation-view/sessions', {
+          contactPointId: point.id,
+          viewerAuthToken: login.viewerAuthToken
+        });
+        const detail = await api('/api/v1/wecom/conversation-view/sessions/' + encodeURIComponent(created.viewerSessionId), {
+          headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
+        });
+        await mountWeComOpenDataFrame(detail, login.viewerAuthToken);
+      } catch (err) {
+        if (isWeComLoginExpired(err)
+            || String(err?.message || '').includes('企业微信登录已过期')) {
+          await returnToWeComLogin('企业微信登录已失效，请重新扫码');
+          return;
+        }
+        container.innerHTML = `<div class="empty">企业微信会话加载失败：${esc(err.message)}</div>`;
+        toast(`企业微信会话加载失败：${err.message}`);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function ensureWeComViewerSdk(config) {
+      await loadWeComSdk();
+      await loadWeComJwxwork();
+      ww.register({
+        corpId: config.corpId,
+        agentId: config.agentId,
+        jsApiList: config.jsApiList || ['wwapp.invokeJsApiByCallInfo'],
+        async getConfigSignature() { return config.configSignature; },
+        async getAgentConfigSignature() { return config.agentConfigSignature; }
+      });
+      await ww.initOpenData();
+    }
+
+    function loadWeComSdk() {
+      if (window.ww) return Promise.resolve(window.ww);
+      if (weComSdkLoadPromise) return weComSdkLoadPromise;
+      weComSdkLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        let settled = false;
+        let timer;
+        const fail = message => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          script.onload = null;
+          script.onerror = null;
+          script.remove();
+          reject(new Error(message));
+        };
+        timer = setTimeout(() => fail('企业微信 JS-SDK 加载超时'), 10000);
+        script.src = WECOM_SDK_SRC;
+        script.async = true;
+        script.onload = () => {
+          if (settled) return;
+          if (!window.ww) {
+            fail('企业微信 JS-SDK 未加载');
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(window.ww);
+        };
+        script.onerror = () => fail('企业微信 JS-SDK 加载失败');
+        document.head.appendChild(script);
+      }).catch(error => {
+        weComSdkLoadPromise = null;
+        throw error;
+      });
+      return weComSdkLoadPromise;
+    }
+
+    function loadWeComJwxwork() {
+      if (weComJwxworkLoadPromise) return weComJwxworkLoadPromise;
+      weComJwxworkLoadPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        let settled = false;
+        let timer;
+        const fail = message => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          script.onload = null;
+          script.onerror = null;
+          script.remove();
+          reject(new Error(message));
+        };
+        timer = setTimeout(() => fail('企业微信会话组件脚本加载超时'), 10000);
+        script.src = WECOM_JWXWORK_SRC;
+        script.async = true;
+        script.onload = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(true);
+        };
+        script.onerror = () => fail('企业微信会话组件脚本加载失败');
+        document.head.appendChild(script);
+      }).catch(error => {
+        weComJwxworkLoadPromise = null;
+        throw error;
+      });
+      return weComJwxworkLoadPromise;
+    }
+
+    function openWeComModal({ modalUrl, modalSize }) {
+      if (!modalUrl) throw new Error('企业微信预览地址无效');
+      const previewUrl = new URL(modalUrl, window.location.href);
+      if (previewUrl.protocol !== 'https:') throw new Error('企业微信预览地址必须使用 HTTPS');
+      const modal = $('wecomOpenModal');
+      const frame = $('wecomOpenFrame');
+      const panel = modal.firstElementChild;
+      panel.style.width = '';
+      panel.style.height = '';
+      if (modalSize?.width) panel.style.width = `${Math.min(Number(modalSize.width), 960)}px`;
+      if (modalSize?.height) panel.style.height = `${Math.min(Number(modalSize.height), 720)}px`;
+      frame.src = previewUrl.toString();
+      modal.hidden = false;
+    }
+
+    function closeWeComModal() {
+      $('wecomOpenFrame').src = 'about:blank';
+      $('wecomOpenModal').hidden = true;
+    }
+
+    function isWeComLoginExpired(error) {
+      const detail = error?.detail || error || {};
+      const text = `${detail.errCode || ''} ${detail.errMsg || ''} ${detail.message || error?.message || ''}`;
+      return WECOM_LOGIN_EXPIRED_MARKERS.some(marker => text.includes(marker))
+        || text.includes('viewer auth token is expired or missing');
+    }
+
+    function handleWeComComponentError(error, detail, viewerAuthToken) {
+      if (isWeComLoginExpired(error)) {
+        returnToWeComLogin('企业微信登录已失效，请重新扫码')
+          .catch(loginError => setWeComLoginStatus(loginError.message, true));
+        return;
+      }
+      const container = $('wecomViewerContainer');
+      if (container) container.innerHTML = '<div class="empty">企业微信组件渲染失败</div>';
+      reportWeComViewerEvent('component_error', detail.viewerSessionId, viewerAuthToken);
+    }
+
+    async function mountWeComOpenDataFrame(detail, viewerAuthToken) {
+      const container = $('wecomViewerContainer');
+      if (!detail.messages || !detail.messages.length) {
+        container.innerHTML = '<div class="empty">暂无可展示的企业微信会话记录</div>';
+        return;
+      }
+      const factory = ww.createOpenDataFrameFactory();
+      let componentErrorReported = false;
+      factory.createOpenDataFrame({
+        el: container,
+        template: `
+          <view wx:for="{{data.msgList}}" wx:key="msgid" class="msg">
+            <ww-open-message message-id="{{item.msgid}}" secret-key="{{item.secretKey}}"
+              open-type="viewMessage" binderror="handleMessageError" />
+          </view>
+        `,
+        style: `.msg { height: 100%; overflow: auto; }`,
+        data: { msgList: detail.messages },
+        methods: {
+          handleMessageError(error) {
+            if (componentErrorReported && !isWeComLoginExpired(error)) return;
+            componentErrorReported = true;
+            handleWeComComponentError(error, detail, viewerAuthToken);
+          }
+        },
+        handleModal({ modalUrl, modalSize }) {
+          openWeComModal({ modalUrl, modalSize });
+          return false;
+        },
+        error(error) {
+          if (componentErrorReported && !isWeComLoginExpired(error)) return;
+          componentErrorReported = true;
+          handleWeComComponentError(error, detail, viewerAuthToken);
+        }
+      });
+    }
+
+    function reportWeComViewerEvent(eventType, viewerSessionId, viewerAuthToken) {
+      api('/api/v1/wecom/conversation-view/events', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'X-WeCom-Viewer-Auth':viewerAuthToken },
+        body:JSON.stringify({ eventType, viewerSessionId })
+      })
+        .catch(() => toast('企业微信组件错误审计失败'));
     }
 
     function renderSendPanel(contact) {
@@ -1472,7 +2076,7 @@ public class App {
         renderChatMode(state.selectedMode, point?.value || '');
         return;
       }
-      panel.innerHTML = '<div class="empty">企业微信 API 接入位已预留</div>';
+      renderWeComViewerPanel(contact);
     }
 
     function renderChatMode(mode, to) {
@@ -1594,10 +2198,22 @@ public class App {
     }
 
     async function sendEmail() {
-      await postJson('/api/send/email', { to:$('emailTo').value, subject:$('emailSubject').value, body:$('emailBody').value });
-      $('emailBody').value = '';
-      toast('邮件已发送');
-      await refreshAll(false);
+      const to = $('emailTo').value.trim();
+      const subject = $('emailSubject').value.trim();
+      if (!to) { toast('请选择收件人'); return; }
+      if (!subject) { toast('请输入邮件主题'); return; }
+      const button = $('sendEmail');
+      button.disabled = true;
+      try {
+        await postJson('/api/send/email', { to, subject, body:$('emailBody').value });
+        $('emailBody').value = '';
+        toast('邮件已发送');
+        await refreshAll(false);
+      } catch (err) {
+        toast(`邮件发送失败：${err.message}`);
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function sendChatText() {
@@ -1631,10 +2247,13 @@ public class App {
     }
 
     function connectEvents() {
+      if (state.eventSource) state.eventSource.close();
       try {
-        const source = new EventSource('/events');
-        source.onmessage = async () => { toast('有新消息'); await refreshAll(true); };
-      } catch (e) {}
+        state.eventSource = new EventSource('/events');
+        state.eventSource.onmessage = async () => { toast('有新消息'); await refreshAll(true); };
+      } catch (error) {
+        state.eventSource = null;
+      }
     }
 
     async function enableNotifications() {
@@ -1643,7 +2262,12 @@ public class App {
       toast(result === 'granted' ? '提醒已开启' : '提醒未开启');
     }
 
-    init().catch(err => toast(err.message));
+    const showWeComLoginError = error => {
+      $('wwLoginPanel').innerHTML = '<div class="empty">登录配置不可用</div>';
+      setWeComLoginStatus(error.message, true);
+    };
+    $('wecomLoginRetry').onclick = () => initWeComLogin().catch(showWeComLoginError);
+    initWeComLogin().catch(showWeComLoginError);
   </script>
 </body>
 </html>
@@ -1651,17 +2275,33 @@ public class App {
     }
 
     private static class EventHub {
-        private final List<HttpExchange> clients = new CopyOnWriteArrayList<>();
+        private static final byte[] CONNECTED_EVENT = ": connected\n\n".getBytes(StandardCharsets.UTF_8);
+        private static final byte[] HEARTBEAT_EVENT = ": heartbeat\n\n".getBytes(StandardCharsets.UTF_8);
+        private final List<EventClient> clients = new CopyOnWriteArrayList<>();
+        private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "message-center-sse-heartbeat");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        EventHub() {
+            heartbeatExecutor.scheduleAtFixedRate(this::heartbeat, 25, 25, TimeUnit.SECONDS);
+        }
 
         void connect(HttpExchange exchange) throws IOException {
+            EventClient client = new EventClient(exchange);
             Headers headers = exchange.getResponseHeaders();
             headers.set("Content-Type", "text/event-stream; charset=utf-8");
             headers.set("Cache-Control", "no-cache");
             headers.set("Connection", "keep-alive");
-            exchange.sendResponseHeaders(200, 0);
-            clients.add(exchange);
-            exchange.getResponseBody().write(": connected\n\n".getBytes(StandardCharsets.UTF_8));
-            exchange.getResponseBody().flush();
+            try {
+                exchange.sendResponseHeaders(200, 0);
+                clients.add(client);
+                client.write(CONNECTED_EVENT);
+            } catch (IOException ex) {
+                removeClient(client);
+                throw ex;
+            }
         }
 
         void publish(UnifiedMessage message) {
@@ -1669,15 +2309,67 @@ public class App {
                 return;
             }
             String payload = "data: " + GSON.toJson(message) + "\n\n";
-            byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
-            for (HttpExchange client : clients) {
+            publishBytes(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        private void heartbeat() {
+            publishBytes(HEARTBEAT_EVENT);
+        }
+
+        private void publishBytes(byte[] bytes) {
+            for (EventClient client : clients) {
                 try {
-                    client.getResponseBody().write(bytes);
-                    client.getResponseBody().flush();
+                    client.write(bytes);
                 } catch (IOException ex) {
-                    clients.remove(client);
-                    client.close();
+                    removeClient(client);
                 }
+            }
+        }
+
+        void close() {
+            heartbeatExecutor.shutdownNow();
+            for (EventClient client : clients) {
+                removeClient(client);
+            }
+        }
+
+        private void removeClient(EventClient client) {
+            clients.remove(client);
+            client.close();
+        }
+
+        private static class EventClient {
+            private final HttpExchange exchange;
+            private boolean closed;
+
+            EventClient(HttpExchange exchange) {
+                this.exchange = exchange;
+            }
+
+            synchronized void write(byte[] bytes) throws IOException {
+                if (closed) {
+                    throw new IOException("SSE client is closed");
+                }
+                try {
+                    OutputStream response = exchange.getResponseBody();
+                    response.write(bytes);
+                    response.flush();
+                } catch (IOException ex) {
+                    closeLocked();
+                    throw ex;
+                }
+            }
+
+            synchronized void close() {
+                closeLocked();
+            }
+
+            private void closeLocked() {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+                exchange.close();
             }
         }
     }

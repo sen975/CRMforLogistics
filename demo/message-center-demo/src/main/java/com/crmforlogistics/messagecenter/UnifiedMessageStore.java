@@ -120,6 +120,7 @@ public class UnifiedMessageStore {
         List<UnifiedMessage> result = new ArrayList<>();
         result.addAll(readEmailMessages());
         result.addAll(readChatAppMessages());
+        result.addAll(readWeComMessages());
         result.sort(Comparator
                 .comparing((UnifiedMessage message) -> MessageTime.parseInstant(message.timestamp))
                 .thenComparing(message -> ContactPointUtil.firstNonBlank(message.id, message.sourceId)));
@@ -360,7 +361,7 @@ public class UnifiedMessageStore {
                     available ? "" : "missing CUST_SPACE_ID/CHATAPP_FROM or Aliyun credentials");
         }
         if ("wecom".equals(normalized)) {
-            return new ChannelCapability("wecom", false, "reserved for future WeCom API adapter");
+            return new ChannelCapability("wecom", true, "");
         }
         return new ChannelCapability(normalized, false, "unknown channel");
     }
@@ -592,6 +593,70 @@ public class UnifiedMessageStore {
             }
         }
         return new ArrayList<>(bySourceId.values());
+    }
+
+    private List<UnifiedMessage> readWeComMessages() throws IOException {
+        Path file = config.wecomDataFile();
+        List<UnifiedMessage> result = new ArrayList<>();
+        if (!Files.exists(file)) {
+            return result;
+        }
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            if (line.isBlank()) {
+                continue;
+            }
+            try {
+                JsonObject object = JsonParser.parseString(line).getAsJsonObject();
+                String msgid = JsonSupport.string(object, "msgid");
+                String msgtype = JsonSupport.string(object, "msgtype");
+                long sendTime = object.has("send_time") ? object.get("send_time").getAsLong() : 0;
+                String externalUserid = JsonSupport.string(object, "external_userid");
+                String openKfid = JsonSupport.string(object, "open_kfid");
+                int origin = object.has("origin") ? object.get("origin").getAsInt() : 3;
+
+                UnifiedMessage message = new UnifiedMessage();
+                message.sourceId = msgid;
+                message.id = "wecom:" + ContactPointUtil.firstNonBlank(msgid, Integer.toHexString(line.hashCode()));
+                message.channel = "wecom";
+                message.direction = origin == 3 ? "inbound" : "outbound";
+                message.timestamp = sendTime > 0 ? Instant.ofEpochSecond(sendTime).toString() : "";
+                message.raw = JsonSupport.string(object, "_raw");
+                message.from = externalUserid;
+                message.to = openKfid;
+                String peer = "outbound".equals(message.direction) ? message.to : message.from;
+                message.contactPointId = ContactPointUtil.normalizePointId("wecom:" + peer);
+                message.text = wecomDisplayText(object, msgtype);
+                message.summary = message.text;
+                result.add(message);
+            } catch (RuntimeException ignored) {
+                // Skip malformed lines.
+            }
+        }
+        return result;
+    }
+
+    private static String wecomDisplayText(JsonObject object, String msgtype) {
+        if (msgtype == null || msgtype.isBlank()) return "";
+        return switch (msgtype) {
+            case "text" -> {
+                JsonObject text = object.getAsJsonObject("text");
+                yield text != null ? JsonSupport.string(text, "content") : "";
+            }
+            case "image" -> "[图片]";
+            case "voice" -> "[语音]";
+            case "video" -> "[视频]";
+            case "file" -> "[文件]";
+            case "location" -> {
+                JsonObject loc = object.getAsJsonObject("location");
+                yield loc != null ? "[位置] " + JsonSupport.string(loc, "name") : "[位置]";
+            }
+            case "link" -> {
+                JsonObject link = object.getAsJsonObject("link");
+                yield link != null ? JsonSupport.string(link, "title") : "[链接]";
+            }
+            case "event" -> "[事件]";
+            default -> "";
+        };
     }
 
     private String chatAppTitle(JsonObject object, String raw, String projectedMediaType) {

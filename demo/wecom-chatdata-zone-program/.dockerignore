@@ -1,0 +1,5 @@
+target/official-java-1.4.0
+target/*.tar
+target/surefire-reports
+src/test
+.git

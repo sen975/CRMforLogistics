@@ -1,0 +1,35 @@
+diff --git a/src/main/java/mytype/mycom/mygroup/NetworkService.java b/src/main/java/mytype/mycom/mygroup/NetworkService.java
+--- a/src/main/java/mytype/mycom/mygroup/NetworkService.java
++++ b/src/main/java/mytype/mycom/mygroup/NetworkService.java
+@@ -49 +49 @@
+-                    .option(ChannelOption.SO_BACKLOG, 4096)
++                    .option(ChannelOption.SO_BACKLOG, 128)
+@@ -62 +62 @@
+-                            cp.addLast(new HttpObjectAggregator(64 * 1024 * 1024));
++                            cp.addLast(new HttpObjectAggregator(2 * 1024 * 1024));
+diff --git a/src/main/java/mytype/mycom/mygroup/SvrConfig.java b/src/main/java/mytype/mycom/mygroup/SvrConfig.java
+--- a/src/main/java/mytype/mycom/mygroup/SvrConfig.java
++++ b/src/main/java/mytype/mycom/mygroup/SvrConfig.java
+@@ -13 +13 @@
+-    public static int io_gorup_size = 256;
++    public static int io_gorup_size = 4;
+@@ -18 +18 @@
+-    public static int business_gorup_size = 256;
++    public static int business_gorup_size = 4;
+diff --git a/src/main/java/mytype/mycom/mygroup/SpecDemo.java b/src/main/java/mytype/mycom/mygroup/SpecDemo.java
+--- a/src/main/java/mytype/mycom/mygroup/SpecDemo.java
++++ b/src/main/java/mytype/mycom/mygroup/SpecDemo.java
+@@ -40,13 +40,5 @@ public class SpecDemo {
+             System.exit(1);
+         }
+ 
+-        try {
+-            Class.forName("mytype.mycom.mygroup.DataBaseUtils");
+-        } catch (ClassNotFoundException e) {
+-            SpecUtil.WWSpecLogError("load DataBaseUtils failed");
+-            e.printStackTrace();
+-            System.exit(1);
+-        }
+-
+         CommonUtils.displayJvmCharsetConfig();
+     }

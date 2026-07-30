@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -57,6 +58,7 @@ public class Config {
     public Path emailContactGroupFile() { return Path.of(value("EMAIL_CONTACT_GROUP_FILE", emailDataDir().resolve("contact-groups.jsonl").toString())); }
     public Path chatappDataFile() { return Path.of(value("CHATAPP_DATA_FILE", "../chatapp-send-receive-demo/data/messages.jsonl")); }
     public Path chatappTemplateFile() { return Path.of(value("CHATAPP_TEMPLATE_FILE", "../chatapp-send-receive-demo/data/templates.json")); }
+    public Path wecomDataFile() { return dataFile("WECOM_DATA_FILE", "wecom-messages.jsonl"); }
     public int webPort() { return Integer.parseInt(value("WEB_PORT", value("MESSAGE_CENTER_PORT", "8099"))); }
     public long mediaMaxBytes() { return Long.parseLong(value("MEDIA_MAX_BYTES", "20971520")); }
     public Path mediaCacheDir() { return Path.of(value("MEDIA_CACHE_DIR", dataDir().resolve("media-cache").toString())); }
@@ -74,6 +76,146 @@ public class Config {
     }
     public int workerBatchSize() { return boundedInt("WORKER_BATCH_SIZE", 25, 1, 100); }
     public int workerMaxAttempts() { return boundedInt("WORKER_MAX_ATTEMPTS", 6, 1, 20); }
+    public String wecomCorpId() { return value("WECOM_CORP_ID", ""); }
+    public String wecomAgentId() { return value("WECOM_AGENT_ID", ""); }
+    public String wecomSecret() { return value("WECOM_SECRET", ""); }
+    public String wecomSuiteId() { return value("WECOM_SUITE_ID", ""); }
+    public String wecomSuiteSecret() { return value("WECOM_SUITE_SECRET", ""); }
+    public String wecomToken() { return value("WECOM_TOKEN", ""); }
+    public String wecomEncodingAesKey() { return value("WECOM_ENCODING_AES_KEY", ""); }
+    public String wecomCallbackReceiveId() { return value("WECOM_CALLBACK_RECEIVE_ID", wecomSuiteId()); }
+    public Path wecomAuthorizationInstallationsFile() {
+        return Path.of(value("WECOM_AUTHORIZATION_INSTALLATIONS_FILE",
+                dataDir().resolve("wecom-authorization-installations.jsonl").toString()));
+    }
+    public String wecomLoginAuthCorpId() { return value("WECOM_LOGIN_AUTH_CORP_ID", ""); }
+    public int wecomAuthorizationQueueCapacity() {
+        return boundedInt("WECOM_AUTHORIZATION_QUEUE_CAPACITY", 64, 1, 256);
+    }
+    public List<String> wecomAllowedJsapiOrigins() {
+        String raw = value("WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:" + webPort());
+        return splitCsv(raw);
+    }
+    public int wecomViewerSessionTtlSeconds() {
+        return boundedInt("WECOM_VIEWER_SESSION_TTL_SECONDS", 300, 30, 3600);
+    }
+    public int wecomViewerMaxMessages() {
+        return boundedInt("WECOM_VIEWER_MAX_MESSAGES", 10, 1, 20);
+    }
+    public int wecomViewerSessionRateLimit() {
+        return boundedInt("WECOM_VIEWER_SESSION_RATE_LIMIT", 10, 1, 60);
+    }
+    public Path wecomViewerAuditFile() {
+        return Path.of(value("WECOM_VIEWER_AUDIT_FILE", dataDir().resolve("wecom-viewer-audit.jsonl").toString()));
+    }
+    public long wecomViewerAuditMaxBytes() {
+        return boundedLong("WECOM_VIEWER_AUDIT_MAX_BYTES", 1_048_576L, 4_096L, 20_971_520L);
+    }
+    public int wecomTokenRefreshSkewSeconds() {
+        return boundedInt("WECOM_TOKEN_REFRESH_SKEW_SECONDS", 300, 5, 1800);
+    }
+    public String wecomLoginRedirectUri() {
+        String raw = value("WECOM_LOGIN_REDIRECT_URI", "http://localhost:" + webPort() + "/");
+        if (raw.length() > 2048) {
+            throw new IllegalArgumentException("WECOM_LOGIN_REDIRECT_URI must not exceed 2048 characters");
+        }
+        final java.net.URI uri;
+        try {
+            uri = java.net.URI.create(raw);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("WECOM_LOGIN_REDIRECT_URI must be an absolute URL", exception);
+        }
+        String scheme = uri.getScheme() == null ? ""
+                : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        String host = uri.getHost() == null ? ""
+                : uri.getHost().toLowerCase(java.util.Locale.ROOT);
+        boolean localHttp = "http".equals(scheme) && "localhost".equals(host);
+        if ((!"https".equals(scheme) && !localHttp) || host.isBlank()
+                || uri.getUserInfo() != null || uri.getFragment() != null) {
+            throw new IllegalArgumentException(
+                    "WECOM_LOGIN_REDIRECT_URI must use HTTPS or local http://localhost without user info or fragment");
+        }
+        String origin = scheme + "://" + host + (uri.getPort() >= 0 ? ":" + uri.getPort() : "");
+        if (!wecomAllowedJsapiOrigins().contains(origin)) {
+            throw new IllegalArgumentException(
+                    "WECOM_LOGIN_REDIRECT_URI origin must be listed in WECOM_ALLOWED_JSAPI_ORIGINS");
+        }
+        return uri.toString();
+    }
+    public int wecomLoginAttemptTtlSeconds() {
+        return boundedInt("WECOM_LOGIN_ATTEMPT_TTL_SECONDS", 300, 30, 600);
+    }
+    public int wecomLoginMaxPending() {
+        return boundedInt("WECOM_LOGIN_MAX_PENDING", 256, 1, 1024);
+    }
+    public String wecomChatDataProgramId() {
+        return boundedOptionalText("WECOM_CHATDATA_PROGRAM_ID", 128);
+    }
+    public String wecomChatDataAbilityId() {
+        return boundedOptionalText("WECOM_CHATDATA_ABILITY_ID", 128);
+    }
+    public Path wecomChatDataPrivateKeyFile() {
+        String raw = value("WECOM_CHATDATA_PRIVATE_KEY_FILE", "");
+        if (raw.isBlank()) return Path.of("");
+        Path path = Path.of(raw);
+        if (!path.isAbsolute()) {
+            throw new IllegalArgumentException("WECOM_CHATDATA_PRIVATE_KEY_FILE must be an absolute path");
+        }
+        return path;
+    }
+    public int wecomChatDataPublicKeyVersion() {
+        return boundedInt("WECOM_CHATDATA_PUBLIC_KEY_VERSION", 1, 1, Integer.MAX_VALUE);
+    }
+    public Path wecomChatDataCursorFile() {
+        return dataFile("WECOM_CHATDATA_CURSOR_FILE", "wecom-chatdata-cursor.json");
+    }
+    public int wecomChatDataSyncLimit() {
+        return boundedInt("WECOM_CHATDATA_SYNC_LIMIT", 200, 1, 200);
+    }
+    public int wecomChatDataSyncMaxPages() {
+        return boundedInt("WECOM_CHATDATA_SYNC_MAX_PAGES", 5, 1, 5);
+    }
+    public int wecomChatDataSyncTimeoutSeconds() {
+        return boundedInt("WECOM_CHATDATA_SYNC_TIMEOUT_SECONDS", 15, 1, 15);
+    }
+    public int wecomChatDataStoreMaxMessages() {
+        return boundedInt("WECOM_CHATDATA_STORE_MAX_MESSAGES", 5000, 1, 5000);
+    }
+    public long wecomChatDataStoreMaxBytes() {
+        return boundedLong("WECOM_CHATDATA_STORE_MAX_BYTES", 8_388_608L, 4_096L, 8_388_608L);
+    }
+    public boolean wecomDailySummaryEnabled() {
+        return strictBoolean("WECOM_DAILY_SUMMARY_ENABLED", false);
+    }
+    public String wecomDailySummaryAbilityId() {
+        String abilityId = value("WECOM_DAILY_SUMMARY_ABILITY_ID", "conversation_daily_summary").trim();
+        if (!"conversation_daily_summary".equals(abilityId)) {
+            throw new IllegalArgumentException(
+                    "WECOM_DAILY_SUMMARY_ABILITY_ID must be conversation_daily_summary");
+        }
+        return abilityId;
+    }
+    public int wecomDailySummaryHour() {
+        return boundedInt("WECOM_DAILY_SUMMARY_HOUR", 0, 0, 23);
+    }
+    public int wecomDailySummaryMinute() {
+        return boundedInt("WECOM_DAILY_SUMMARY_MINUTE", 5, 0, 59);
+    }
+    public int wecomDailySummaryMaxBatches() {
+        return boundedInt("WECOM_DAILY_SUMMARY_MAX_BATCHES", 32, 1, 32);
+    }
+    public int wecomDailySummaryMaxTransientAttempts() {
+        return boundedInt("WECOM_DAILY_SUMMARY_MAX_TRANSIENT_ATTEMPTS", 20, 1, 20);
+    }
+    public int wecomDailySummaryMaxBackoffSeconds() {
+        return boundedInt("WECOM_DAILY_SUMMARY_MAX_BACKOFF_SECONDS", 900, 1, 900);
+    }
+    public int wecomDailySummaryPollInitialSeconds() {
+        return boundedInt("WECOM_DAILY_SUMMARY_POLL_INITIAL_SECONDS", 30, 5, 900);
+    }
+    public int wecomDailySummaryMaxWaitHours() {
+        return boundedInt("WECOM_DAILY_SUMMARY_MAX_WAIT_HOURS", 24, 1, 24);
+    }
 
     public String readSecret(Path path) throws IOException {
         try {
@@ -86,6 +228,11 @@ public class Config {
         } catch (IOException ex) {
             throw new IOException("Unable to read secret file: " + path, ex);
         }
+    }
+
+    private Path dataFile(String key, String defaultFileName) {
+        Path path = Path.of(value(key, defaultFileName));
+        return path.isAbsolute() ? path : dataDir().resolve(path).normalize();
     }
 
     private int boundedInt(String key, int fallback, int minimum, int maximum) {
@@ -102,10 +249,49 @@ public class Config {
         return parsed;
     }
 
+    private long boundedLong(String key, long fallback, long minimum, long maximum) {
+        String raw = value(key, Long.toString(fallback));
+        final long parsed;
+        try {
+            parsed = Long.parseLong(raw);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException(key + " must be an integer between " + minimum + " and " + maximum, ex);
+        }
+        if (parsed < minimum || parsed > maximum) {
+            throw new IllegalArgumentException(key + " must be between " + minimum + " and " + maximum);
+        }
+        return parsed;
+    }
+
+    private String boundedOptionalText(String key, int maximum) {
+        String text = value(key, "").trim();
+        if (text.length() > maximum) {
+            throw new IllegalArgumentException(key + " must not exceed " + maximum + " characters");
+        }
+        return text;
+    }
+
+    private boolean strictBoolean(String key, boolean fallback) {
+        String raw = value(key, Boolean.toString(fallback));
+        if ("true".equalsIgnoreCase(raw)) return true;
+        if ("false".equalsIgnoreCase(raw)) return false;
+        throw new IllegalArgumentException(key + " must be true or false");
+    }
+
     private static String stripQuotes(String value) {
         if (value != null && value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
             return value.substring(1, value.length() - 1);
         }
         return value == null ? "" : value;
+    }
+
+    private static List<String> splitCsv(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
     }
 }

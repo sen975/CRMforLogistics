@@ -493,6 +493,295 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/js-sdk-config:
+    get:
+      operationId: getWeComJsSdkConfig
+      description: Return WeCom JS-SDK signatures for an allowed frontend URL. The server validates the URL against WECOM_ALLOWED_JSAPI_ORIGINS and never returns corpsecret, access_token, or jsapi_ticket. The jsApiList includes wwapp.invokeJsApiByCallInfo for the conversation viewer.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          description: Short-lived viewer token bound to the same delegated authorization installation and version.
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+      responses:
+        '200':
+          description: WeCom JS-SDK config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComJsSdkConfig'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/authorization/callback:
+    get:
+      operationId: verifyWeComAuthorizationCallback
+      description: Verify the official delegated-authorization callback URL and return the decrypted echostr as plain text. This request is sent by WeCom when saving the callback URL and does not create or change an installation.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: msg_signature
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: timestamp
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 32
+            pattern: '^[0-9]{1,32}$'
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: echostr
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1048576
+      responses:
+        '200':
+          description: Decrypted callback verification string
+          content:
+            text/plain:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+    post:
+      operationId: receiveWeComAuthorizationCallback
+      description: Verify and decrypt the official delegated-authorization suite callback, then synchronously accept suite_ticket or enqueue bounded installation changes. The exact XML body is limited to 1 MiB and credential material is never returned.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: msg_signature
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: timestamp
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 32
+            pattern: '^[0-9]{1,32}$'
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/WeComAuthorizationCallbackBody'
+      responses:
+        '200':
+          description: Official callback acknowledgement
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: success
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/login/attempts:
+    post:
+      operationId: createWeComLoginAttempt
+      description: Create one bounded short-lived state for the official WeCom browser login panel without returning secrets, tickets, signatures, or viewer tokens.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              maxProperties: 0
+      responses:
+        '200':
+          description: Short-lived official WeCom login panel configuration and one-time state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComLoginAttemptResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/login/exchange:
+    post:
+      operationId: exchangeWeComLoginCode
+      description: Atomically consume a short-lived login state, then exchange the official WeCom browser login code for a bounded viewer identity token.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeComLoginExchangeRequest'
+      responses:
+        '200':
+          description: WeCom user identity for this message-center session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComLoginExchangeResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/conversation-view/sessions:
+    post:
+      operationId: createWeComConversationViewerSession
+      description: Synchronize bounded WeCom chatdata indexes, then create a short-lived viewer session after the messaging read permission check succeeds.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeComViewerSessionCreateRequest'
+      responses:
+        '200':
+          description: Bounded WeCom viewer session id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComViewerSessionCreateResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '409':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '429':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '500':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '502':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '503':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '504':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/conversation-view/sessions/{viewerSessionId}:
+    get:
+      operationId: getWeComConversationViewerSession
+      description: Return bounded WeCom viewer message references for a valid short-lived viewer session. The short-lived viewer auth token is supplied with X-WeCom-Viewer-Auth, not a URL query parameter.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: viewerSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 64
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      responses:
+        '200':
+          description: WeCom viewer session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComViewerSessionDetail'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/conversation-view/events:
+    post:
+      operationId: recordWeComConversationViewerEvent
+      description: Record a bounded client-side WeCom component failure in the audit owner. The short-lived viewer auth token is supplied with X-WeCom-Viewer-Auth and secret material is never accepted in the body.
+      tags:
+        - Channels
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeComViewerEventRequest'
+      responses:
+        '202':
+          description: Bounded viewer audit event accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComViewerEventAccepted'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/webhooks/{channelType}:
     post:
       operationId: receiveChannelWebhook
@@ -687,6 +976,11 @@ components:
           schema:
             $ref: '#/components/schemas/ApiError'
   schemas:
+    WeComAuthorizationCallbackBody:
+      type: string
+      format: binary
+      minLength: 1
+      maxLength: 1048576
     ApiError:
       type: object
       additionalProperties: false
@@ -1193,6 +1487,190 @@ components:
         acceptedAt:
           type: string
           format: date-time
+    WeComJsSdkSignature:
+      type: object
+      required: [timestamp, nonceStr, signature]
+      additionalProperties: false
+      properties:
+        timestamp:
+          type: string
+          minLength: 1
+          maxLength: 16
+        nonceStr:
+          type: string
+          minLength: 1
+          maxLength: 64
+        signature:
+          type: string
+          minLength: 40
+          maxLength: 40
+    WeComJsSdkConfig:
+      type: object
+      required: [corpId, agentId, jsApiList, configSignature, agentConfigSignature]
+      additionalProperties: false
+      properties:
+        corpId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 32
+        jsApiList:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+          contains:
+            const: wwapp.invokeJsApiByCallInfo
+        configSignature:
+          $ref: '#/components/schemas/WeComJsSdkSignature'
+        agentConfigSignature:
+          $ref: '#/components/schemas/WeComJsSdkSignature'
+    WeComLoginAttemptResponse:
+      type: object
+      required: [corpId, agentId, redirectUri, state, expiresIn]
+      additionalProperties: false
+      properties:
+        corpId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 32
+        redirectUri:
+          type: string
+          format: uri
+          minLength: 1
+          maxLength: 2048
+        state:
+          type: string
+          minLength: 16
+          maxLength: 128
+        expiresIn:
+          type: integer
+          minimum: 30
+          maximum: 600
+    WeComLoginExchangeRequest:
+      type: object
+      required: [code, state]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          type: string
+          minLength: 16
+          maxLength: 128
+    WeComLoginExchangeResponse:
+      type: object
+      required: [wecomUserId, viewerAuthToken, expiresIn]
+      additionalProperties: false
+      properties:
+        wecomUserId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        viewerAuthToken:
+          type: string
+          minLength: 16
+          maxLength: 128
+        expiresIn:
+          type: integer
+          minimum: 30
+          maximum: 3600
+    WeComViewerSessionCreateRequest:
+      type: object
+      required: [contactPointId, viewerAuthToken]
+      additionalProperties: false
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        contactPointId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        viewerAuthToken:
+          type: string
+          minLength: 16
+          maxLength: 128
+    WeComViewerSessionCreateResponse:
+      type: object
+      required: [viewerSessionId, expiresIn]
+      additionalProperties: false
+      properties:
+        viewerSessionId:
+          type: string
+          minLength: 16
+          maxLength: 64
+        expiresIn:
+          type: integer
+          minimum: 30
+          maximum: 3600
+    WeComViewerMessage:
+      type: object
+      required: [msgid, secretKey]
+      additionalProperties: false
+      properties:
+        msgid:
+          type: string
+          minLength: 1
+          maxLength: 128
+        secretKey:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    WeComViewerSessionDetail:
+      type: object
+      required: [viewerSessionId, corpId, agentId, messages]
+      additionalProperties: false
+      properties:
+        viewerSessionId:
+          type: string
+          minLength: 16
+          maxLength: 64
+        corpId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        agentId:
+          type: string
+          minLength: 1
+          maxLength: 32
+        messages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/WeComViewerMessage'
+    WeComViewerEventRequest:
+      type: object
+      required: [eventType, viewerSessionId]
+      additionalProperties: false
+      properties:
+        eventType:
+          type: string
+          const: component_error
+        viewerSessionId:
+          type: string
+          minLength: 16
+          maxLength: 64
+    WeComViewerEventAccepted:
+      type: object
+      required: [accepted]
+      additionalProperties: false
+      properties:
+        accepted:
+          type: boolean
+          const: true
     SseEvent:
       type: object
       additionalProperties: false

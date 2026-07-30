@@ -6,16 +6,10 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import jakarta.mail.Store;
 
-import java.security.Security;
-import java.util.Arrays;
 import java.util.Properties;
-import java.util.stream.Collectors;
 
 public class EmailSyncService {
     private static final String PROVIDER_139 = "139";
-    private static final String TLS_139_CIPHER_SUITE = "TLS_RSA_WITH_AES_256_GCM_SHA384";
-    private static final String TLS_DISABLED_ALGORITHMS = "jdk.tls.disabledAlgorithms";
-    private static final String DISABLED_TLS_RSA_SUITES = "TLS_RSA_*";
 
     private final Config config;
     private final EmailInboxWriter writer;
@@ -31,12 +25,46 @@ public class EmailSyncService {
 
     public SyncResult receiveLatest() throws Exception {
         SyncResult result = new SyncResult("email");
+        if (usesOpenSslImapFallback()) {
+            receiveLatestWithOpenSsl(result);
+            result.message = "received " + result.saved + " new email messages";
+            return result;
+        }
         try (Store store = connectStore()) {
             receiveLatestFromFolder(store, config.value("INBOX_FOLDER", "INBOX"), "in", receiveLimit(), result);
             receiveLatestFromFolder(store, config.value("SENT_FOLDER", "Sent"), "out", receiveLimit(), result);
         }
         result.message = "received " + result.saved + " new email messages";
         return result;
+    }
+
+    boolean usesOpenSslImapFallback() {
+        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider())
+                && bool("IMAP_139_USE_OPENSSL", true);
+    }
+
+    private void receiveLatestWithOpenSsl(SyncResult result) throws Exception {
+        requireConfig("IMAP_HOST");
+        requireConfig("IMAP_USERNAME");
+        requireConfig("IMAP_PASSWORD");
+        OpenSslImapClient client = new OpenSslImapClient(config);
+        receiveLatestFromOpenSslFolder(client, config.value("INBOX_FOLDER", "INBOX"), "in", receiveLimit(), result);
+        receiveLatestFromOpenSslFolder(client, config.value("SENT_FOLDER", "Sent"), "out", receiveLimit(), result);
+    }
+
+    private void receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName, String direction,
+                                                int limit, SyncResult result) throws Exception {
+        if (folderName == null || folderName.isBlank()) {
+            return;
+        }
+        for (Message message : client.fetchLatest(folderName, limit)) {
+            result.fetched++;
+            if (writer.append(message, direction)) {
+                result.saved++;
+            } else {
+                result.skipped++;
+            }
+        }
     }
 
     private void receiveLatestFromFolder(Store store, String folderName, String direction, int limit, SyncResult result) throws Exception {
@@ -73,9 +101,8 @@ public class EmailSyncService {
         requireConfig("IMAP_HOST");
         requireConfig("IMAP_USERNAME");
         requireConfig("IMAP_PASSWORD");
-        applyJavaSecurityProfile();
         Session session = Session.getInstance(imapProperties());
-        Store store = session.getStore("imap");
+        Store store = session.getStore(storeProtocol());
         store.connect(config.value("IMAP_HOST", ""), imapPort(),
                 config.value("IMAP_USERNAME", ""), config.value("IMAP_PASSWORD", ""));
         return store;
@@ -83,32 +110,33 @@ public class EmailSyncService {
 
     Properties imapProperties() {
         Properties props = new Properties();
-        props.put("mail.imap.host", config.value("IMAP_HOST", ""));
-        props.put("mail.imap.port", Integer.toString(imapPort()));
-        props.put("mail.imap.ssl.enable", Boolean.toString(bool("IMAP_SSL", true)));
-        props.put("mail.imap.connectiontimeout", "15000");
-        props.put("mail.imap.timeout", "30000");
-        props.put("mail.imap.ssl.protocols", "TLSv1.2");
-        String cipherSuite = javaMailCipherSuite();
-        if (!cipherSuite.isBlank()) {
-            props.put("mail.imap.ssl.ciphersuites", cipherSuite);
-        }
+        putImapProperties(props, "mail.imap");
+        putImapProperties(props, "mail.imaps");
         return props;
     }
 
-    private void applyJavaSecurityProfile() {
-        if (!PROVIDER_139.equalsIgnoreCase(effectiveMailProvider())) {
-            return;
-        }
-        String disabledAlgorithms = Security.getProperty(TLS_DISABLED_ALGORITHMS);
-        String adjustedAlgorithms = withoutDisabledTlsRsa(disabledAlgorithms);
-        if (!adjustedAlgorithms.equals(disabledAlgorithms)) {
-            Security.setProperty(TLS_DISABLED_ALGORITHMS, adjustedAlgorithms);
+    private void putImapProperties(Properties props, String prefix) {
+        props.put(prefix + ".host", config.value("IMAP_HOST", ""));
+        props.put(prefix + ".port", Integer.toString(imapPort()));
+        props.put(prefix + ".ssl.enable", Boolean.toString(bool("IMAP_SSL", true)));
+        props.put(prefix + ".connectiontimeout", "15000");
+        props.put(prefix + ".timeout", "30000");
+        props.put(prefix + ".ssl.protocols", "TLSv1.2");
+        String cipherSuite = javaMailCipherSuite();
+        if (!cipherSuite.isBlank()) {
+            props.put(prefix + ".ssl.ciphersuites", cipherSuite);
+            props.put(prefix + ".ssl.socketFactory",
+                    BouncyCastle139ImapSocketFactory.create(config.value("IMAP_HOST", "")));
+            props.put(prefix + ".ssl.checkserveridentity", "true");
         }
     }
 
+    private String storeProtocol() {
+        return bool("IMAP_SSL", true) ? "imaps" : "imap";
+    }
+
     private String javaMailCipherSuite() {
-        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider()) ? TLS_139_CIPHER_SUITE : "";
+        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider()) ? BouncyCastle139ImapSocketFactory.CIPHER_SUITE : "";
     }
 
     private String effectiveMailProvider() {
@@ -141,13 +169,4 @@ public class EmailSyncService {
         return value;
     }
 
-    private static String withoutDisabledTlsRsa(String disabledAlgorithms) {
-        if (disabledAlgorithms == null || disabledAlgorithms.isBlank()) {
-            return "";
-        }
-        return Arrays.stream(disabledAlgorithms.split(","))
-                .map(String::trim)
-                .filter(item -> !item.equalsIgnoreCase(DISABLED_TLS_RSA_SUITES))
-                .collect(Collectors.joining(", "));
-    }
 }

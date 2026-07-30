@@ -131,24 +131,24 @@ class JdbcMessageRepositoryIT {
         UnifiedMessageStore store = new UnifiedMessageStore(contactRepository, messages, userId);
         assertEquals(4, store.thread(contactId.toString()).size());
         assertEquals(clientOne.messageId().toString(), store.findMessage(clientOne.messageId().toString()).id);
-        UnifiedContact projectedContact = store.contacts().getFirst();
+        UnifiedContact projectedContact = store.contacts().get(0);
         assertEquals(contactId.toString(), projectedContact.id);
         assertEquals("two", projectedContact.lastText);
         assertEquals(4, projectedContact.messageCount);
         assertEquals(List.of("VIP"), projectedContact.tags);
-        assertEquals(identityId.toString(), projectedContact.points.getFirst().id);
+        assertEquals(identityId.toString(), projectedContact.points.get(0).id);
         assertTrue(store.contactGroup(contactId.toString()).contains(identityId.toString()));
 
         store.updateContactRemark(contactId.toString(), "new remark");
         store.updateContactProfile(contactId.toString(), "Buyer Updated", List.of("VIP", "Hot"));
-        UnifiedContact updated = store.contacts().getFirst();
+        UnifiedContact updated = store.contacts().get(0);
         assertEquals("Buyer Updated", updated.displayName);
         assertEquals("new remark", updated.remark);
         assertEquals(List.of("Hot", "VIP"), updated.tags);
 
         List<UnifiedMessage> latestTwo = messages.thread(userId, conversation, null, 2);
         assertEquals(List.of("one", "two"), latestTwo.stream().map(message -> message.bodyText).toList());
-        UnifiedMessage firstLatest = latestTwo.getFirst();
+        UnifiedMessage firstLatest = latestTwo.get(0);
         List<UnifiedMessage> older = messages.thread(userId, conversation,
                 new MessageCursor(Instant.parse(firstLatest.timestamp), UUID.fromString(firstLatest.id)), 2);
         assertEquals(List.of("late", "hello"), older.stream().map(message -> message.bodyText).toList());
@@ -162,10 +162,10 @@ class JdbcMessageRepositoryIT {
                 "provider-newer-contact", null, "inbound", "text", null, "newest", null,
                 occurredAt.plusSeconds(100), true, null));
         UnifiedContact firstContactPage = contactRepository.listForUser(userId,
-                new ContactQuery("", null, null, 1)).getFirst();
+                new ContactQuery("", null, null, 1)).get(0);
         assertEquals(newerContact.toString(), firstContactPage.id);
         UnifiedContact secondContactPage = contactRepository.listForUser(userId,
-                new ContactQuery("", Instant.parse(firstContactPage.lastTime), UUID.fromString(firstContactPage.id), 1)).getFirst();
+                new ContactQuery("", Instant.parse(firstContactPage.lastTime), UUID.fromString(firstContactPage.id), 1)).get(0);
         assertEquals(contactId.toString(), secondContactPage.id);
     }
 

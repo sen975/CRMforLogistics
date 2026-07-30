@@ -50,7 +50,8 @@ class DatabaseSchemaIT {
                     "channel_accounts", "channel_sync_cursors", "message_templates", "conversations",
                     "conversation_access_grants", "conversation_read_states", "messages",
                     "message_participants", "message_status_events", "attachments", "channel_events",
-                    "outbox_jobs", "audit_logs", "data_import_batches", "data_import_errors");
+                    "outbox_jobs", "audit_logs", "data_import_batches", "data_import_errors",
+                    "wecom_daily_summary_jobs", "wecom_daily_summaries");
         }
     }
 

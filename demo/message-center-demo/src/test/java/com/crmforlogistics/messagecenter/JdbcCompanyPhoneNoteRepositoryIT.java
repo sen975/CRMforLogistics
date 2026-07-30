@@ -90,8 +90,8 @@ class JdbcCompanyPhoneNoteRepositoryIT {
         assertTrue(companies.detailsForUser(userId, company).conversationIds().isEmpty());
         companies.linkContact(company, contact, "buyer", true, "primary", userId);
         CompanyDetails linked = companies.detailsForUser(userId, company);
-        assertEquals(contact, linked.contacts().getFirst().contactId());
-        assertEquals(conversation, linked.conversationIds().getFirst());
+        assertEquals(contact, linked.contacts().get(0).contactId());
+        assertEquals(conversation, linked.conversationIds().get(0));
         assertNotNull(companies.findForUser(userId, company));
 
         UUID noteId = notes.create(new PhoneNoteDraft(contact, company, phoneIdentity,
@@ -101,7 +101,7 @@ class JdbcCompanyPhoneNoteRepositoryIT {
 
         assertTrue(companies.detailsForUser(userId, company).contacts().isEmpty());
         assertTrue(companies.detailsForUser(userId, company).conversationIds().isEmpty());
-        assertEquals(noteId, notes.listByContact(userId, contact, null, 20).getFirst().id());
+        assertEquals(noteId, notes.listByContact(userId, contact, null, 20).get(0).id());
 
         UUID olderCompany = companies.create(new CompanyDraft("Older", null, null, null,
                 null, userId, null), userId);
@@ -111,10 +111,10 @@ class JdbcCompanyPhoneNoteRepositoryIT {
         updateCompanyTime(olderCompany, Instant.parse("2026-07-02T00:00:00Z"));
         updateCompanyTime(newerCompany, Instant.parse("2026-07-03T00:00:00Z"));
         Company firstCompanyPage = companies.listForUser(userId,
-                new CompanyQuery("", null, null, 1)).getFirst();
+                new CompanyQuery("", null, null, 1)).get(0);
         assertEquals(newerCompany, firstCompanyPage.id());
         Company secondCompanyPage = companies.listForUser(userId,
-                new CompanyQuery("", Instant.parse("2026-07-03T00:00:00Z"), newerCompany, 1)).getFirst();
+                new CompanyQuery("", Instant.parse("2026-07-03T00:00:00Z"), newerCompany, 1)).get(0);
         assertEquals(olderCompany, secondCompanyPage.id());
 
         UUID sameTimeA = companies.create(new CompanyDraft("Same A", null, null, null,
@@ -125,9 +125,9 @@ class JdbcCompanyPhoneNoteRepositoryIT {
         updateCompanyTime(sameTimeA, sameTime);
         updateCompanyTime(sameTimeB, sameTime);
         Company sameTimeFirst = companies.listForUser(userId,
-                new CompanyQuery("Same", null, null, 1)).getFirst();
+                new CompanyQuery("Same", null, null, 1)).get(0);
         Company sameTimeSecond = companies.listForUser(userId,
-                new CompanyQuery("Same", sameTime, sameTimeFirst.id(), 1)).getFirst();
+                new CompanyQuery("Same", sameTime, sameTimeFirst.id(), 1)).get(0);
         assertTrue(!sameTimeFirst.id().equals(sameTimeSecond.id()));
 
         assertNotNull(companies.create(new CompanyDraft("Unassigned", null, null, null,
