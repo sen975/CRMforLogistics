@@ -5,15 +5,9 @@ import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
 import com.aliyun.auth.credentials.provider.ICredentialProvider;
 import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
 import com.aliyun.sdk.service.cams20200606.AsyncClient;
-import com.aliyun.sdk.service.cams20200606.models.GetChatappTemplateDetailRequest;
-import com.aliyun.sdk.service.cams20200606.models.GetChatappTemplateDetailResponse;
-import com.aliyun.sdk.service.cams20200606.models.GetChatappTemplateDetailResponseBody;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
-import com.aliyun.sdk.service.cams20200606.models.ListChatappTemplateRequest;
-import com.aliyun.sdk.service.cams20200606.models.ListChatappTemplateResponse;
-import com.aliyun.sdk.service.cams20200606.models.ListChatappTemplateResponseBody;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -251,38 +245,17 @@ public class ChatAppHistorySyncService {
             merged.put(templateStore.key(existing), existing);
         }
 
-        try (AsyncClient client = createClient()) {
+        try (ChatAppTemplateGateway gateway = AliyunChatAppTemplateGateway.open(config)) {
             for (int pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
-                ListChatappTemplateRequest.Builder builder = ListChatappTemplateRequest.builder()
-                        .custSpaceId(requiredConfig("CUST_SPACE_ID"))
-                        .page(ListChatappTemplateRequest.Page.builder()
-                                .index(pageIndex)
-                                .size(pageSize)
-                                .build());
-
-                putIfPresent("TEMPLATE_LANGUAGE", builder::language);
-                putIfPresent("TEMPLATE_NAME", builder::name);
-                putIfPresent("TEMPLATE_CODE", builder::code);
-                putIfPresent("TEMPLATE_AUDIT_STATUS", builder::auditStatus);
-                putIfPresent("TEMPLATE_CATEGORY", builder::category);
-                putIfPresent("TEMPLATE_TYPE", builder::templateType);
-
-                ListChatappTemplateResponse response = client.listChatappTemplate(builder.build()).get();
-                ListChatappTemplateResponseBody body = response.getBody();
-                if (body == null) {
-                    break;
-                }
-                assertOk("ListChatappTemplate", body.getCode(), body.getMessage());
-                if (Boolean.FALSE.equals(body.getSuccess())) {
-                    throw new IllegalStateException("ListChatappTemplate failed: " + body.getMessage());
-                }
-                List<ListChatappTemplateResponseBody.ListTemplate> rows = body.getListTemplate();
+                ChatAppTemplateGateway.TemplatePage page = gateway.listTemplates(
+                        pageIndex, pageSize, Duration.ofSeconds(15));
+                List<ChatAppTemplateGateway.TemplateSummary> rows = page.templates();
                 if (rows == null || rows.isEmpty()) {
                     break;
                 }
                 result.fetched += rows.size();
-                for (ListChatappTemplateResponseBody.ListTemplate row : rows) {
-                    TemplateStore.TemplateRecord record = fetchTemplateDetail(client, row);
+                for (ChatAppTemplateGateway.TemplateSummary row : rows) {
+                    TemplateStore.TemplateRecord record = gateway.getTemplateDetail(row, Duration.ofSeconds(15));
                     TemplateStore.TemplateRecord previous = merged.put(templateStore.key(record), record);
                     if (previous == null || !sameTemplate(previous, record)) {
                         result.saved++;
@@ -320,38 +293,6 @@ public class ChatAppHistorySyncService {
         message.raw = raw;
         message.extra = extra;
         return message;
-    }
-
-    private TemplateStore.TemplateRecord fetchTemplateDetail(
-            AsyncClient client,
-            ListChatappTemplateResponseBody.ListTemplate row
-    ) throws Exception {
-        String language = ContactPointUtil.firstNonBlank(row.getLanguage(), config.value("TEMPLATE_LANGUAGE", config.value("CHATAPP_LANGUAGE", "")));
-        GetChatappTemplateDetailRequest.Builder builder = GetChatappTemplateDetailRequest.builder()
-                .custSpaceId(requiredConfig("CUST_SPACE_ID"));
-        putIfNotBlank(row.getTemplateCode(), builder::templateCode);
-        putIfNotBlank(row.getTemplateName(), builder::templateName);
-        putIfNotBlank(language, builder::language);
-        putIfNotBlank(row.getTemplateType(), builder::templateType);
-
-        GetChatappTemplateDetailResponse response = client.getChatappTemplateDetail(builder.build()).get();
-        GetChatappTemplateDetailResponseBody body = response.getBody();
-        if (body == null) {
-            throw new IllegalStateException("GetChatappTemplateDetail returned empty body for " + row.getTemplateCode());
-        }
-        assertOk("GetChatappTemplateDetail", body.getCode(), body.getMessage());
-        GetChatappTemplateDetailResponseBody.Data data = body.getData();
-        if (data == null) {
-            throw new IllegalStateException("GetChatappTemplateDetail returned empty data for " + row.getTemplateCode());
-        }
-        TemplateStore.TemplateRecord record = new TemplateStore.TemplateRecord();
-        record.templateCode = ContactPointUtil.firstNonBlank(data.getTemplateCode(), row.getTemplateCode());
-        record.templateName = ContactPointUtil.firstNonBlank(data.getName(), row.getTemplateName());
-        record.languageCode = ContactPointUtil.firstNonBlank(data.getLanguage(), row.getLanguage());
-        record.body = templateBody(data.getComponents());
-        record.raw = GSON.toJson(data);
-        record.updatedAt = Instant.now().toString();
-        return record;
     }
 
     private String historyDisplayText(ListChatappMessageResponseBody.Data row) {
@@ -454,25 +395,6 @@ public class ChatAppHistorySyncService {
             }
         }
         return "";
-    }
-
-    private static String templateBody(List<GetChatappTemplateDetailResponseBody.Components> components) {
-        if (components == null || components.isEmpty()) {
-            return "";
-        }
-        List<String> fallbackText = new ArrayList<>();
-        for (GetChatappTemplateDetailResponseBody.Components component : components) {
-            String text = ContactPointUtil.firstNonBlank(component.getText(), component.getCaption(), "");
-            if (text.isBlank()) {
-                continue;
-            }
-            String type = ContactPointUtil.firstNonBlank(component.getType(), "");
-            if ("BODY".equalsIgnoreCase(type)) {
-                return text;
-            }
-            fallbackText.add(text);
-        }
-        return String.join("\n", fallbackText);
     }
 
     private static boolean sameTemplate(TemplateStore.TemplateRecord left, TemplateStore.TemplateRecord right) {
