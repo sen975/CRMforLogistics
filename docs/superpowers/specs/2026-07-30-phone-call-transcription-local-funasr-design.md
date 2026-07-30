@@ -185,12 +185,13 @@ failed -> queued                 manual retry
 POST  /api/v1/contacts/{contactId}/call-records
 GET   /api/v1/contacts/{contactId}/timeline
 GET   /api/v1/call-records/{callRecordId}
+POST  /api/v1/call-records/{callRecordId}/audio-sessions
 GET   /api/v1/call-records/{callRecordId}/audio
 POST  /api/v1/call-records/{callRecordId}/retry
 PATCH /api/v1/call-records/{callRecordId}/transcript
 ```
 
-所有接口都要求既有 `X-WeCom-Viewer-Auth`。服务端先验证 token，再校验目标联系人或电话记录仍属于当前可读联系人组；上传、重试和修订从 token 解析员工 actor。token 缺失、过期或无法解析员工身份时返回 `AUTH_REQUIRED`，不得接受请求体传入的人员 ID。
+除音频内容 GET 外，所有接口都要求既有 `X-WeCom-Viewer-Auth`。服务端先验证 token，再校验目标联系人或电话记录仍属于当前可读联系人组；上传、重试和修订从 token 解析员工 actor。token 缺失、过期或无法解析员工身份时返回 `AUTH_REQUIRED`，不得接受请求体传入的人员 ID。音频内容 GET 只接受服务端创建的短时播放会话 Cookie，不接受 query token、本地路径或任意 caller ID。
 
 ### 8.1 创建电话记录
 
@@ -229,10 +230,14 @@ payload
 
 排序固定为 `occurredAt ASC, typeRank ASC, sortId ASC`；cursor 编码三元组，不能使用数组下标。`threadRevision` 必须覆盖消息 revision 与电话记录 version，使 SSE 或轮询能识别电话状态变化。每页和当前前端缓存继续使用既有上界。
 
-### 8.3 详情、播放、重试与修订
+### 8.3 详情、播放会话、重试与修订
 
 - 详情接口只返回授权聊天对象下的记录。
-- 音频接口按 `callRecordId` 解析服务端相对路径，支持标准 `Range` 请求以便浏览器播放；不得接受任意文件路径。
+- 右侧详情挂载播放器前，用认证头调用 `POST /audio-sessions`。服务端校验 actor 与电话记录归属后创建 5 分钟内存播放会话，返回 `204` 并设置随机 opaque Cookie：`HttpOnly`、`SameSite=Strict`、路径只限当前记录的 `/audio`，HTTPS 部署必须带 `Secure`。
+- 播放会话只绑定当前 viewer actor、`callRecordId`、到期时间和最近创建顺序；不保存音频内容。每个 actor 最多 8 个、全局最多 256 个，超限时淘汰该作用域最旧会话。
+- 音频 GET 按 `callRecordId` 与播放 Cookie 双向匹配后解析服务端相对路径，支持标准单区间 `Range` 请求以便浏览器播放；拒绝多区间请求，绝不接受任意文件路径。
+- `<audio>` 不能携带自定义认证头。详情保持打开时，前端每 4 分钟重新创建同一记录的播放会话并旋转 Cookie；离开详情、切换记录或页面隐藏时停止续期。播放请求因会话失效返回 401 时，UI 重新创建会话，恢复原 `currentTime` 后继续播放，最多自动恢复一次，避免认证故障形成无限循环。
+- 播放 Cookie 不进入 URL、JSON、日志、localStorage 或 sessionStorage；服务重启后内存会话自然失效，前端重新创建即可。
 - 重试接口仅接受 `failed` 状态，并使用请求幂等键阻断重复排队。
 - 修订接口必须带预期 version；冲突返回 409，不覆盖他人修订。
 - API 错误统一返回现有结构化错误 envelope、trace ID、稳定 code 和可审计 context。
@@ -304,6 +309,9 @@ response_format=verbose_json
 | FunASR 响应体上限 | 10 MiB |
 | 分段数量上限 | 20000 |
 | 人工修订版本上限 | 20 |
+| 单 actor 播放会话上限 | 8 |
+| 全局播放会话上限 | 256 |
+| 播放会话 TTL | 300 秒 |
 
 网络错误、连接超时、请求超时和 HTTP `5xx` 可以自动重试。可重试失败会清除旧租约，写入有上界的 `nextAttemptAt`，并从 `processing` 返回 `queued`。MP3 非法、超过文件/时长上限、磁盘容量不足、FunASR `4xx` 和响应合同错误不自动重试。三次尝试耗尽后记录进入 `failed`，保留录音并允许用户人工重试。
 
@@ -348,6 +356,8 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 - 当前人工修订稿和历史版本。
 - 失败原因与“重新转录”命令。
 
+详情取得数据后先创建短时播放会话，再设置 `<audio src>`；创建失败时只禁用播放器并展示结构化错误，转录和修订内容仍可查看。详情保持打开时按第 8.3 节续期，关闭时清理 timer 和媒体资源。
+
 排队和处理中显示稳定占位尺寸，不能因文案变化导致右栏或聊天列表跳动。移动端沿用现有详情抽屉/单列约束，不让右栏覆盖发送区。
 
 ## 13. 错误语义
@@ -367,6 +377,8 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 | `FUNASR_INVALID_RESPONSE` | 响应类型、范围或上界不符合合同 | 否 |
 | `TRANSCRIPT_VERSION_CONFLICT` | 人工修订发生并发冲突 | 否 |
 | `AUTH_REQUIRED` | 无法取得可靠服务端 actor | 否 |
+| `AUDIO_SESSION_EXPIRED` | 播放会话缺失、失效或不匹配当前记录 | 否 |
+| `AUDIO_RANGE_INVALID` | Range 缺失有效单区间或请求多区间 | 否 |
 
 错误详情不得包含本地绝对路径、用户音频内容、FunASR 完整响应、内部网络拓扑或其他敏感配置。
 
@@ -374,6 +386,7 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 
 - FunASR 容器只加入私有 Compose 网络；不声明宿主机端口映射。
 - 所有音频读取必须先验证记录属于当前可见联系人，不能只凭 UUID 猜测访问。
+- 音频 URL 不携带认证 token；浏览器只能使用路径限定、HttpOnly、SameSite=Strict 的短时播放 Cookie。HTTPS 下 Cookie 必须带 `Secure`。
 - 上传文件名只用于安全展示；存储路径完全由服务端 ID 生成。
 - multipart、JSON、分段、修订文本、错误文本和 SSE payload 都有长度上限。
 - 日志只记录 record ID、trace ID、状态、耗时、大小和稳定错误码，不记录音频、完整转录或 FunASR body。
@@ -385,11 +398,13 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 ### 15.1 单元与合同测试
 
 - `CallRecordService`：绑定校验、方向、时间、幂等、状态机、version 冲突、重试和修订上限。
+- `CallAudioSessionService`：viewer token 换取播放会话、actor/record 绑定、TTL、每 actor 8 个、全局 256 个、Cookie 属性和淘汰顺序。
 - `FileCallRecordRepository`：临时文件、原子替换、损坏记录、索引重建、孤立音频对账、独占锁和启动恢复。
 - `LocalAudioStore`：MP3 签名、MIME、大小、时长、SHA-256、容量竞争、路径穿越和临时文件清理。
 - `FunAsrClient`：multipart 字段、流式文件、超时、`4xx`、`5xx`、空文本、非法 JSON、倒置时间、响应和分段上界。
 - `TranscriptionWorker`：有界并发、租约、三次尝试、退避、重启恢复、旧 worker 提交拒绝。
 - `ContactTimelineService`：消息/电话混排、相同时间 tie-break、cursor、revision、分页无重无漏。
+- 音频响应：完整 GET、单区间 `206`、`Content-Range`、seek、多区间拒绝、Cookie 缺失/过期/错记录拒绝。
 - OpenAPI 合同：所有请求/响应 additional-properties、上界、错误 envelope 和 MP3 content type。
 
 ### 15.2 集成测试
@@ -399,6 +414,7 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 - 联系人合并后两侧电话记录进入同一时间线；拆分所选号码后记录跟随该号码。
 - 并发提交相同 `clientRequestId` 只产生一个 MP3 和一个任务。
 - SSE 丢失时详情轮询能收敛到最终状态，且停止轮询不可见记录。
+- 播放会话在右栏打开时每 4 分钟续期，切换记录后旧 timer 停止；模拟过期后最多自动恢复一次并保持 `currentTime`。
 
 ### 15.3 浏览器验收
 
@@ -432,6 +448,9 @@ CALL_RECORD_MAX_ATTEMPTS=3
 CALL_RECORD_MAX_RESPONSE_BYTES=10485760
 CALL_RECORD_MAX_SEGMENTS=20000
 CALL_RECORD_MAX_REVISIONS=20
+CALL_AUDIO_SESSION_TTL_SECONDS=300
+CALL_AUDIO_SESSION_MAX_PER_ACTOR=8
+CALL_AUDIO_SESSION_MAX_ACTIVE=256
 FUNASR_BASE_URL=http://funasr:8000
 FUNASR_MODEL=sensevoice
 FUNASR_CONNECT_TIMEOUT_SECONDS=3

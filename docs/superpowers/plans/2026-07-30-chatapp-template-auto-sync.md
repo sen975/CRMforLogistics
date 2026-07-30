@@ -1002,7 +1002,7 @@ git commit -m "feat: synchronize ChatApp templates atomically"
 
 **Interfaces:**
 - Produces: `ChatAppTemplateSyncRuntime.open(Config, ChatAppTemplateSynchronizer, IntConsumer)`、`start()`、`enabled()`、`close()`。
-- Produces for tests: package-private `SyncAction` 和构造器 `(boolean, int, SyncAction, IntConsumer, ScheduledExecutorService)`，不需要继承或 mock 具体同步器。
+- Produces: package-private 依赖注入接口 `SyncAction` 和构造器 `(boolean, int, SyncAction, IntConsumer, ScheduledExecutorService)`；生产工厂和测试都通过该边界装配，不增加测试专用方法。
 - Consumed by: `App.startWeb()`。
 
 - [ ] **Step 1: 写入失败的运行时测试**
@@ -1036,6 +1036,7 @@ void disabledOrUnconfiguredRuntimeDoesNotScheduleWork() throws Exception {
 @Test
 void startsAsynchronouslyPublishesOnlyChangesAndStopsAfterClose() throws Exception {
     CountDownLatch invoked = new CountDownLatch(1);
+    CountDownLatch published = new CountDownLatch(1);
     AtomicInteger publishes = new AtomicInteger();
     ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
     ChatAppTemplateSyncRuntime.SyncAction action = () -> {
@@ -1044,12 +1045,16 @@ void startsAsynchronouslyPublishesOnlyChangesAndStopsAfterClose() throws Excepti
                 ChatAppTemplateSynchronizer.Status.CHANGED, 2, 1, 2, 1, 1);
     };
     ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
-            true, 300, action, count -> publishes.incrementAndGet(), executor);
+            true, 300, action, count -> {
+                publishes.incrementAndGet();
+                published.countDown();
+            }, executor);
 
     runtime.start();
     assertTrue(invoked.await(2, TimeUnit.SECONDS));
+    assertTrue(published.await(2, TimeUnit.SECONDS));
     runtime.close();
-    runtime.runOnceForTests();
+    runtime.start();
     assertEquals(1, publishes.get());
 }
 
@@ -1079,16 +1084,21 @@ void closeInterruptsAnInFlightSyncBeforeReturning() throws Exception {
 }
 
 @Test
-void unchangedSyncDoesNotPublishARefreshEvent() {
+void unchangedSyncDoesNotPublishARefreshEvent() throws Exception {
     AtomicInteger publishes = new AtomicInteger();
+    CountDownLatch invoked = new CountDownLatch(1);
     ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
             true, 300,
-            () -> new ChatAppTemplateSynchronizer.Outcome(
-                    ChatAppTemplateSynchronizer.Status.UNCHANGED, 2, 0, 2, 1, 1),
+            () -> {
+                invoked.countDown();
+                return new ChatAppTemplateSynchronizer.Outcome(
+                        ChatAppTemplateSynchronizer.Status.UNCHANGED, 2, 0, 2, 1, 1);
+            },
             count -> publishes.incrementAndGet(),
             Executors.newSingleThreadScheduledExecutor());
     try {
-        runtime.runOnceForTests();
+        runtime.start();
+        assertTrue(invoked.await(2, TimeUnit.SECONDS));
         assertEquals(0, publishes.get());
     } finally {
         runtime.close();
@@ -1110,7 +1120,7 @@ private ChatAppTemplateSynchronizer synchronizerThatFailsIfCalled(
 }
 ```
 
-上述 `UNCHANGED` 测试直接调用 `runOnceForTests()`，不等待 5 分钟调度周期。
+上述 `UNCHANGED` 测试依赖 `start()` 的零延迟首轮调度，不等待 5 分钟周期，也不暴露测试专用生产方法。
 
 - [ ] **Step 2: 运行测试，确认运行时类不存在**
 
@@ -1176,8 +1186,6 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
     public boolean enabled() {
         return enabled;
     }
-
-    void runOnceForTests() { runOnce(); }
 
     private void runOnce() {
         if (closed.get()) return;
