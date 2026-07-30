@@ -9,14 +9,20 @@ import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Comparator;
+import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,9 +33,19 @@ public class TemplateStore {
             "\\{\\{\\s*([A-Za-z0-9_.-]+)\\s*}}|\\$\\(\\s*([A-Za-z0-9_.-]+)\\s*\\)|\\(\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\)");
 
     private final Path file;
+    private final AtomicMover mover;
 
     public TemplateStore(Path file) {
+        this(file, TemplateStore::defaultMove);
+    }
+
+    TemplateStore(Path file, AtomicMover mover) {
         this.file = file;
+        this.mover = mover;
+    }
+
+    Path file() {
+        return file;
     }
 
     public List<TemplateRecord> readAll() throws IOException {
@@ -57,16 +73,91 @@ public class TemplateStore {
         if (file == null) {
             return;
         }
-        if (file.getParent() != null) {
-            Files.createDirectories(file.getParent());
+        replaceIfChanged(records);
+    }
+
+    public synchronized ReplaceResult replaceIfChanged(List<TemplateRecord> records) throws IOException {
+        List<TemplateRecord> next = normalized(records);
+        List<TemplateRecord> previous = normalized(readAll());
+        int changedRecords = changedRecordCount(previous, next);
+        if (changedRecords == 0) {
+            return new ReplaceResult(false, 0, next.size());
         }
-        List<TemplateRecord> safeRecords = records == null ? new ArrayList<>() : new ArrayList<>(records);
-        safeRecords.sort(Comparator
-                .comparing((TemplateRecord item) -> firstNonBlank(item.templateName, ""))
+        writeAtomically(next);
+        return new ReplaceResult(true, changedRecords, next.size());
+    }
+
+    private void writeAtomically(List<TemplateRecord> records) throws IOException {
+        Path target = file.toAbsolutePath().normalize();
+        Path parent = target.getParent();
+        Files.createDirectories(parent);
+        Path temporary = Files.createTempFile(parent, target.getFileName().toString() + ".", ".tmp");
+        IOException writeFailure = null;
+        try {
+            Files.writeString(temporary, GSON.toJson(records), StandardCharsets.UTF_8,
+                    StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                channel.force(true);
+            }
+            mover.move(temporary, target);
+        } catch (IOException exception) {
+            writeFailure = exception;
+            throw exception;
+        } finally {
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException cleanupFailure) {
+                if (writeFailure != null) {
+                    writeFailure.addSuppressed(cleanupFailure);
+                } else {
+                    throw cleanupFailure;
+                }
+            }
+        }
+    }
+
+    private static void defaultMove(Path source, Path target) throws IOException {
+        Files.move(source, target, StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private List<TemplateRecord> normalized(List<TemplateRecord> input) {
+        List<TemplateRecord> result = new ArrayList<>();
+        for (TemplateRecord source : input == null ? List.<TemplateRecord>of() : input) {
+            TemplateRecord copy = GSON.fromJson(GSON.toJson(source), TemplateRecord.class);
+            if (copy.placeholders == null || copy.placeholders.isEmpty()) {
+                copy.placeholders = placeholders(copy.body == null ? "" : copy.body);
+            }
+            result.add(copy);
+        }
+        result.sort(Comparator.comparing((TemplateRecord item) -> firstNonBlank(item.templateName, ""))
                 .thenComparing(item -> firstNonBlank(item.languageCode, ""))
                 .thenComparing(item -> firstNonBlank(item.templateCode, "")));
-        Files.writeString(file, GSON.toJson(safeRecords), StandardCharsets.UTF_8,
-                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+        return result;
+    }
+
+    private int changedRecordCount(List<TemplateRecord> previous, List<TemplateRecord> next) {
+        Map<String, String> before = semanticMap(previous);
+        Map<String, String> after = semanticMap(next);
+        Set<String> keys = new LinkedHashSet<>(before.keySet());
+        keys.addAll(after.keySet());
+        int changed = 0;
+        for (String key : keys) {
+            if (!Objects.equals(before.get(key), after.get(key))) {
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    private Map<String, String> semanticMap(List<TemplateRecord> records) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (TemplateRecord source : records) {
+            TemplateRecord copy = GSON.fromJson(GSON.toJson(source), TemplateRecord.class);
+            copy.updatedAt = null;
+            result.put(key(copy), GSON.toJson(copy));
+        }
+        return result;
     }
 
     public TemplateRecord find(String code, String language) {
@@ -181,4 +272,11 @@ public class TemplateStore {
         public String raw;
         public String updatedAt;
     }
+
+    @FunctionalInterface
+    interface AtomicMover {
+        void move(Path source, Path target) throws IOException;
+    }
+
+    record ReplaceResult(boolean changed, int changedRecords, int recordCount) {}
 }
