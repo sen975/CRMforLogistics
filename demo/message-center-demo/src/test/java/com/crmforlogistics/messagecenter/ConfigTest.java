@@ -19,6 +19,48 @@ class ConfigTest {
     Path tempDir;
 
     @Test
+    void exposesBoundedChatAppTemplateAutoSyncSettings() {
+        Config defaults = new Config(Map.of("CUST_SPACE_ID", "space-1"));
+        assertEquals(true, defaults.chatappTemplateAutoSyncEnabled());
+        assertEquals(300, defaults.chatappTemplateSyncIntervalSeconds());
+        assertEquals(50, defaults.chatappTemplatePageSize());
+        assertEquals(40, defaults.chatappTemplateMaxPages());
+        assertEquals(true, defaults.hasChatAppTemplateSyncConfiguration());
+
+        Config configured = new Config(Map.ofEntries(
+                Map.entry("CUST_SPACE_ID", "space-1"),
+                Map.entry("CHATAPP_TEMPLATE_AUTO_SYNC_ENABLED", "false"),
+                Map.entry("CHATAPP_TEMPLATE_SYNC_INTERVAL_SECONDS", "600"),
+                Map.entry("TEMPLATE_PAGE_SIZE", "25"),
+                Map.entry("TEMPLATE_MAX_PAGES", "12")
+        ));
+        assertEquals(false, configured.chatappTemplateAutoSyncEnabled());
+        assertEquals(600, configured.chatappTemplateSyncIntervalSeconds());
+        assertEquals(25, configured.chatappTemplatePageSize());
+        assertEquals(12, configured.chatappTemplateMaxPages());
+        assertEquals(false, new Config(Map.of()).hasChatAppTemplateSyncConfiguration());
+    }
+
+    @Test
+    void rejectsUnsafeChatAppTemplateAutoSyncSettings() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CHATAPP_TEMPLATE_AUTO_SYNC_ENABLED", "yes"))
+                        .chatappTemplateAutoSyncEnabled());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CHATAPP_TEMPLATE_SYNC_INTERVAL_SECONDS", "299"))
+                        .chatappTemplateSyncIntervalSeconds());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CHATAPP_TEMPLATE_SYNC_INTERVAL_SECONDS", "601"))
+                        .chatappTemplateSyncIntervalSeconds());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("TEMPLATE_PAGE_SIZE", "51"))
+                        .chatappTemplatePageSize());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("TEMPLATE_MAX_PAGES", "41"))
+                        .chatappTemplateMaxPages());
+    }
+
+    @Test
     void exposesDatabaseMinioAndBoundedWorkerSettings() {
         Config config = new Config(Map.ofEntries(
                 Map.entry("DATABASE_URL", "jdbc:postgresql://localhost:5432/message_center"),

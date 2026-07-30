@@ -58,6 +58,21 @@ public class Config {
     public Path emailContactGroupFile() { return Path.of(value("EMAIL_CONTACT_GROUP_FILE", emailDataDir().resolve("contact-groups.jsonl").toString())); }
     public Path chatappDataFile() { return Path.of(value("CHATAPP_DATA_FILE", "../chatapp-send-receive-demo/data/messages.jsonl")); }
     public Path chatappTemplateFile() { return Path.of(value("CHATAPP_TEMPLATE_FILE", "../chatapp-send-receive-demo/data/templates.json")); }
+    public boolean chatappTemplateAutoSyncEnabled() {
+        return strictBoolean("CHATAPP_TEMPLATE_AUTO_SYNC_ENABLED", true);
+    }
+    public int chatappTemplateSyncIntervalSeconds() {
+        return boundedInt("CHATAPP_TEMPLATE_SYNC_INTERVAL_SECONDS", 300, 300, 600);
+    }
+    public int chatappTemplatePageSize() {
+        return boundedInt("TEMPLATE_PAGE_SIZE", 50, 1, 50);
+    }
+    public int chatappTemplateMaxPages() {
+        return boundedInt("TEMPLATE_MAX_PAGES", 40, 1, 40);
+    }
+    public boolean hasChatAppTemplateSyncConfiguration() {
+        return !value("CUST_SPACE_ID", "").isBlank();
+    }
     public Path wecomDataFile() { return dataFile("WECOM_DATA_FILE", "wecom-messages.jsonl"); }
     public int webPort() { return Integer.parseInt(value("WEB_PORT", value("MESSAGE_CENTER_PORT", "8099"))); }
     public long mediaMaxBytes() { return Long.parseLong(value("MEDIA_MAX_BYTES", "20971520")); }
