@@ -20,9 +20,9 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -39,6 +39,7 @@ public class ChatAppHistorySyncService {
     private final ChatAppHistoryStore historyStore;
     private final TemplateStore templateStore;
     private final MediaCacher mediaCacher;
+    private final ChatAppTemplateSynchronizer templateSynchronizer;
     private final ThreadPoolExecutor mediaExecutor;
 
     interface MediaCacher {
@@ -46,7 +47,12 @@ public class ChatAppHistorySyncService {
     }
 
     public ChatAppHistorySyncService(Config config) {
-        this(config, new ChatAppHistoryStore(config), new TemplateStore(config.chatappTemplateFile()), defaultMediaCacher(config));
+        this(config, ChatAppTemplateSynchronizer.create(config));
+    }
+
+    ChatAppHistorySyncService(Config config, ChatAppTemplateSynchronizer templateSynchronizer) {
+        this(config, new ChatAppHistoryStore(config), new TemplateStore(config.chatappTemplateFile()),
+                defaultMediaCacher(config), templateSynchronizer);
     }
 
     ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore, TemplateStore templateStore) {
@@ -54,10 +60,18 @@ public class ChatAppHistorySyncService {
     }
 
     ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore, TemplateStore templateStore, MediaCacher mediaCacher) {
+        this(config, historyStore, templateStore, mediaCacher,
+                ChatAppTemplateSynchronizer.create(config));
+    }
+
+    private ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore,
+                                      TemplateStore templateStore, MediaCacher mediaCacher,
+                                      ChatAppTemplateSynchronizer templateSynchronizer) {
         this.config = config;
         this.historyStore = historyStore;
         this.templateStore = templateStore;
         this.mediaCacher = Objects.requireNonNull(mediaCacher);
+        this.templateSynchronizer = Objects.requireNonNull(templateSynchronizer);
         this.mediaExecutor = createMediaExecutor(config);
     }
 
@@ -237,40 +251,17 @@ public class ChatAppHistorySyncService {
     }
 
     public SyncResult syncTemplates() throws Exception {
-        int pageSize = Integer.parseInt(config.value("TEMPLATE_PAGE_SIZE", "50"));
-        int maxPages = Integer.parseInt(config.value("TEMPLATE_MAX_PAGES", "10"));
+        ChatAppTemplateSynchronizer.Outcome outcome = templateSynchronizer.sync();
         SyncResult result = new SyncResult("chatapp-templates");
-        Map<String, TemplateStore.TemplateRecord> merged = new LinkedHashMap<>();
-        for (TemplateStore.TemplateRecord existing : templateStore.readAll()) {
-            merged.put(templateStore.key(existing), existing);
-        }
-
-        try (ChatAppTemplateGateway gateway = AliyunChatAppTemplateGateway.open(config)) {
-            for (int pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
-                ChatAppTemplateGateway.TemplatePage page = gateway.listTemplates(
-                        pageIndex, pageSize, Duration.ofSeconds(15));
-                List<ChatAppTemplateGateway.TemplateSummary> rows = page.templates();
-                if (rows == null || rows.isEmpty()) {
-                    break;
-                }
-                result.fetched += rows.size();
-                for (ChatAppTemplateGateway.TemplateSummary row : rows) {
-                    TemplateStore.TemplateRecord record = gateway.getTemplateDetail(row, Duration.ofSeconds(15));
-                    TemplateStore.TemplateRecord previous = merged.put(templateStore.key(record), record);
-                    if (previous == null || !sameTemplate(previous, record)) {
-                        result.saved++;
-                    } else {
-                        result.skipped++;
-                    }
-                }
-                if (rows.size() < pageSize) {
-                    break;
-                }
-            }
-        }
-
-        templateStore.saveAll(new ArrayList<>(merged.values()));
-        result.message = "synced " + result.saved + " ChatApp templates";
+        result.fetched = outcome.fetched();
+        result.saved = outcome.changed();
+        result.skipped = outcome.status() == ChatAppTemplateSynchronizer.Status.UNCHANGED
+                ? outcome.fetched() : Math.max(0, outcome.fetched() - outcome.changed());
+        result.pages = outcome.pages();
+        result.durationMillis = outcome.durationMillis();
+        result.message = "template sync " + outcome.status().name().toLowerCase(Locale.ROOT)
+                + ", fetched " + outcome.fetched() + ", changed " + outcome.changed()
+                + ", count " + outcome.count();
         return result;
     }
 
@@ -395,13 +386,6 @@ public class ChatAppHistorySyncService {
             }
         }
         return "";
-    }
-
-    private static boolean sameTemplate(TemplateStore.TemplateRecord left, TemplateStore.TemplateRecord right) {
-        return Objects.equals(left.templateCode, right.templateCode)
-                && Objects.equals(left.templateName, right.templateName)
-                && Objects.equals(left.languageCode, right.languageCode)
-                && Objects.equals(left.body, right.body);
     }
 
     private static String inferDirection(String messageSource, String eventAction, String type) {
