@@ -6,7 +6,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntConsumer;
 
 public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
@@ -20,8 +19,8 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
     private final ScheduledExecutorService executor;
     private final int intervalSeconds;
     private final boolean enabled;
-    private final AtomicReference<Lifecycle> lifecycle =
-            new AtomicReference<>(Lifecycle.NEW);
+    private final Object lifecycleLock = new Object();
+    private Lifecycle lifecycle = Lifecycle.NEW;
 
     public static ChatAppTemplateSyncRuntime open(Config config,
                                                    ChatAppTemplateSynchronizer synchronizer,
@@ -52,15 +51,23 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
     }
 
     public void start() {
-        if (!enabled || !lifecycle.compareAndSet(Lifecycle.NEW, Lifecycle.STARTED)) {
+        if (!enabled) {
             return;
+        }
+        synchronized (lifecycleLock) {
+            if (lifecycle != Lifecycle.NEW) {
+                return;
+            }
+            lifecycle = Lifecycle.STARTED;
         }
         try {
             executor.scheduleAtFixedRate(this::runOnce, 0, intervalSeconds, TimeUnit.SECONDS);
         } catch (RejectedExecutionException exception) {
-            if (lifecycle.get() != Lifecycle.CLOSED) {
-                lifecycle.compareAndSet(Lifecycle.STARTED, Lifecycle.NEW);
-                throw exception;
+            synchronized (lifecycleLock) {
+                if (lifecycle != Lifecycle.CLOSED) {
+                    lifecycle = Lifecycle.NEW;
+                    throw exception;
+                }
             }
         }
     }
@@ -70,15 +77,20 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
     }
 
     private void runOnce() {
-        if (lifecycle.get() == Lifecycle.CLOSED) {
-            return;
+        synchronized (lifecycleLock) {
+            if (lifecycle == Lifecycle.CLOSED) {
+                return;
+            }
         }
         long started = System.nanoTime();
         try {
             ChatAppTemplateSynchronizer.Outcome outcome = syncAction.run();
-            if (lifecycle.get() != Lifecycle.CLOSED
-                    && outcome.status() == ChatAppTemplateSynchronizer.Status.CHANGED) {
-                changedPublisher.accept(outcome.count());
+            if (outcome.status() == ChatAppTemplateSynchronizer.Status.CHANGED) {
+                synchronized (lifecycleLock) {
+                    if (lifecycle != Lifecycle.CLOSED) {
+                        changedPublisher.accept(outcome.count());
+                    }
+                }
             }
             log(outcome.status().name().toLowerCase(Locale.ROOT), outcome, null, started);
         } catch (Exception exception) {
@@ -103,7 +115,13 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
 
     @Override
     public void close() {
-        if (lifecycle.getAndSet(Lifecycle.CLOSED) == Lifecycle.CLOSED || executor == null) {
+        synchronized (lifecycleLock) {
+            if (lifecycle == Lifecycle.CLOSED) {
+                return;
+            }
+            lifecycle = Lifecycle.CLOSED;
+        }
+        if (executor == null) {
             return;
         }
         executor.shutdownNow();
