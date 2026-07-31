@@ -231,10 +231,9 @@ class ChatAppTemplateSyncRuntimeTest {
     }
 
     @Test
-    void closeCannotTransitionRuntimeWhileChangedPublicationIsInProgress() throws Exception {
+    void closeStartsShutdownWhileChangedPublicationIsInProgress() throws Exception {
         CountDownLatch publishing = new CountDownLatch(1);
         CountDownLatch allowPublication = new CountDownLatch(1);
-        CountDownLatch closeStarted = new CountDownLatch(1);
         CountDownLatch shutdownNowCalled = new CountDownLatch(1);
         AtomicInteger publishes = new AtomicInteger();
         ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1) {
@@ -253,21 +252,16 @@ class ChatAppTemplateSyncRuntimeTest {
                     awaitIgnoringInterrupt(allowPublication);
                     publishes.incrementAndGet();
                 }, executor);
-        Thread closeThread = new Thread(() -> {
-            closeStarted.countDown();
-            runtime.close();
-        });
+        Thread closeThread = new Thread(runtime::close);
 
         try {
             captureStderr(() -> {
                 runtime.start();
                 assertTrue(publishing.await(2, TimeUnit.SECONDS));
                 closeThread.start();
-                assertTrue(closeStarted.await(2, TimeUnit.SECONDS));
-                assertFalse(shutdownNowCalled.await(250, TimeUnit.MILLISECONDS),
-                        "close must not transition to CLOSED during publication");
+                assertTrue(shutdownNowCalled.await(2, TimeUnit.SECONDS),
+                        "close must start shutdown without waiting for publication");
                 allowPublication.countDown();
-                assertTrue(shutdownNowCalled.await(2, TimeUnit.SECONDS));
                 closeThread.join(TimeUnit.SECONDS.toMillis(2));
                 assertFalse(closeThread.isAlive());
                 assertEquals(1, publishes.get());
@@ -401,10 +395,14 @@ class ChatAppTemplateSyncRuntimeTest {
                         throw new IllegalStateException("must not be logged");
                     },
                     Executors.newSingleThreadScheduledExecutor());
-            runtime.start();
-            assertTrue(publisherCalled.await(2, TimeUnit.SECONDS));
-            runtime.close();
-            runtime.close();
+            try {
+                runtime.start();
+                assertTrue(publisherCalled.await(2, TimeUnit.SECONDS));
+                runtime.close();
+                runtime.close();
+            } finally {
+                runtime.close();
+            }
         });
 
         assertStructuredLog(stderr, "failed", "unknown", 0, 0, 0,

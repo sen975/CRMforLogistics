@@ -86,15 +86,19 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
         try {
             ChatAppTemplateSynchronizer.Outcome outcome = syncAction.run();
             if (outcome.status() == ChatAppTemplateSynchronizer.Status.CHANGED) {
-                synchronized (lifecycleLock) {
-                    if (lifecycle != Lifecycle.CLOSED) {
-                        changedPublisher.accept(outcome.count());
-                    }
+                if (tryBeginPublication()) {
+                    changedPublisher.accept(outcome.count());
                 }
             }
             log(outcome.status().name().toLowerCase(Locale.ROOT), outcome, null, started);
         } catch (Exception exception) {
             log("failed", null, exception, started);
+        }
+    }
+
+    private boolean tryBeginPublication() {
+        synchronized (lifecycleLock) {
+            return lifecycle != Lifecycle.CLOSED;
         }
     }
 
