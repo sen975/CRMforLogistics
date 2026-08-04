@@ -26,6 +26,9 @@ wechat-decrypt/
 **/data/inbox.jsonl
 **/data/contact-groups.jsonl
 **/data/media/
+**/data-local/
+**/media-cache/
+**/*.lock
 **/result.txt
 **/*.log
 
