@@ -24,10 +24,18 @@ public final class PhoneRepository {
     private static final int MAX_LIMIT = 100;
     private static final int MAX_CURSOR_BYTES = 2048;
     private final CallRecordRepository records;
+    private final CallRecordService service;
     private final UnifiedMessageStore contacts;
 
     public PhoneRepository(CallRecordRepository records, UnifiedMessageStore contacts) {
         this.records = Objects.requireNonNull(records, "records");
+        this.service = null;
+        this.contacts = Objects.requireNonNull(contacts, "contacts");
+    }
+
+    public PhoneRepository(CallRecordService service, UnifiedMessageStore contacts) {
+        this.records = null;
+        this.service = Objects.requireNonNull(service, "service");
         this.contacts = Objects.requireNonNull(contacts, "contacts");
     }
 
@@ -41,7 +49,9 @@ public final class PhoneRepository {
 
         Map<String, ContactProjection> projections = projections();
         List<PhoneRecord> matching = new ArrayList<>();
-        for (CallRecord record : records.listByAnchors(allowedAnchors)) {
+        List<CallRecord> snapshot = service == null
+                ? records.listByAnchors(allowedAnchors) : service.list(allowedAnchors);
+        for (CallRecord record : snapshot) {
             if (record.phonePointId() == null || !record.phonePointId().startsWith("phone:")) continue;
             ContactProjection projection = projections.get(record.contactAnchorPointId());
             if (projection == null) projection = projections.get(record.phonePointId());
