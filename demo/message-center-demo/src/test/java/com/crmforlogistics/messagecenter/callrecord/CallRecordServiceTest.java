@@ -102,6 +102,8 @@ class CallRecordServiceTest {
                 contactId -> List.of(EMAIL, "phone:+86 138-0000-0000"), 4)) {
             assertCode("PHONE_CONTACT_REQUIRED", () -> withPhone.service().create(
                     commandWithoutPhone("missing-phone"), unreadableStream()));
+            assertCode("PHONE_NUMBER_INVALID", () -> withPhone.service().create(
+                    command("phone:12345", "invalid-phone"), unreadableStream()));
             assertCode("CONTACT_BINDING_INVALID", () -> withPhone.service().create(
                     command("phone:+86 139-0000-0000", "foreign-phone"),
                     unreadableStream()));

@@ -237,12 +237,18 @@ public final class CallRecordService {
         requireText(command.contentType(), 128,
                 "CALL_RECORD_INPUT_INVALID", "contentType is invalid");
         requireActor(command.actor());
-        String phone = command.phonePointId() == null || command.phonePointId().isBlank()
-                ? "" : ContactPointUtil.normalizePointId(command.phonePointId());
-        if (phone.isEmpty()) {
+        String rawPhone = command.phonePointId();
+        boolean phoneMissing = rawPhone == null || rawPhone.isBlank();
+        String phone = phoneMissing ? "" : ContactPointUtil.normalizePointId(rawPhone);
+        if (phoneMissing) {
             throw new CallRecordException(
                     "PHONE_CONTACT_REQUIRED", 400,
                     "A contact phone point is required", false);
+        }
+        if (phone.isEmpty() && rawPhone.trim().regionMatches(true, 0, "phone:", 0, 6)) {
+            throw new CallRecordException(
+                    "PHONE_NUMBER_INVALID", 400,
+                    "The phone number is invalid", false);
         }
         if (!phone.startsWith("phone:")) {
             throw bindingInvalid();

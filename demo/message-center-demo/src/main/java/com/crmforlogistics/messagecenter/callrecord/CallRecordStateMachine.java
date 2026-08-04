@@ -112,7 +112,7 @@ final class CallRecordStateMachine {
                 current.id(), current.contactAnchorPointId(), current.phonePointId(),
                 current.direction(), current.occurredAt(), current.createdAt(), current.createdBy(),
                 current.clientRequestId(), current.audio(), current.transcription(), revisions,
-                revision.id(), current.version() + 1);
+                revision.id(), current.version() + 1, current.note());
     }
 
     static CallRecord recover(CallRecord current, Instant now) throws CallRecordException {
@@ -129,7 +129,7 @@ final class CallRecordStateMachine {
                 current.id(), current.contactAnchorPointId(), current.phonePointId(),
                 current.direction(), current.occurredAt(), current.createdAt(), current.createdBy(),
                 current.clientRequestId(), current.audio(), transcription, current.revisions(),
-                current.currentRevisionId(), current.version() + 1);
+                current.currentRevisionId(), current.version() + 1, current.note());
     }
 
     private static void requireState(CallRecord current, String expected)

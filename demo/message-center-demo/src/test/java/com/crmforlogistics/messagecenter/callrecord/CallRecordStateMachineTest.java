@@ -158,6 +158,22 @@ class CallRecordStateMachineTest {
         assertEquals("CALL_RECORD_STATE_INVALID", revisionError.code());
     }
 
+    @Test
+    void preservesNoteAcrossTranscriptionTransitionsAndRevision() throws Exception {
+        CallRecord queued = withNote(queuedRecord(), "客户要求周五回电");
+        CallRecord processing = CallRecordStateMachine.lease(
+                queued, "worker-note", NOW, NOW.plusSeconds(60));
+        CallRecord completed = CallRecordStateMachine.complete(
+                processing, processing.transcription().lease().id(),
+                validResult(), NOW.plusSeconds(10));
+        CallRecord revised = CallRecordStateMachine.appendRevision(
+                completed, "人工修订", "editor", NOW.plusSeconds(20), 20);
+
+        assertEquals(queued.note(), processing.note());
+        assertEquals(queued.note(), completed.note());
+        assertEquals(queued.note(), revised.note());
+    }
+
     private static CallRecord queuedRecord() {
         return new CallRecord(
                 UUID.fromString("550e8400-e29b-41d4-a716-446655440000"),
@@ -200,5 +216,13 @@ class CallRecordStateMachineTest {
                 source.direction(), source.occurredAt(), source.createdAt(), source.createdBy(),
                 source.clientRequestId(), source.audio(), transcription, source.revisions(),
                 source.currentRevisionId(), source.version());
+    }
+
+    private static CallRecord withNote(CallRecord source, String note) {
+        return new CallRecord(
+                source.id(), source.contactAnchorPointId(), source.phonePointId(),
+                source.direction(), source.occurredAt(), source.createdAt(), source.createdBy(),
+                source.clientRequestId(), source.audio(), source.transcription(), source.revisions(),
+                source.currentRevisionId(), source.version(), note);
     }
 }
