@@ -369,6 +369,10 @@ public class UnifiedMessageStoreTest {
 				  await renderPhoneRepositoryPanel();
 				  assert.match($('phoneRepositoryItems').innerHTML, /回电/);
 				  state.selectedPointId = 'contact-1';
+				  state.selectedChannel = 'phoneRepository';
+				  renderComposer();
+				  assert.equal(state.selectedChannel, 'phoneRepository',
+					  'phone repository tab must remain selected after rendering');
 
 				  state.selectedChannel = 'phone';
 				  renderComposer();

@@ -2422,7 +2422,7 @@ public class App {
         return;
       }
 	  const channels = [...contact.channels.filter(channel => ['email', 'chatapp', 'wecom'].includes(channel)), 'wecom'].filter((v,i,a)=>a.indexOf(v)===i);
-	  if (![...channels, 'callRecord'].includes(state.selectedChannel)) state.selectedChannel = channels[0];
+	  if (![...channels, 'callRecord', 'phoneRepository'].includes(state.selectedChannel)) state.selectedChannel = channels[0];
       $('composer').innerHTML = `
 		<div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}<button class="${state.selectedChannel==='callRecord'?'active':''}" data-channel="callRecord">电话记录</button><button class="${state.selectedChannel==='phoneRepository'?'active':''}" data-channel="phoneRepository">电话仓库</button></div>
         <div id="sendPanel"></div>`;
