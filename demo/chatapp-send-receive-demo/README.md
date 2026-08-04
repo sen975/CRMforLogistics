@@ -25,6 +25,7 @@ CHATAPP_TO=8613800000000
 CHATAPP_CHANNEL_TYPE=whatsapp
 CHATAPP_TYPE=message
 CHATAPP_MESSAGE_TYPE=text
+CHATAPP_TEMPLATE_TYPE=template
 ```
 
 程序会先读 `.env`，再用当前 PowerShell 环境变量覆盖同名配置。
@@ -140,6 +141,8 @@ CHATAPP_TEMPLATE_NAME=...
 CHATAPP_LANGUAGE=zh_CN
 CHATAPP_TEMPLATE_PARAMS_JSON={"1":"测试"}
 ```
+
+模板消息会自动使用 `CHATAPP_TEMPLATE_TYPE=template`。不要把模板消息按 `CHATAPP_TYPE=message` 发，否则 CAMS 会返回 `Template code can not have value when type is message`。
 
 注意：历史消息里通常只有模板名称/编号和参数，不会自动带完整正文。这个 demo 会先把模板库同步到本地，再用 `templateCode + languageCode` 找模板正文并替换参数。
 

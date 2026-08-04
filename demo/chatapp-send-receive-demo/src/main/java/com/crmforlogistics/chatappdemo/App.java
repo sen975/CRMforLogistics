@@ -901,10 +901,10 @@ public class App {
                 .messageType(config.value("CHATAPP_MESSAGE_TYPE", "text"))
                 .templateCode(requiredInline(templateCode, "templateCode"))
                 .language(language)
+                .type(templateRequestType(config))
                 .templateParams(templateParams == null ? Map.of() : templateParams);
 
         putIfPresent(config, "CHATAPP_CHANNEL_TYPE", builder::channelType);
-        putIfPresent(config, "CHATAPP_TYPE", builder::type);
         putIfNotBlank(templateName, builder::templateName);
         putIfNotBlank(clientRequestId, builder::taskId);
 
@@ -925,6 +925,10 @@ public class App {
             message.requestFingerprint = requestFingerprint;
             return store.append(message);
         }
+    }
+
+    static String templateRequestType(Config config) {
+        return config.value("CHATAPP_TEMPLATE_TYPE", "template");
     }
 
     static String renderOutboundTemplateText(

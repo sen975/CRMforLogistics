@@ -1,5 +1,7 @@
 package com.crmforlogistics.chatappdemo;
 
+import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageRequest;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,6 +12,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AppTemplateRenderingTest {
     public static void main(String[] args) throws Exception {
         rendersTemplateBodyFromLocalTemplateStore();
+        usesTemplateRequestTypeForTemplateMessages();
+        templateRequestOmitsMessageType();
         rendersDollarParenthesesTemplatePlaceholders();
         fallsBackToTemplateParameterPreviewWhenTemplateIsMissing();
         rendersSelectedTemplateForOutboundBubble();
@@ -27,6 +31,29 @@ public class AppTemplateRenderingTest {
         reusesPersistedResultForSameClientRequestId();
         doesNotRepeatFailedRequestWithSameClientRequestId();
         findsPersistedMessageByClientRequestId();
+    }
+
+    private static void usesTemplateRequestTypeForTemplateMessages() {
+        App.Config config = new App.Config(java.util.Map.of("CHATAPP_TYPE", "message"));
+
+        assertEquals("template", App.templateRequestType(config));
+    }
+
+    private static void templateRequestOmitsMessageType() {
+        App.Config config = new App.Config(java.util.Map.of(
+                "CUST_SPACE_ID", "space-1",
+                "CHATAPP_FROM", "8613000000000",
+                "CHATAPP_TYPE", "message",
+                "CHATAPP_MESSAGE_TYPE", "text",
+                "CHATAPP_TEMPLATE_MESSAGE_TYPE", "text"
+        ));
+
+        SendChatappMessageRequest request = App.buildTemplateRequest(config, "8613111111111", "tpl-1",
+                "shipping_notice", "zh_CN", java.util.Map.of("text", "Alex"), "task-1");
+
+        assertEquals("template", request.getType());
+        assertNull(request.getMessageType(), "template request must not send messageType");
+        assertEquals("tpl-1", request.getTemplateCode());
     }
 
     private static void rendersTemplateBodyFromLocalTemplateStore() throws Exception {
@@ -376,6 +403,12 @@ public class AppTemplateRenderingTest {
     private static void assertContains(String value, String expected) {
         if (!value.contains(expected)) {
             throw new AssertionError("Expected value to contain: " + expected + "\nActual:\n" + value);
+        }
+    }
+
+    private static void assertNull(Object value, String message) {
+        if (value != null) {
+            throw new AssertionError(message + ": " + value);
         }
     }
 
