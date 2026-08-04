@@ -276,7 +276,6 @@ response_format=verbose_json
 {
   "text": "完整转录",
   "duration": 3.45,
-  "model": "sensevoice",
   "segments": [
     { "text": "完整转录", "start": 0.0, "end": 3.45 }
   ]
@@ -290,7 +289,7 @@ response_format=verbose_json
 - `response_format` 固定为 `verbose_json`。
 - 不发送鉴权头；sidecar 只能加入 Compose 内网，不映射公网端口。
 - 响应必须使用结构化 JSON 解析；不得通过字符串查找提取字段。
-- `text`、`duration`、`model`、`segments` 类型错误或时间范围倒置均视为合同失败。
+- `text`、`duration`、`segments` 必须存在且满足类型、非空和时间范围约束；新版 OpenAI-compatible FunASR 可省略响应 `model`，此时适配器使用已经校验过的请求模型。若响应包含 `model`，仍必须是非空字符串。
 - 不补造说话人、不把空响应当成功、不回退 DashScope。
 
 ## 11. 资源治理与重试

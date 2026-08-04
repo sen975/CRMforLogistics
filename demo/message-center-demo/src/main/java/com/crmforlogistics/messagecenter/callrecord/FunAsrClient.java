@@ -150,7 +150,8 @@ public final class FunAsrClient {
         }
 
         String text = requiredString(object, "text", MAX_TEXT_CHARACTERS);
-        String model = requiredString(object, "model", 128);
+        String model = object.has("model")
+                ? requiredString(object, "model", 128) : configuredModel;
         double duration = requiredNumber(object, "duration");
         if (!Double.isFinite(duration) || duration <= 0 || duration > maxDurationSeconds) {
             throw invalidResponse("FunASR duration is invalid", null);

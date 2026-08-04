@@ -86,6 +86,22 @@ class FunAsrClientTest {
     }
 
     @Test
+    void acceptsVerboseResponsesThatOmitOptionalModelField() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange, 200,
+                "{\"text\":\"你好\",\"duration\":1.0,"
+                        + "\"segments\":[{\"text\":\"你好\",\"start\":0.0,\"end\":1.0}]}"));
+        try {
+            TranscriptionResult result = client(server, Map.of()).transcribe(
+                    audioFile(fixtureBytes()), "sensevoice");
+
+            assertEquals("sensevoice", result.model());
+            assertEquals("你好", result.originalText());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void mapsRejectedAndUnavailableStatusesWithoutLeakingBodies() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         HttpServer server = server(exchange -> {

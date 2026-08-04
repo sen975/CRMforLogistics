@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.callrecord.CallRecordException;
 import com.crmforlogistics.messagecenter.callrecord.CallRecordHttpAdapter;
 import com.crmforlogistics.messagecenter.callrecord.CallRecordRuntime;
 import com.crmforlogistics.messagecenter.callrecord.ContactTimelineService;
+import com.crmforlogistics.messagecenter.callrecord.PhoneRepository;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -2143,6 +2144,8 @@ public class App {
         ${m.raw ? `<h3>Raw</h3><pre>${esc(m.raw)}</pre>` : ''}`;
       $('detail').innerHTML = `<div class="message-detail-panel message-detail-standalone" id="messageDetailPanel">${html}</div>`;
     }
+
+""").append("""
 
 	function clearCallDetailActivity(clearSelection = true) {
 	  state.callDetailGeneration += 1;
