@@ -43,6 +43,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -558,6 +561,156 @@ public class UnifiedMessageStoreTest {
         rebindsPhonePointIdempotently();
         rejectsPhonePointBoundToAnotherContactGroup();
         listsPhoneOnlyContactWithoutMessages();
+    }
+
+    @Test
+    void phoneIdentityRejectsFiveDigits() throws Exception {
+        assertInvalidPhoneIdentity("12345");
+    }
+
+    @Test
+    void phoneIdentityRejectsTwentyOneDigits() throws Exception {
+        assertInvalidPhoneIdentity("123456789012345678901");
+    }
+
+    @Test
+    void phoneIdentityRejectsLettersMixedWithDigits() throws Exception {
+        assertInvalidPhoneIdentity("abc123456");
+    }
+
+    private static void assertInvalidPhoneIdentity(String phoneNumber) throws Exception {
+        assertEquals("", ContactPointUtil.normalizePointId("phone:" + phoneNumber));
+        Path dir = Files.createTempDirectory("message-center-phone-validation-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> store.ensurePhoneContact("", phoneNumber, "Invalid"));
+        assertEquals("PHONE_NUMBER_INVALID", exception.getMessage());
+    }
+
+    @Test
+    void ensuringPhoneOnSecondaryPointReturnsPrimaryProjection() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-secondary-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Files.writeString(emailData.resolve("inbox.jsonl"), "{"
+                + "\"id\":\"mail-secondary-1\","
+                + "\"direction\":\"in\","
+                + "\"contactEmail\":\"buyer@example.com\","
+                + "\"contactName\":\"Buyer\","
+                + "\"subject\":\"Existing contact\","
+                + "\"sentDate\":\"2026-08-01T01:00:00Z\","
+                + "\"bodyText\":\"Body\"}\n", StandardCharsets.UTF_8);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        store.mergeContacts("email:buyer@example.com", "wecom:buyer");
+
+        UnifiedContact contact = store.ensurePhoneContact("wecom:buyer", "13800000000", "ignored");
+
+        assertEquals("email:buyer@example.com", contact.id);
+        assertTrue(contact.points.stream().anyMatch(point -> "phone:13800000000".equals(point.id)),
+                "primary projection must include the phone bound through its secondary point");
+    }
+
+    @Test
+    void concurrentDistinctPhoneBindingsDoNotLoseUpdates() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-distinct-concurrency-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        int taskCount = 12;
+        List<String> primaryPoints = new ArrayList<>();
+        for (int index = 0; index < taskCount; index++) {
+            primaryPoints.add(store.ensurePhoneContact("", "130000000" + String.format("%02d", index),
+                    "Contact " + index).id);
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(taskCount);
+        CountDownLatch ready = new CountDownLatch(taskCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<String>> futures = new ArrayList<>();
+        try {
+            for (int index = 0; index < taskCount; index++) {
+                String primaryPoint = primaryPoints.get(index);
+                String newPhone = "139000000" + String.format("%02d", index);
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("concurrent bindings did not receive the start signal");
+                    }
+                    return store.bindPhonePoint(primaryPoint, newPhone);
+                }));
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "all concurrent bindings must be ready");
+            start.countDown();
+            for (int index = 0; index < taskCount; index++) {
+                String expectedPoint = "phone:139000000" + String.format("%02d", index);
+                assertEquals(expectedPoint, futures.get(index).get(10, TimeUnit.SECONDS));
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
+        for (int index = 0; index < taskCount; index++) {
+            String expectedPoint = "phone:139000000" + String.format("%02d", index);
+            assertTrue(store.contactGroup(primaryPoints.get(index)).contains(expectedPoint),
+                    "concurrent phone binding was lost: " + expectedPoint);
+        }
+    }
+
+    @Test
+    void concurrentSamePhoneBindingHasExactlyOneWinner() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-conflict-concurrency-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        int taskCount = 12;
+        List<String> primaryPoints = new ArrayList<>();
+        for (int index = 0; index < taskCount; index++) {
+            primaryPoints.add(store.ensurePhoneContact("", "131000000" + String.format("%02d", index),
+                    "Contact " + index).id);
+        }
+
+        ExecutorService executor = Executors.newFixedThreadPool(taskCount);
+        CountDownLatch ready = new CountDownLatch(taskCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<String>> futures = new ArrayList<>();
+        try {
+            for (String primaryPoint : primaryPoints) {
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("concurrent bindings did not receive the start signal");
+                    }
+                    try {
+                        store.bindPhonePoint(primaryPoint, "13800000000");
+                        return "success";
+                    } catch (IllegalStateException exception) {
+                        return exception.getMessage();
+                    }
+                }));
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "all concurrent bindings must be ready");
+            start.countDown();
+            List<String> results = new ArrayList<>();
+            for (Future<String> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+            assertEquals(1, (int) results.stream().filter("success"::equals).count());
+            assertEquals(taskCount - 1,
+                    (int) results.stream().filter("PHONE_POINT_CONFLICT"::equals).count());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     private static void createsPhoneOnlyContactGroupAndPersistsDisplayName() throws Exception {
