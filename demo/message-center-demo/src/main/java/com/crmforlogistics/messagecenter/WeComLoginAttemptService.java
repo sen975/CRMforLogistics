@@ -51,6 +51,15 @@ public final class WeComLoginAttemptService {
             throw new WeComAuthorizationException("WECOM_LOGIN_INSTALLATION_NOT_SELECTED", 400,
                     "未配置登录首屏使用的授权企业");
         }
+        if (config.hasAnyWeComLoginSuiteConfiguration()
+                && !config.hasCompleteWeComLoginSuiteConfiguration()) {
+            throw new WeComAuthorizationException("WECOM_LOGIN_SUITE_INCOMPLETE", 400,
+                    "企业微信登录授权 Suite 配置必须同时提供 SuiteID 和 SuiteSecret");
+        }
+        if (!config.hasCompleteWeComLoginSuiteConfiguration()) {
+            throw new WeComAuthorizationException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
+                    "企业微信登录授权 Suite 尚未配置");
+        }
         WeComAuthorizationStore.Installation installation = authorizationStore.requireActive(
                 config.wecomSuiteId(), config.wecomLoginAuthCorpId());
         String redirectUri = config.wecomLoginRedirectUri();
@@ -67,7 +76,7 @@ public final class WeComLoginAttemptService {
         attempts.put(state, new Attempt(now + config.wecomLoginAttemptTtlSeconds(),
                 installation.installationId(), installation.version(), installation.suiteId(),
                 installation.authCorpId(), installation.agentId()));
-        return new LoginAttemptResponse(installation.authCorpId(), installation.agentId(), redirectUri,
+        return new LoginAttemptResponse("ServiceApp", config.wecomLoginSuiteId(), redirectUri,
                 state, config.wecomLoginAttemptTtlSeconds());
     }
 
@@ -122,7 +131,7 @@ public final class WeComLoginAttemptService {
         }
     }
 
-    public record LoginAttemptResponse(String corpId, String agentId, String redirectUri,
+    public record LoginAttemptResponse(String loginType, String appId, String redirectUri,
                                        String state, int expiresIn) {}
 
     public record InstallationBinding(String installationId, long version, String suiteId,

@@ -25,13 +25,12 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 public class ChatAppSender {
@@ -39,10 +38,16 @@ public class ChatAppSender {
 
     private final Config config;
     private final TemplateStore templateStore;
+    private final ChatAppHistoryStore historyStore;
 
     public ChatAppSender(Config config) {
-        this.config = config;
+        this(config, new ChatAppHistoryStore(config));
+    }
+
+    ChatAppSender(Config config, ChatAppHistoryStore historyStore) {
+        this.config = Objects.requireNonNull(config);
         this.templateStore = new TemplateStore(config.chatappTemplateFile());
+        this.historyStore = Objects.requireNonNull(historyStore);
     }
 
     public UnifiedMessage sendText(String to, String text, String clientRequestId) throws Exception {
@@ -57,7 +62,8 @@ public class ChatAppSender {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
             String raw = GSON.toJson(response.getBody());
-            appendLocal(messageId, "outbound", chatappFrom(), cleanTo, cleanText, "Submitted", raw, Map.of());
+            historyStore.appendResult(messageId, "outbound", chatappFrom(), cleanTo, cleanText, "Submitted",
+                    Instant.now().toString(), raw, Map.of());
             return findStored(messageId, cleanTo);
         }
     }
@@ -77,7 +83,8 @@ public class ChatAppSender {
             String paramsJson = GSON.toJson(safeParams);
             String raw = outboundTemplateRaw(response, code, templateName, language, paramsJson);
             String text = templateStore.render(code, language, paramsJson, templateName);
-            appendLocal(messageId, "outbound", chatappFrom(), cleanTo, text, "Submitted", raw, Map.of());
+            historyStore.appendResult(messageId, "outbound", chatappFrom(), cleanTo, text, "Submitted",
+                    Instant.now().toString(), raw, Map.of());
             return findStored(messageId, cleanTo);
         }
     }
@@ -125,14 +132,16 @@ public class ChatAppSender {
             extra.put("mimeType", mimeType);
             extra.put("fileName", fileName);
             extra.put("caption", caption == null ? "" : caption);
-            appendLocal(messageId, "outbound", chatappFrom(), cleanTo, text, "Submitted", raw, extra);
+            historyStore.appendResult(messageId, "outbound", chatappFrom(), cleanTo, text, "Submitted",
+                    Instant.now().toString(), raw, extra);
             return findStored(messageId, cleanTo);
         }
     }
 
     public UnifiedMessage appendWebhook(String raw) throws Exception {
         WebhookMessage parsed = WebhookMessage.parse(raw);
-        appendLocal(parsed.id, parsed.direction, parsed.from, parsed.to, parsed.text, parsed.status, raw, Map.of());
+        historyStore.appendResult(parsed.id, parsed.direction, parsed.from, parsed.to, parsed.text,
+                "status".equals(parsed.direction) ? null : parsed.status, Instant.now().toString(), raw, Map.of());
         return findStored(parsed.direction.equals("status") ? statusTargetId(parsed.id) : parsed.id,
                 "outbound".equals(parsed.direction) ? parsed.to : parsed.from);
     }
@@ -187,46 +196,6 @@ public class ChatAppSender {
                     .build());
         }
         return DefaultCredentialProvider.builder().build();
-    }
-
-    private void appendLocal(String id, String direction, String from, String to, String text, String status,
-                             String raw, Map<String, String> extra) throws IOException {
-        if (config.chatappDataFile().getParent() != null) {
-            Files.createDirectories(config.chatappDataFile().getParent());
-        }
-        String messageId = ContactPointUtil.firstNonBlank(id, "local-" + UUID.randomUUID());
-        if (containsMessage(messageId)) {
-            return;
-        }
-        Map<String, String> record = new LinkedHashMap<>();
-        record.put("id", messageId);
-        record.put("direction", direction);
-        record.put("timestamp", Instant.now().toString());
-        record.put("from", from == null ? "" : from);
-        record.put("to", to == null ? "" : to);
-        record.put("text", text == null ? "" : text);
-        if (status != null && !status.isBlank() && !"status".equals(direction)) {
-            record.put("status", status);
-            record.put("statusTimestamp", Instant.now().toString());
-        }
-        if (extra != null) {
-            record.putAll(extra);
-        }
-        record.put("raw", raw == null ? "" : raw);
-        Files.writeString(config.chatappDataFile(), GSON.toJson(record) + System.lineSeparator(), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-    }
-
-    private boolean containsMessage(String id) throws IOException {
-        if (id == null || id.isBlank() || !Files.exists(config.chatappDataFile())) {
-            return false;
-        }
-        for (String line : Files.readAllLines(config.chatappDataFile(), StandardCharsets.UTF_8)) {
-            if (line.contains("\"id\":\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private UnifiedMessage findStored(String sourceId, String to) throws IOException {

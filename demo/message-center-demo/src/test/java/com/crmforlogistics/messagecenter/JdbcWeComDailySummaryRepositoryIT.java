@@ -149,6 +149,79 @@ class JdbcWeComDailySummaryRepositoryIT {
         WeComDailySummaryRepository.LeasedSummaryJob expired = repository
                 .leaseNext("worker-d", now.plusSeconds(6), Duration.ofMinutes(1)).orElseThrow();
         assertTrue(expired.deadline().isBefore(now.plusSeconds(6)));
+        repository.markFailed(expired.jobId(), "DEADLINE_EXCEEDED", "DEADLINE_EXCEEDED",
+                now.plusSeconds(6));
+    }
+
+    @Test
+    void aggregatesCoverageAndSummaryAcrossAllCompletedLeafBatches() throws Exception {
+        Instant now = Instant.parse("2026-08-02T00:00:00Z");
+        WeComDailySummaryRepository.DailySummaryKey firstKey = key("external-multi", 0, 1);
+        WeComDailySummaryRepository.DailySummaryKey secondKey = key("external-multi", 1, 3);
+        repository.ensureDailyJob(firstKey, List.of(digest("multi-1")),
+                now.plusSeconds(3600), now);
+        repository.ensureDailyJob(secondKey, List.of(digest("multi-2"), digest("multi-3")),
+                now.plusSeconds(3600), now);
+
+        WeComDailySummaryRepository.LeasedSummaryJob first = repository
+                .leaseNext("worker-a", now, Duration.ofMinutes(1)).orElseThrow();
+        repository.markSubmitted(first.jobId(), "multi-job-1", now.plusSeconds(1));
+        repository.markCompleted(first.jobId(), batchSummary(first),
+                new WeComDailySummaryRepository.Coverage(
+                        first.messageCount(), first.messageCount(), 1, "COMPLETE"),
+                now.plusSeconds(2));
+        WeComDailySummaryRepository.LeasedSummaryJob second = repository
+                .leaseNext("worker-b", now.plusSeconds(3), Duration.ofMinutes(1)).orElseThrow();
+        repository.markSubmitted(second.jobId(), "multi-job-2", now.plusSeconds(4));
+        repository.markCompleted(second.jobId(), batchSummary(second),
+                new WeComDailySummaryRepository.Coverage(
+                        second.messageCount(), second.messageCount(), 1, "COMPLETE"),
+                now.plusSeconds(5));
+
+        WeComDailySummaryRepository.DailySummary summary = repository.findSummary(
+                new WeComDailySummaryRepository.DailyConversationKey(
+                        firstKey.installationId(), firstKey.authCorpId(), firstKey.day(),
+                        firstKey.userId(), firstKey.externalUserId())).orElseThrow();
+        assertEquals("第一批摘要\n\n第二批摘要", summary.summary());
+        assertEquals(3, summary.messageCount());
+        assertEquals(3, summary.completedMessageCount());
+        assertEquals(2, summary.batchCount());
+        assertEquals(2, summary.completedBatchCount());
+        assertEquals("COMPLETE", summary.completeness());
+    }
+
+    @Test
+    void persistsPartialCoverageWhenOneLeafBatchFails() throws Exception {
+        Instant now = Instant.parse("2026-08-03T00:00:00Z");
+        WeComDailySummaryRepository.DailySummaryKey firstKey = key("external-partial", 0, 1);
+        WeComDailySummaryRepository.DailySummaryKey secondKey = key("external-partial", 1, 3);
+        repository.ensureDailyJob(firstKey, List.of(digest("partial-1")),
+                now.plusSeconds(3600), now);
+        repository.ensureDailyJob(secondKey, List.of(digest("partial-2"), digest("partial-3")),
+                now.plusSeconds(3600), now);
+
+        WeComDailySummaryRepository.LeasedSummaryJob completed = repository
+                .leaseNext("worker-a", now, Duration.ofMinutes(1)).orElseThrow();
+        repository.markSubmitted(completed.jobId(), "partial-job", now.plusSeconds(1));
+        repository.markCompleted(completed.jobId(), "可用批次摘要",
+                new WeComDailySummaryRepository.Coverage(
+                        completed.messageCount(), completed.messageCount(), 1, "COMPLETE"),
+                now.plusSeconds(2));
+        WeComDailySummaryRepository.LeasedSummaryJob failed = repository
+                .leaseNext("worker-b", now.plusSeconds(3), Duration.ofMinutes(1)).orElseThrow();
+        repository.markFailed(failed.jobId(), "MODEL_FAILED", "MODEL_FAILED",
+                now.plusSeconds(4));
+
+        WeComDailySummaryRepository.DailySummary summary = repository.findSummary(
+                new WeComDailySummaryRepository.DailyConversationKey(
+                        firstKey.installationId(), firstKey.authCorpId(), firstKey.day(),
+                        firstKey.userId(), firstKey.externalUserId())).orElseThrow();
+        assertEquals("可用批次摘要", summary.summary());
+        assertEquals(3, summary.messageCount());
+        assertEquals(completed.messageCount(), summary.completedMessageCount());
+        assertEquals(2, summary.batchCount());
+        assertEquals(1, summary.completedBatchCount());
+        assertEquals("PARTIAL", summary.completeness());
     }
 
     @Test
@@ -185,6 +258,10 @@ class JdbcWeComDailySummaryRepositoryIT {
     private static String digest(String value) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                 .digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String batchSummary(WeComDailySummaryRepository.LeasedSummaryJob job) {
+        return job.key().sliceStart() == 0 ? "第一批摘要" : "第二批摘要";
     }
 
     private static long countForExternal(String table, String externalUserId) throws Exception {

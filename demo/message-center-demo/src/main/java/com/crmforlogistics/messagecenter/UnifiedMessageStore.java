@@ -8,8 +8,10 @@ import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -100,6 +102,13 @@ public class UnifiedMessageStore {
             ContactAccumulator acc = byPrimary.computeIfAbsent(primary, ContactAccumulator::new);
             acc.add(message);
         }
+        for (Map.Entry<String, List<String>> entry : groups.entrySet()) {
+            List<String> points = entry.getValue();
+            if (!points.isEmpty() && points.stream().allMatch(UnifiedMessageStore::isPhonePoint)) {
+                String primary = ContactPointUtil.normalizePointId(entry.getKey());
+                byPrimary.computeIfAbsent(primary, ContactAccumulator::new);
+            }
+        }
         List<UnifiedContact> result = new ArrayList<>();
         for (ContactAccumulator acc : byPrimary.values()) {
             result.add(acc.toContact(groups.getOrDefault(acc.primaryPointId, List.of(acc.primaryPointId)),
@@ -146,6 +155,11 @@ public class UnifiedMessageStore {
                 .comparing((UnifiedMessage message) -> MessageTime.parseInstant(message.timestamp))
                 .thenComparing(message -> ContactPointUtil.firstNonBlank(message.id, message.sourceId)));
         return result;
+    }
+
+    /** Read-only snapshot used by projections that combine messages with other item types. */
+    public List<UnifiedMessage> timelineMessages(String contactPointId) throws IOException {
+        return List.copyOf(thread(contactPointId));
     }
 
     public ThreadPage threadPage(String contactPointId, String cursor, int limit) throws IOException {
@@ -209,6 +223,62 @@ public class UnifiedMessageStore {
         Map<String, List<String>> groups = contactGroups();
         String primary = primaryFor(point, groups);
         return new ArrayList<>(groups.getOrDefault(primary, List.of(primary)));
+    }
+
+    public UnifiedContact ensurePhoneContact(String contactPointId, String phoneNumber, String displayName)
+            throws IOException {
+        requireFileContactStore();
+        String phonePointId = normalizedPhonePoint(phoneNumber);
+        String contactPoint = ContactPointUtil.normalizePointId(contactPointId);
+        if (contactPoint.isBlank()) {
+            String name = displayName == null ? "" : displayName.trim();
+            if (name.isBlank()) {
+                throw new IllegalArgumentException("PHONE_CONTACT_REQUIRED");
+            }
+            Map<String, List<String>> groups = contactGroups();
+            String existingPrimary = primaryFor(phonePointId, groups);
+            if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
+                return contactProjection(existingPrimary);
+            }
+            Map<String, String> remarks = contactRemarks();
+            Map<String, List<String>> tags = contactTags();
+            groups.put(phonePointId, List.of(phonePointId));
+            remarks.put(phonePointId, name);
+            writeContactGroups(groups, remarks, tags);
+            return contactProjection(phonePointId);
+        }
+
+        bindPhonePoint(contactPoint, phoneNumber);
+        return contactProjection(contactPoint);
+    }
+
+    public String bindPhonePoint(String contactPointId, String phoneNumber) throws IOException {
+        requireFileContactStore();
+        String contactPoint = ContactPointUtil.normalizePointId(contactPointId);
+        if (contactPoint.isBlank()) {
+            throw new IllegalArgumentException("CONTACT_NOT_FOUND");
+        }
+        String phonePointId = normalizedPhonePoint(phoneNumber);
+        Map<String, List<String>> groups = contactGroups();
+        String primary = primaryFor(contactPoint, groups);
+        if (!contactExists(contactPoint, groups)) {
+            throw new IllegalArgumentException("CONTACT_NOT_FOUND");
+        }
+        String existingPrimary = primaryFor(phonePointId, groups);
+        if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
+            if (!existingPrimary.equals(primary)) {
+                throw new IllegalStateException("PHONE_POINT_CONFLICT");
+            }
+            return phonePointId;
+        }
+
+        Map<String, String> remarks = contactRemarks();
+        Map<String, List<String>> tags = contactTags();
+        LinkedHashSet<String> points = new LinkedHashSet<>(groups.getOrDefault(primary, List.of(primary)));
+        points.add(phonePointId);
+        groups.put(primary, new ArrayList<>(points));
+        writeContactGroups(groups, remarks, tags);
+        return phonePointId;
     }
 
     public void mergeContacts(String primaryPointId, String mergedPointId) throws IOException {
@@ -886,9 +956,8 @@ public class UnifiedMessageStore {
     private void writeContactGroups(Map<String, List<String>> groups, Map<String, String> remarks,
                                     Map<String, List<String>> tags) throws IOException {
         Path file = config.contactGroupFile();
-        if (file.getParent() != null) {
-            Files.createDirectories(file.getParent());
-        }
+        Path directory = file.toAbsolutePath().getParent();
+        Files.createDirectories(directory);
         StringBuilder output = new StringBuilder();
         for (Map.Entry<String, List<String>> entry : groups.entrySet()) {
             LinkedHashSet<String> points = new LinkedHashSet<>();
@@ -912,8 +981,61 @@ public class UnifiedMessageStore {
             record.tags = cleanTags(tags.getOrDefault(primary, List.of()));
             output.append(GSON.toJson(record)).append(System.lineSeparator());
         }
-        Files.writeString(file, output.toString(), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        Path temporary = Files.createTempFile(directory, ".contact-groups-", ".tmp");
+        try {
+            Files.writeString(temporary, output.toString(), StandardCharsets.UTF_8,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    private void requireFileContactStore() throws IOException {
+        if (databaseBacked()) {
+            throw new IOException("Phone contact binding is unavailable for database-backed contacts");
+        }
+    }
+
+    private String normalizedPhonePoint(String phoneNumber) {
+        String point = ContactPointUtil.normalizePointId("phone:" + (phoneNumber == null ? "" : phoneNumber));
+        if (!isPhonePoint(point)) {
+            throw new IllegalArgumentException("PHONE_NUMBER_INVALID");
+        }
+        return point;
+    }
+
+    private boolean contactExists(String contactPointId, Map<String, List<String>> groups) throws IOException {
+        if (groups.containsKey(contactPointId)) {
+            return true;
+        }
+        for (List<String> points : groups.values()) {
+            if (points.stream().anyMatch(point -> contactPointId.equals(ContactPointUtil.normalizePointId(point)))) {
+                return true;
+            }
+        }
+        return messages().stream().anyMatch(message -> contactPointId.equals(
+                ContactPointUtil.normalizePointId(message.contactPointId)));
+    }
+
+    private UnifiedContact contactProjection(String contactPointId) throws IOException {
+        String normalized = ContactPointUtil.normalizePointId(contactPointId);
+        return contacts().stream()
+                .filter(contact -> normalized.equals(contact.id))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("CONTACT_NOT_FOUND"));
+    }
+
+    private static boolean isPhonePoint(String pointId) {
+        if (pointId == null || !pointId.startsWith("phone:")) {
+            return false;
+        }
+        String digits = pointId.substring("phone:".length());
+        return digits.matches("[0-9]{6,20}");
     }
 
     private static String primaryFor(String contactPointId, Map<String, List<String>> groups) {
@@ -1121,7 +1243,9 @@ public class UnifiedMessageStore {
 
         UnifiedContact toContact(List<String> groupPoints, String remark, List<String> tags) {
             for (String groupPoint : groupPoints) {
-                points.putIfAbsent(groupPoint, ContactPointUtil.fromId(groupPoint, null));
+                ContactPoint point = ContactPointUtil.fromId(groupPoint, null);
+                points.putIfAbsent(groupPoint, point);
+                channels.add(point.channel);
             }
             UnifiedContact contact = new UnifiedContact();
             contact.id = primaryPointId;

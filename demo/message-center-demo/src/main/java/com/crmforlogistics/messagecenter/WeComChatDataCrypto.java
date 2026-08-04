@@ -9,16 +9,21 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyFactory;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.interfaces.RSAKey;
+import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.RSAPublicKeySpec;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Set;
 
 public final class WeComChatDataCrypto {
     private static final int MAX_KEY_FILE_BYTES = 16_384;
     private final int publicKeyVersion;
     private final PrivateKey privateKey;
+    private final PublicKeyMaterial publicKeyMaterial;
 
     public WeComChatDataCrypto(Config config) throws WeComChatDataException {
         publicKeyVersion = config.wecomChatDataPublicKeyVersion();
@@ -38,6 +43,18 @@ public final class WeComChatDataCrypto {
             if (!(privateKey instanceof RSAKey rsaKey) || rsaKey.getModulus().bitLength() != 2048) {
                 throw new IllegalArgumentException("private key size invalid");
             }
+            if (!(privateKey instanceof RSAPrivateCrtKey crtKey)) {
+                throw new IllegalArgumentException("private key public parameters unavailable");
+            }
+            byte[] publicKeyDer = KeyFactory.getInstance("RSA").generatePublic(
+                    new RSAPublicKeySpec(crtKey.getModulus(), crtKey.getPublicExponent())).getEncoded();
+            String publicKeyPem = "-----BEGIN PUBLIC KEY-----\n"
+                    + Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(publicKeyDer)
+                    + "\n-----END PUBLIC KEY-----\n";
+            String sha256 = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(publicKeyDer));
+            publicKeyMaterial = new PublicKeyMaterial(publicKeyPem, publicKeyVersion, sha256,
+                    crtKey.getModulus().bitLength());
         } catch (Exception exception) {
             throw decryptFailed(exception);
         }
@@ -77,6 +94,10 @@ public final class WeComChatDataCrypto {
         }
     }
 
+    public PublicKeyMaterial publicKeyMaterial() {
+        return publicKeyMaterial;
+    }
+
     private static String decodeUtf8(byte[] bytes) throws CharacterCodingException {
         return StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -88,4 +109,6 @@ public final class WeComChatDataCrypto {
         return new WeComChatDataException("WECOM_CHATDATA_DECRYPT_FAILED", 500,
                 "企业微信会话密钥解密失败", cause);
     }
+
+    public record PublicKeyMaterial(String pem, int version, String sha256, int bitLength) {}
 }

@@ -128,6 +128,23 @@ class ChatAppTemplateSynchronizerTest {
     }
 
     @Test
+    void rejectsShortPageWhoseReportedTotalExceedsFetchedRows() throws Exception {
+        store.replaceIfChanged(List.of(record("stable", "old")));
+        String before = Files.readString(templateFile, StandardCharsets.UTF_8);
+        FakeGateway gateway = new FakeGateway(List.of(
+                new ChatAppTemplateGateway.TemplatePage(List.of(summary("partial")), 2)));
+        gateway.details.put("partial", record("partial", "new"));
+
+        ChatAppTemplateSynchronizer.SyncFailure failure = assertThrows(
+                ChatAppTemplateSynchronizer.SyncFailure.class, () -> synchronizer(gateway).sync());
+
+        assertEquals("list", failure.stage());
+        assertTrue(failure.getMessage().contains("reported=2"));
+        assertTrue(failure.getMessage().contains("fetched=1"));
+        assertEquals(before, Files.readString(templateFile, StandardCharsets.UTF_8));
+    }
+
+    @Test
     void rejectsAccumulatedRowsAboveTwoThousandBeforeFetchingDetails() throws Exception {
         List<ChatAppTemplateGateway.TemplateSummary> summaries =
                 IntStream.range(0, 2_001).mapToObj(index -> summary("code-" + index)).toList();

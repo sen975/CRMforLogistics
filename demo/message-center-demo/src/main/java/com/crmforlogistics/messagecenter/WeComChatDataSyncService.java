@@ -35,7 +35,20 @@ public final class WeComChatDataSyncService {
             }
         };
         WeComViewerAuditTrail auditTrail = new WeComViewerAuditTrail(config, java.time.Clock.systemUTC());
-        this.audit = (action, result, userId) -> auditTrail.record(action, result, userId, "", "");
+        this.audit = new AuditSink() {
+            @Override
+            public void record(String action, String result, String userId) throws Exception {
+                auditTrail.record(action, result, userId, "", "");
+            }
+
+            @Override
+            public void recordFailure(String action, String result, String userId,
+                                      WeComChatDataException failure) throws Exception {
+                auditTrail.recordDiagnostic(action, result, userId, "", "",
+                        failure.code(), failure.upstreamErrcode(), failure.upstreamPath(),
+                        failure.upstreamHttpStatus(), failure.upstreamHint());
+            }
+        };
     }
 
     private WeComChatDataSyncService(Config config, PageGateway gateway, SecretDecryptor decryptor,
@@ -172,7 +185,7 @@ public final class WeComChatDataSyncService {
 
     private void auditFailure(WeComChatDataException primary, String action, String result, String userId) {
         try {
-            audit.record(action, result, userId);
+            audit.recordFailure(action, result, userId, primary);
         } catch (Exception auditFailure) {
             primary.addSuppressed(auditFailure);
         }
@@ -205,6 +218,11 @@ public final class WeComChatDataSyncService {
 
     interface AuditSink {
         void record(String action, String result, String userId) throws Exception;
+
+        default void recordFailure(String action, String result, String userId,
+                                   WeComChatDataException failure) throws Exception {
+            record(action, result, userId);
+        }
     }
 
     public record SyncResult(int pages, int stored, int skipped) {}

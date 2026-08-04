@@ -87,6 +87,17 @@ class WeComAuthorizationCallbackRouteTest {
             FakeExchange missingNonce = exchange(signature, timestamp, "", body);
             App.routeForTests(missingNonce, config, messages, viewer, null, codec, service);
             assertEquals(403, missingNonce.responseCode);
+
+            FakeExchange hookValidated = getExchange(
+                    "/hook_path", echoSignature, timestamp, nonce, encryptedEcho);
+            App.routeForTests(hookValidated, config, messages, viewer, null, codec, service);
+            assertEquals(200, hookValidated.responseCode);
+            assertEquals("verified-echo", hookValidated.responseText());
+
+            FakeExchange hookAccepted = exchange("/hook_path", signature, timestamp, nonce, body);
+            App.routeForTests(hookAccepted, config, messages, viewer, null, codec, service);
+            assertEquals(200, hookAccepted.responseCode);
+            assertEquals("success", hookAccepted.responseText());
         }
 
         FakeExchange unavailable = exchange("signature", Long.toString(NOW.getEpochSecond()),
@@ -114,6 +125,7 @@ class WeComAuthorizationCallbackRouteTest {
                 Map.entry("WECOM_SUITE_ID", SUITE),
                 Map.entry("WECOM_TOKEN", TOKEN),
                 Map.entry("WECOM_ENCODING_AES_KEY", encodingKey()),
+                Map.entry("WECOM_AUTHORIZATION_AUDIT_FILE", tempDir.resolve("authorization-audit.jsonl").toString()),
                 Map.entry("WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099")));
     }
 
@@ -126,14 +138,23 @@ class WeComAuthorizationCallbackRouteTest {
     }
 
     private static FakeExchange exchange(String signature, String timestamp, String nonce, String body) {
-        String uri = "/api/v1/wecom/authorization/callback?msg_signature=" + signature
+        return exchange("/api/v1/wecom/authorization/callback", signature, timestamp, nonce, body);
+    }
+
+    private static FakeExchange exchange(String path, String signature, String timestamp, String nonce, String body) {
+        String uri = path + "?msg_signature=" + signature
                 + "&timestamp=" + timestamp;
         if (!nonce.isEmpty()) uri += "&nonce=" + nonce;
         return new FakeExchange("POST", uri, body);
     }
 
     private static FakeExchange getExchange(String signature, String timestamp, String nonce, String echo) {
-        String uri = "/api/v1/wecom/authorization/callback?msg_signature=" + signature
+        return getExchange("/api/v1/wecom/authorization/callback", signature, timestamp, nonce, echo);
+    }
+
+    private static FakeExchange getExchange(String path, String signature, String timestamp, String nonce,
+                                            String echo) {
+        String uri = path + "?msg_signature=" + signature
                 + "&timestamp=" + timestamp + "&nonce=" + nonce + "&echostr="
                 + java.net.URLEncoder.encode(echo, StandardCharsets.UTF_8);
         return new FakeExchange("GET", uri, "");

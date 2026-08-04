@@ -88,7 +88,8 @@ class ChatAppTemplateSyncRuntimeTest {
             }
         });
 
-        assertStructuredLog(stderr, "changed", "none", 2, 1, 2, "none");
+        assertStartedLog(stderr);
+        assertStructuredLog(stderr, "succeeded", "none", 2, 1, 2, "none");
     }
 
     @Test
@@ -274,6 +275,128 @@ class ChatAppTemplateSyncRuntimeTest {
     }
 
     @Test
+    void interruptedCloseStillWaitsForAnInFlightPublication() throws Exception {
+        CountDownLatch publishing = new CountDownLatch(1);
+        CountDownLatch allowPublication = new CountDownLatch(1);
+        ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
+                true, 300,
+                () -> new ChatAppTemplateSynchronizer.Outcome(
+                        ChatAppTemplateSynchronizer.Status.CHANGED, 1, 1, 1, 1, 0),
+                count -> {
+                    publishing.countDown();
+                    awaitIgnoringInterrupt(allowPublication);
+                }, Executors.newSingleThreadScheduledExecutor());
+        AtomicReference<Boolean> closeInterrupted = new AtomicReference<>(false);
+        Thread closeThread = new Thread(() -> {
+            runtime.close();
+            closeInterrupted.set(Thread.currentThread().isInterrupted());
+        });
+
+        try {
+            captureStderr(() -> {
+                runtime.start();
+                assertTrue(publishing.await(2, TimeUnit.SECONDS));
+                closeThread.start();
+                closeThread.interrupt();
+                closeThread.join(200);
+                assertTrue(closeThread.isAlive(),
+                        "interruption must not let close pass an active publication");
+                allowPublication.countDown();
+                closeThread.join(TimeUnit.SECONDS.toMillis(2));
+                assertFalse(closeThread.isAlive());
+                assertTrue(closeInterrupted.get(), "close must restore its interrupt status");
+            });
+        } finally {
+            allowPublication.countDown();
+            runtime.close();
+            closeThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
+    }
+
+    @Test
+    void executorShutdownTimeoutStillWaitsForAnInFlightPublication() throws Exception {
+        CountDownLatch publishing = new CountDownLatch(1);
+        CountDownLatch allowPublication = new CountDownLatch(1);
+        CountDownLatch awaitTerminationCalled = new CountDownLatch(1);
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1) {
+            @Override
+            public boolean awaitTermination(long timeout, TimeUnit unit) {
+                awaitTerminationCalled.countDown();
+                return false;
+            }
+        };
+        ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
+                true, 300,
+                () -> new ChatAppTemplateSynchronizer.Outcome(
+                        ChatAppTemplateSynchronizer.Status.CHANGED, 1, 1, 1, 1, 0),
+                count -> {
+                    publishing.countDown();
+                    awaitIgnoringInterrupt(allowPublication);
+                }, executor);
+        Thread closeThread = new Thread(runtime::close);
+
+        try {
+            String stderr = captureStderr(() -> {
+                runtime.start();
+                assertTrue(publishing.await(2, TimeUnit.SECONDS));
+                closeThread.start();
+                assertTrue(awaitTerminationCalled.await(2, TimeUnit.SECONDS));
+                closeThread.join(200);
+                assertTrue(closeThread.isAlive(),
+                        "shutdown timeout must not let close pass an active publication");
+                allowPublication.countDown();
+                closeThread.join(TimeUnit.SECONDS.toMillis(2));
+                assertFalse(closeThread.isAlive());
+            });
+            assertTrue(stderr.contains("chatapp.template_sync event=shutdown_timeout"), stderr);
+        } finally {
+            allowPublication.countDown();
+            runtime.close();
+            closeThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
+    }
+
+    @Test
+    void concurrentCloseCallsBothWaitForAnInFlightPublication() throws Exception {
+        CountDownLatch publishing = new CountDownLatch(1);
+        CountDownLatch allowPublication = new CountDownLatch(1);
+        ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
+                true, 300,
+                () -> new ChatAppTemplateSynchronizer.Outcome(
+                        ChatAppTemplateSynchronizer.Status.CHANGED, 1, 1, 1, 1, 0),
+                count -> {
+                    publishing.countDown();
+                    awaitIgnoringInterrupt(allowPublication);
+                }, Executors.newSingleThreadScheduledExecutor());
+        Thread firstClose = new Thread(runtime::close);
+        Thread secondClose = new Thread(runtime::close);
+
+        try {
+            captureStderr(() -> {
+                runtime.start();
+                assertTrue(publishing.await(2, TimeUnit.SECONDS));
+                firstClose.start();
+                secondClose.start();
+                firstClose.join(200);
+                secondClose.join(200);
+                assertTrue(firstClose.isAlive());
+                assertTrue(secondClose.isAlive(),
+                        "a concurrent close must wait for the active publication too");
+                allowPublication.countDown();
+                firstClose.join(TimeUnit.SECONDS.toMillis(2));
+                secondClose.join(TimeUnit.SECONDS.toMillis(2));
+                assertFalse(firstClose.isAlive());
+                assertFalse(secondClose.isAlive());
+            });
+        } finally {
+            allowPublication.countDown();
+            runtime.close();
+            firstClose.join(TimeUnit.SECONDS.toMillis(2));
+            secondClose.join(TimeUnit.SECONDS.toMillis(2));
+        }
+    }
+
+    @Test
     void changedActionReturningAfterShutdownNowDoesNotPublish() throws Exception {
         CountDownLatch actionStarted = new CountDownLatch(1);
         CountDownLatch interrupted = new CountDownLatch(1);
@@ -317,9 +440,80 @@ class ChatAppTemplateSyncRuntimeTest {
                 assertFalse(closeThread.isAlive());
                 assertEquals(0, publishes.get());
             });
-            assertStructuredLog(stderr, "changed", "none", 1, 1, 1, "none");
+            assertStructuredLog(stderr, "succeeded", "none", 1, 1, 1, "none");
         } finally {
             allowActionReturn.countDown();
+            runtime.close();
+            closeThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
+    }
+
+    @Test
+    void syncReturningAfterCloseCannotCommitItsSnapshot() throws Exception {
+        Path snapshot = tempDir.resolve("late-commit.json");
+        TemplateStore store = new TemplateStore(snapshot);
+        store.replaceIfChanged(List.of(record("stable", "old")));
+        String before = java.nio.file.Files.readString(snapshot, StandardCharsets.UTF_8);
+        CountDownLatch listStarted = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        CountDownLatch allowListReturn = new CountDownLatch(1);
+        CountDownLatch shutdownNowCalled = new CountDownLatch(1);
+        ChatAppTemplateGateway gateway = new ChatAppTemplateGateway() {
+            @Override
+            public TemplatePage listTemplates(int pageIndex, int pageSize, Duration timeout) {
+                listStarted.countDown();
+                while (allowListReturn.getCount() > 0) {
+                    try {
+                        allowListReturn.await();
+                    } catch (InterruptedException exception) {
+                        interrupted.countDown();
+                    }
+                }
+                return new TemplatePage(List.of(new TemplateSummary(
+                        "late", "late", "zh_CN", "WHATSAPP")), 1);
+            }
+
+            @Override
+            public TemplateStore.TemplateRecord getTemplateDetail(
+                    TemplateSummary summary, Duration timeout) {
+                return record("late", "new");
+            }
+
+            @Override
+            public void close() {}
+        };
+        Config config = new Config(Map.of(
+                "CUST_SPACE_ID", "space-1",
+                "CHATAPP_TEMPLATE_FILE", snapshot.toString()));
+        ChatAppTemplateSynchronizer synchronizer = new ChatAppTemplateSynchronizer(
+                config, store, () -> gateway, Clock.systemUTC(), Duration.ofSeconds(5));
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1) {
+            @Override
+            public List<Runnable> shutdownNow() {
+                List<Runnable> pending = super.shutdownNow();
+                shutdownNowCalled.countDown();
+                return pending;
+            }
+        };
+        ChatAppTemplateSyncRuntime runtime = new ChatAppTemplateSyncRuntime(
+                true, 300, commitGate -> synchronizer.syncWithCommitGate(commitGate),
+                count -> fail("must not publish"), executor);
+        Thread closeThread = new Thread(runtime::close);
+
+        try {
+            captureStderr(() -> {
+                runtime.start();
+                assertTrue(listStarted.await(2, TimeUnit.SECONDS));
+                closeThread.start();
+                assertTrue(shutdownNowCalled.await(2, TimeUnit.SECONDS));
+                assertTrue(interrupted.await(2, TimeUnit.SECONDS));
+                allowListReturn.countDown();
+                closeThread.join(TimeUnit.SECONDS.toMillis(2));
+                assertFalse(closeThread.isAlive());
+            });
+            assertEquals(before, java.nio.file.Files.readString(snapshot, StandardCharsets.UTF_8));
+        } finally {
+            allowListReturn.countDown();
             runtime.close();
             closeThread.join(TimeUnit.SECONDS.toMillis(2));
         }
@@ -419,6 +613,16 @@ class ChatAppTemplateSyncRuntimeTest {
                 }, Clock.systemUTC(), Duration.ofMillis(50));
     }
 
+    private static TemplateStore.TemplateRecord record(String code, String body) {
+        TemplateStore.TemplateRecord record = new TemplateStore.TemplateRecord();
+        record.templateCode = code;
+        record.templateName = code;
+        record.languageCode = "zh_CN";
+        record.body = body;
+        record.raw = "{}";
+        return record;
+    }
+
     private static String captureStderr(ThrowingRunnable action) throws Exception {
         PrintStream originalStderr = System.err;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -436,10 +640,16 @@ class ChatAppTemplateSyncRuntimeTest {
     private static void assertStructuredLog(String stderr, String event, String stage,
                                             int fetched, int changed, int count,
                                             String errorType) {
-        assertTrue(stderr.matches("chatapp\\.template_sync event=" + event
+        assertTrue(stderr.matches("(?s).*chatapp\\.template_sync event=" + event
                 + " stage=" + stage + " durationMillis=\\d+ fetched=" + fetched
                 + " changed=" + changed + " count=" + count
-                + " errorType=" + errorType + "\\R"), stderr);
+                + " errorType=" + errorType + "\\R.*"), stderr);
+    }
+
+    private static void assertStartedLog(String stderr) {
+        assertTrue(stderr.matches("(?s).*chatapp\\.template_sync event=started"
+                + " stage=none durationMillis=\\d+ fetched=0 changed=0 count=0"
+                + " errorType=none\\R.*"), stderr);
     }
 
     private static void awaitIgnoringInterrupt(CountDownLatch latch) {

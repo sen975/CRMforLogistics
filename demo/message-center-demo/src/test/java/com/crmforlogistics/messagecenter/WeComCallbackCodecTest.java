@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -35,6 +36,34 @@ class WeComCallbackCodecTest {
 
         assertEquals("suite_ticket", callback.infoType());
         assertEquals("ticket-value", callback.suiteTicket());
+    }
+
+    @Test
+    void decryptsExplicitlyConfiguredLoginSuiteCallbackAndRejectsUnknownSuite() throws Exception {
+        Config config = new Config(Map.of(
+                "WECOM_SUITE_ID", SUITE,
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_TOKEN", TOKEN,
+                "WECOM_ENCODING_AES_KEY", KEY_B64));
+        WeComCallbackCodec codec = new WeComCallbackCodec(config, CLOCK);
+        String timestamp = Long.toString(NOW.getEpochSecond());
+        String loginEncrypted = encrypt("<xml><SuiteId>ww-login-suite</SuiteId><InfoType>suite_ticket</InfoType>"
+                + "<SuiteTicket>login-ticket</SuiteTicket></xml>", "ww-login-suite");
+        WeComCallbackCodec.DecodedCallback decoded = codec.decode(
+                WeComCallbackCodec.sha1(TOKEN, timestamp, "nonce", loginEncrypted),
+                timestamp, "nonce", loginEncrypted);
+        assertEquals("ww-login-suite", decoded.suiteId());
+
+        String loginEcho = encrypt("login-suite-echo", "ww-login-suite");
+        assertEquals("login-suite-echo", codec.verifyAndDecryptEcho(
+                WeComCallbackCodec.sha1(TOKEN, timestamp, "nonce", loginEcho),
+                timestamp, "nonce", loginEcho));
+
+        String unknownEncrypted = encrypt("<xml><SuiteId>unknown</SuiteId><InfoType>suite_ticket</InfoType>"
+                + "<SuiteTicket>ticket</SuiteTicket></xml>", "unknown");
+        assertThrows(WeComAuthorizationException.class, () -> codec.decode(
+                WeComCallbackCodec.sha1(TOKEN, timestamp, "nonce", unknownEncrypted),
+                timestamp, "nonce", unknownEncrypted));
     }
 
     @Test

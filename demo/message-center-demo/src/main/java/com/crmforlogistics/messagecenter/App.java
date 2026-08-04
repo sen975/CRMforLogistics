@@ -1,5 +1,11 @@
 package com.crmforlogistics.messagecenter;
 
+import com.crmforlogistics.messagecenter.callrecord.CallAudioSessionService;
+import com.crmforlogistics.messagecenter.callrecord.CallRecordEvent;
+import com.crmforlogistics.messagecenter.callrecord.CallRecordException;
+import com.crmforlogistics.messagecenter.callrecord.CallRecordHttpAdapter;
+import com.crmforlogistics.messagecenter.callrecord.CallRecordRuntime;
+import com.crmforlogistics.messagecenter.callrecord.ContactTimelineService;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -34,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 public class App {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
+    private static final Gson SSE_GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final int WECOM_VIEWER_REQUEST_MAX_BYTES = 4096;
 
     public static void main(String[] args) throws Exception {
@@ -60,7 +67,12 @@ public class App {
             return;
         }
         if ("sync".equalsIgnoreCase(command)) {
-            System.out.println(GSON.toJson(new ChatAppHistorySyncService(config).syncMessages()));
+            ChatAppTemplateSynchronizer templates = ChatAppTemplateSynchronizer.create(config);
+            ChatAppHistorySyncService syncService = new ChatAppHistorySyncService(config, templates);
+            try (ChatAppMessageSynchronizer synchronizer =
+                         ChatAppMessageSynchronizer.create(config, syncService)) {
+                System.out.println(GSON.toJson(synchronizer.sync().result()));
+            }
             return;
         }
         if ("sync-templates".equalsIgnoreCase(command)) {
@@ -109,10 +121,21 @@ public class App {
 
     private static void startWeb(Config config) throws Exception {
         UnifiedMessageStore store = new UnifiedMessageStore(config);
+        LocalWeComDevelopmentService localWeCom = config.localDevMode()
+                ? new LocalWeComDevelopmentService(config) : null;
         MailSender mailSender = new MailSender(config);
-        ChatAppSender chatAppSender = new ChatAppSender(config);
+        ChatAppHistoryStore chatAppHistoryStore = new ChatAppHistoryStore(config);
+        ChatAppSender chatAppSender = new ChatAppSender(config, chatAppHistoryStore);
         EmailSyncService emailSyncService = new EmailSyncService(config);
-        ChatAppHistorySyncService chatAppSyncService = new ChatAppHistorySyncService(config);
+        ChatAppTemplateSynchronizer templateSynchronizer = ChatAppTemplateSynchronizer.create(config);
+        ChatAppHistorySyncService chatAppSyncService = new ChatAppHistorySyncService(
+                config, chatAppHistoryStore, new TemplateStore(config.chatappTemplateFile()),
+                ChatAppHistorySyncService.defaultMediaCacher(config), templateSynchronizer,
+                () -> AliyunChatAppMessageGateway.open(config));
+        ChatAppMessageSynchronizer messageSynchronizer =
+                ChatAppMessageSynchronizer.create(config, chatAppSyncService);
+        ChatAppMessageSyncRuntime messageRuntime =
+                ChatAppMessageSyncRuntime.open(config, messageSynchronizer);
         WeComReceiver weComReceiver = new WeComReceiver(config);
         WeComAuthorizationStore authorizationStore = null;
         if (Files.exists(config.credentialMasterKeyFile())) {
@@ -125,58 +148,133 @@ public class App {
             callbackCodec = new WeComCallbackCodec(config);
             if (authorizationStore != null) {
                 authorizationGateway = new WeComAuthorizationGateway(config);
-                authorizationService = new WeComAuthorizationService(config, authorizationStore,
-                        authorizationGateway);
             }
         }
         WeComAccessTokenService accessTokens = authorizationGateway == null
                 ? null : new WeComAccessTokenService(config, authorizationGateway);
+        WeComChatDataPublicKeyRegistrar publicKeyRegistrar = WeComChatDataPublicKeyRegistrar.open(
+                config, authorizationStore, accessTokens);
+        if (authorizationGateway != null) {
+            authorizationService = new WeComAuthorizationService(config, authorizationStore,
+                    authorizationGateway, publicKeyRegistrar);
+        }
         WeComViewerService weComViewer = accessTokens == null
                 ? new WeComViewerService(config, authorizationStore)
-                : new WeComViewerService(config, authorizationStore, accessTokens);
+                : new WeComViewerService(config, authorizationStore, accessTokens, authorizationGateway);
         WeComLoginAttemptService weComLoginAttempts = new WeComLoginAttemptService(config, authorizationStore);
         WeComChatDataSyncService chatDataSync = accessTokens == null ? null
                 : new WeComChatDataSyncService(config, new WeComChatDataGateway(config, accessTokens));
         WeComDailySummaryRuntime dailySummary = WeComDailySummaryRuntime.open(
                 config, authorizationStore, accessTokens);
+        EventHub events = new EventHub();
+        CallRecordRuntime callRuntime = CallRecordRuntime.open(config, store, events::publish);
+        CallRecordHttpAdapter callRecordHttp = null;
+        if (callRuntime.available()) {
+            ContactTimelineService timeline = new ContactTimelineService(store, callRuntime.service());
+            CallAudioSessionService audioSessions = new CallAudioSessionService(config);
+            callRecordHttp = new CallRecordHttpAdapter(
+                    config, callRuntime.service(), timeline, callRuntime.audioStore(),
+                    audioSessions, localWeCom == null ? weComViewer::requireViewerActor : localWeCom::requireViewerActor);
+        }
         WeComAuthorizationService finalAuthorizationService = authorizationService;
+        WeComChatDataPublicKeyRegistrar finalPublicKeyRegistrar = publicKeyRegistrar;
         WeComCallbackCodec finalCallbackCodec = callbackCodec;
         WeComChatDataSyncService finalChatDataSync = chatDataSync;
-        EventHub events = new EventHub();
-        HttpServer server = HttpServer.create(new InetSocketAddress(config.webPort()), 0);
+        LocalWeComDevelopmentService finalLocalWeCom = localWeCom;
+        ChatAppTemplateSyncRuntime templateRuntime = ChatAppTemplateSyncRuntime.open(
+                config, templateSynchronizer, events::publishTemplatesChanged);
+        CallRecordHttpAdapter finalCallRecordHttp = callRecordHttp;
+        HttpServer server;
+        try {
+            server = HttpServer.create(new InetSocketAddress(config.webBindAddress(), config.webPort()), 0);
+        } catch (Exception startupFailure) {
+            closeCallRuntime(callRuntime);
+            dailySummary.close();
+            events.close();
+            throw startupFailure;
+        }
         server.createContext("/", exchange -> {
             try {
+                if (finalCallRecordHttp != null && finalCallRecordHttp.handle(exchange)) return;
+                if (finalCallRecordHttp == null && isCallRecordPath(exchange)) {
+                    CallRecordException failure = callRuntime.startupFailure();
+                    writeCallRuntimeError(exchange, failure);
+                    return;
+                }
                 route(exchange, config, store, mailSender, chatAppSender, emailSyncService,
-                        chatAppSyncService, weComReceiver, weComViewer, weComLoginAttempts,
-                        finalChatDataSync, finalCallbackCodec, finalAuthorizationService, events);
+                        messageSynchronizer, weComReceiver, weComViewer, weComLoginAttempts,
+                        finalChatDataSync, finalLocalWeCom, finalCallbackCodec, finalAuthorizationService, events);
             } catch (Exception ex) {
                 writeRouteError(exchange, ex);
             }
         });
         server.setExecutor(Executors.newCachedThreadPool());
-        server.start();
+        try {
+            server.start();
+            templateRuntime.start();
+            messageRuntime.start();
+        } catch (Exception startupFailure) {
+            server.stop(0);
+            closeCallRuntime(callRuntime);
+            messageRuntime.close();
+            templateRuntime.close();
+            dailySummary.close();
+            events.close();
+            throw startupFailure;
+        }
         WeComDailySummaryRuntime finalDailySummary = dailySummary;
+        CallRecordRuntime finalCallRuntime = callRuntime;
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            messageRuntime.close();
+            templateRuntime.close();
+            closeCallRuntime(finalCallRuntime);
             finalDailySummary.close();
             events.close();
             server.stop(0);
+            if (finalAuthorizationService != null) finalAuthorizationService.close();
+            finalPublicKeyRegistrar.close();
         }, "message-center-shutdown"));
         System.out.println("Message center demo started: http://localhost:" + config.webPort());
         System.out.println("ChatApp webhook endpoint: http://localhost:" + config.webPort() + "/webhook/chatapp");
     }
 
+    private static boolean isCallRecordPath(HttpExchange exchange) {
+        return CallRecordHttpAdapter.matchesRoute(exchange.getRequestURI().getRawPath());
+    }
+
+    private static void closeCallRuntime(CallRecordRuntime runtime) {
+        try {
+            runtime.close();
+        } catch (CallRecordException exception) {
+            System.err.println("call_record_shutdown_failed code=" + exception.code());
+        }
+    }
+
+    private static void writeCallRuntimeError(HttpExchange exchange,
+                                               CallRecordException failure) throws IOException {
+        CallRecordException error = failure == null
+                ? new CallRecordException("CALL_RECORD_UNAVAILABLE", 503,
+                "电话记录服务不可用", false) : failure;
+        writeJson(exchange, error.httpStatus(), Map.of(
+                "code", error.code(),
+                "message", error.getMessage() == null ? "" : error.getMessage(),
+                "traceId", java.util.UUID.randomUUID().toString(),
+                "context", Map.of()));
+    }
+
     private static void route(HttpExchange exchange, Config config, UnifiedMessageStore store, MailSender mailSender,
                               ChatAppSender chatAppSender, EmailSyncService emailSyncService,
-                              ChatAppHistorySyncService chatAppSyncService, WeComReceiver weComReceiver,
+                              ChatAppMessageSynchronizer messageSynchronizer, WeComReceiver weComReceiver,
                               WeComViewerService weComViewer, WeComLoginAttemptService weComLoginAttempts,
                               WeComChatDataSyncService chatDataSync,
+                              LocalWeComDevelopmentService localWeCom,
                               WeComCallbackCodec callbackCodec, WeComAuthorizationService authorizationService,
                               EventHub events) throws Exception {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
         String weComPath = path;
         if ("GET".equals(method) && "/".equals(path)) {
-            writeHtml(exchange, pageHtml());
+            writeHtml(exchange, pageHtml(config.localDevMode()));
             return;
         }
         if ("GET".equals(method) && "/events".equals(path)) {
@@ -282,7 +380,7 @@ public class App {
             return;
         }
         if ("POST".equals(method) && "/api/sync/chatapp".equals(path)) {
-            SyncResult result = chatAppSyncService.syncMessages();
+            SyncResult result = messageSynchronizer.sync().result();
             events.publish(syncEvent("chatapp", result.message));
             writeJson(exchange, 200, result);
             return;
@@ -294,7 +392,9 @@ public class App {
             writeJson(exchange, 200, Map.of("ok", true));
             return;
         }
-        if ("GET".equals(method) && "/api/v1/wecom/authorization/callback".equals(weComPath)) {
+        boolean weComAuthorizationCallback = "/api/v1/wecom/authorization/callback".equals(weComPath)
+                || "/hook_path".equals(weComPath);
+        if ("GET".equals(method) && weComAuthorizationCallback) {
             if (callbackCodec == null) {
                 throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
                         "企业微信授权服务尚未配置");
@@ -306,7 +406,7 @@ public class App {
             writeText(exchange, 200, echo);
             return;
         }
-        if ("POST".equals(method) && "/api/v1/wecom/authorization/callback".equals(weComPath)) {
+        if ("POST".equals(method) && weComAuthorizationCallback) {
             if (callbackCodec == null || authorizationService == null) {
                 throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
                         "企业微信授权服务尚未配置");
@@ -328,25 +428,56 @@ public class App {
             return;
         }
         if ("GET".equals(method) && "/api/v1/wecom/js-sdk-config".equals(weComPath)) {
+            if (localWeCom != null) {
+                localWeCom.requireViewerActor(viewerAuthToken(exchange));
+                writeJson(exchange, 200, localWeCom.jsSdkConfig());
+                return;
+            }
             writeJson(exchange, 200, weComViewer.jsSdkConfig(
                     query(exchange).getOrDefault("url", ""), viewerAuthToken(exchange)));
             return;
         }
         if ("POST".equals(method) && "/api/v1/wecom/login/attempts".equals(weComPath)) {
             readViewerJson(exchange);
-            writeJson(exchange, 200, weComLoginAttempts.createAttempt());
+            writeJson(exchange, 200, localWeCom == null
+                    ? weComLoginAttempts.createAttempt() : localWeCom.createAttempt());
             return;
         }
         if ("POST".equals(method) && "/api/v1/wecom/login/exchange".equals(weComPath)) {
             JsonObject body = readViewerJson(exchange, "code", "state");
+            if (localWeCom != null) {
+                writeJson(exchange, 200, localWeCom.exchange(json(body, "code"), json(body, "state")));
+                return;
+            }
             WeComLoginAttemptService.InstallationBinding binding = weComLoginAttempts.consume(json(body, "state"));
             writeJson(exchange, 200, weComViewer.exchangeLoginCode(json(body, "code"), binding));
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/wecom/conversation-view/sync".equals(weComPath)) {
+            readViewerJson(exchange);
+            String viewerAuthToken = viewerAuthToken(exchange);
+            if (localWeCom != null) {
+                writeJson(exchange, 200, localWeCom.sync(viewerAuthToken));
+                return;
+            }
+            WeComViewerService.ViewerSyncContext syncContext = weComViewer.viewerSyncContext(viewerAuthToken);
+            if (chatDataSync == null) {
+                throw new WeComChatDataException("WECOM_CHATDATA_NOT_CONFIGURED", 503,
+                        "企业微信会话同步尚未配置");
+            }
+            WeComChatDataSyncService.SyncResult result = chatDataSync.sync(syncContext);
+            writeJson(exchange, 200, result);
             return;
         }
         if ("POST".equals(method) && "/api/v1/wecom/conversation-view/sessions".equals(weComPath)) {
             JsonObject body = readViewerJson(exchange, "conversationId", "contactPointId", "viewerAuthToken");
             String contactPointId = json(body, "contactPointId");
             String viewerAuthToken = json(body, "viewerAuthToken");
+            if (localWeCom != null) {
+                requireReadableContactPoint(store, contactPointId);
+                writeJson(exchange, 200, localWeCom.createSession(contactPointId, viewerAuthToken));
+                return;
+            }
             try {
                 requireReadableContactPoint(store, contactPointId);
             } catch (SecurityException denied) {
@@ -369,17 +500,40 @@ public class App {
         }
         if ("GET".equals(method) && weComPath.startsWith("/api/v1/wecom/conversation-view/sessions/")) {
             String sessionId = weComPath.substring("/api/v1/wecom/conversation-view/sessions/".length());
-            writeJson(exchange, 200, weComViewer.viewerSession(sessionId, viewerAuthToken(exchange)));
+            writeJson(exchange, 200, localWeCom == null
+                    ? weComViewer.viewerSession(sessionId, viewerAuthToken(exchange))
+                    : localWeCom.readSession(sessionId, viewerAuthToken(exchange)));
             return;
         }
         if ("POST".equals(method) && "/api/v1/wecom/conversation-view/events".equals(weComPath)) {
             JsonObject body = readViewerJson(exchange, "eventType", "viewerSessionId");
-            weComViewer.recordClientEvent(json(body, "eventType"), json(body, "viewerSessionId"),
-                    viewerAuthToken(exchange));
+            if (localWeCom == null) {
+                weComViewer.recordClientEvent(json(body, "eventType"), json(body, "viewerSessionId"),
+                        viewerAuthToken(exchange));
+            } else {
+                localWeCom.recordClientEvent(json(body, "eventType"), json(body, "viewerSessionId"),
+                        viewerAuthToken(exchange));
+            }
             writeJson(exchange, 202, Map.of("accepted", true));
             return;
         }
         writeJson(exchange, 404, Map.of("error", "NotFound", "message", path));
+    }
+
+    static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
+                              ChatAppMessageSynchronizer messageSynchronizer) throws Exception {
+        EventHub events = new EventHub();
+        ChatAppHistoryStore historyStore = new ChatAppHistoryStore(config);
+        try {
+            route(exchange, config, store, new MailSender(config),
+                    new ChatAppSender(config, historyStore), new EmailSyncService(config),
+                    messageSynchronizer, new WeComReceiver(config), null, null,
+                    null, null, null, null, events);
+        } catch (Exception exception) {
+            writeRouteError(exchange, exception);
+        } finally {
+            events.close();
+        }
     }
 
     static void routeForTests(HttpExchange exchange, Config config, UnifiedMessageStore store,
@@ -417,10 +571,16 @@ public class App {
                               WeComCallbackCodec callbackCodec,
                               WeComAuthorizationService authorizationService) throws Exception {
         EventHub events = new EventHub();
-        try {
-            route(exchange, config, store, new MailSender(config), new ChatAppSender(config),
-                    new EmailSyncService(config), new ChatAppHistorySyncService(config),
-                    new WeComReceiver(config), weComViewer, weComLoginAttempts, chatDataSync, callbackCodec,
+        ChatAppHistoryStore historyStore = new ChatAppHistoryStore(config);
+        ChatAppHistorySyncService syncService = new ChatAppHistorySyncService(
+                config, historyStore, new TemplateStore(config.chatappTemplateFile()));
+        try (ChatAppMessageSynchronizer messageSynchronizer =
+                     ChatAppMessageSynchronizer.create(config, syncService)) {
+            LocalWeComDevelopmentService localWeCom = config.localDevMode()
+                    ? new LocalWeComDevelopmentService(config) : null;
+            route(exchange, config, store, new MailSender(config),
+                    new ChatAppSender(config, historyStore), new EmailSyncService(config), messageSynchronizer,
+                    new WeComReceiver(config), weComViewer, weComLoginAttempts, chatDataSync, localWeCom, callbackCodec,
                     authorizationService, events);
         } catch (Exception exception) {
             writeRouteError(exchange, exception);
@@ -611,6 +771,10 @@ public class App {
     }
 
     static String pageHtml() {
+        return pageHtml(false);
+    }
+
+    static String pageHtml(boolean localDevMode) {
         return new StringBuilder().append("""
 <!doctype html>
 <html lang="zh-CN">
@@ -720,6 +884,20 @@ public class App {
 	    .msg-meta-line a, .media-open-link { font-size:11px; }
 	    .media-open-link { border:0; background:transparent; color:var(--accent); padding:0; border-radius:0; cursor:pointer; }
 	    .media-open-link:disabled { color:var(--muted); }
+	    .call-row { display:grid; grid-template-columns:42px minmax(0, 76%); align-items:start; gap:10px; margin:0 0 12px; }
+	    .call-row.outbound { grid-template-columns:minmax(0, 76%) 42px; justify-content:end; }
+	    .call-row.outbound .msg-avatar { order:2; }
+	    .call-row.outbound .msg-stack { order:1; align-items:flex-end; }
+	    .call-card { width:min(320px, 100%); min-width:0; padding:10px 11px; border:1px solid #b8c5d8; border-left:3px solid var(--accent); border-radius:6px; background:#fff; cursor:pointer; text-align:left; }
+	    .call-card:hover { background:#f7faff; }
+	    .call-card.active { outline:2px solid var(--accent); outline-offset:1px; }
+	    .call-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+	    .call-card-title { display:flex; align-items:center; gap:7px; min-width:0; font-weight:700; font-size:12px; }
+	    .call-phone-icon { position:relative; width:15px; height:15px; flex:0 0 auto; border:2px solid var(--accent); border-top-color:transparent; border-right-color:transparent; border-radius:3px 3px 3px 8px; transform:rotate(-38deg); }
+	    .call-state { flex:0 0 auto; color:var(--muted); font-size:11px; font-weight:700; }
+	    .call-state.completed { color:#047857; }
+	    .call-state.failed { color:var(--danger); }
+	    .call-card-body { margin-top:7px; color:var(--muted); font-size:12px; display:flex; gap:8px; flex-wrap:wrap; }
 	    .status-icon { position:relative; width:14px; height:14px; display:inline-block; border:1.5px solid var(--muted); border-radius:50%; flex:0 0 auto; }
 	    .status-icon.sent::after, .status-icon.read::after, .status-icon.success::after { content:""; position:absolute; left:3px; top:3px; width:6px; height:3px; border-left:1.8px solid var(--muted); border-bottom:1.8px solid var(--muted); transform:rotate(-45deg); }
 	    .status-icon.failed { border-color:var(--danger); }
@@ -743,6 +921,10 @@ public class App {
 	    .file-drop { display:flex; align-items:center; justify-content:center; gap:9px; min-height:92px; border-left:1px solid var(--hairline); color:var(--muted); font-size:12px; cursor:pointer; padding:12px; }
 	    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 	    .composer-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+	    .call-upload-form { display:grid; gap:9px; }
+	    .call-upload-grid { display:grid; grid-template-columns:minmax(180px,1.25fr) minmax(110px,.6fr) minmax(180px,.9fr) minmax(150px,.8fr); gap:10px; align-items:end; }
+	    .call-upload-actions { display:grid; grid-template-columns:minmax(160px,1fr) auto; gap:12px; align-items:center; }
+	    .call-upload-progress { width:100%; height:8px; accent-color:var(--accent); }
 	    .tool-cluster { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 	    .icon-button { width:34px; height:34px; padding:0; display:grid; place-items:center; border-radius:50%; background:#fff; }
 	    .tool-icon { position:relative; width:18px; height:18px; display:block; color:var(--muted); }
@@ -800,6 +982,18 @@ public class App {
     .tag-pill { color:#047857; background:#ecfdf3; border:1px solid #9ed8b8; border-radius:999px; padding:2px 7px; font-size:11px; }
     .message-detail-panel { margin-top:18px; border-top:1px solid var(--line); padding-top:12px; }
     .message-detail-standalone { margin-top:0; border-top:0; padding-top:0; }
+	.call-detail { display:grid; gap:14px; }
+	.call-detail-title { display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:750; font-size:15px; }
+	.call-detail audio { width:100%; }
+	.call-detail-section { display:grid; gap:8px; }
+	.call-detail-section h3 { margin:0; font-size:13px; }
+	.transcript-segment { display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; padding:8px 0; border-bottom:1px solid var(--hairline); font-size:12px; line-height:1.45; }
+	.transcript-time { color:var(--muted); font-variant-numeric:tabular-nums; }
+	.call-transcript-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; font-size:13px; }
+	.call-revision-form { display:grid; gap:8px; }
+	.call-revision-form textarea { width:100%; min-height:112px; resize:vertical; border:1px solid var(--line); border-radius:4px; padding:9px; }
+	.call-detail-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+	.call-audio-error { color:var(--danger); font-size:12px; min-height:18px; }
     .kv { display:grid; grid-template-columns:92px 1fr; gap:8px; padding:7px 0; border-bottom:1px solid #edf0f5; }
     pre { white-space:pre-wrap; overflow:auto; background:#101828; color:#e5e7eb; border-radius:8px; padding:12px; max-height:260px; }
     .toast { position:fixed; right:18px; bottom:18px; background:#202124; color:white; padding:10px 12px; border-radius:8px; box-shadow:0 12px 28px rgba(0,0,0,.22); display:none; z-index:20; }
@@ -826,15 +1020,15 @@ public class App {
 	      .workspace-section { min-height:48px; }
 	      .pane { grid-column:1; grid-row:auto; min-height:360px; }
 	      .contact-list, .thread, .detail { max-height:58vh; }
-	      .message-row, .message-row.outbound { grid-template-columns:42px minmax(0, 1fr); justify-content:stretch; }
-	      .message-row.outbound .msg-avatar, .message-row.outbound .msg-stack { order:initial; align-items:flex-start; }
-	      .grid2, .composer-context, .media-editor, .template-form #tplFields { grid-template-columns:1fr; }
+	      .message-row, .message-row.outbound, .call-row, .call-row.outbound { grid-template-columns:42px minmax(0, 1fr); justify-content:stretch; }
+	      .message-row.outbound .msg-avatar, .message-row.outbound .msg-stack, .call-row.outbound .msg-avatar, .call-row.outbound .msg-stack { order:initial; align-items:flex-start; }
+	      .grid2, .composer-context, .media-editor, .template-form #tplFields, .call-upload-grid, .call-upload-actions { grid-template-columns:1fr; }
 	      .file-drop { border-left:0; border-top:1px solid var(--hairline); min-height:58px; }
 	    }
   </style>
 </head>
 <body>
-  <section class="wecom-login-screen" id="wecomLoginScreen">
+  <section class="wecom-login-screen" id="wecomLoginScreen"__LOCAL_LOGIN_HIDDEN__>
     <div class="wecom-login-card">
       <div class="wecom-login-brand">统一消息中心</div>
       <div class="small">使用企业微信扫码后查看会话消息</div>
@@ -843,7 +1037,7 @@ public class App {
       <button id="wecomLoginRetry" type="button" hidden>重新加载二维码</button>
     </div>
   </section>
-  <main class="shell" id="shell" hidden>
+  <main class="shell" id="shell"__LOCAL_SHELL_HIDDEN__>
     <header class="workspace-topbar">
       <div class="workspace-section">
         <div class="workspace-title"><div class="brand">统一消息中心</div><div class="small" id="contactCount">0 个联系人</div></div>
@@ -858,7 +1052,7 @@ public class App {
           <div class="contact-points-line" id="threadSub">邮件和 ChatApp 按时间穿插显示</div>
         </div>
         <div class="workspace-actions">
-          <div class="sync-actions"><button id="syncEmailBtn">收取邮件</button><button id="syncChatBtn">同步 WhatsApp</button></div>
+          <div class="sync-actions"><button id="syncEmailBtn">收取邮件</button><button id="syncChatBtn">同步 WhatsApp</button><button id="syncWeComBtn">同步企业微信会话</button></div>
           <div class="utility-actions"><button class="icon-button" id="refreshBtn" type="button" title="刷新" aria-label="刷新"><span class="tool-icon refresh"></span></button></div>
         </div>
       </div>
@@ -906,12 +1100,18 @@ public class App {
     const THREAD_PAGE_SIZE = 10;
     const THREAD_PAGE_CACHE_LIMIT = 20;
     const THREAD_PAGE_MAX_MESSAGES = 200;
+	const LOCAL_DEV_MODE = __LOCAL_DEV_MODE__;
+	const CALL_AUDIO_RENEW_MS = 240000;
+	const CALL_DETAIL_POLL_MS = 3000;
+	const CALL_DETAIL_POLL_MAX_MS = 30000;
+	const CALL_DETAIL_POLL_MAX_FAILURES = 5;
+	const CALL_MAX_AUDIO_BYTES = 104857600;
     const WECOM_SDK_SRC = 'https://wwcdn.weixin.qq.com/node/open/js/wecom-jssdk-2.3.4.js';
     const WECOM_JWXWORK_SRC = 'https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js';
     const WECOM_LOGIN_EXPIRED_MARKERS = ['42006','42003','40029','Missing open sid'];
     let weComSdkLoadPromise = null;
     let weComJwxworkLoadPromise = null;
-    const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, messageCenterInitialized:false, eventSource:null, refreshTimer:null };
+	const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedCallRecordId:'', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, viewerReloginPromise:null, messageCenterInitialized:false, eventSource:null, refreshTimer:null, callDetail:null, callDetailGeneration:0, callDetailPollTimer:null, callDetailPollFailures:0, callAudioRenewTimer:null, callAudioRecovered:false, callAudioSessionReady:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -931,13 +1131,31 @@ public class App {
       }
       return data;
     };
+	const viewerApi = async (url, options = {}) => {
+	  const login = currentWeComAuth();
+	  const headers = { ...(options.headers || {}), 'X-WeCom-Viewer-Auth': login.viewerAuthToken };
+	  const response = await fetch(url, { ...options, headers });
+	  const text = response.status === 204 ? '' : await response.text();
+	  let data = {};
+	  if (text) {
+		try { data = JSON.parse(text); }
+		catch (error) { throw new Error('电话记录服务返回了无效响应'); }
+	  }
+	  if (!response.ok) {
+		const error = new Error(data.message || data.code || response.statusText);
+		error.code = data.code || '';
+		error.status = response.status;
+		throw error;
+	  }
+	  return data;
+	};
     const postJson = (url, body) => api(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     const timeText = value => value ? new Date(value).toLocaleString() : '';
     const initials = name => (name || '?').trim().slice(0, 2).toUpperCase();
     const requestId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     function threadPageUrl(id, cursor = '') {
-      let url = '/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE;
+      let url = '/api/v1/contacts/' + encodeURIComponent(id) + '/timeline?limit=' + THREAD_PAGE_SIZE;
       if (cursor) url += '&cursor=' + encodeURIComponent(cursor);
       return url;
     }
@@ -984,6 +1202,14 @@ public class App {
 
     async function initWeComLogin() {
       if (window.top !== window.self) throw new Error('企业微信登录和会话组件必须运行在顶层页面');
+      if (LOCAL_DEV_MODE) {
+        $('wecomLoginScreen').hidden = true;
+        $('shell').hidden = false;
+        const attempt = await postJson('/api/v1/wecom/login/attempts', {});
+        state.wecomLoginAttempt = attempt;
+        await completeWeComLogin('local-development-code');
+        return;
+      }
       $('shell').hidden = true;
       $('wecomLoginScreen').hidden = false;
       $('wwLoginPanel').innerHTML = '<div class="empty">正在准备登录配置</div>';
@@ -996,9 +1222,8 @@ public class App {
       ww.createWWLoginPanel({
         el: '#wwLoginPanel',
         params: {
-          login_type: 'CorpApp',
-          appid: attempt.corpId,
-          agentid: attempt.agentId,
+          login_type: attempt.loginType,
+          appid: attempt.appId,
           redirect_uri: attempt.redirectUri,
           state: attempt.state,
           redirect_type: 'callback',
@@ -1034,20 +1259,23 @@ public class App {
       } catch (error) {
         state.wecomAuth = null;
         state.wecomAuthExpiresAt = 0;
-        $('shell').hidden = true;
-        $('wecomLoginScreen').hidden = false;
+        $('shell').hidden = !LOCAL_DEV_MODE;
+        $('wecomLoginScreen').hidden = LOCAL_DEV_MODE;
         throw error;
       }
     }
 
-    function currentWeComAuth() {
-      if (!state.wecomAuth?.viewerAuthToken || Date.now() >= state.wecomAuthExpiresAt) {
-        throw new Error('企业微信登录已过期，请重新扫码');
-      }
-      return state.wecomAuth;
-    }
+	function currentWeComAuth() {
+	  if (!state.wecomAuth?.viewerAuthToken || Date.now() >= state.wecomAuthExpiresAt) {
+		const error = new Error('企业微信登录已过期，请重新扫码');
+		error.code = 'WECOM_VIEWER_AUTH_EXPIRED';
+		error.status = 401;
+		throw error;
+	  }
+	  return state.wecomAuth;
+	}
 
-    async function returnToWeComLogin(message) {
+	async function returnToWeComLogin(message) {
       state.wecomAuth = null;
       state.wecomAuthExpiresAt = 0;
       state.wecomLoginAttempt = null;
@@ -1055,11 +1283,23 @@ public class App {
       state.eventSource = null;
       if (state.refreshTimer) clearInterval(state.refreshTimer);
       state.refreshTimer = null;
+	  clearCallDetailActivity();
       $('shell').hidden = true;
       $('wecomLoginScreen').hidden = false;
       setWeComLoginStatus(message || '请重新扫码登录');
-      await initWeComLogin();
-    }
+	  await initWeComLogin();
+	}
+
+	async function handleViewerAuthFailure(error) {
+	  if (!isWeComLoginExpired(error)) return false;
+	  if (!state.viewerReloginPromise) {
+		state.viewerReloginPromise = returnToWeComLogin('企业微信登录已失效，请重新扫码')
+		  .catch(loginError => setWeComLoginStatus(`重新登录失败：${loginError.message}`, true))
+		  .finally(() => { state.viewerReloginPromise = null; });
+	  }
+	  await state.viewerReloginPromise;
+	  return true;
+	}
 
     async function enterMessageCenter() {
       const caps = await api('/api/channel-capabilities');
@@ -1071,6 +1311,7 @@ public class App {
         $('refreshBtn').onclick = () => refreshAll(false);
         $('syncEmailBtn').onclick = syncEmail;
         $('syncChatBtn').onclick = syncChatApp;
+        $('syncWeComBtn').onclick = syncWeCom;
         $('searchInput').oninput = renderContacts;
         bindScrollSurfaces();
         $('detailToggleBtn').onclick = toggleDetailPane;
@@ -1092,30 +1333,46 @@ public class App {
             closeWeComModal();
           }
         });
+		document.addEventListener('visibilitychange', handleCallAudioVisibility);
         $('notifyBtn').onclick = enableNotifications;
       }
       connectEvents();
       if (state.refreshTimer) clearInterval(state.refreshTimer);
-      state.refreshTimer = setInterval(() => refreshAll(true), 5000);
-    }
+	  state.refreshTimer = setInterval(() => refreshInBackground(true), 5000);
+	}
 
-	    async function refreshAll(silent) {
+	async function refreshAll(silent) {
 	      if (silent && isUserScrolling()) {
 	        state.pendingSilentRefresh = true;
 	        return;
 	      }
 	      await loadContacts(silent);
-	      if (state.selectedPointId) await loadThread(state.selectedPointId, true);
-	    }
+	  if (state.selectedPointId) await loadThread(state.selectedPointId, true);
+	}
+
+	async function refreshInBackground(silent) {
+	  try {
+		await refreshAll(silent);
+	  } catch (error) {
+		if (!(await handleViewerAuthFailure(error))) toast(`刷新失败：${error.message}`);
+	  }
+	}
 
 	    async function refreshSelectedContactViews(silent) {
 	      await refreshAll(silent);
 	      const contact = selectedContact();
-	      if (contact && !contact.channels.includes(state.selectedChannel)) {
+	      if (contact && ![...contact.channels, 'wecom', 'callRecord'].includes(state.selectedChannel)) {
 	        state.selectedChannel = contact.channels[0] || '';
 	      }
 	      renderComposer();
 	    }
+
+    async function refreshTemplates() {
+      state.templates = await api('/api/templates');
+      if (state.selectedChannel === 'chatapp' && state.selectedMode === 'template') {
+        renderComposer();
+      }
+    }
 
 	    async function syncEmail() {
 	      await runSync('/api/sync/email', '正在收取邮件', result => `邮件收取完成：新增 ${result.saved || 0}，跳过 ${result.skipped || 0}`);
@@ -1128,6 +1385,29 @@ public class App {
 	        const reason = result.mediaFailures?.[0]?.reason ? `，首条原因 ${result.mediaFailures?.[0]?.reason}` : '';
 	        return `WhatsApp 同步完成：新增 ${result.saved || 0}，刷新 ${result.updated || 0}，页 ${result.pages || 0}，耗时 ${formatDuration(result.durationMillis)}，模板 ${result.templatesSaved || 0}，附件 ${result.mediaCached || 0}，排队 ${result.mediaQueued || 0}，失败 ${result.mediaFailed || 0}${reason}`;
 	      });
+	    }
+
+	    async function syncWeCom() {
+	      const button = $('syncWeComBtn');
+	      if (button) button.disabled = true;
+	      try {
+	        const login = currentWeComAuth();
+	        const result = await api('/api/v1/wecom/conversation-view/sync', {
+	          method: 'POST',
+	          headers: { 'Content-Type': 'application/json', 'X-WeCom-Viewer-Auth': login.viewerAuthToken },
+	          body: '{}'
+	        });
+	        toast(`企业微信同步完成：${result.stored || 0} 条，跳过 ${result.skipped || 0} 条`);
+	        await refreshAll(false);
+	      } catch (error) {
+	        if (isWeComLoginExpired(error)) {
+	          await returnToWeComLogin('企业微信登录已失效，请重新扫码');
+	          return;
+	        }
+	        toast(`企业微信同步失败：${error.message}`);
+	      } finally {
+	        if (button) button.disabled = false;
+	      }
 	    }
 
 	    async function runSync(url, pendingText, doneText) {
@@ -1149,7 +1429,7 @@ public class App {
 	    async function loadContacts(silent) {
       const listEl = $('contacts');
       const top = listEl.scrollTop;
-      const lockDetail = state.profileDirty || state.selectedMessageId || profileModalOpen() || detailEditing();
+	      const lockDetail = state.profileDirty || state.selectedMessageId || state.selectedCallRecordId || profileModalOpen() || detailEditing();
       const contacts = await api('/api/contacts');
       if (silent) reconcileUnreadContacts(contacts);
       state.contacts = contacts;
@@ -1314,7 +1594,7 @@ public class App {
     }
 
     function label(channel) {
-      return channel === 'email' ? '邮件' : channel === 'chatapp' ? 'WhatsApp' : channel === 'wecom' ? '企业微信' : channel;
+      return channel === 'email' ? '邮件' : channel === 'chatapp' ? 'WhatsApp' : channel === 'wecom' ? '企业微信' : channel === 'callRecord' ? '电话记录' : channel;
     }
 
     function primaryChannel(contact) {
@@ -1503,6 +1783,7 @@ public class App {
         state.profileDirty = false;
         state.profileSavedPointId = '';
         closeProfileModal();
+		clearCallDetailActivity();
       }
       state.selectedPointId = id;
       state.selectedMessageId = '';
@@ -1515,10 +1796,12 @@ public class App {
       renderContactDetail(contact);
     }
 
-    function renderThreadMessages(contact, messages) {
+    function renderThreadMessages(contact, items) {
       updateContactHeader(contact);
       const threadEl = $('thread');
-      threadEl.innerHTML = messages.map(m => {
+	  threadEl.innerHTML = items.map(item => {
+		if (item.type === 'callRecord') return renderCallRecordCard(item);
+		const m = item.payload || {};
         const direction = m.direction === 'outbound' ? 'outbound' : 'inbound';
         const meta = [
           `<span>${esc(label(m.channel))}</span>`,
@@ -1541,36 +1824,79 @@ public class App {
           </div>`;
       }).join('') || '<div class="empty">暂无消息</div>';
       document.querySelectorAll('.msg[data-id]').forEach(item => item.onclick = () => selectMessage(item.dataset.id));
+	  document.querySelectorAll('.call-card[data-call-record-id]').forEach(item => {
+		item.onclick = () => openCallRecordDetail(item.dataset.callRecordId);
+		item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCallRecordDetail(item.dataset.callRecordId); } };
+	  });
       document.querySelectorAll('[data-open-media]').forEach(item => item.onclick = event => openAttachment(event, item.dataset.openMedia, item.dataset.fileName));
     }
+
+	function callRecordStateText(value) {
+	  return value === 'queued' ? '排队中' : value === 'processing' ? '转录中' : value === 'completed' ? '已完成' : value === 'failed' ? '失败' : value || '未知状态';
+	}
+
+	function callDirectionText(value) {
+	  return value === 'outbound' ? '呼出' : value === 'inbound' ? '呼入' : '方向未指定';
+	}
+
+	function callPhoneLabel(phonePointId) {
+	  const contact = selectedContact();
+	  const point = (contact?.points || []).find(item => item.id === phonePointId && item.channel === 'phone' && item.type === 'phone' && item.id.startsWith('phone:'));
+	  return point ? (point.label || point.value || '未指定号码') : '未指定号码';
+	}
+
+	function callDurationText(seconds) {
+	  const value = Number(seconds || 0);
+	  if (!Number.isFinite(value) || value <= 0) return '';
+	  const minutes = Math.floor(value / 60);
+	  const remainder = Math.floor(value % 60);
+	  return minutes ? `${minutes}分${String(remainder).padStart(2, '0')}秒` : `${remainder}秒`;
+	}
+
+	function renderCallRecordCard(item) {
+	  const call = item.payload || {};
+	  const direction = call.direction === 'outbound' ? 'outbound' : 'inbound';
+	  const details = [callPhoneLabel(call.phonePointId), callDurationText(call.durationSeconds)].filter(Boolean);
+	  return `
+		<div class="call-row ${esc(direction)}">
+		  <div class="msg-avatar"><span class="call-phone-icon" aria-hidden="true"></span></div>
+		  <div class="msg-stack">
+			<article class="call-card ${call.id === state.selectedCallRecordId ? 'active' : ''}" data-call-record-id="${esc(call.id)}" tabindex="0" role="button" aria-label="查看${esc(callDirectionText(call.direction))}电话记录">
+			  <div class="call-card-head"><div class="call-card-title"><span>${esc(callDirectionText(call.direction))}电话</span></div><span class="call-state ${esc(call.state || '')}">${esc(callRecordStateText(call.state))}</span></div>
+			  <div class="call-card-body">${details.map(value => `<span>${esc(value)}</span>`).join('')}</div>
+			</article>
+			<div class="msg-meta-line"><span>电话记录</span><span>${esc(timeText(call.occurredAt || item.occurredAt))}</span></div>
+		  </div>
+		</div>`;
+	}
 
     async function loadThread(id, keepScroll) {
       const threadEl = $('thread');
       const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
       const contact = state.contacts.find(c => c.id === id);
       const requestSeq = nextThreadLoadSeq(id);
-      const page = await api(threadPageUrl(id));
+	  const page = await viewerApi(threadPageUrl(id));
       if (state.selectedPointId !== id || currentThreadLoadSeq(id) !== requestSeq) return;
-      const messages = page.items || [];
+	  const items = page.items || [];
       const existing = state.threadPages[id];
-      const pageMessageCount = Number(page.messageCount);
+	  const pageItemCount = Number(page.itemCount);
       const threadRevision = String(page.threadRevision || '');
-      if (!Number.isFinite(pageMessageCount) || !threadRevision) throw new Error('线程页合同缺少版本信息');
+	  if (!Number.isFinite(pageItemCount) || !threadRevision) throw new Error('时间线页合同缺少版本信息');
       const previousThreadRevision = existing ? existing.threadRevision || '' : '';
       const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousThreadRevision === threadRevision;
       const merged = shouldKeepLoadedThread
-        ? mergeThreadMessages([...existing.items, ...messages])
-        : messages;
+		? mergeThreadMessages([...existing.items, ...items])
+		: items;
       state.threadPages[id] = {
         items: merged,
         nextCursor: page.nextCursor || null,
         isLoadingOlder: false,
         hasLoadedInitial: true,
-        pageMessageCount,
+		pageItemCount,
         threadRevision: page.threadRevision,
       };
       if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;
-      if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;
+	  if (shouldKeepLoadedThread && !existing.nextCursor && pageItemCount <= merged.length) state.threadPages[id].nextCursor = null;
       limitThreadPageMessages(state.threadPages[id]);
       rememberThreadPageAccess(id);
       const messagesForRender = state.threadPages[id].items;
@@ -1596,7 +1922,7 @@ public class App {
       const oldScrollHeight = threadEl.scrollHeight;
       const oldScrollTop = threadEl.scrollTop;
       try {
-        const older = await api(threadPageUrl(id, page.nextCursor));
+		const older = await viewerApi(threadPageUrl(id, page.nextCursor));
         if (state.selectedPointId !== id || state.threadPages[id] !== page || currentThreadLoadSeq(id) !== requestSeq) return;
         if ((older.threadRevision || '') !== (page.threadRevision || '')) {
           await loadThread(id, false);
@@ -1619,9 +1945,14 @@ public class App {
       }
     }
 
-    function threadRenderKey(contact, messages) {
+	function threadRenderKey(contact, items) {
       const header = contact ? `${contact.id || ''}:${contact.displayName || ''}:${pointSummary(contact)}` : '';
-      return header + '::' + messages.map(m => [
+	  return header + '::' + items.map(item => {
+		const m = item.payload || {};
+		return [
+		item.type || '',
+		item.sortId || '',
+		item.occurredAt || '',
         m.id || '',
         m.timestamp || '',
         m.status || '',
@@ -1632,16 +1963,21 @@ public class App {
         m.mediaType || '',
         m.mediaUrl || '',
         m.objectKey || '',
-        m.fileName || ''
-      ].join('~')).join('|');
+		m.fileName || '',
+		m.state || '',
+		m.version || 0,
+		m.durationSeconds || 0,
+		m.phonePointId || ''
+		].join('~');
+	  }).join('|');
     }
 
     function mergeThreadMessages(messages) {
       const seen = new Set();
       const indexByKey = new Map();
       const merged = [];
-      messages.forEach(message => {
-        const key = message.id || message.sourceId;
+	  messages.forEach(message => {
+		const key = `${message.type || ''}:${message.sortId || ''}`;
         if (!key) { merged.push(message); return; }
         if (seen.has(key)) {
           merged[indexByKey.get(key)] = message;
@@ -1661,6 +1997,7 @@ public class App {
     }
 
     async function selectMessage(id) {
+	  clearCallDetailActivity();
       state.selectedMessageId = id;
       document.querySelectorAll('.msg').forEach(item => item.classList.toggle('active', item.dataset.id === id));
       const m = await api('/api/messages?id=' + encodeURIComponent(id));
@@ -1805,6 +2142,268 @@ public class App {
       $('detail').innerHTML = `<div class="message-detail-panel message-detail-standalone" id="messageDetailPanel">${html}</div>`;
     }
 
+	function clearCallDetailActivity(clearSelection = true) {
+	  state.callDetailGeneration += 1;
+	  const audio = $('callAudio');
+	  if (audio) {
+		audio.pause();
+		audio.removeAttribute('src');
+		audio.load();
+	  }
+	  if (state.callDetailPollTimer) clearTimeout(state.callDetailPollTimer);
+	  if (state.callAudioRenewTimer) clearInterval(state.callAudioRenewTimer);
+	  state.callDetailPollTimer = null;
+	  state.callDetailPollFailures = 0;
+	  state.callAudioRenewTimer = null;
+	  state.callAudioRecovered = false;
+	  state.callAudioSessionReady = false;
+	  state.callDetail = null;
+	  if (clearSelection) state.selectedCallRecordId = '';
+	}
+
+	function isCurrentCallDetail(callRecordId, generation = state.callDetailGeneration) {
+	  return state.selectedCallRecordId === callRecordId && state.callDetailGeneration === generation;
+	}
+
+	async function openCallRecordDetail(callRecordId) {
+	  clearCallDetailActivity();
+	  state.selectedMessageId = '';
+	  state.selectedCallRecordId = callRecordId;
+	  const generation = state.callDetailGeneration;
+	  document.querySelectorAll('.msg').forEach(item => item.classList.remove('active'));
+	  document.querySelectorAll('.call-card').forEach(item => item.classList.toggle('active', item.dataset.callRecordId === callRecordId));
+	  $('detail').innerHTML = '<div class="empty">正在加载电话记录</div>';
+	  try {
+		const detail = await viewerApi('/api/v1/call-records/' + encodeURIComponent(callRecordId));
+		if (!isCurrentCallDetail(callRecordId, generation)) return;
+		state.callDetail = detail;
+		renderCallRecordDetail(detail);
+		scheduleCallDetailPoll(detail, generation);
+		try {
+		  const renewed = await renewCallAudioSession(callRecordId, generation);
+		  if (renewed) startCallAudioRenewal(callRecordId, generation);
+		} catch (audioError) {
+		  const target = isCurrentCallDetail(callRecordId, generation) ? $('callAudioError') : null;
+		  if (target) target.textContent = `播放授权失败：${audioError.message}`;
+		}
+	  } catch (err) {
+		if (isCurrentCallDetail(callRecordId, generation)) $('detail').innerHTML = `<div class="empty">电话记录加载失败：${esc(err.message)}</div>`;
+	  }
+	}
+
+	function renderCallRecordDetail(detail, preservedAudio = null) {
+	  const transcription = detail.transcription || {};
+	  const result = transcription.result || {};
+	  const segments = Array.isArray(result.segments) ? result.segments : [];
+	  const revisions = Array.isArray(detail.revisions) ? detail.revisions : [];
+	  const current = revisions.find(item => item.id === detail.currentRevisionId);
+	  const editableText = current?.text || result.originalText || '';
+	  const audioPath = '/api/v1/call-records/' + encodeURIComponent(detail.id) + '/audio';
+	  const audioSrc = state.callAudioSessionReady ? ` src="${esc(audioPath)}"` : '';
+	  const segmentHtml = segments.length ? segments.map(segment => `
+		<div class="transcript-segment"><div class="transcript-time">${esc(segmentTime(segment.startSeconds))}–${esc(segmentTime(segment.endSeconds))}</div><div>${esc(segment.text)}</div></div>`).join('') : '<div class="small">暂无分段</div>';
+	  const revisionHtml = revisions.length ? revisions.map(revision => `
+		<div class="transcript-segment"><div class="transcript-time">${esc(timeText(revision.editedAt))}</div><div>${esc(revision.text)}<div class="small">${esc(revision.editedBy || '')}</div></div></div>`).join('') : '<div class="small">暂无人工修订</div>';
+	  const error = transcription.error || {};
+	  $('detail').innerHTML = `
+		<div class="call-detail" id="callDetailPanel">
+		  <div class="call-detail-title"><span>${esc(callDirectionText(detail.direction))}电话</span><span class="call-state ${esc(transcription.state || '')}" id="callDetailState">${esc(callRecordStateText(transcription.state))}</span></div>
+		  <div class="small call-detail-update-error" id="callDetailUpdateError"></div>
+		  <div>
+			<div class="kv"><div class="small">号码</div><div>${esc(callPhoneLabel(detail.phonePointId))}</div></div>
+			<div class="kv"><div class="small">通话时间</div><div>${esc(timeText(detail.occurredAt))}</div></div>
+			<div class="kv"><div class="small">时长</div><div>${esc(callDurationText(detail.audio?.durationSeconds) || '读取中')}</div></div>
+			<div class="kv"><div class="small">文件</div><div>${esc(detail.audio?.originalFileName || '')}</div></div>
+		  </div>
+		  <div class="call-detail-section"><h3>录音</h3><audio id="callAudio" controls preload="metadata"${audioSrc}></audio><div class="call-audio-error" id="callAudioError"></div></div>
+		  ${error.message ? `<div class="call-detail-section"><h3>失败原因</h3><div>${esc(error.message)}</div></div>` : ''}
+		  <div class="call-detail-section"><h3>完整转录</h3><div class="call-transcript-text">${esc(result.originalText || '转录尚未完成')}</div></div>
+		  <div class="call-detail-section"><h3>时间分段</h3>${segmentHtml}</div>
+		  <div class="call-detail-section"><h3>修订记录</h3>${revisionHtml}</div>
+		  <div class="call-revision-form"><label class="small" for="callRevisionText">修订转录</label><textarea id="callRevisionText">${esc(editableText)}</textarea></div>
+		  <div class="call-detail-actions">
+			${transcription.state === 'failed' && error.retryable ? '<button id="retryCallRecord" type="button">重新转录</button>' : ''}
+			<button class="primary" id="reviseCallRecord" type="button" ${editableText ? '' : 'disabled'}>保存修订</button>
+		  </div>
+		</div>`;
+	  const audioPlaceholder = $('callAudio');
+	  if (preservedAudio && audioPlaceholder && audioPlaceholder !== preservedAudio) {
+		audioPlaceholder.replaceWith(preservedAudio);
+	  }
+	  bindCallAudioRecovery(detail.id, state.callDetailGeneration);
+	  const retry = $('retryCallRecord');
+	  if (retry) retry.onclick = retryCallRecord;
+	  const revise = $('reviseCallRecord');
+	  if (revise) revise.onclick = reviseCallRecord;
+	}
+
+	function segmentTime(seconds) {
+	  const value = Math.max(0, Number(seconds || 0));
+	  const minutes = Math.floor(value / 60);
+	  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+	}
+
+	function scheduleCallDetailPoll(detail, generation = state.callDetailGeneration) {
+	  if (state.callDetailPollTimer) clearTimeout(state.callDetailPollTimer);
+	  state.callDetailPollTimer = null;
+	  const status = detail?.transcription?.state;
+	  if (!['queued', 'processing'].includes(status) || !isCurrentCallDetail(detail.id, generation)) return;
+	  const delay = Math.min(CALL_DETAIL_POLL_MAX_MS,
+		CALL_DETAIL_POLL_MS * (2 ** Math.max(0, state.callDetailPollFailures - 1)));
+	  state.callDetailPollTimer = setTimeout(() => refreshCallRecordDetail(detail.id, generation), delay);
+	}
+
+	function updateCallRecordDetail(detail) {
+	  const previous = state.callDetail;
+	  const existingAudio = previous?.id === detail?.id
+		&& $('detail').innerHTML.includes('id="callDetailPanel"') ? $('callAudio') : null;
+	  state.callDetail = detail;
+	  renderCallRecordDetail(detail, existingAudio);
+	}
+
+	async function refreshCallRecordDetail(callRecordId, generation = state.callDetailGeneration) {
+	  const contactId = state.selectedPointId;
+	  if (state.callDetailPollTimer) clearTimeout(state.callDetailPollTimer);
+	  state.callDetailPollTimer = null;
+	  try {
+		const detail = await viewerApi('/api/v1/call-records/' + encodeURIComponent(callRecordId));
+		if (!isCurrentCallDetail(callRecordId, generation) || state.selectedPointId !== contactId) return;
+		state.callDetailPollFailures = 0;
+		updateCallRecordDetail(detail);
+		if (!['queued', 'processing'].includes(detail.transcription?.state) && contactId) await loadThread(contactId, true);
+		scheduleCallDetailPoll(detail, generation);
+	  } catch (err) {
+		if (isCurrentCallDetail(callRecordId, generation) && state.selectedPointId === contactId) {
+		  if (err.status === 401 || err.status === 403) {
+			state.callDetailPollFailures = CALL_DETAIL_POLL_MAX_FAILURES;
+			await handleViewerAuthFailure(err);
+			return;
+		  }
+		  state.callDetailPollFailures = Math.min(
+			CALL_DETAIL_POLL_MAX_FAILURES, state.callDetailPollFailures + 1);
+		  const target = $('callDetailUpdateError');
+		  if (state.callDetailPollFailures >= CALL_DETAIL_POLL_MAX_FAILURES) {
+			if (target) target.textContent = `详情更新失败，已停止自动更新：${err.message}`;
+			return;
+		  }
+		  if (target) target.textContent = `详情更新失败，稍后重试：${err.message}`;
+		  scheduleCallDetailPoll(state.callDetail || { id:callRecordId, transcription:{ state:'queued' } }, generation);
+		}
+	  }
+	}
+
+	async function renewCallAudioSession(callRecordId, generation = state.callDetailGeneration) {
+	  await viewerApi('/api/v1/call-records/' + encodeURIComponent(callRecordId) + '/audio-sessions', { method:'POST' });
+	  if (!isCurrentCallDetail(callRecordId, generation)) return false;
+	  state.callAudioSessionReady = true;
+	  const audio = $('callAudio');
+	  if (audio && !audio.getAttribute('src')) audio.setAttribute('src', '/api/v1/call-records/' + encodeURIComponent(callRecordId) + '/audio');
+	  bindCallAudioRecovery(callRecordId, generation);
+	  return true;
+	}
+
+	function startCallAudioRenewal(callRecordId, generation = state.callDetailGeneration) {
+	  if (document.visibilityState === 'hidden' || !isCurrentCallDetail(callRecordId, generation)) return;
+	  if (state.callAudioRenewTimer) clearInterval(state.callAudioRenewTimer);
+	  state.callAudioRenewTimer = null;
+	  state.callAudioRenewTimer = setInterval(() => renewCallAudioSession(callRecordId, generation).catch(err => {
+		const target = isCurrentCallDetail(callRecordId, generation) ? $('callAudioError') : null;
+		if (target) target.textContent = `播放授权续期失败：${err.message}`;
+	  }), CALL_AUDIO_RENEW_MS);
+	}
+
+	function handleCallAudioVisibility() {
+	  const callRecordId = state.selectedCallRecordId;
+	  const generation = state.callDetailGeneration;
+	  if (!callRecordId) return;
+	  if (document.visibilityState === 'hidden') {
+		if (state.callAudioRenewTimer) clearInterval(state.callAudioRenewTimer);
+		state.callAudioRenewTimer = null;
+		return;
+	  }
+	  renewCallAudioSession(callRecordId, generation)
+		.then(renewed => { if (renewed) startCallAudioRenewal(callRecordId, generation); })
+		.catch(err => {
+		  const target = isCurrentCallDetail(callRecordId, generation) ? $('callAudioError') : null;
+		  if (target) target.textContent = `播放授权续期失败：${err.message}`;
+		});
+	}
+
+	function bindCallAudioRecovery(callRecordId, generation = state.callDetailGeneration) {
+	  const audio = $('callAudio');
+	  if (!audio) return;
+	  audio.onerror = async () => {
+		if (!isCurrentCallDetail(callRecordId, generation)) return;
+		const target = $('callAudioError');
+		if (state.callAudioRecovered) {
+		  if (target) target.textContent = '录音加载失败，请稍后重试';
+		  return;
+		}
+		state.callAudioRecovered = true;
+		const currentTime = Number(audio.currentTime || 0);
+		try {
+		  const renewed = await renewCallAudioSession(callRecordId, generation);
+		  if (!renewed || !isCurrentCallDetail(callRecordId, generation)) return;
+		  audio.addEventListener('loadedmetadata', () => {
+			if (!isCurrentCallDetail(callRecordId, generation)) return;
+			audio.currentTime = Math.min(currentTime, Number.isFinite(audio.duration) ? audio.duration : currentTime);
+			audio.play().catch(() => {});
+		  }, { once:true });
+		  audio.load();
+		} catch (err) {
+		  if (isCurrentCallDetail(callRecordId, generation) && target) target.textContent = `录音恢复失败：${err.message}`;
+		}
+	  };
+	}
+
+	async function retryCallRecord() {
+	  const detail = state.callDetail;
+	  if (!detail || detail.id !== state.selectedCallRecordId) return;
+	  const callRecordId = detail.id;
+	  const contactId = state.selectedPointId;
+	  const button = $('retryCallRecord');
+	  if (button) button.disabled = true;
+	  try {
+		const updated = await viewerApi('/api/v1/call-records/' + encodeURIComponent(callRecordId) + '/retry', {
+		  method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ clientRequestId:requestId() })
+		});
+		if (state.selectedCallRecordId !== callRecordId || state.selectedPointId !== contactId) return;
+		state.callDetail = updated;
+		renderCallRecordDetail(updated);
+		scheduleCallDetailPoll(updated);
+		await loadThread(contactId, true);
+		toast('已重新加入转录队列');
+	  } catch (err) {
+		if (state.selectedCallRecordId !== callRecordId || state.selectedPointId !== contactId) return;
+		toast(`重新转录失败：${err.message}`);
+		if (button) button.disabled = false;
+	  }
+	}
+
+	async function reviseCallRecord() {
+	  const detail = state.callDetail;
+	  const text = $('callRevisionText')?.value.trim() || '';
+	  if (!detail || detail.id !== state.selectedCallRecordId || !text) return;
+	  const callRecordId = detail.id;
+	  const contactId = state.selectedPointId;
+	  const button = $('reviseCallRecord');
+	  if (button) button.disabled = true;
+	  try {
+		const updated = await viewerApi('/api/v1/call-records/' + encodeURIComponent(callRecordId) + '/transcript', {
+		  method:'PATCH', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ text, expectedVersion:detail.version })
+		});
+		if (state.selectedCallRecordId !== callRecordId || state.selectedPointId !== contactId) return;
+		state.callDetail = updated;
+		renderCallRecordDetail(updated);
+		await loadThread(contactId, true);
+		toast('转录修订已保存');
+	  } catch (err) {
+		if (state.selectedCallRecordId !== callRecordId || state.selectedPointId !== contactId) return;
+		toast(`保存修订失败：${err.message}`);
+		if (button) button.disabled = false;
+	  }
+	}
+
     function toggleDetailPane() {
       state.detailCollapsed = !state.detailCollapsed;
       $('shell').classList.toggle('detail-collapsed', state.detailCollapsed);
@@ -1813,14 +2412,98 @@ public class App {
     function renderComposer() {
       const contact = selectedContact();
       if (!contact) { $('composer').innerHTML = ''; return; }
-      const channels = [...contact.channels, 'wecom'].filter((v,i,a)=>a.indexOf(v)===i);
-      if (!channels.includes(state.selectedChannel)) state.selectedChannel = channels[0];
+	  const channels = [...contact.channels.filter(channel => ['email', 'chatapp', 'wecom'].includes(channel)), 'wecom'].filter((v,i,a)=>a.indexOf(v)===i);
+	  if (![...channels, 'callRecord'].includes(state.selectedChannel)) state.selectedChannel = channels[0];
       $('composer').innerHTML = `
-        <div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}</div>
+		<div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}<button class="${state.selectedChannel==='callRecord'?'active':''}" data-channel="callRecord">电话记录</button></div>
         <div id="sendPanel"></div>`;
       document.querySelectorAll('[data-channel]').forEach(btn => btn.onclick = () => { state.selectedChannel = btn.dataset.channel; renderComposer(); });
       renderSendPanel(contact);
     }
+
+	function phonePoints(contact) {
+	  return (contact?.points || []).filter(point => point.channel === 'phone' && point.type === 'phone' && point.id.startsWith('phone:'));
+	}
+
+	function localDateTimeValue(date = new Date()) {
+	  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+	  return local.toISOString().slice(0, 16);
+	}
+
+	function renderCallRecordUploadPanel(contact) {
+	  const points = phonePoints(contact);
+	  const options = points.length === 0
+		? '<option value="">未绑定电话</option>'
+		: (points.length > 1 ? '<option value="">选择号码</option>' : '') + points.map((point, index) => `<option value="${esc(point.id)}" ${points.length === 1 && index === 0 ? 'selected' : ''}>${esc(point.label || point.value)}</option>`).join('');
+	  $('sendPanel').innerHTML = `
+		<div class="call-upload-form">
+		  <div class="call-upload-grid">
+			<div class="field"><label for="callFile">MP3 录音</label><input id="callFile" type="file" accept="audio/mpeg,.mp3"></div>
+			<div class="field"><label for="callDirection">方向</label><select id="callDirection"><option value="">选择方向</option><option value="inbound">呼入</option><option value="outbound">呼出</option></select></div>
+			<div class="field"><label for="callOccurredAt">通话时间</label><input id="callOccurredAt" type="datetime-local" value="${esc(localDateTimeValue())}"></div>
+			<div class="field"><label for="callPhonePoint">绑定号码</label><select id="callPhonePoint" ${points.length === 0 ? 'disabled' : ''}>${options}</select></div>
+		  </div>
+		  <div class="call-upload-actions"><div><progress class="call-upload-progress" id="callUploadProgress" max="100" value="0"></progress><div class="small" id="callUploadStatus">最大 100 MiB，最长 2 小时</div></div><button class="primary" id="uploadCallRecordButton" type="button" aria-label="上传电话录音">上传录音</button></div>
+		</div>`;
+	  $('uploadCallRecordButton').onclick = uploadCallRecord;
+	}
+
+	function uploadCallRecord() {
+	  const contactId = state.selectedPointId;
+	  const file = $('callFile')?.files?.[0];
+	  const direction = $('callDirection')?.value || '';
+	  const occurredAtValue = $('callOccurredAt')?.value || '';
+	  const phonePointId = $('callPhonePoint')?.disabled ? '' : ($('callPhonePoint')?.value || '');
+	  const phoneChoices = phonePoints(selectedContact());
+	  if (!contactId || !file) { toast('请选择 MP3 录音'); return; }
+	  if (!/\\.mp3$/i.test(file.name || '')) { toast('只支持 MP3 录音'); return; }
+	  if (Number(file.size || 0) > CALL_MAX_AUDIO_BYTES) { toast('MP3 文件不能超过 100 MiB'); return; }
+	  if (!direction) { toast('请选择呼入或呼出'); return; }
+	  if (!occurredAtValue || Number.isNaN(new Date(occurredAtValue).getTime())) { toast('请选择有效的通话时间'); return; }
+	  if (phoneChoices.length > 1 && !phonePointId) { toast('请选择绑定号码'); return; }
+	  let viewerAuthToken;
+	  try { viewerAuthToken = currentWeComAuth().viewerAuthToken; }
+	  catch (err) { toast(err.message); return; }
+
+	  const form = new FormData();
+	  form.append('direction', direction);
+	  form.append('occurredAt', new Date(occurredAtValue).toISOString());
+	  form.append('clientRequestId', requestId());
+	  if (phonePointId) form.append('phonePointId', phonePointId);
+	  form.append('file', file);
+
+	  const progress = $('callUploadProgress');
+	  const status = $('callUploadStatus');
+	  const button = $('uploadCallRecordButton');
+	  const xhr = new XMLHttpRequest();
+	  button.disabled = true;
+	  status.textContent = '正在上传';
+	  xhr.open('POST', '/api/v1/contacts/' + encodeURIComponent(contactId) + '/call-records');
+	  xhr.setRequestHeader('X-WeCom-Viewer-Auth', viewerAuthToken);
+	  xhr.upload.onprogress = event => {
+		if (!event.lengthComputable) return;
+		progress.value = Math.min(100, Math.round(event.loaded * 100 / event.total));
+		status.textContent = `正在上传 ${progress.value}%`;
+	  };
+	  xhr.onload = async () => {
+		button.disabled = false;
+		let response = {};
+		try { response = JSON.parse(xhr.responseText || '{}'); } catch (ignored) {}
+		if (xhr.status < 200 || xhr.status >= 300) {
+		  status.textContent = '上传失败';
+		  toast(`电话录音上传失败：${response.message || response.code || xhr.statusText}`);
+		  return;
+		}
+		progress.value = 100;
+		status.textContent = callRecordStateText(response.state || 'queued');
+		if (state.selectedPointId === contactId) await loadThread(contactId, true);
+		toast('电话录音已加入转录队列');
+	  };
+	  xhr.onerror = () => { button.disabled = false; status.textContent = '上传失败'; toast('电话录音上传失败：网络不可用'); };
+	  xhr.onabort = () => { button.disabled = false; status.textContent = '上传已取消'; };
+	  xhr.send(form);
+	  return xhr;
+	}
 
     function wecomPoint(contact) {
       return sendPointForChannel(contact, 'wecom');
@@ -1854,11 +2537,6 @@ public class App {
       container.innerHTML = '<div class="empty">正在同步企业微信会话</div>';
       try {
         const login = currentWeComAuth();
-        const currentUrl = window.location.href.split('#')[0];
-        const config = await api('/api/v1/wecom/js-sdk-config?url=' + encodeURIComponent(currentUrl), {
-          headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
-        });
-        await ensureWeComViewerSdk(config);
         const created = await postJson('/api/v1/wecom/conversation-view/sessions', {
           contactPointId: point.id,
           viewerAuthToken: login.viewerAuthToken
@@ -1866,7 +2544,16 @@ public class App {
         const detail = await api('/api/v1/wecom/conversation-view/sessions/' + encodeURIComponent(created.viewerSessionId), {
           headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
         });
-        await mountWeComOpenDataFrame(detail, login.viewerAuthToken);
+        if (LOCAL_DEV_MODE) {
+          mountLocalWeComViewer(detail);
+        } else {
+          const currentUrl = window.location.href.split('#')[0];
+          const config = await api('/api/v1/wecom/js-sdk-config?url=' + encodeURIComponent(currentUrl), {
+            headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
+          });
+          await ensureWeComViewerSdk(config);
+          await mountWeComOpenDataFrame(detail, login.viewerAuthToken);
+        }
       } catch (err) {
         if (isWeComLoginExpired(err)
             || String(err?.message || '').includes('企业微信登录已过期')) {
@@ -1984,11 +2671,13 @@ public class App {
       $('wecomOpenModal').hidden = true;
     }
 
-    function isWeComLoginExpired(error) {
-      const detail = error?.detail || error || {};
-      const text = `${detail.errCode || ''} ${detail.errMsg || ''} ${detail.message || error?.message || ''}`;
-      return WECOM_LOGIN_EXPIRED_MARKERS.some(marker => text.includes(marker))
-        || text.includes('viewer auth token is expired or missing');
+	function isWeComLoginExpired(error) {
+	  const detail = error?.detail || error || {};
+	  const text = `${detail.errCode || ''} ${detail.errMsg || ''} ${detail.message || error?.message || ''}`;
+	  return error?.status === 401 || error?.status === 403
+		|| error?.code === 'WECOM_VIEWER_AUTH_EXPIRED'
+		|| WECOM_LOGIN_EXPIRED_MARKERS.some(marker => text.includes(marker))
+		|| text.includes('viewer auth token is expired or missing');
     }
 
     function handleWeComComponentError(error, detail, viewerAuthToken) {
@@ -2039,6 +2728,19 @@ public class App {
       });
     }
 
+    function mountLocalWeComViewer(detail) {
+      const container = $('wecomViewerContainer');
+      if (!detail.messages || !detail.messages.length) {
+        container.innerHTML = '<div class="empty">暂无本地企业微信样例消息</div>';
+        return;
+      }
+      container.innerHTML = `<div class="local-wecom-list">${detail.messages.map(item => `
+        <div class="msg" style="padding:12px;border-bottom:1px solid var(--hairline)">
+          <div><strong>本地会话消息</strong> <span class="small">${esc(item.msgid)}</span></div>
+          <div class="small" style="margin-top:6px">secret_key：${esc(String(item.secretKey || '').slice(0, 8))}…（本地样例）</div>
+        </div>`).join('')}</div>`;
+    }
+
     function reportWeComViewerEvent(eventType, viewerSessionId, viewerAuthToken) {
       api('/api/v1/wecom/conversation-view/events', {
         method:'POST',
@@ -2051,6 +2753,10 @@ public class App {
     function renderSendPanel(contact) {
       const panel = $('sendPanel');
       const point = sendPointForChannel(contact, state.selectedChannel);
+	  if (state.selectedChannel === 'callRecord') {
+		renderCallRecordUploadPanel(contact);
+		return;
+	  }
       if (state.selectedChannel === 'email') {
         panel.innerHTML = `
           <div class="composer-form email-form">
@@ -2250,7 +2956,14 @@ public class App {
       if (state.eventSource) state.eventSource.close();
       try {
         state.eventSource = new EventSource('/events');
-        state.eventSource.onmessage = async () => { toast('有新消息'); await refreshAll(true); };
+        state.eventSource.onmessage = () => refreshInBackground(true);
+        state.eventSource.addEventListener('templates-changed', async () => {
+          try {
+            await refreshTemplates();
+          } catch (error) {
+            console.error('template refresh failed', error);
+          }
+        });
       } catch (error) {
         state.eventSource = null;
       }
@@ -2271,7 +2984,10 @@ public class App {
   </script>
 </body>
 </html>
-""").toString();
+""").toString()
+                .replace("__LOCAL_DEV_MODE__", Boolean.toString(localDevMode))
+                .replace("__LOCAL_LOGIN_HIDDEN__", localDevMode ? " hidden" : "")
+                .replace("__LOCAL_SHELL_HIDDEN__", localDevMode ? "" : " hidden");
     }
 
     private static class EventHub {
@@ -2309,6 +3025,23 @@ public class App {
                 return;
             }
             String payload = "data: " + GSON.toJson(message) + "\n\n";
+            publishBytes(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        void publishTemplatesChanged(int count) {
+            String payload = "event: templates-changed\n"
+                    + "data: " + SSE_GSON.toJson(Map.of("count", count)) + "\n\n";
+            publishBytes(payload.getBytes(StandardCharsets.UTF_8));
+        }
+
+        void publish(CallRecordEvent event) {
+            if (event == null) return;
+            String payload = "data: " + GSON.toJson(Map.of(
+                    "type", "callRecord",
+                    "callRecordId", event.callRecordId(),
+                    "contactAnchorPointId", event.contactAnchorPointId(),
+                    "state", event.state(),
+                    "version", event.version())) + "\n\n";
             publishBytes(payload.getBytes(StandardCharsets.UTF_8));
         }
 

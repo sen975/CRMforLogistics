@@ -10,20 +10,20 @@ public final class WeComAccessTokenService {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);
     private final Config config;
     private final Clock clock;
-    private final CorpTokenProvider provider;
+    private final DevelopedAppTokenProvider provider;
     private final Map<String, CachedToken> tokens = new ConcurrentHashMap<>();
 
     public WeComAccessTokenService(Config config, WeComAuthorizationGateway gateway) {
-        this(config, Clock.systemUTC(), gateway::getCorpToken);
+        this(config, Clock.systemUTC(), gateway::getDevelopedAppToken);
     }
 
-    private WeComAccessTokenService(Config config, Clock clock, CorpTokenProvider provider) {
+    private WeComAccessTokenService(Config config, Clock clock, DevelopedAppTokenProvider provider) {
         this.config = config;
         this.clock = clock;
         this.provider = provider;
     }
 
-    static WeComAccessTokenService forTests(Config config, Clock clock, CorpTokenProvider provider) {
+    static WeComAccessTokenService forTests(Config config, Clock clock, DevelopedAppTokenProvider provider) {
         return new WeComAccessTokenService(config, clock, provider);
     }
 
@@ -63,8 +63,8 @@ public final class WeComAccessTokenService {
         return response.accessToken();
     }
 
-    interface CorpTokenProvider {
-        WeComAuthorizationGateway.CorpTokenResponse fetch(String authCorpId, String permanentCode,
+    interface DevelopedAppTokenProvider {
+        WeComAuthorizationGateway.CorpTokenResponse fetch(String authCorpId, String developedAppSecret,
                                                            Duration timeout)
                 throws WeComAuthorizationException;
     }

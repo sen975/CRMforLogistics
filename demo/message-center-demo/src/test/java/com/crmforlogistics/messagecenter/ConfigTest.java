@@ -7,16 +7,171 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConfigTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void chatAppMessageAutoSyncIsEnabledByDefault() {
+        assertTrue(new Config(new HashMap<>()).chatappMessageAutoSyncEnabled());
+    }
+
+    @Test
+    void localWeComModeDefaultsOffAndBindsToLoopbackWhenEnabled() {
+        Config defaults = new Config(Map.of());
+        assertFalse(defaults.localDevMode());
+        assertEquals("0.0.0.0", defaults.webBindAddress());
+
+        Config local = new Config(Map.of("LOCAL_DEV_MODE", "true"));
+        assertTrue(local.localDevMode());
+        assertEquals("127.0.0.1", local.webBindAddress());
+        assertEquals("fixture", local.localWeComDataSource());
+    }
+
+    @Test
+    void localWeComModeRejectsNonLoopbackAndUnknownSource() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("LOCAL_DEV_MODE", "true", "WEB_BIND_ADDRESS", "0.0.0.0"))
+                        .webBindAddress());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("LOCAL_WECOM_DATA_SOURCE", "upstream"))
+                        .localWeComDataSource());
+    }
+
+    @Test
+    void chatAppMessageAutoSyncCanBeDisabled() {
+        assertFalse(new Config(new HashMap<>(Map.of(
+                "CHATAPP_MESSAGE_AUTO_SYNC_ENABLED", "false"
+        ))).chatappMessageAutoSyncEnabled());
+    }
+
+    @Test
+    void chatAppMessageAutoSyncRejectsNonBooleanValues() {
+        Config config = new Config(new HashMap<>(Map.of(
+                "CHATAPP_MESSAGE_AUTO_SYNC_ENABLED", "yes"
+        )));
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                config::chatappMessageAutoSyncEnabled);
+        assertEquals("CHATAPP_MESSAGE_AUTO_SYNC_ENABLED must be true or false", error.getMessage());
+    }
+
+    @Test
+    void exposesBoundedLocalCallRecordAndFunAsrSettings() {
+        Config config = new Config(Map.ofEntries(
+                Map.entry("DATA_DIR", tempDir.toString()),
+                Map.entry("CALL_RECORD_MAX_AUDIO_BYTES", "104857600"),
+                Map.entry("CALL_RECORD_MAX_DURATION_SECONDS", "7200"),
+                Map.entry("CALL_RECORD_STORAGE_MAX_BYTES", "10737418240"),
+                Map.entry("CALL_RECORD_MAX_RECORDS", "10000"),
+                Map.entry("CALL_RECORD_QUEUE_CAPACITY", "64"),
+                Map.entry("CALL_RECORD_WORKER_CONCURRENCY", "1"),
+                Map.entry("CALL_RECORD_LEASE_SECONDS", "2100"),
+                Map.entry("CALL_RECORD_MAX_ATTEMPTS", "3"),
+                Map.entry("CALL_RECORD_MAX_RESPONSE_BYTES", "10485760"),
+                Map.entry("CALL_RECORD_MAX_SEGMENTS", "20000"),
+                Map.entry("CALL_RECORD_MAX_REVISIONS", "20"),
+                Map.entry("CALL_AUDIO_SESSION_TTL_SECONDS", "300"),
+                Map.entry("CALL_AUDIO_SESSION_MAX_PER_ACTOR", "8"),
+                Map.entry("CALL_AUDIO_SESSION_MAX_ACTIVE", "256"),
+                Map.entry("FUNASR_BASE_URL", "http://funasr:8000"),
+                Map.entry("FUNASR_MODEL", "sensevoice"),
+                Map.entry("FUNASR_CONNECT_TIMEOUT_SECONDS", "3"),
+                Map.entry("FUNASR_REQUEST_TIMEOUT_SECONDS", "1800")
+        ));
+
+        assertEquals(tempDir.resolve("call-records"), config.callRecordDataDir());
+        assertEquals(104857600L, config.callRecordMaxAudioBytes());
+        assertEquals(7200, config.callRecordMaxDurationSeconds());
+        assertEquals(10737418240L, config.callRecordStorageMaxBytes());
+        assertEquals(10000, config.callRecordMaxRecords());
+        assertEquals(64, config.callRecordQueueCapacity());
+        assertEquals(1, config.callRecordWorkerConcurrency());
+        assertEquals(2100, config.callRecordLeaseSeconds());
+        assertEquals(3, config.callRecordMaxAttempts());
+        assertEquals(10485760L, config.callRecordMaxResponseBytes());
+        assertEquals(20000, config.callRecordMaxSegments());
+        assertEquals(20, config.callRecordMaxRevisions());
+        assertEquals(300, config.callAudioSessionTtlSeconds());
+        assertEquals(8, config.callAudioSessionMaxPerActor());
+        assertEquals(256, config.callAudioSessionMaxActive());
+        assertFalse(config.callAudioCookieSecure());
+        assertEquals(java.net.URI.create("http://funasr:8000"), config.funAsrBaseUri());
+        assertEquals("sensevoice", config.funAsrModel());
+        assertEquals(java.time.Duration.ofSeconds(3), config.funAsrConnectTimeout());
+        assertEquals(java.time.Duration.ofSeconds(1800), config.funAsrRequestTimeout());
+    }
+
+    @Test
+    void acceptsOnlyPrivateOrSidecarFunAsrHosts() {
+        for (String url : List.of(
+                "http://localhost:8000",
+                "http://funasr:8000",
+                "https://speech.internal",
+                "http://speech.local:8000",
+                "http://127.0.0.1:8000",
+                "http://10.20.30.40:8000",
+                "http://172.16.0.1:8000",
+                "http://172.31.255.254:8000",
+                "http://192.168.1.10:8000")) {
+            assertEquals(java.net.URI.create(url),
+                    new Config(Map.of("FUNASR_BASE_URL", url)).funAsrBaseUri());
+        }
+
+        for (String url : List.of(
+                "https://api.example.com",
+                "http://172.15.0.1:8000",
+                "http://172.32.0.1:8000",
+                "http://169.254.1.1:8000",
+                "http://[2001:db8::1]:8000",
+                "http://user:pass@funasr:8000",
+                "http://funasr:8000/v1",
+                "http://funasr:8000?model=sensevoice")) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> new Config(Map.of("FUNASR_BASE_URL", url)).funAsrBaseUri(), url);
+        }
+    }
+
+    @Test
+    void derivesCallAudioSecureCookieOnlyFromConfiguredLoginRedirectUri() {
+        Config https = new Config(Map.of(
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/"));
+        assertTrue(https.callAudioCookieSecure());
+
+        Config localHttp = new Config(Map.of(
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099",
+                "WECOM_LOGIN_REDIRECT_URI", "http://localhost:8099/"));
+        assertFalse(localHttp.callAudioCookieSecure());
+    }
+
+    @Test
+    void rejectsUnsafeCallRecordAndFunAsrSettings() {
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CALL_RECORD_WORKER_CONCURRENCY", "0"))
+                        .callRecordWorkerConcurrency());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CALL_RECORD_MAX_AUDIO_BYTES", "104857601"))
+                        .callRecordMaxAudioBytes());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("CALL_RECORD_MAX_DURATION_SECONDS", "7201"))
+                        .callRecordMaxDurationSeconds());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("FUNASR_MODEL", "unknown")).funAsrModel());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("FUNASR_REQUEST_TIMEOUT_SECONDS", "3601"))
+                        .funAsrRequestTimeout());
+    }
 
     @Test
     void exposesBoundedChatAppTemplateAutoSyncSettings() {
@@ -165,10 +320,28 @@ class ConfigTest {
         assertEquals("ww-authorized", config.wecomLoginAuthCorpId());
         assertEquals(tempDir.resolve("wecom-authorization-installations.jsonl"),
                 config.wecomAuthorizationInstallationsFile());
+        assertEquals(tempDir.resolve("wecom-authorization-audit.jsonl"),
+                config.wecomAuthorizationAuditFile());
+        assertEquals(1_048_576L, config.wecomAuthorizationAuditMaxBytes());
         assertEquals(64, config.wecomAuthorizationQueueCapacity());
 
         assertEquals("dk-suite", new Config(Map.of("WECOM_SUITE_ID", "dk-suite"))
                 .wecomCallbackReceiveId());
+    }
+
+    @Test
+    void exposesIndependentWeComLoginSuiteSettings() {
+        Config configured = new Config(Map.of(
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret"));
+
+        assertEquals("ww-login-suite", configured.wecomLoginSuiteId());
+        assertEquals("login-suite-secret", configured.wecomLoginSuiteSecret());
+        assertTrue(configured.hasCompleteWeComLoginSuiteConfiguration());
+        assertTrue(configured.hasAnyWeComLoginSuiteConfiguration());
+        Config partial = new Config(Map.of("WECOM_LOGIN_SUITE_ID", "ww-login-suite"));
+        assertFalse(partial.hasCompleteWeComLoginSuiteConfiguration());
+        assertTrue(partial.hasAnyWeComLoginSuiteConfiguration());
     }
 
     @Test
@@ -182,6 +355,9 @@ class ConfigTest {
         assertEquals("", defaults.wecomChatDataAbilityId());
         assertEquals(tempDir.resolve("chatdata-key.pem"), defaults.wecomChatDataPrivateKeyFile());
         assertEquals(1, defaults.wecomChatDataPublicKeyVersion());
+        assertEquals(false, defaults.wecomChatDataPublicKeyAutoRegister());
+        assertEquals(tempDir.resolve("wecom-chatdata-public-key-registration.json"),
+                defaults.wecomChatDataPublicKeyRegistrationFile());
         assertEquals(tempDir.resolve("wecom-chatdata-cursor.json"), defaults.wecomChatDataCursorFile());
         assertEquals(200, defaults.wecomChatDataSyncLimit());
         assertEquals(5, defaults.wecomChatDataSyncMaxPages());
@@ -256,11 +432,16 @@ class ConfigTest {
         Config config = new Config(Map.of(
                 "DATA_DIR", tempDir.toString(),
                 "WECOM_DATA_FILE", "viewer/messages.jsonl",
-                "WECOM_CHATDATA_CURSOR_FILE", "viewer/cursor.json"
+                "WECOM_CHATDATA_CURSOR_FILE", "viewer/cursor.json",
+                "WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE", "viewer/public-key-registration.json",
+                "WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER", "true"
         ));
 
         assertEquals(tempDir.resolve("viewer/messages.jsonl"), config.wecomDataFile());
         assertEquals(tempDir.resolve("viewer/cursor.json"), config.wecomChatDataCursorFile());
+        assertEquals(tempDir.resolve("viewer/public-key-registration.json"),
+                config.wecomChatDataPublicKeyRegistrationFile());
+        assertEquals(true, config.wecomChatDataPublicKeyAutoRegister());
     }
 
     @Test
@@ -271,6 +452,9 @@ class ConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new Config(Map.of("WECOM_CHATDATA_PUBLIC_KEY_VERSION", "0"))
                         .wecomChatDataPublicKeyVersion());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER", "yes"))
+                        .wecomChatDataPublicKeyAutoRegister());
         assertThrows(IllegalArgumentException.class,
                 () -> new Config(Map.of("WECOM_CHATDATA_SYNC_LIMIT", "201"))
                         .wecomChatDataSyncLimit());

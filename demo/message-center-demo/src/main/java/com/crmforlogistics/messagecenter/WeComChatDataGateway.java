@@ -20,6 +20,7 @@ import java.util.Set;
 
 public final class WeComChatDataGateway {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
+    private static final String SYNC_PROGRAM_PATH = "/cgi-bin/chatdata/sync_call_program";
     private static final Set<String> OUTER_FIELDS = Set.of("errcode", "errmsg", "response_data");
     private static final Set<String> PAGE_FIELDS = Set.of(
             "errcode", "errmsg", "has_more", "next_cursor", "msg_list");
@@ -61,7 +62,7 @@ public final class WeComChatDataGateway {
         long deadline = System.nanoTime() + timeout.toNanos();
         try {
             JsonObject input = new JsonObject();
-            if (cursor != null && !cursor.isBlank()) input.addProperty("cursor", cursor);
+            input.addProperty("cursor", cursor == null ? "" : cursor);
             input.addProperty("limit", limit);
             JsonObject requestBody = new JsonObject();
             requestBody.addProperty("program_id", config.wecomChatDataProgramId());
@@ -69,7 +70,7 @@ public final class WeComChatDataGateway {
             requestBody.addProperty("request_data", input.toString());
             String token = accessTokens.accessToken(installation, remaining(deadline));
             Duration requestTimeout = remaining(deadline);
-            URI uri = apiBase.resolve("/cgi-bin/chatdata/sync_call_program?access_token="
+            URI uri = apiBase.resolve(SYNC_PROGRAM_PATH + "?access_token="
                     + URLEncoder.encode(token, StandardCharsets.UTF_8));
             HttpRequest request = HttpRequest.newBuilder(uri)
                     .timeout(requestTimeout)
@@ -80,15 +81,32 @@ public final class WeComChatDataGateway {
             try (InputStream stream = response.body()) {
                 byte[] bytes = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
                 if (response.statusCode() < 200 || response.statusCode() >= 300
-                        || bytes.length > MAX_RESPONSE_BYTES) throw programError(null);
-                JsonObject outer = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
-                requireOnlyFields(outer, OUTER_FIELDS);
-                if (integer(outer, "errcode") != 0) throw programError(null);
-                String responseData = text(outer, "response_data", MAX_RESPONSE_BYTES);
-                return parseProgramPage(responseData, limit);
+                        || bytes.length > MAX_RESPONSE_BYTES) {
+                    throw programError(null, SYNC_PROGRAM_PATH, response.statusCode(), null);
+                }
+                try {
+                    JsonObject outer = JsonParser.parseString(
+                            new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
+                    requireOnlyFields(outer, OUTER_FIELDS);
+                    int outerErrcode = integer(outer, "errcode");
+                    if (outerErrcode != 0) {
+                        throw programError(outerErrcode, SYNC_PROGRAM_PATH, response.statusCode(), null);
+                    }
+                    String responseData = text(outer, "response_data", MAX_RESPONSE_BYTES);
+                    return parseProgramPage(responseData, limit, response.statusCode());
+                } catch (WeComChatDataException exception) {
+                    if (exception.upstreamPath() != null) throw exception;
+                    throw programError(exception.upstreamErrcode(), SYNC_PROGRAM_PATH,
+                            response.statusCode(), exception.upstreamHint(), exception);
+                } catch (Exception exception) {
+                    throw programError(null, SYNC_PROGRAM_PATH, response.statusCode(), exception);
+                }
             }
         } catch (WeComChatDataException exception) {
             throw exception;
+        } catch (WeComAuthorizationException exception) {
+            throw programError(exception.upstreamErrcode(), exception.upstreamPath(),
+                    exception.upstreamHttpStatus(), exception.upstreamHint(), exception);
         } catch (HttpTimeoutException exception) {
             throw timeout(exception);
         } catch (InterruptedException exception) {
@@ -99,11 +117,15 @@ public final class WeComChatDataGateway {
         }
     }
 
-    private ProgramPage parseProgramPage(String raw, int limit) throws WeComChatDataException {
+    private ProgramPage parseProgramPage(String raw, int limit, int upstreamHttpStatus)
+            throws WeComChatDataException {
         try {
             JsonObject body = JsonParser.parseString(raw).getAsJsonObject();
             requireOnlyFields(body, PAGE_FIELDS);
-            if (integer(body, "errcode") != 0) throw programError(null);
+            int programErrcode = integer(body, "errcode");
+            if (programErrcode != 0) {
+                throw programError(programErrcode, SYNC_PROGRAM_PATH, upstreamHttpStatus, null);
+            }
             int hasMoreValue = integer(body, "has_more");
             if (hasMoreValue != 0 && hasMoreValue != 1) throw programError(null);
             String nextCursor = optionalText(body, "next_cursor", 128);
@@ -217,6 +239,19 @@ public final class WeComChatDataGateway {
     private static WeComChatDataException programError(Throwable cause) {
         return new WeComChatDataException("WECOM_CHATDATA_PROGRAM_ERROR", 502,
                 "企业微信专区程序调用失败", cause);
+    }
+
+    private static WeComChatDataException programError(Integer upstreamErrcode, String upstreamPath,
+                                                        Integer upstreamHttpStatus, Throwable cause) {
+        return programError(upstreamErrcode, upstreamPath, upstreamHttpStatus, null, cause);
+    }
+
+    private static WeComChatDataException programError(Integer upstreamErrcode, String upstreamPath,
+                                                        Integer upstreamHttpStatus, String upstreamHint,
+                                                        Throwable cause) {
+        return new WeComChatDataException("WECOM_CHATDATA_PROGRAM_ERROR", 502,
+                "企业微信专区程序调用失败", upstreamErrcode, upstreamPath,
+                upstreamHttpStatus, upstreamHint, cause);
     }
 
     interface AccessTokenProvider {

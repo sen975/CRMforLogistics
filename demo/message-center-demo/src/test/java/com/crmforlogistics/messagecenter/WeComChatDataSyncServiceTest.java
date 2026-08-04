@@ -197,6 +197,37 @@ class WeComChatDataSyncServiceTest {
         assertTrue(!published.get());
     }
 
+    @Test
+    void preservesSafeProgramDiagnosticsInFailureAudit() throws Exception {
+        Config config = config(Map.of());
+        AtomicReference<WeComChatDataException> auditedFailure = new AtomicReference<>();
+        WeComChatDataSyncService service = WeComChatDataSyncService.forTests(config,
+                (installation, requestedCursor, limit, timeout) -> {
+                    throw new WeComChatDataException("WECOM_CHATDATA_PROGRAM_ERROR", 502,
+                            "企业微信专区程序调用失败", 48002,
+                            "/cgi-bin/chatdata/sync_call_program", 200, "abc123", null);
+                },
+                (version, encrypted) -> "secret",
+                store(new AtomicReference<>("")),
+                new WeComChatDataSyncService.AuditSink() {
+                    @Override public void record(String action, String result, String userId) { }
+
+                    @Override public void recordFailure(String action, String result, String userId,
+                                                        WeComChatDataException failure) {
+                        auditedFailure.set(failure);
+                    }
+                });
+
+        WeComChatDataException thrown = assertThrows(WeComChatDataException.class,
+                () -> service.sync(context()));
+
+        assertEquals(48002, thrown.upstreamErrcode());
+        assertEquals("/cgi-bin/chatdata/sync_call_program", thrown.upstreamPath());
+        assertEquals(200, thrown.upstreamHttpStatus());
+        assertEquals("abc123", thrown.upstreamHint());
+        assertEquals(thrown, auditedFailure.get());
+    }
+
     private Config config(Map<String, String> extra) throws Exception {
         Path keyFile = tempDir.resolve("private-key.pem");
         if (!Files.exists(keyFile)) Files.writeString(keyFile, "test-key");

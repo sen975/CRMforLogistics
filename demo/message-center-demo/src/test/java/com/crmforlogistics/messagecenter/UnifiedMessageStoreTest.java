@@ -12,6 +12,7 @@ import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -59,6 +60,8 @@ public class UnifiedMessageStoreTest {
         frontendThreadPageCacheIsBounded();
         eventHubRemovesDeadClientsWithoutWaitingForBusinessMessages();
         eventHubSerializesWritesPerSseClient();
+        eventHubPublishesTemplateChanges();
+        templateRouteServesLastSuccessfulSnapshot();
         wecomViewerSignatureUsesOfficialJsapiAlgorithmAndOriginAllowlist();
         wecomViewerSessionsAreBoundedUserScopedAndReadMessageReferences();
         wecomViewerLoginExchangeDoesNotPublishTokenWhenAuditFails();
@@ -97,6 +100,9 @@ public class UnifiedMessageStoreTest {
         chatAppTextMessagesUseMessageBodyAsContactPreview();
         emailInboxWriterStoresImapMessagesInLegacyInboxJsonlFormat();
         chatAppHistoryStoreDeduplicatesAndFeedsUnifiedTimeline();
+        chatAppWebhookDelegatesWritesToHistoryStore();
+        chatAppStatusWebhookPreservesLegacyProjection();
+        chatAppSyncRouteUsesSynchronizerAndPreservesLockBusyResult();
         chatAppHistoryStoreRefreshesExpiredMediaUrlForExistingMessage();
         chatAppHistorySyncDefaultsToShortFirstRunWindow();
         chatAppHistorySyncUsesLatestLocalTimestampForIncrementalWindow();
@@ -104,6 +110,566 @@ public class UnifiedMessageStoreTest {
         chatAppHistorySyncPreCachesMediaWithoutBlockingMessageSync();
         chatAppHistorySyncDoesNotRetryUnchangedMediaByDefault();
         chatAppHistorySyncExtractsCamsUrlFieldForMediaCache();
+        projectsPhoneIdentityAcrossMergeAndSplit();
+        appWiresCallRuntimeBeforeLegacyRoutesAndClosesItBeforeServer();
+        phoneCallUiUsesUnifiedTimelineAndAuthenticatedBoundedPlayback();
+		frontendPhoneCallBehaviorUsesCanonicalIdentityAndBoundedAudioRecovery();
+    }
+
+    @Test
+    void callRuntimeWiringStaysThinAndOrdered() throws Exception {
+        appWiresCallRuntimeBeforeLegacyRoutesAndClosesItBeforeServer();
+    }
+
+    @Test
+    void phoneCallUiContractIsPresent() {
+        phoneCallUiUsesUnifiedTimelineAndAuthenticatedBoundedPlayback();
+    }
+
+	@Test
+	void phoneCallUiBehaviorIsBoundedAndAuthenticated() throws Exception {
+		frontendPhoneCallBehaviorUsesCanonicalIdentityAndBoundedAudioRecovery();
+	}
+
+    private static void phoneCallUiUsesUnifiedTimelineAndAuthenticatedBoundedPlayback() {
+        String html = App.pageHtml();
+        assertContains(html, "data-channel=\"callRecord\"");
+        assertContains(html, "accept=\"audio/mpeg,.mp3\"");
+        assertContains(html, "function uploadCallRecord()");
+        assertContains(html, "function renderCallRecordCard(item)");
+        assertContains(html, "function openCallRecordDetail(callRecordId)");
+		assertContains(html, "function renewCallAudioSession(callRecordId, generation");
+		assertContains(html, "function refreshCallRecordDetail(callRecordId, generation");
+		assertContains(html, "CALL_AUDIO_RENEW_MS = 240000");
+		assertContains(html, "CALL_DETAIL_POLL_MAX_FAILURES = 5");
+		assertContains(html, "const viewerApi = async (url, options = {}) =>");
+		assertContains(html, "async function handleViewerAuthFailure(error)");
+		assertContains(html, "async function refreshInBackground(silent)");
+		assertContains(html, "setInterval(() => refreshInBackground(true), 5000)");
+		assertContains(html, "state.eventSource.onmessage = () => refreshInBackground(true);");
+		assertContains(html, "new XMLHttpRequest()");
+		assertContains(html, "X-WeCom-Viewer-Auth");
+		assertContains(html, "'/api/v1/contacts/' + encodeURIComponent(id) + '/timeline?limit='");
+		int loginReturn = html.indexOf("async function returnToWeComLogin(message)");
+		int callCleanup = html.indexOf("clearCallDetailActivity();", loginReturn);
+		int enterMessageCenter = html.indexOf("async function enterMessageCenter()", loginReturn);
+		assertTrue(loginReturn >= 0 && callCleanup > loginReturn && callCleanup < enterMessageCenter,
+				"returning to WeCom login must release call detail timers");
+        assertNotContains(html, "viewerAuthToken=");
+    }
+
+	private static void frontendPhoneCallBehaviorUsesCanonicalIdentityAndBoundedAudioRecovery()
+			throws Exception {
+		Path dir = Files.createTempDirectory("message-center-phone-ui-test");
+		Path html = dir.resolve("page.html");
+		Path probe = dir.resolve("probe.mjs");
+		Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+		Files.writeString(probe, frontendPhoneCallProbe(), StandardCharsets.UTF_8);
+
+		Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+				.redirectErrorStream(true)
+				.start();
+		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		if (!process.waitFor(10, TimeUnit.SECONDS)) {
+			process.destroyForcibly();
+			throw new AssertionError("frontend phone call probe timed out");
+		}
+		if (process.exitValue() != 0) {
+			throw new AssertionError("frontend phone call probe failed:\n" + output);
+		}
+	}
+
+	private static String frontendPhoneCallProbe() {
+		return """
+				import assert from 'node:assert/strict';
+				import fs from 'node:fs';
+				import vm from 'node:vm';
+
+				const html = fs.readFileSync(process.argv[2], 'utf8');
+				let script = html.match(/<script>([\\s\\S]*?)<\\/script>/)?.[1];
+				assert.ok(script, 'page must contain the embedded script');
+				script = script.replace(/\\n\\s*initWeComLogin\\(\\)\\.catch\\(showWeComLoginError\\);\\s*$/, '');
+
+				const elements = new Map();
+				const requests = [];
+				const xhrs = [];
+				const clearedTimeouts = [];
+				const clearedIntervals = [];
+				const timeoutDelays = [];
+				const control = { failAudioSession:false, deferAudioSession:false, failDetail:false, deferMutation:false, detailState:'queued' };
+				let timerId = 0;
+
+				function classList() {
+				  const values = new Set();
+				  return {
+					add: value => values.add(value),
+					remove: value => values.delete(value),
+					contains: value => values.has(value),
+					toggle: (value, force) => force === undefined ? (values.has(value) ? values.delete(value) : values.add(value)) : (force ? values.add(value) : values.delete(value))
+				  };
+				}
+
+				function element(id) {
+				  if (elements.has(id)) return elements.get(id);
+				  const attributes = new Map();
+				  const listeners = new Map();
+				  const el = {
+					id,
+					dataset: {},
+					style: { display:'', setProperty() {} },
+					classList: classList(),
+					hidden: false,
+					disabled: false,
+					textContent: '',
+					value: '',
+					files: [],
+					clientHeight: id === 'thread' ? 120 : 0,
+					scrollHeight: id === 'thread' ? 240 : 0,
+					scrollTop: 0,
+					currentTime: 0,
+					duration: 12,
+					paused: true,
+					querySelectorAll: () => [],
+					closest: () => null,
+					appendChild() {},
+					remove() {},
+					click() {},
+					focus() {},
+					setAttribute(name, value) { attributes.set(name, String(value)); },
+					getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+					removeAttribute(name) { attributes.delete(name); },
+					addEventListener(name, callback) { listeners.set(name, callback); },
+					load() { const callback = listeners.get('loadedmetadata'); if (callback) { listeners.delete('loadedmetadata'); callback(); } },
+					play() { this.paused = false; return Promise.resolve(); },
+					pause() { this.paused = true; },
+					replaceWith(replacement) { elements.set(id, replacement); }
+				  };
+				  Object.defineProperty(el, 'innerHTML', {
+					get() { return this._innerHTML || ''; },
+					set(value) {
+					  this._innerHTML = String(value || '');
+					  if (id === 'detail') ['callAudio','callAudioError','callDetailUpdateError','callRevisionText','retryCallRecord','reviseCallRecord'].forEach(childId => elements.delete(childId));
+					  if (id === 'sendPanel') ['callFile','callDirection','callOccurredAt','callPhonePoint','callUploadProgress','callUploadStatus','uploadCallRecordButton'].forEach(childId => elements.delete(childId));
+					}
+				  });
+				  elements.set(id, el);
+				  return el;
+				}
+
+				const document = {
+				  activeElement: null,
+				  visibilityState: 'visible',
+				  body: { appendChild() {} },
+				  head: { appendChild() {} },
+				  addEventListener() {},
+				  createElement: tag => element(`created-${tag}-${elements.size}`),
+				  getElementById: id => element(id),
+				  querySelectorAll: () => []
+				};
+
+				class TestFormData {
+				  constructor() { this.entries = []; }
+				  append(name, value) { this.entries.push([name, value]); }
+				}
+
+				class TestXhr {
+				  constructor() { this.upload = {}; this.headers = {}; this.status = 0; this.responseText = ''; xhrs.push(this); }
+				  open(method, url) { this.method = method; this.url = url; }
+				  setRequestHeader(name, value) { this.headers[name] = value; }
+				  send(form) { this.form = form; }
+				}
+
+				const callDetail = {
+				  id:'call-1', contactAnchorPointId:'contact-1', phonePointId:'phone:8613800000000', direction:'inbound',
+				  occurredAt:'2026-08-01T01:00:00Z', createdAt:'2026-08-01T01:01:00Z', version:1,
+				  audio:{ originalFileName:'call.mp3', sizeBytes:123, durationSeconds:8 },
+				  transcription:{ state:'queued', result:{ originalText:'', segments:[] }, error:{} }, revisions:[], currentRevisionId:''
+				};
+				const callItem = { type:'callRecord', occurredAt:callDetail.occurredAt, sortId:'call:call-1', payload:{ id:'call-1', phonePointId:callDetail.phonePointId, direction:'inbound', occurredAt:callDetail.occurredAt, durationSeconds:8, state:'queued', version:1 } };
+
+				function response(url, options = {}) {
+				  requests.push({ url:String(url), options });
+				  if (String(url).endsWith('/audio-sessions')) {
+					if (control.failAudioSession) {
+					  const result = { ok:false, status:503, statusText:'Unavailable', text:async () => JSON.stringify({ code:'AUDIO_SESSION_UNAVAILABLE', message:'播放授权不可用' }), json:async () => ({}) };
+					  if (control.deferAudioSession) return new Promise(resolve => { control.resolveAudioSession = () => resolve(result); });
+					  return result;
+					}
+					return { ok:true, status:204, statusText:'', text:async () => '', json:async () => ({}) };
+				  }
+				  if (String(url).endsWith('/retry') || String(url).endsWith('/transcript')) {
+					const updated = { ...callDetail, version:2 };
+					const result = { ok:true, status:200, statusText:'', text:async () => JSON.stringify(updated), json:async () => updated };
+					if (control.deferMutation) return new Promise(resolve => { control.resolveMutation = () => resolve(result); });
+					return result;
+				  }
+				  if (String(url).includes('/api/v1/call-records/call-1')) {
+					if (control.failDetail) return { ok:false, status:503, statusText:'Unavailable', text:async () => JSON.stringify({ code:'CALL_DETAIL_UNAVAILABLE', message:'详情暂不可用' }), json:async () => ({}) };
+					const detail = { ...callDetail, transcription:{ ...callDetail.transcription, state:control.detailState } };
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(detail), json:async () => detail };
+				  }
+				  if (String(url).includes('/timeline?limit=')) {
+					const page = { items:[callItem], itemCount:1, nextCursor:'', threadRevision:'rev-1' };
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(page), json:async () => page };
+				  }
+				  throw new Error(`unexpected fetch ${url}`);
+				}
+
+				const context = {
+				  assert,
+				  console,
+				  document,
+				  requests,
+				  clearedTimeouts,
+				  clearedIntervals,
+				  timeoutDelays,
+				  control,
+				  fetch: async (url, options) => response(url, options),
+				  FormData: TestFormData,
+				  XMLHttpRequest: TestXhr,
+				  setTimeout: (callback, delay) => { timeoutDelays.push(delay); return ++timerId; },
+				  clearTimeout: id => clearedTimeouts.push(id),
+				  setInterval: () => ++timerId,
+				  clearInterval: id => clearedIntervals.push(id),
+				  requestAnimationFrame: callback => callback(),
+				  window: { crypto:{ randomUUID:() => 'uuid-1' }, open:() => null, toastTimer:null },
+				  crypto: { randomUUID:() => 'uuid-1' },
+				  URL: { createObjectURL:() => 'blob:test', revokeObjectURL() {} },
+				  Notification: function Notification() {}
+				};
+				context.window.document = document;
+				context.globalThis = context;
+				vm.createContext(context);
+
+				await vm.runInContext(script + `
+				(async () => {
+				  const phoneContact = { id:'contact-1', displayName:'Buyer', channels:['chatapp','phone'], points:[
+					{ id:'chatapp:whatsapp:8613800000000', channel:'chatapp', type:'phone', value:'8613800000000' },
+					{ id:'phone:8613800000000', channel:'phone', type:'phone', value:'8613800000000', label:'8613800000000' }
+				  ] };
+				  state.contacts = [phoneContact, { id:'contact-2', displayName:'No phone', channels:['wecom'], points:[] }];
+				  state.selectedPointId = 'contact-1';
+				  state.selectedChannel = 'callRecord';
+				  state.wecomAuth = { viewerAuthToken:'viewer-token' };
+				  state.wecomAuthExpiresAt = Date.now() + 60000;
+
+				  state.selectedChannel = 'phone';
+				  renderComposer();
+				  assert.doesNotMatch($('composer').innerHTML, /data-channel="phone"/);
+				  assert.match($('composer').innerHTML, /data-channel="callRecord"/);
+				  assert.equal(state.selectedChannel, 'chatapp');
+				  state.selectedChannel = 'callRecord';
+				  renderCallRecordUploadPanel(phoneContact);
+				  assert.match($('sendPanel').innerHTML, /value="phone:8613800000000"/);
+				  assert.ok($('sendPanel').innerHTML.includes('>8613800000000</option>'));
+				  assert.doesNotMatch($('sendPanel').innerHTML, /unknown/);
+				  $('callFile').files = [{ name:'call.mp3', size:123 }];
+				  $('callDirection').value = 'inbound';
+				  $('callOccurredAt').value = '2026-08-01T10:00';
+				  $('callPhonePoint').disabled = false;
+				  $('callPhonePoint').value = 'phone:8613800000000';
+				  const upload = uploadCallRecord();
+				  assert.equal(JSON.stringify(upload.form.entries.map(entry => entry[0])), JSON.stringify(['direction','occurredAt','clientRequestId','phonePointId','file']));
+				  assert.equal(upload.form.entries.find(entry => entry[0] === 'phonePointId')[1], 'phone:8613800000000');
+				  assert.equal(upload.headers['X-WeCom-Viewer-Auth'], 'viewer-token');
+				  assert.equal(upload.headers['Content-Type'], undefined);
+				  upload.status = 201;
+				  upload.responseText = JSON.stringify({ callRecordId:'call-1', state:'queued', clientRequestId:'uuid-1' });
+				  await upload.onload();
+				  assert.match($('thread').innerHTML, /class="call-card/);
+				  assert.match($('thread').innerHTML, /排队中/);
+				  const uploadedTimeline = requests.findLast(item => item.url.includes('/timeline?limit='));
+				  assert.equal(uploadedTimeline.options.headers['X-WeCom-Viewer-Auth'], 'viewer-token');
+
+				  state.selectedPointId = 'contact-2';
+				  renderCallRecordUploadPanel(state.contacts[1]);
+				  assert.match($('sendPanel').innerHTML, /未绑定电话/);
+				  $('callFile').files = [{ name:'call.mp3', size:123 }];
+				  $('callDirection').value = 'outbound';
+				  $('callOccurredAt').value = '2026-08-01T11:00';
+				  $('callPhonePoint').disabled = true;
+				  const noPhoneUpload = uploadCallRecord();
+				  assert.equal(noPhoneUpload.form.entries.some(entry => entry[0] === 'phonePointId'), false);
+
+				  state.selectedPointId = 'contact-1';
+				  renderCallRecordUploadPanel(phoneContact);
+				  $('callFile').files = [{ name:'call.mp3', size:123 }];
+				  $('callDirection').value = 'inbound';
+				  $('callOccurredAt').value = '2026-08-01T10:00';
+				  $('callPhonePoint').disabled = false;
+				  $('callPhonePoint').value = 'phone:8613800000000';
+				  state.wecomAuthExpiresAt = 0;
+				  let expiredAuthError;
+				  try { currentWeComAuth(); } catch (error) { expiredAuthError = error; }
+				  assert.equal(expiredAuthError.status, 401);
+				  assert.equal(expiredAuthError.code, 'WECOM_VIEWER_AUTH_EXPIRED');
+				  let expiredUpload;
+				  assert.doesNotThrow(() => { expiredUpload = uploadCallRecord(); });
+				  assert.equal(expiredUpload, undefined);
+				  assert.equal($('uploadCallRecordButton').disabled, false);
+				  state.wecomAuthExpiresAt = Date.now() + 60000;
+
+				  const threadBeforeDetail = $('thread').innerHTML;
+				  control.failAudioSession = true;
+				  control.deferAudioSession = true;
+				  const staleAudioAuthorization = openCallRecordDetail('call-1');
+				  for (let tick = 0; tick < 10 && typeof control.resolveAudioSession !== 'function'; tick++) await Promise.resolve();
+				  assert.equal(typeof control.resolveAudioSession, 'function');
+				  state.selectedPointId = 'contact-2';
+				  state.selectedCallRecordId = 'call-4';
+				  $('detail').innerHTML = '<div>其他电话</div>';
+				  const currentCallAudioError = $('callAudioError');
+				  control.resolveAudioSession();
+				  await staleAudioAuthorization;
+				  assert.equal(currentCallAudioError.textContent, '', 'stale audio authorization errors must not overwrite the current detail');
+				  control.deferAudioSession = false;
+				  state.selectedPointId = 'contact-1';
+				  control.failAudioSession = true;
+				  await openCallRecordDetail('call-1');
+				  assert.match($('detail').innerHTML, /完整转录/);
+				  assert.match($('callAudioError').textContent, /播放授权不可用/);
+				  control.failAudioSession = false;
+				  await openCallRecordDetail('call-1');
+				  assert.equal($('thread').innerHTML, threadBeforeDetail);
+				  assert.match($('detail').innerHTML, /完整转录/);
+				  assert.ok($('callAudio').getAttribute('src').endsWith('/api/v1/call-records/call-1/audio'));
+				  const audioBeforeQueuedPoll = $('callAudio');
+				  await refreshCallRecordDetail('call-1');
+				  assert.equal($('callAudio'), audioBeforeQueuedPoll, 'queued polling must preserve the active audio element');
+				  $('callAudio').currentTime = 3;
+				  await $('callAudio').play();
+				  control.detailState = 'completed';
+				  await refreshCallRecordDetail('call-1');
+				  assert.equal($('callAudio'), audioBeforeQueuedPoll, 'terminal polling must preserve the active audio element');
+				  assert.equal($('callAudio').currentTime, 3);
+				  assert.equal($('callAudio').paused, false);
+				  assert.match($('detail').innerHTML, /已完成/);
+				  control.detailState = 'queued';
+				  await refreshCallRecordDetail('call-1');
+				  $('callAudio').currentTime = 4;
+				  const sessionsBeforeRecovery = requests.filter(item => item.url.endsWith('/audio-sessions')).length;
+				  await $('callAudio').onerror();
+				  assert.equal($('callAudio').currentTime, 4);
+				  await $('callAudio').onerror();
+				  assert.equal(requests.filter(item => item.url.endsWith('/audio-sessions')).length, sessionsBeforeRecovery + 1);
+
+				  control.failDetail = true;
+				  const detailPollDelayStart = timeoutDelays.length;
+				  for (let attempt = 0; attempt < CALL_DETAIL_POLL_MAX_FAILURES + 1; attempt++) await refreshCallRecordDetail('call-1');
+				  assert.equal(JSON.stringify(timeoutDelays.slice(detailPollDelayStart)), JSON.stringify([3000,6000,12000,24000]));
+				  assert.equal(state.callDetailPollFailures, CALL_DETAIL_POLL_MAX_FAILURES);
+				  assert.equal(state.callDetailPollTimer, null, 'detail polling must stop after bounded failures');
+				  assert.match($('callDetailUpdateError').textContent, /已停止自动更新/);
+				  control.failDetail = false;
+				  await refreshCallRecordDetail('call-1');
+				  assert.equal($('callDetailUpdateError').textContent, '', 'successful polling must clear the previous update error');
+
+				  const queuedDetail = state.callDetail;
+				  state.callDetail = { ...queuedDetail, transcription:{ state:'failed', result:queuedDetail.transcription.result, error:{ retryable:true, message:'失败' } } };
+				  renderCallRecordDetail(state.callDetail);
+				  control.deferMutation = true;
+				  const contactTwoTimelineBeforeRetry = requests.filter(item => item.url.includes('/contacts/contact-2/timeline')).length;
+				  const staleRetry = retryCallRecord();
+				  await Promise.resolve();
+				  await Promise.resolve();
+				  assert.equal(typeof control.resolveMutation, 'function');
+				  state.selectedPointId = 'contact-2';
+				  state.selectedCallRecordId = 'call-2';
+				  const newerSelection = { id:'call-2' };
+				  state.callDetail = newerSelection;
+				  control.resolveMutation();
+				  await staleRetry;
+				  assert.equal(state.callDetail, newerSelection, 'stale retry response must not replace the current detail');
+				  assert.equal(requests.filter(item => item.url.includes('/contacts/contact-2/timeline')).length, contactTwoTimelineBeforeRetry);
+				  control.deferMutation = false;
+				  state.selectedPointId = 'contact-1';
+				  state.selectedCallRecordId = 'call-1';
+				  state.callDetail = queuedDetail;
+
+				  renderCallRecordDetail(state.callDetail);
+				  $('callRevisionText').value = '人工修订文本';
+				  control.deferMutation = true;
+				  control.resolveMutation = undefined;
+				  const contactTwoTimelineBeforeRevision = requests.filter(item => item.url.includes('/contacts/contact-2/timeline')).length;
+				  const staleRevision = reviseCallRecord();
+				  await Promise.resolve();
+				  await Promise.resolve();
+				  assert.equal(typeof control.resolveMutation, 'function');
+				  state.selectedPointId = 'contact-2';
+				  state.selectedCallRecordId = 'call-3';
+				  const latestSelection = { id:'call-3' };
+				  state.callDetail = latestSelection;
+				  control.resolveMutation();
+				  await staleRevision;
+				  assert.equal(state.callDetail, latestSelection, 'stale revision response must not replace the current detail');
+				  assert.equal(requests.filter(item => item.url.includes('/contacts/contact-2/timeline')).length, contactTwoTimelineBeforeRevision);
+				  control.deferMutation = false;
+				  state.selectedPointId = 'contact-1';
+				  state.selectedCallRecordId = 'call-1';
+				  state.callDetail = queuedDetail;
+
+				  const pollTimer = state.callDetailPollTimer;
+				  const renewTimer = state.callAudioRenewTimer;
+				  await selectContact('contact-2');
+				  assert.ok(clearedTimeouts.includes(pollTimer));
+				  assert.ok(clearedIntervals.includes(renewTimer));
+				  assert.equal(state.selectedCallRecordId, '');
+				})()
+				`, context);
+
+				console.log('frontend phone call behavior ok');
+				""";
+	}
+
+    private static void appWiresCallRuntimeBeforeLegacyRoutesAndClosesItBeforeServer()
+            throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/crmforlogistics/messagecenter/App.java"), StandardCharsets.UTF_8);
+        assertContains(source, "CallRecordRuntime.open(config, store, events::publish)");
+        assertContains(source, "callRuntime.available()");
+        assertContains(source, "new ContactTimelineService(store, callRuntime.service())");
+        assertContains(source, "new CallAudioSessionService(config)");
+        assertContains(source, "if (finalCallRecordHttp != null && finalCallRecordHttp.handle(exchange)) return;");
+        assertContains(source, "CallRecordHttpAdapter.matchesRoute(exchange.getRequestURI().getRawPath())");
+        assertContains(source, "closeCallRuntime(callRuntime);");
+        assertNotContains(source, "rawPath.startsWith(\"/api/v1/contacts/\")");
+        assertContains(source, "void publish(CallRecordEvent event)");
+        assertContains(source, "event.callRecordId()");
+        assertContains(source, "event.contactAnchorPointId()");
+        assertContains(source, "event.state()");
+        assertContains(source, "event.version()");
+        int shutdownHook = source.indexOf("message-center-shutdown");
+        int hookStart = source.lastIndexOf("addShutdownHook", shutdownHook);
+        int closeRuntime = source.indexOf("closeCallRuntime(finalCallRuntime)", hookStart);
+        int stopServer = source.indexOf("server.stop(0)", hookStart);
+        if (closeRuntime < 0 || stopServer < 0 || closeRuntime >= stopServer) {
+            throw new AssertionError("call runtime must close before HTTP server stops");
+        }
+    }
+
+    @Test
+    void phoneIdentityUsesTheSharedContactProjection() throws Exception {
+        projectsPhoneIdentityAcrossMergeAndSplit();
+    }
+
+    @Test
+    void phoneOnlyContactsAreOwnedByTheUnifiedContactStore() throws Exception {
+        createsPhoneOnlyContactGroupAndPersistsDisplayName();
+        rebindsPhonePointIdempotently();
+        rejectsPhonePointBoundToAnotherContactGroup();
+        listsPhoneOnlyContactWithoutMessages();
+    }
+
+    private static void createsPhoneOnlyContactGroupAndPersistsDisplayName() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-only-contact-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+
+        UnifiedContact contact = testStore(dir, emailData, chatData.resolve("messages.jsonl"))
+                .ensurePhoneContact("", "+86 138-0000-0000", "采购联系人");
+
+        assertEquals("phone:8613800000000", contact.id);
+        assertEquals("采购联系人", contact.displayName);
+        assertEquals("phone:8613800000000", contact.points.get(0).id);
+        assertEquals("phone", contact.points.get(0).channel);
+        assertEquals(0, contact.messageCount);
+        assertContains(Files.readString(dir.resolve("contact-groups.jsonl")), "采购联系人");
+    }
+
+    private static void rebindsPhonePointIdempotently() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-rebind-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        UnifiedContact contact = store.ensurePhoneContact("", "13800000000", "采购联系人");
+
+        assertEquals("phone:13800000000", store.bindPhonePoint(contact.id, "138-0000-0000"));
+        assertEquals("1", Integer.toString(store.contactGroup(contact.id).size()));
+        assertEquals("1", Integer.toString(store.contacts().size()));
+    }
+
+    private static void rejectsPhonePointBoundToAnotherContactGroup() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-conflict-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        UnifiedContact first = store.ensurePhoneContact("", "13800000000", "采购联系人");
+        UnifiedContact second = store.ensurePhoneContact("", "13900000000", "运输联系人");
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> store.bindPhonePoint(second.id, "13800000000"));
+        assertEquals("PHONE_POINT_CONFLICT", exception.getMessage());
+        assertEquals("phone:13800000000", store.contactGroup(first.id).get(0));
+        assertEquals("phone:13900000000", store.contactGroup(second.id).get(0));
+    }
+
+    private static void listsPhoneOnlyContactWithoutMessages() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-phone-only-list-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        UnifiedMessageStore store = testStore(dir, emailData, chatData.resolve("messages.jsonl"));
+        store.ensurePhoneContact("", "13800000000", "采购联系人");
+
+        List<UnifiedContact> contacts = store.contacts();
+        assertEquals("1", Integer.toString(contacts.size()));
+        assertEquals("采购联系人", contacts.get(0).displayName);
+        assertEquals("", contacts.get(0).lastText);
+        assertEquals(0, contacts.get(0).messageCount);
+        assertEquals("phone", String.join(",", contacts.get(0).channels));
+    }
+
+    private static void projectsPhoneIdentityAcrossMergeAndSplit() throws Exception {
+        assertEquals("phone:8613800000000",
+                ContactPointUtil.normalizePointId("PHONE:+86 138-0000-0000"));
+        assertEquals("", ContactPointUtil.normalizePointId("phone:---"));
+
+        ContactPoint projected = ContactPointUtil.fromId(
+                "phone:+86 138-0000-0000", null);
+        assertEquals("phone:8613800000000", projected.id);
+        assertEquals("phone", projected.channel);
+        assertEquals("phone", projected.type);
+        assertEquals("8613800000000", projected.value);
+        assertEquals("8613800000000", projected.label);
+
+        Path dir = Files.createTempDirectory("message-center-phone-point-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Files.writeString(emailData.resolve("inbox.jsonl"), "{"
+                + "\"id\":\"mail-phone-1\","
+                + "\"direction\":\"in\","
+                + "\"contactEmail\":\"buyer@example.com\","
+                + "\"contactName\":\"Buyer\","
+                + "\"subject\":\"Call follow-up\","
+                + "\"sentDate\":\"2026-07-30T01:00:00Z\","
+                + "\"bodyText\":\"Body\"}\n", StandardCharsets.UTF_8);
+
+        UnifiedMessageStore store = testStore(
+                dir, emailData, chatData.resolve("messages.jsonl"));
+        store.mergeContacts(
+                "email:buyer@example.com", "phone:+86 138-0000-0000");
+        UnifiedContact merged = store.contacts().stream()
+                .filter(contact -> "email:buyer@example.com".equals(contact.id))
+                .findFirst().orElseThrow();
+        ContactPoint phone = merged.points.stream()
+                .filter(point -> "phone:8613800000000".equals(point.id))
+                .findFirst().orElseThrow();
+        assertEquals("phone", phone.channel);
+        assertEquals("phone", phone.type);
+
+        store.splitContact(
+                "email:buyer@example.com", "phone:8613800000000");
+        assertEquals("phone:8613800000000",
+                store.contactGroup("phone:+86 138-0000-0000").get(0));
     }
 
     private static void chatAppTemplateMessagesUseTemplateRequestType() {
@@ -667,6 +1233,8 @@ public class UnifiedMessageStoreTest {
                 Map.entry("CHATAPP_TEMPLATE_FILE", dir.resolve("templates.json").toString()),
                 Map.entry("WECOM_DATA_FILE", wecomData.toString()),
                 Map.entry("WECOM_SUITE_ID", "dk-test-suite"),
+                Map.entry("WECOM_LOGIN_SUITE_ID", "ww-login-suite"),
+                Map.entry("WECOM_LOGIN_SUITE_SECRET", "login-suite-secret"),
                 Map.entry("WECOM_LOGIN_AUTH_CORP_ID", "ww-test-corp"),
                 Map.entry("WECOM_CHATDATA_PROGRAM_ID", "program-1"),
                 Map.entry("WECOM_CHATDATA_ABILITY_ID", "ability-1"),
@@ -701,7 +1269,9 @@ public class UnifiedMessageStoreTest {
         App.routeForTests(attemptExchange, config, store, viewer, loginAttempts);
         assertEquals(200, attemptExchange.responseCode);
         JsonObject attempt = JsonParser.parseString(attemptExchange.responseText()).getAsJsonObject();
-        assertContains(attemptExchange.responseText(), "\"corpId\": \"ww-test-corp\"");
+        assertContains(attemptExchange.responseText(), "\"loginType\": \"ServiceApp\"");
+        assertContains(attemptExchange.responseText(), "\"appId\": \"ww-login-suite\"");
+        assertNotContains(attemptExchange.responseText(), "agentId");
         assertContains(attemptExchange.responseText(), "\"redirectUri\": \"http://localhost:8099/\"");
         assertNotContains(attemptExchange.responseText(), "secret");
         String loginState = attempt.get("state").getAsString();
@@ -758,6 +1328,15 @@ public class UnifiedMessageStoreTest {
                     }
                 },
                 (action, result, userId) -> { });
+        FakeHttpExchange initialSyncExchange = new FakeHttpExchange(
+                "POST", "/api/v1/wecom/conversation-view/sync");
+        initialSyncExchange.getRequestHeaders().set("X-WeCom-Viewer-Auth", viewerAuthToken);
+        initialSyncExchange.requestBodyJson("{}");
+        App.routeForTests(initialSyncExchange, config, store, viewer, loginAttempts, syncService);
+        assertEquals(200, initialSyncExchange.responseCode);
+        assertContains(initialSyncExchange.responseText(), "\"pages\": 1");
+        assertContains(initialSyncExchange.responseText(), "\"stored\": 0");
+
         FakeHttpExchange missingSyncExchange = new FakeHttpExchange(
                 "POST", "/api/v1/wecom/conversation-view/sessions");
         missingSyncExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\","
@@ -765,13 +1344,13 @@ public class UnifiedMessageStoreTest {
         App.routeForTests(missingSyncExchange, config, store, viewer, loginAttempts);
         assertEquals(503, missingSyncExchange.responseCode);
         assertContains(missingSyncExchange.responseText(), "WECOM_CHATDATA_NOT_CONFIGURED");
-        assertEquals(0, syncCalls.get());
+        assertEquals(1, syncCalls.get());
 
         FakeHttpExchange createExchange = new FakeHttpExchange("POST", "/api/v1/wecom/conversation-view/sessions");
         createExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\",\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
         App.routeForTests(createExchange, config, store, viewer, loginAttempts, syncService);
         assertEquals(200, createExchange.responseCode);
-        assertEquals(1, syncCalls.get());
+        assertEquals(2, syncCalls.get());
         String sessionId = JsonParser.parseString(createExchange.responseText()).getAsJsonObject()
                 .get("viewerSessionId").getAsString();
 
@@ -1218,6 +1797,7 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "发送 WhatsApp");
         assertContains(html, "收取邮件");
         assertContains(html, "同步 WhatsApp");
+        assertContains(html, "同步企业微信会话");
         assertContains(html, "刷新 ${result.updated || 0}");
         assertContains(html, "附件 ${result.mediaCached || 0}");
         assertContains(html, "排队 ${result.mediaQueued || 0}");
@@ -1228,6 +1808,7 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "result.mediaFailures?.[0]?.reason");
         assertContains(html, "/api/sync/email");
         assertContains(html, "/api/sync/chatapp");
+        assertContains(html, "/api/v1/wecom/conversation-view/sync");
         assertContains(html, "workspace-topbar");
         assertContains(html, "contact-points-line");
         assertContains(html, "sync-actions");
@@ -1288,7 +1869,7 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "clearContactUnread");
         assertContains(html, "c.id !== state.selectedPointId");
         assertContains(html, "aria-label=\"有未读消息\"");
-        assertContains(html, "state.selectedMessageId || profileModalOpen() || detailEditing()");
+		assertContains(html, "state.selectedMessageId || state.selectedCallRecordId || profileModalOpen() || detailEditing()");
         assertContains(html, "async function refreshSelectedContactViews");
         assertContains(html, "await refreshSelectedContactViews(false);");
         assertContains(html, "toast('联系人已合并')");
@@ -1379,6 +1960,10 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "id=\"shell\" hidden");
         assertContains(html, "function initWeComLogin()");
         assertContains(html, "ww.createWWLoginPanel({");
+        assertContains(html, "login_type: attempt.loginType");
+        assertContains(html, "appid: attempt.appId");
+        assertNotContains(html, "login_type: 'CorpApp'");
+        assertNotContains(html, "agentid: attempt.agentId");
         assertContains(html, "redirect_type: 'callback'");
         assertContains(html, "onLoginSuccess({ code })");
         assertContains(html, "/api/v1/wecom/login/attempts");
@@ -1429,8 +2014,8 @@ public class UnifiedMessageStoreTest {
         String html = App.pageHtml();
 
         assertContains(html, "const THREAD_PAGE_SIZE = 10;");
-        assertContains(html, "const page = await api(threadPageUrl(id));");
-        assertContains(html, "const messages = page.items || [];");
+		assertContains(html, "const page = await viewerApi(threadPageUrl(id));");
+        assertContains(html, "const items = page.items || [];");
         assertContains(html, "nextCursor: page.nextCursor || null");
         assertContains(html, "threadRevision: page.threadRevision");
         assertContains(html, "threadLoadSeqByContact:{}");
@@ -1438,12 +2023,12 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "function currentThreadLoadSeq(id)");
         assertContains(html, "const requestSeq = nextThreadLoadSeq(id);");
         assertContains(html, "if (state.selectedPointId !== id || currentThreadLoadSeq(id) !== requestSeq) return;");
-        assertContains(html, "const pageMessageCount = Number(page.messageCount);");
+        assertContains(html, "const pageItemCount = Number(page.itemCount);");
         assertContains(html, "const threadRevision = String(page.threadRevision || '');");
-        assertContains(html, "if (!Number.isFinite(pageMessageCount) || !threadRevision) throw new Error('线程页合同缺少版本信息');");
+		assertContains(html, "if (!Number.isFinite(pageItemCount) || !threadRevision) throw new Error('时间线页合同缺少版本信息');");
         assertNotContains(html, "contact?.messageCount");
         assertContains(html, "function threadPageUrl(id, cursor = '')");
-        assertContains(html, "'/api/threads?contactPointId=' + encodeURIComponent(id) + '&limit=' + THREAD_PAGE_SIZE");
+		assertContains(html, "'/api/v1/contacts/' + encodeURIComponent(id) + '/timeline?limit=' + THREAD_PAGE_SIZE");
     }
 
     private static void apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit() throws Exception {
@@ -1493,10 +2078,10 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "const previousThreadRevision = existing ? existing.threadRevision || '' : '';");
         assertContains(html, "const shouldKeepLoadedThread = keepScroll && existing && existing.hasLoadedInitial && previousThreadRevision === threadRevision;");
         assertContains(html, "const merged = shouldKeepLoadedThread");
-        assertContains(html, "pageMessageCount,");
+		assertContains(html, "pageItemCount,");
         assertContains(html, "threadRevision,");
         assertContains(html, "if (shouldKeepLoadedThread && existing.nextCursor) state.threadPages[id].nextCursor = existing.nextCursor;");
-        assertContains(html, "if (shouldKeepLoadedThread && !existing.nextCursor && pageMessageCount <= merged.length) state.threadPages[id].nextCursor = null;");
+		assertContains(html, "if (shouldKeepLoadedThread && !existing.nextCursor && pageItemCount <= merged.length) state.threadPages[id].nextCursor = null;");
         assertContains(html, "if ((older.threadRevision || '') !== (page.threadRevision || '')) {");
         assertContains(html, "await loadThread(id, false);");
         assertContains(html, "el.onwheel = event => { if (event.deltaY < 0) loadOlderThreadMessages(); };");
@@ -1505,7 +2090,7 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "if (y > state.threadTouchY + 8) loadOlderThreadMessages();");
         assertContains(html, "function mergeThreadMessages(messages)");
         assertContains(html, "const seen = new Set();");
-        assertContains(html, "const key = message.id || message.sourceId;");
+		assertContains(html, "const key = `${message.type || ''}:${message.sortId || ''}`;");
         assertContains(html, "if (!key) { merged.push(message); return; }");
         assertNotContains(html, "`${message.timestamp || ''}:${message.channel || ''}:${message.text || message.summary || ''}`");
         assertContains(html, "return merged;");
@@ -1554,12 +2139,13 @@ public class UnifiedMessageStoreTest {
                 ];
                 const elements = new Map();
 
-                function page(start, end, nextCursor, threadRevision, messageCount) {
+                function page(start, end, nextCursor, threadRevision, itemCount) {
                   const items = [];
                   for (let i = start; i <= end; i++) {
-                    items.push({ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:`2026-07-10T01:${String(i).padStart(2, '0')}:00Z`, text:`message-${i}` });
+					const occurredAt = `2026-07-10T01:${String(i).padStart(2, '0')}:00Z`;
+					items.push({ type:'message', occurredAt, sortId:`message:m${i}`, payload:{ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:occurredAt, text:`message-${i}` } });
                   }
-                  return { items, nextCursor, threadRevision, messageCount };
+				  return { items, nextCursor, threadRevision, itemCount };
                 }
 
                 function classList() {
@@ -1634,11 +2220,12 @@ public class UnifiedMessageStoreTest {
                   page,
                   requests,
                   responses,
-                  fetch: async url => {
-                    requests.push(String(url));
-                    const body = responses.shift();
-                    assert.ok(body, `unexpected fetch ${url}`);
-                    return { ok: true, json: async () => body, headers: { get: () => '' }, blob: async () => ({ type:'' }) };
+				  fetch: async (url, options = {}) => {
+					requests.push(String(url));
+					assert.equal(options.headers['X-WeCom-Viewer-Auth'], 'viewer-token');
+					const body = responses.shift();
+					assert.ok(body, `unexpected fetch ${url}`);
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(body), json:async () => body, headers:{ get:() => '' }, blob:async () => ({ type:'' }) };
                   },
                   setTimeout,
                   clearTimeout,
@@ -1653,32 +2240,34 @@ public class UnifiedMessageStoreTest {
                 vm.createContext(context);
 
                 await vm.runInContext(script + `
-                (async () => {
-                  state.contacts = [{ id:'contact-1', displayName:'Buyer', channels:['chatapp'], points:[{ id:'contact-1', channel:'chatapp', value:'8613000000000' }] }];
-                  state.selectedPointId = 'contact-1';
+				(async () => {
+				  state.contacts = [{ id:'contact-1', displayName:'Buyer', channels:['chatapp'], points:[{ id:'contact-1', channel:'chatapp', value:'8613000000000' }] }];
+				  state.selectedPointId = 'contact-1';
+				  state.wecomAuth = { viewerAuthToken:'viewer-token' };
+				  state.wecomAuthExpiresAt = Date.now() + 60000;
 
                   await loadThread('contact-1', false);
-                  assert.equal(requests[0], '/api/threads?contactPointId=contact-1&limit=10');
+				  assert.equal(requests[0], '/api/v1/contacts/contact-1/timeline?limit=10');
                   assert.equal(state.threadPages['contact-1'].items.length, 10);
-                  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.id)), JSON.stringify(['m11','m12','m13','m14','m15','m16','m17','m18','m19','m20']));
+				  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.payload.id)), JSON.stringify(['m11','m12','m13','m14','m15','m16','m17','m18','m19','m20']));
                   assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-1');
                   assert.equal($('thread').scrollTop, $('thread').scrollHeight);
 
                   $('thread').scrollTop = 0;
                   const oldScrollHeight = $('thread').scrollHeight;
                   await loadOlderThreadMessages();
-                  assert.equal(requests[1], '/api/threads?contactPointId=contact-1&limit=10&cursor=cursor-older');
+				  assert.equal(requests[1], '/api/v1/contacts/contact-1/timeline?limit=10&cursor=cursor-older');
                   assert.equal(state.threadPages['contact-1'].items.length, 20);
-                  assert.equal(state.threadPages['contact-1'].items[0].id, 'm1');
-                  assert.equal(state.threadPages['contact-1'].items[19].id, 'm20');
+				  assert.equal(state.threadPages['contact-1'].items[0].payload.id, 'm1');
+				  assert.equal(state.threadPages['contact-1'].items[19].payload.id, 'm20');
                   assert.equal($('thread').scrollTop, $('thread').scrollHeight - oldScrollHeight);
 
                   state.threadPages['contact-1'].nextCursor = 'stale-cursor';
                   $('thread').scrollTop = 0;
                   await loadOlderThreadMessages();
-                  assert.equal(requests[2], '/api/threads?contactPointId=contact-1&limit=10&cursor=stale-cursor');
-                  assert.equal(requests[3], '/api/threads?contactPointId=contact-1&limit=10');
-                  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.id)), JSON.stringify(['m21','m22','m23','m24','m25','m26','m27','m28','m29','m30']));
+				  assert.equal(requests[2], '/api/v1/contacts/contact-1/timeline?limit=10&cursor=stale-cursor');
+				  assert.equal(requests[3], '/api/v1/contacts/contact-1/timeline?limit=10');
+				  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.payload.id)), JSON.stringify(['m21','m22','m23','m24','m25','m26','m27','m28','m29','m30']));
                   assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-2');
                   assert.equal(state.threadPages['contact-1'].nextCursor, 'cursor-fresh');
                 })()
@@ -1734,12 +2323,13 @@ public class UnifiedMessageStoreTest {
                 const responses = [];
                 const elements = new Map();
 
-                function page(start, end, nextCursor, threadRevision, messageCount) {
+                function page(start, end, nextCursor, threadRevision, itemCount) {
                   const items = [];
                   for (let i = start; i <= end; i++) {
-                    items.push({ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:`2026-07-10T01:${String(i).padStart(2, '0')}:00Z`, text:`message-${i}` });
+					const occurredAt = `2026-07-10T01:${String(i).padStart(2, '0')}:00Z`;
+					items.push({ type:'message', occurredAt, sortId:`message:m${i}`, payload:{ id:`m${i}`, channel:'chatapp', direction:'inbound', timestamp:occurredAt, text:`message-${i}` } });
                   }
-                  return { items, nextCursor, threadRevision, messageCount };
+				  return { items, nextCursor, threadRevision, itemCount };
                 }
 
                 function classList() {
@@ -1814,11 +2404,12 @@ public class UnifiedMessageStoreTest {
                   page,
                   requests,
                   responses,
-                  fetch: async url => {
-                    requests.push(String(url));
-                    const body = responses.shift();
-                    assert.ok(body, `unexpected fetch ${url}`);
-                    return { ok: true, json: async () => body, headers: { get: () => '' }, blob: async () => ({ type:'' }) };
+				  fetch: async (url, options = {}) => {
+					requests.push(String(url));
+					assert.equal(options.headers['X-WeCom-Viewer-Auth'], 'viewer-token');
+					const body = responses.shift();
+					assert.ok(body, `unexpected fetch ${url}`);
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(body), json:async () => body, headers:{ get:() => '' }, blob:async () => ({ type:'' }) };
                   },
                   setTimeout,
                   clearTimeout,
@@ -1832,9 +2423,11 @@ public class UnifiedMessageStoreTest {
                 context.globalThis = context;
                 vm.createContext(context);
 
-                await vm.runInContext(script + `
-                (async () => {
-                  for (let i = 1; i <= 25; i++) {
+				await vm.runInContext(script + `
+				(async () => {
+				  state.wecomAuth = { viewerAuthToken:'viewer-token' };
+				  state.wecomAuthExpiresAt = Date.now() + 60000;
+				  for (let i = 1; i <= 25; i++) {
                     const id = 'contact-' + i;
                     state.contacts.push({ id, displayName:'Buyer ' + i, channels:['chatapp'], points:[{ id, channel:'chatapp', value:'86130000000' + i }] });
                     state.selectedPointId = id;
@@ -1849,8 +2442,8 @@ public class UnifiedMessageStoreTest {
 
                   const oversized = limitThreadPageMessages(page(1, 250, 'too-old', 'rev-long', 250));
                   assert.equal(oversized.items.length, THREAD_PAGE_MAX_MESSAGES);
-                  assert.equal(oversized.items[0].id, 'm51');
-                  assert.equal(oversized.items[199].id, 'm250');
+				  assert.equal(oversized.items[0].payload.id, 'm51');
+				  assert.equal(oversized.items[199].payload.id, 'm250');
                   assert.equal(oversized.nextCursor, null);
                 })()
                 `, context);
@@ -1946,6 +2539,62 @@ public class UnifiedMessageStoreTest {
             exchange.releaseWrites.countDown();
             close.invoke(hub);
         }
+    }
+
+    private static void eventHubPublishesTemplateChanges() throws Exception {
+        Class<?> eventHubClass = Class.forName(App.class.getName() + "$EventHub");
+        java.lang.reflect.Constructor<?> constructor = eventHubClass.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        Object hub = constructor.newInstance();
+        java.lang.reflect.Method connect = eventHubClass.getDeclaredMethod("connect", HttpExchange.class);
+        java.lang.reflect.Method publishTemplatesChanged = eventHubClass.getDeclaredMethod(
+                "publishTemplatesChanged", int.class);
+        java.lang.reflect.Method close = eventHubClass.getDeclaredMethod("close");
+        connect.setAccessible(true);
+        publishTemplatesChanged.setAccessible(true);
+        close.setAccessible(true);
+        FakeHttpExchange exchange = new FakeHttpExchange("GET", "/events");
+        try {
+            connect.invoke(hub, exchange);
+            publishTemplatesChanged.invoke(hub, 2);
+            assertEquals(": connected\n\nevent: templates-changed\n"
+                    + "data: {\"count\":2}\n\n", exchange.responseText());
+        } finally {
+            close.invoke(hub);
+        }
+
+        String html = App.pageHtml();
+        assertContains(html, "addEventListener('templates-changed'");
+        assertContains(html, "await refreshTemplates()");
+        int handlerStart = html.indexOf("addEventListener('templates-changed'");
+        int handlerEnd = html.indexOf("});", handlerStart) + 3;
+        String handler = html.substring(handlerStart, handlerEnd);
+        assertNotContains(handler, "refreshAll(");
+        assertNotContains(handler, "toast('有新消息')");
+        assertNotContains(handler, "Notification");
+    }
+
+    private static void templateRouteServesLastSuccessfulSnapshot() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-template-route-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Config config = testConfig(dir, emailData, chatData.resolve("messages.jsonl"));
+        TemplateStore.TemplateRecord record = new TemplateStore.TemplateRecord();
+        record.templateCode = "stable-template";
+        record.templateName = "stable-template";
+        record.languageCode = "zh_CN";
+        record.body = "Stable body";
+        record.raw = "{\"auditStatus\":\"pass\"}";
+        new TemplateStore(config.chatappTemplateFile()).replaceIfChanged(List.of(record));
+        FakeHttpExchange exchange = new FakeHttpExchange("GET", "/api/templates");
+
+        invokeRoute(exchange, config, new UnifiedMessageStore(config));
+
+        assertEquals(200, exchange.responseCode);
+        assertContains(exchange.responseText(), "stable-template");
+        assertContains(exchange.responseText(), "Stable body");
     }
 
     private static UnifiedMessage testSseMessage() {
@@ -2162,6 +2811,93 @@ public class UnifiedMessageStoreTest {
         assertEquals("1", Integer.toString(thread.size()));
         assertEquals("Synced hello", thread.get(0).text);
         assertEquals("Read", thread.get(0).status);
+    }
+
+    private static void chatAppWebhookDelegatesWritesToHistoryStore() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-chatapp-webhook-owner-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Config config = testConfig(dir, emailData, chatData.resolve("messages.jsonl"));
+        AtomicInteger writes = new AtomicInteger();
+        ChatAppHistoryStore history = new ChatAppHistoryStore(config) {
+            @Override
+            public WriteResult appendResult(String id, String direction, String from, String to,
+                                            String text, String status, String timestamp,
+                                            String raw, Map<String, String> extra) throws Exception {
+                writes.incrementAndGet();
+                return super.appendResult(id, direction, from, to, text, status, timestamp, raw, extra);
+            }
+        };
+        ChatAppSender sender = new ChatAppSender(config, history);
+
+        sender.appendWebhook("{\"MessageId\":\"webhook-owner-1\",\"From\":\"user\","
+                + "\"To\":\"business\",\"Message\":\"hello\"}");
+
+        assertEquals("1", Integer.toString(writes.get()));
+        assertContains(Files.readString(config.chatappDataFile()), "webhook-owner-1");
+    }
+
+    private static void chatAppStatusWebhookPreservesLegacyProjection() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-chatapp-status-webhook-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp");
+        Files.createDirectories(emailData);
+        Files.createDirectories(chatData);
+        Config config = testConfig(dir, emailData, chatData.resolve("messages.jsonl"));
+        ChatAppHistoryStore history = new ChatAppHistoryStore(config);
+        history.appendResult("webhook-status-1", "outbound", "business", "user", "hello", null,
+                "2026-08-01T00:00:00Z", "{}", Map.of());
+        ChatAppSender sender = new ChatAppSender(config, history);
+
+        UnifiedMessage result = sender.appendWebhook("{\"MessageId\":\"webhook-status-1\","
+                + "\"From\":\"business\",\"To\":\"user\",\"Status\":\"Read\"}");
+
+        String stored = Files.readString(config.chatappDataFile());
+        assertContains(stored, "\"id\":\"webhook-status-1-status\"");
+        assertContains(stored, "\"direction\":\"status\"");
+        assertContains(stored, "\"text\":\"Status: Read\"");
+        assertNotContains(stored, "\"status\":\"Read\"");
+        assertEquals("webhook-status-1", result.sourceId);
+        assertEquals("outbound", result.direction);
+        assertEquals("hello", result.text);
+        assertEquals("Read", result.status);
+    }
+
+    private static void chatAppSyncRouteUsesSynchronizerAndPreservesLockBusyResult() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-chatapp-sync-route-test");
+        Path emailData = dir.resolve("email");
+        Path messages = dir.resolve("messages.jsonl");
+        Files.createDirectories(emailData);
+        Config config = testConfig(dir, emailData, messages);
+        UnifiedMessageStore store = new UnifiedMessageStore(config);
+        AtomicInteger syncCalls = new AtomicInteger();
+        ChatAppMessageSynchronizer synchronizer = new ChatAppMessageSynchronizer(
+                messages, gate -> {
+                    syncCalls.incrementAndGet();
+                    SyncResult result = new SyncResult("chatapp");
+                    result.message = "unexpected";
+                    return result;
+                }, () -> { });
+        FakeHttpExchange exchange = new FakeHttpExchange("POST", "/api/sync/chatapp");
+
+        try (ChatAppMessageSyncLock.Handle ignored =
+                     ChatAppMessageSyncLock.tryAcquire(messages).orElseThrow(); synchronizer) {
+            App.routeForTests(exchange, config, store, synchronizer);
+        }
+
+        assertEquals(200, exchange.responseCode);
+        JsonObject response = JsonParser.parseString(exchange.responseText()).getAsJsonObject();
+        assertEquals("chatapp", response.get("channel").getAsString());
+        assertEquals("lock_busy", response.get("message").getAsString());
+        for (String field : List.of(
+                "fetched", "saved", "updated", "skipped", "pages", "durationMillis",
+                "syncStartTime", "syncEndTime", "mediaCached", "mediaQueued", "mediaFailed",
+                "mediaFailures", "templatesFetched", "templatesSaved", "templatesSkipped")) {
+            assertTrue(response.has(field), "missing SyncResult field: " + field);
+        }
+        assertEquals(0, syncCalls.get());
     }
 
     private static void chatAppHistoryStoreRefreshesExpiredMediaUrlForExistingMessage() throws Exception {
@@ -2640,12 +3376,12 @@ public class UnifiedMessageStoreTest {
         }
     }
 
-    private static void assertThrows(Class<? extends Throwable> expectedType, ThrowingRunnable runnable) {
+    private static <T extends Throwable> T assertThrows(Class<T> expectedType, ThrowingRunnable runnable) {
         try {
             runnable.run();
         } catch (Throwable actual) {
             if (expectedType.isInstance(actual)) {
-                return;
+                return expectedType.cast(actual);
             }
             throw new AssertionError("Expected " + expectedType.getSimpleName()
                     + " but got " + actual.getClass().getSimpleName(), actual);

@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
+import org.xml.sax.helpers.DefaultHandler;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
@@ -19,20 +20,28 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /** Verifies and decrypts official WeCom suite callbacks. */
 public final class WeComCallbackCodec {
     private static final int MAX_XML_BYTES = 1_048_576;
     private static final int MAX_FIELD = 512;
     private final String suiteId;
+    private final Set<String> allowedSuiteIds;
     private final String callbackReceiveId;
+    private final Set<String> allowedEchoReceiveIds;
     private final String token;
     private final byte[] aesKey;
     private final Clock clock;
 
     public WeComCallbackCodec(Config config) {
-        this(config.wecomSuiteId(), config.wecomCallbackReceiveId(), config.wecomToken(),
-                config.wecomEncodingAesKey(), Clock.systemUTC());
+        this(config, Clock.systemUTC());
+    }
+
+    WeComCallbackCodec(Config config, Clock clock) {
+        this(config.wecomSuiteId(), config.wecomLoginSuiteId(), config.wecomCallbackReceiveId(),
+                config.wecomToken(), config.wecomEncodingAesKey(), clock);
     }
 
     WeComCallbackCodec(String suiteId, String token, String encodingAesKey) {
@@ -45,8 +54,22 @@ public final class WeComCallbackCodec {
 
     WeComCallbackCodec(String suiteId, String callbackReceiveId, String token,
                        String encodingAesKey, Clock clock) {
+        this(suiteId, "", callbackReceiveId, token, encodingAesKey, clock);
+    }
+
+    private WeComCallbackCodec(String suiteId, String loginSuiteId, String callbackReceiveId, String token,
+                               String encodingAesKey, Clock clock) {
         this.suiteId = require(suiteId, "suiteId", 128);
+        LinkedHashSet<String> suiteIds = new LinkedHashSet<>();
+        suiteIds.add(this.suiteId);
+        if (loginSuiteId != null && !loginSuiteId.isBlank()) {
+            suiteIds.add(require(loginSuiteId, "loginSuiteId", 128));
+        }
+        this.allowedSuiteIds = Set.copyOf(suiteIds);
         this.callbackReceiveId = require(callbackReceiveId, "callbackReceiveId", 128);
+        LinkedHashSet<String> echoReceiveIds = new LinkedHashSet<>(suiteIds);
+        echoReceiveIds.add(this.callbackReceiveId);
+        this.allowedEchoReceiveIds = Set.copyOf(echoReceiveIds);
         this.token = require(token, "token", 512);
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
         String padded = require(encodingAesKey, "encodingAesKey", 128);
@@ -70,8 +93,8 @@ public final class WeComCallbackCodec {
             require(encryptXml, "encrypt", MAX_XML_BYTES);
             String encrypted = encryptedValue(encryptXml);
             long epoch = verifySignature(msgSignature, timestamp, nonce, encrypted);
-            String plainXml = decrypt(encrypted, suiteId);
-            return parse(plainXml, epoch);
+            DecryptedPayload payload = decrypt(encrypted, allowedSuiteIds);
+            return parse(payload.xml(), payload.receiveId(), epoch);
         } catch (WeComAuthorizationException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -88,7 +111,7 @@ public final class WeComCallbackCodec {
             require(nonce, "nonce", 128);
             require(encryptedEcho, "echostr", MAX_XML_BYTES);
             verifySignature(msgSignature, timestamp, nonce, encryptedEcho);
-            return decrypt(encryptedEcho, callbackReceiveId);
+            return decrypt(encryptedEcho, allowedEchoReceiveIds).xml();
         } catch (WeComAuthorizationException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -123,12 +146,14 @@ public final class WeComCallbackCodec {
         factory.setExpandEntityReferences(false);
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-        Document document = factory.newDocumentBuilder().parse(new InputSource(new StringReader(trimmed)));
+        var builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(new DefaultHandler());
+        Document document = builder.parse(new InputSource(new StringReader(trimmed)));
         String encrypted = field(document, "Encrypt");
         return require(encrypted, "Encrypt", MAX_XML_BYTES);
     }
 
-    private String decrypt(String encrypted, String expectedReceiveId) throws Exception {
+    private DecryptedPayload decrypt(String encrypted, Set<String> expectedReceiveIds) throws Exception {
         byte[] ciphertext = Base64.getDecoder().decode(encrypted);
         if (ciphertext.length == 0 || ciphertext.length % 16 != 0 || ciphertext.length > MAX_XML_BYTES) {
             throw new IllegalArgumentException("encrypted callback has invalid dimensions");
@@ -152,10 +177,10 @@ public final class WeComCallbackCodec {
                 String xml = new String(plain, 20, xmlLength, StandardCharsets.UTF_8);
                 String receiveId = new String(plain, 20 + xmlLength, plain.length - 20 - xmlLength,
                         StandardCharsets.UTF_8);
-                if (!expectedReceiveId.equals(receiveId)) {
+                if (!expectedReceiveIds.contains(receiveId)) {
                     throw new SecurityException("callback receive id is invalid");
                 }
-                return xml;
+                return new DecryptedPayload(xml, receiveId);
             } finally {
                 java.util.Arrays.fill(plain, (byte) 0);
             }
@@ -165,7 +190,7 @@ public final class WeComCallbackCodec {
         }
     }
 
-    private DecodedCallback parse(String xml, long epoch) throws Exception {
+    private DecodedCallback parse(String xml, String receiveId, long epoch) throws Exception {
         if (xml.getBytes(StandardCharsets.UTF_8).length > MAX_XML_BYTES) throw new IllegalArgumentException("XML too large");
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -176,9 +201,12 @@ public final class WeComCallbackCodec {
         factory.setExpandEntityReferences(false);
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-        Document document = factory.newDocumentBuilder().parse(new InputSource(new StringReader(xml)));
+        var builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(new DefaultHandler());
+        Document document = builder.parse(new InputSource(new StringReader(xml)));
         String callbackSuiteId = field(document, "SuiteId");
-        if (!callbackSuiteId.isBlank() && !suiteId.equals(callbackSuiteId)) {
+        if (callbackSuiteId.isBlank() || !allowedSuiteIds.contains(callbackSuiteId)
+                || !callbackSuiteId.equals(receiveId)) {
             throw new SecurityException("callback suite id is invalid");
         }
         String infoType = require(field(document, "InfoType"), "InfoType", 64);
@@ -189,7 +217,7 @@ public final class WeComCallbackCodec {
         for (String value : List.of(authCorpId, authCode, suiteTicket, state)) {
             if (value.length() > MAX_FIELD) throw new IllegalArgumentException("callback field is too long");
         }
-        return new DecodedCallback(suiteId, infoType, authCorpId, authCode, suiteTicket, state,
+        return new DecodedCallback(callbackSuiteId, infoType, authCorpId, authCode, suiteTicket, state,
                 Instant.ofEpochSecond(epoch));
     }
 
@@ -222,4 +250,5 @@ public final class WeComCallbackCodec {
 
     public record DecodedCallback(String suiteId, String infoType, String authCorpId, String authCode,
                                   String suiteTicket, String state, Instant timestamp) {}
+    private record DecryptedPayload(String xml, String receiveId) {}
 }

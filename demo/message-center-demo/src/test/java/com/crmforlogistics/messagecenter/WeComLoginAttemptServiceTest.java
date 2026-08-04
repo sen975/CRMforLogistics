@@ -38,8 +38,8 @@ class WeComLoginAttemptServiceTest {
                 config, store, clock, states::remove);
 
         WeComLoginAttemptService.LoginAttemptResponse first = service.createAttempt();
-        assertEquals("ww-test-corp", first.corpId());
-        assertEquals("1000247", first.agentId());
+        assertEquals("ServiceApp", first.loginType());
+        assertEquals("ww-login-suite", first.appId());
         assertEquals("https://crm.example.com/", first.redirectUri());
         assertEquals(30, first.expiresIn());
         service.createAttempt();
@@ -90,10 +90,58 @@ class WeComLoginAttemptServiceTest {
     }
 
     @Test
+    void usesServiceAppLoginSuiteForQrButKeepsInstallationBinding() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(2500));
+        Config config = new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_AUTH_CORP_ID", "ww-authorized-corp",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-login-app.jsonl").toString()));
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-authorized-corp", "2000001", "permanent-code");
+
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, store, clock,
+                () -> "dddddddddddddddddddddddddddddddd");
+
+        WeComLoginAttemptService.LoginAttemptResponse attempt = service.createAttempt();
+        assertEquals("ServiceApp", attempt.loginType());
+        assertEquals("ww-login-suite", attempt.appId());
+
+        WeComLoginAttemptService.InstallationBinding binding = service.consume(attempt.state());
+        assertEquals("ww-authorized-corp", binding.authCorpId());
+        assertEquals("2000001", binding.agentId());
+    }
+
+    @Test
+    void rejectsPartiallyConfiguredLoginSuite() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(2600));
+        Config config = new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_AUTH_CORP_ID", "ww-authorized-corp",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-login-incomplete.jsonl").toString()));
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-authorized-corp", "2000001", "permanent-code");
+
+        WeComAuthorizationException error = assertThrows(WeComAuthorizationException.class,
+                () -> WeComLoginAttemptService.forTests(config, store, clock,
+                        () -> "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").createAttempt());
+        assertEquals("WECOM_LOGIN_SUITE_INCOMPLETE", error.code());
+        assertEquals(400, error.httpStatus());
+    }
+
+    @Test
     void failsClosedWithoutConfiguredOrActiveInstallation() throws Exception {
         MutableClock clock = new MutableClock(Instant.ofEpochSecond(3000));
         Config missingSelection = new Config(Map.of(
                 "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
                 "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
                 "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-missing.jsonl").toString()));
@@ -118,6 +166,8 @@ class WeComLoginAttemptServiceTest {
     private Config config(String maxPending) {
         return new Config(Map.of(
                 "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
                 "WECOM_LOGIN_AUTH_CORP_ID", "ww-test-corp",
                 "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
                 "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",

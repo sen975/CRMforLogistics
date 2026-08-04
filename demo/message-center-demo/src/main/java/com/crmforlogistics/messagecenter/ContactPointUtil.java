@@ -4,12 +4,12 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-final class ContactPointUtil {
+public final class ContactPointUtil {
     private static final Pattern EMAIL_PATTERN = Pattern.compile("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", Pattern.CASE_INSENSITIVE);
 
     private ContactPointUtil() {}
 
-    static String normalizePointId(String value) {
+    public static String normalizePointId(String value) {
         if (value == null) return "";
         String trimmed = value.trim();
         if (trimmed.isBlank()) return "";
@@ -17,6 +17,10 @@ final class ContactPointUtil {
         String[] parts = trimmed.split(":", 3);
         if (parts.length == 2 && "email".equalsIgnoreCase(parts[0])) {
             return "email:" + extractEmail(parts[1]).toLowerCase(Locale.ROOT);
+        }
+        if (parts.length == 2 && "phone".equalsIgnoreCase(parts[0])) {
+            String phone = normalizePhone(parts[1]);
+            return phone.isBlank() ? "" : "phone:" + phone;
         }
         if (parts.length == 3 && "chatapp".equalsIgnoreCase(parts[0])) {
             return "chatapp:" + parts[1].trim().toLowerCase(Locale.ROOT) + ":" + normalizePhone(parts[2]);
@@ -41,6 +45,10 @@ final class ContactPointUtil {
         if (normalized.startsWith("wecom:")) {
             String value = normalized.substring("wecom:".length());
             return new ContactPoint(normalized, "wecom", "wecom", value, value);
+        }
+        if (normalized.startsWith("phone:")) {
+            String value = normalized.substring("phone:".length());
+            return new ContactPoint(normalized, "phone", "phone", value, value);
         }
         return new ContactPoint(normalized, "unknown", "unknown", normalized, normalized);
     }

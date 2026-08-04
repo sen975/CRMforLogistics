@@ -23,6 +23,16 @@ public final class ChatAppTemplateSynchronizer {
     private final Duration roundTimeout;
     private final AtomicBoolean running = new AtomicBoolean();
 
+    @FunctionalInterface
+    interface CommitAction {
+        TemplateStore.ReplaceResult run() throws Exception;
+    }
+
+    @FunctionalInterface
+    interface CommitGate {
+        TemplateStore.ReplaceResult commit(CommitAction action) throws Exception;
+    }
+
     ChatAppTemplateSynchronizer(Config config, TemplateStore templateStore,
                                 ChatAppTemplateGateway.Factory gatewayFactory, Clock clock,
                                 Duration roundTimeout) {
@@ -41,6 +51,11 @@ public final class ChatAppTemplateSynchronizer {
     }
 
     public Outcome sync() throws Exception {
+        return syncWithCommitGate(CommitAction::run);
+    }
+
+    Outcome syncWithCommitGate(CommitGate commitGate) throws Exception {
+        Objects.requireNonNull(commitGate);
         long started = System.nanoTime();
         if (!running.compareAndSet(false, true)) {
             return Outcome.lockBusy(started);
@@ -52,18 +67,19 @@ public final class ChatAppTemplateSynchronizer {
                 return Outcome.lockBusy(started);
             }
             try (ChatAppTemplateSyncLock.Handle ignored = acquired.orElseThrow()) {
-                return synchronizeLocked(started);
+                return synchronizeLocked(started, commitGate);
             }
         } finally {
             running.set(false);
         }
     }
 
-    private Outcome synchronizeLocked(long started) throws Exception {
+    private Outcome synchronizeLocked(long started, CommitGate commitGate) throws Exception {
         long deadlineNanos = System.nanoTime() + roundTimeout.toNanos();
         Map<String, TemplateStore.TemplateRecord> records = new LinkedHashMap<>();
         int fetched = 0;
         int pages = 0;
+        Integer reportedTotal = null;
 
         try (ChatAppTemplateGateway gateway = openGateway()) {
             for (int pageIndex = 1; pageIndex <= config.chatappTemplateMaxPages(); pageIndex++) {
@@ -72,6 +88,13 @@ public final class ChatAppTemplateSynchronizer {
                 pages++;
                 if (page.total() != null && page.total() > MAX_TEMPLATE_RECORDS) {
                     throw failure("list", "template_limit_exceeded: total=" + page.total());
+                }
+                if (page.total() != null) {
+                    if (reportedTotal != null && !reportedTotal.equals(page.total())) {
+                        throw failure("list", "template_total_inconsistent: first="
+                                + reportedTotal + ", current=" + page.total());
+                    }
+                    reportedTotal = page.total();
                 }
                 List<ChatAppTemplateGateway.TemplateSummary> rows =
                         page.templates() == null ? List.of() : page.templates();
@@ -103,6 +126,10 @@ public final class ChatAppTemplateSynchronizer {
                     break;
                 }
             }
+            if (reportedTotal != null && reportedTotal != fetched) {
+                throw failure("list", "template_total_mismatch: reported="
+                        + reportedTotal + ", fetched=" + fetched);
+            }
         } catch (SyncFailure failure) {
             throw failure;
         } catch (InterruptedException exception) {
@@ -115,7 +142,10 @@ public final class ChatAppTemplateSynchronizer {
         remainingTimeout(deadlineNanos);
         TemplateStore.ReplaceResult committed;
         try {
-            committed = templateStore.replaceIfChanged(new ArrayList<>(records.values()));
+            List<TemplateStore.TemplateRecord> snapshot = new ArrayList<>(records.values());
+            committed = commitGate.commit(() -> templateStore.replaceIfChanged(snapshot));
+        } catch (SyncFailure failure) {
+            throw failure;
         } catch (Exception exception) {
             throw new SyncFailure("commit", "template_sync_failed", exception);
         }

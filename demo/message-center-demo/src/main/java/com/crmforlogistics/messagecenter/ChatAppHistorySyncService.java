@@ -1,20 +1,11 @@
 package com.crmforlogistics.messagecenter;
 
-import com.aliyun.auth.credentials.Credential;
-import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
-import com.aliyun.auth.credentials.provider.ICredentialProvider;
-import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
-import com.aliyun.sdk.service.cams20200606.AsyncClient;
-import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageRequest;
-import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import darabonba.core.client.ClientOverrideConfiguration;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -31,16 +22,32 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ChatAppHistorySyncService {
+public class ChatAppHistorySyncService implements AutoCloseable {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final Duration LIST_REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration MEDIA_CLOSE_TIMEOUT = Duration.ofSeconds(15);
 
     private final Config config;
     private final ChatAppHistoryStore historyStore;
     private final TemplateStore templateStore;
     private final MediaCacher mediaCacher;
     private final ChatAppTemplateSynchronizer templateSynchronizer;
+    private final ChatAppMessageGateway.Factory gatewayFactory;
     private final ThreadPoolExecutor mediaExecutor;
+    private final AtomicBoolean mediaClosed = new AtomicBoolean();
+    private final Object mediaLifecycleLock = new Object();
+
+    @FunctionalInterface
+    interface CommitAction {
+        void run() throws Exception;
+    }
+
+    @FunctionalInterface
+    interface CommitGate {
+        void commit(CommitAction action) throws Exception;
+    }
 
     interface MediaCacher {
         void cache(UnifiedMessage message) throws Exception;
@@ -52,35 +59,51 @@ public class ChatAppHistorySyncService {
 
     ChatAppHistorySyncService(Config config, ChatAppTemplateSynchronizer templateSynchronizer) {
         this(config, new ChatAppHistoryStore(config), new TemplateStore(config.chatappTemplateFile()),
-                defaultMediaCacher(config), templateSynchronizer);
+                defaultMediaCacher(config), templateSynchronizer,
+                () -> AliyunChatAppMessageGateway.open(config));
     }
 
     ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore, TemplateStore templateStore) {
-        this(config, historyStore, templateStore, defaultMediaCacher(config));
+        this(config, historyStore, templateStore, defaultMediaCacher(config),
+                ChatAppTemplateSynchronizer.create(config),
+                () -> AliyunChatAppMessageGateway.open(config));
     }
 
     ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore, TemplateStore templateStore, MediaCacher mediaCacher) {
         this(config, historyStore, templateStore, mediaCacher,
-                ChatAppTemplateSynchronizer.create(config));
+                ChatAppTemplateSynchronizer.create(config),
+                () -> AliyunChatAppMessageGateway.open(config));
     }
 
-    private ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore,
-                                      TemplateStore templateStore, MediaCacher mediaCacher,
-                                      ChatAppTemplateSynchronizer templateSynchronizer) {
-        this.config = config;
-        this.historyStore = historyStore;
-        this.templateStore = templateStore;
+    ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore,
+                              TemplateStore templateStore, MediaCacher mediaCacher,
+                              ChatAppTemplateSynchronizer templateSynchronizer,
+                              ChatAppMessageGateway.Factory gatewayFactory) {
+        this(config, historyStore, templateStore, mediaCacher, templateSynchronizer,
+                gatewayFactory, createMediaExecutor(config));
+    }
+
+    ChatAppHistorySyncService(Config config, ChatAppHistoryStore historyStore,
+                              TemplateStore templateStore, MediaCacher mediaCacher,
+                              ChatAppTemplateSynchronizer templateSynchronizer,
+                              ChatAppMessageGateway.Factory gatewayFactory,
+                              ThreadPoolExecutor mediaExecutor) {
+        this.config = Objects.requireNonNull(config);
+        this.historyStore = Objects.requireNonNull(historyStore);
+        this.templateStore = Objects.requireNonNull(templateStore);
         this.mediaCacher = Objects.requireNonNull(mediaCacher);
         this.templateSynchronizer = Objects.requireNonNull(templateSynchronizer);
-        this.mediaExecutor = createMediaExecutor(config);
+        this.gatewayFactory = Objects.requireNonNull(gatewayFactory);
+        this.mediaExecutor = Objects.requireNonNull(mediaExecutor);
     }
 
-    private static MediaCacher defaultMediaCacher(Config config) {
+    static MediaCacher defaultMediaCacher(Config config) {
         MediaGateway gateway = new MediaGateway(config);
         return gateway::fetch;
     }
 
-    public SyncResult syncMessages() throws Exception {
+    SyncResult syncMessages(CommitGate commitGate) throws Exception {
+        Objects.requireNonNull(commitGate);
         long startedNanos = System.nanoTime();
         int pageSize = Integer.parseInt(config.value("SYNC_PAGE_SIZE", "20"));
         int maxPages = Integer.parseInt(config.value("SYNC_MAX_PAGES", "2"));
@@ -97,38 +120,27 @@ public class ChatAppHistorySyncService {
             result.templatesSkipped = templates.skipped;
         }
 
-        try (AsyncClient client = createClient()) {
+        try (ChatAppMessageGateway gateway = openGateway()) {
             for (int pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
-                ListChatappMessageRequest.Builder builder = ListChatappMessageRequest.builder()
-                        .custSpaceId(requiredConfig("CUST_SPACE_ID"))
-                        .startTime(startTime)
-                        .endTime(endTime)
-                        .page(ListChatappMessageRequest.Page.builder()
-                                .index((long) pageIndex)
-                                .size((long) pageSize)
-                                .build());
-
-                putIfPresent("CHATAPP_CHANNEL_TYPE", builder::channelType);
-                putIfPresent("CHATAPP_FROM", builder::businessNumber);
-                putIfPresent("SYNC_USER_NUMBER", builder::userNumber);
-                putIfPresent("SYNC_MESSAGE_STATUS", builder::messageStatus);
-                putIfPresent("SYNC_CLIENT_ACCEPT_STATUS", builder::clientAcceptStatus);
-
-                ListChatappMessageResponse response = client.listChatappMessage(builder.build()).get();
-                result.pages++;
-                ListChatappMessageResponseBody body = response.getBody();
-                if (body == null) {
-                    break;
+                ChatAppMessageGateway.MessageRequest request = new ChatAppMessageGateway.MessageRequest(
+                        startTime, endTime, pageIndex, pageSize, requiredConfig("CUST_SPACE_ID"),
+                        config.value("CHATAPP_CHANNEL_TYPE", ""), config.value("CHATAPP_FROM", ""),
+                        config.value("SYNC_USER_NUMBER", ""), config.value("SYNC_MESSAGE_STATUS", ""),
+                        config.value("SYNC_CLIENT_ACCEPT_STATUS", ""));
+                ChatAppMessageGateway.MessagePage page = gateway.listMessages(request, LIST_REQUEST_TIMEOUT);
+                if (page == null) {
+                    throw new IllegalStateException("ListChatappMessage returned empty page");
                 }
-                assertOk("ListChatappMessage", body.getCode(), body.getMessage());
-                List<ListChatappMessageResponseBody.Data> rows = body.getData();
-                if (rows == null || rows.isEmpty()) {
+                result.pages++;
+                List<ListChatappMessageResponseBody.Data> rows = page.messages() == null
+                        ? List.of() : page.messages();
+                if (rows.isEmpty()) {
                     break;
                 }
                 result.fetched += rows.size();
                 for (ListChatappMessageResponseBody.Data row : rows) {
                     ProjectedChatAppMessage message = project(row);
-                    appendAndPrecache(message, result);
+                    commitGate.commit(() -> appendAndPrecache(message, result));
                 }
                 if (rows.size() < pageSize) {
                     break;
@@ -189,20 +201,32 @@ public class ChatAppHistorySyncService {
     }
 
     private void queueMediaCache(UnifiedMessage unified, SyncResult result) {
-        try {
-            mediaExecutor.execute(() -> {
-                try {
-                    mediaCacher.cache(unified);
-                } catch (Exception ex) {
-                    System.err.println("ChatApp media precache failed for "
-                            + ContactPointUtil.firstNonBlank(unified.sourceId, unified.id) + ": " + ex.getMessage());
-                }
-            });
-            result.mediaQueued++;
-        } catch (RejectedExecutionException ex) {
-            result.mediaFailed++;
-            result.recordMediaFailure(unified, new IllegalStateException("附件缓存队列已满"));
+        synchronized (mediaLifecycleLock) {
+            if (mediaClosed.get()) {
+                recordMediaQueueFailure(unified, result, "media cache service is closed");
+                return;
+            }
+            try {
+                mediaExecutor.execute(() -> {
+                    try {
+                        mediaCacher.cache(unified);
+                    } catch (Exception ex) {
+                        System.err.println("ChatApp media precache failed for "
+                                + ContactPointUtil.firstNonBlank(unified.sourceId, unified.id) + ": " + ex.getMessage());
+                    }
+                });
+                result.mediaQueued++;
+            } catch (RejectedExecutionException ex) {
+                String reason = mediaClosed.get()
+                        ? "media cache service is closed" : "media cache queue is full";
+                recordMediaQueueFailure(unified, result, reason);
+            }
         }
+    }
+
+    private static void recordMediaQueueFailure(UnifiedMessage unified, SyncResult result, String reason) {
+        result.mediaFailed++;
+        result.recordMediaFailure(unified, new IllegalStateException(reason));
     }
 
     private static ThreadPoolExecutor createMediaExecutor(Config config) {
@@ -429,6 +453,14 @@ public class ChatAppHistorySyncService {
         return Instant.now().toEpochMilli();
     }
 
+    private ChatAppMessageGateway openGateway() throws Exception {
+        ChatAppMessageGateway gateway = gatewayFactory.open();
+        if (gateway == null) {
+            throw new IllegalStateException("gateway_factory_returned_null");
+        }
+        return gateway;
+    }
+
     private static Instant parseTime(String value) {
         String trimmed = value.trim();
         try {
@@ -450,50 +482,12 @@ public class ChatAppHistorySyncService {
         return Instant.ofEpochMilli(Long.parseLong(trimmed));
     }
 
-    private AsyncClient createClient() {
-        ICredentialProvider provider = createCredentialsProvider();
-        return AsyncClient.builder()
-                .region(config.value("CAMS_REGION", "ap-southeast-1"))
-                .credentialsProvider(provider)
-                .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(config.value("CAMS_ENDPOINT", "cams.ap-southeast-1.aliyuncs.com")))
-                .build();
-    }
-
-    private ICredentialProvider createCredentialsProvider() {
-        String accessKeyId = config.value("ALIYUN_ACCESS_KEY_ID", "");
-        String accessKeySecret = config.value("ALIYUN_ACCESS_KEY_SECRET", "");
-        if (!accessKeyId.isBlank() && !accessKeySecret.isBlank()) {
-            return StaticCredentialProvider.create(Credential.builder()
-                    .accessKeyId(accessKeyId)
-                    .accessKeySecret(accessKeySecret)
-                    .build());
-        }
-        return DefaultCredentialProvider.builder().build();
-    }
-
     private String requiredConfig(String key) {
         String value = config.value(key, "");
         if (value.isBlank()) {
             throw new IllegalStateException("缺少配置: " + key);
         }
         return value;
-    }
-
-    private void putIfPresent(String key, java.util.function.Consumer<String> setter) {
-        putIfNotBlank(config.value(key, ""), setter);
-    }
-
-    private static void putIfNotBlank(String value, java.util.function.Consumer<String> setter) {
-        if (value != null && !value.isBlank()) {
-            setter.accept(value);
-        }
-    }
-
-    private static void assertOk(String apiName, String code, String message) {
-        if (code != null && !code.isBlank() && !"OK".equalsIgnoreCase(code)) {
-            throw new IllegalStateException(apiName + " failed: " + code + " " + message);
-        }
     }
 
     private static String normalizeTimestamp(String value) {
@@ -519,6 +513,32 @@ public class ChatAppHistorySyncService {
             }
         }
         return Instant.now().toString();
+    }
+
+    @Override
+    public void close() {
+        synchronized (mediaLifecycleLock) {
+            if (!mediaClosed.compareAndSet(false, true)) {
+                return;
+            }
+            mediaExecutor.shutdownNow();
+        }
+        boolean interrupted = false;
+        long deadline = System.nanoTime() + MEDIA_CLOSE_TIMEOUT.toNanos();
+        while (!mediaExecutor.isTerminated()) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            try {
+                mediaExecutor.awaitTermination(remaining, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException exception) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     static class ProjectedChatAppMessage {

@@ -14,13 +14,20 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
         ChatAppTemplateSynchronizer.Outcome run() throws Exception;
     }
 
-    private final SyncAction syncAction;
+    @FunctionalInterface
+    interface GatedSyncAction {
+        ChatAppTemplateSynchronizer.Outcome run(
+                ChatAppTemplateSynchronizer.CommitGate commitGate) throws Exception;
+    }
+
+    private final GatedSyncAction syncAction;
     private final IntConsumer changedPublisher;
     private final ScheduledExecutorService executor;
     private final int intervalSeconds;
     private final boolean enabled;
     private final Object lifecycleLock = new Object();
     private Lifecycle lifecycle = Lifecycle.NEW;
+    private int operationsInFlight;
 
     public static ChatAppTemplateSyncRuntime open(Config config,
                                                    ChatAppTemplateSynchronizer synchronizer,
@@ -32,7 +39,8 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
             System.err.println("chatapp.template_sync event=skipped_not_configured stage=config");
         }
         return new ChatAppTemplateSyncRuntime(enabled,
-                config.chatappTemplateSyncIntervalSeconds(), synchronizer::sync, changedPublisher,
+                config.chatappTemplateSyncIntervalSeconds(),
+                commitGate -> synchronizer.syncWithCommitGate(commitGate), changedPublisher,
                 enabled ? Executors.newSingleThreadScheduledExecutor(runnable -> {
                     Thread thread = new Thread(runnable, "chatapp-template-sync");
                     thread.setDaemon(true);
@@ -42,6 +50,12 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
 
     ChatAppTemplateSyncRuntime(boolean enabled, int intervalSeconds,
                                SyncAction syncAction, IntConsumer changedPublisher,
+                               ScheduledExecutorService executor) {
+        this(enabled, intervalSeconds, commitGate -> syncAction.run(), changedPublisher, executor);
+    }
+
+    ChatAppTemplateSyncRuntime(boolean enabled, int intervalSeconds,
+                               GatedSyncAction syncAction, IntConsumer changedPublisher,
                                ScheduledExecutorService executor) {
         this.enabled = enabled;
         this.intervalSeconds = intervalSeconds;
@@ -64,7 +78,7 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
             executor.scheduleAtFixedRate(this::runOnce, 0, intervalSeconds, TimeUnit.SECONDS);
         } catch (RejectedExecutionException exception) {
             synchronized (lifecycleLock) {
-                if (lifecycle != Lifecycle.CLOSED) {
+                if (lifecycle == Lifecycle.STARTED) {
                     lifecycle = Lifecycle.NEW;
                     throw exception;
                 }
@@ -78,27 +92,63 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
 
     private void runOnce() {
         synchronized (lifecycleLock) {
-            if (lifecycle == Lifecycle.CLOSED) {
+            if (lifecycle != Lifecycle.STARTED) {
                 return;
             }
         }
         long started = System.nanoTime();
+        log("started", null, null, started);
         try {
-            ChatAppTemplateSynchronizer.Outcome outcome = syncAction.run();
+            ChatAppTemplateSynchronizer.Outcome outcome = syncAction.run(this::commitIfOpen);
             if (outcome.status() == ChatAppTemplateSynchronizer.Status.CHANGED) {
-                if (tryBeginPublication()) {
-                    changedPublisher.accept(outcome.count());
-                }
+                publishIfOpen(outcome.count());
             }
-            log(outcome.status().name().toLowerCase(Locale.ROOT), outcome, null, started);
+            String event = outcome.status() == ChatAppTemplateSynchronizer.Status.CHANGED
+                    ? "succeeded" : outcome.status().name().toLowerCase(Locale.ROOT);
+            log(event, outcome, null, started);
         } catch (Exception exception) {
             log("failed", null, exception, started);
         }
     }
 
-    private boolean tryBeginPublication() {
+    private TemplateStore.ReplaceResult commitIfOpen(
+            ChatAppTemplateSynchronizer.CommitAction action) throws Exception {
+        if (!tryBeginOperation()) {
+            throw new ChatAppTemplateSynchronizer.SyncFailure(
+                    "cancelled", "template_sync_cancelled", null);
+        }
+        try {
+            return action.run();
+        } finally {
+            endOperation();
+        }
+    }
+
+    private void publishIfOpen(int count) {
+        if (!tryBeginOperation()) {
+            return;
+        }
+        try {
+            changedPublisher.accept(count);
+        } finally {
+            endOperation();
+        }
+    }
+
+    private boolean tryBeginOperation() {
         synchronized (lifecycleLock) {
-            return lifecycle != Lifecycle.CLOSED;
+            if (lifecycle != Lifecycle.STARTED) {
+                return false;
+            }
+            operationsInFlight++;
+            return true;
+        }
+    }
+
+    private void endOperation() {
+        synchronized (lifecycleLock) {
+            operationsInFlight--;
+            lifecycleLock.notifyAll();
         }
     }
 
@@ -119,28 +169,69 @@ public final class ChatAppTemplateSyncRuntime implements AutoCloseable {
 
     @Override
     public void close() {
+        boolean interrupted = false;
         synchronized (lifecycleLock) {
             if (lifecycle == Lifecycle.CLOSED) {
                 return;
             }
-            lifecycle = Lifecycle.CLOSED;
-        }
-        if (executor == null) {
-            return;
-        }
-        executor.shutdownNow();
-        try {
-            if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
-                System.err.println("chatapp.template_sync event=shutdown_timeout");
+            while (lifecycle == Lifecycle.CLOSING) {
+                try {
+                    lifecycleLock.wait();
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
             }
-        } catch (InterruptedException exception) {
+            if (lifecycle == Lifecycle.CLOSED) {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+            lifecycle = Lifecycle.CLOSING;
+        }
+        boolean timedOut = false;
+        if (executor != null) {
+            executor.shutdownNow();
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (!executor.isTerminated()) {
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    timedOut = true;
+                    break;
+                }
+                try {
+                    if (!executor.awaitTermination(remainingNanos, TimeUnit.NANOSECONDS)) {
+                        timedOut = true;
+                        break;
+                    }
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
+            }
+        }
+        synchronized (lifecycleLock) {
+            while (operationsInFlight > 0) {
+                try {
+                    lifecycleLock.wait();
+                } catch (InterruptedException exception) {
+                    interrupted = true;
+                }
+            }
+            lifecycle = Lifecycle.CLOSED;
+            lifecycleLock.notifyAll();
+        }
+        if (interrupted) {
             Thread.currentThread().interrupt();
+        }
+        if (timedOut) {
+            System.err.println("chatapp.template_sync event=shutdown_timeout");
         }
     }
 
     private enum Lifecycle {
         NEW,
         STARTED,
+        CLOSING,
         CLOSED
     }
 }

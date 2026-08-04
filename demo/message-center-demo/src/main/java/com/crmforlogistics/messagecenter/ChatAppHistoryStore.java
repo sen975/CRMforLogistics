@@ -5,24 +5,50 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ChatAppHistoryStore {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final ConcurrentMap<Path, ReentrantLock> PROCESS_LOCKS = new ConcurrentHashMap<>();
 
-    private final Config config;
+    @FunctionalInterface
+    interface AtomicCommitter {
+        void move(Path source, Path target) throws IOException;
+    }
+
+    private final Path file;
+    private final ReentrantLock processLock;
+    private final AtomicCommitter atomicCommitter;
 
     public ChatAppHistoryStore(Config config) {
-        this.config = config;
+        this(config, (source, target) -> Files.move(source, target,
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING));
+    }
+
+    ChatAppHistoryStore(Config config, AtomicCommitter atomicCommitter) {
+        this.file = config.chatappDataFile().toAbsolutePath().normalize();
+        this.processLock = PROCESS_LOCKS.computeIfAbsent(file, ignored -> new ReentrantLock());
+        this.atomicCommitter = Objects.requireNonNull(atomicCommitter);
     }
 
     public enum WriteResult {
@@ -32,24 +58,29 @@ public class ChatAppHistoryStore {
     }
 
     public Optional<Instant> latestTimestamp() throws Exception {
-        if (!Files.exists(config.chatappDataFile())) {
-            return Optional.empty();
-        }
-        Instant latest = Instant.EPOCH;
-        for (String line : Files.readAllLines(config.chatappDataFile(), StandardCharsets.UTF_8)) {
-            if (line.isBlank()) {
-                continue;
+        processLock.lockInterruptibly();
+        try {
+            if (!Files.exists(file)) {
+                return Optional.empty();
             }
-            try {
-                JsonObject object = JsonParser.parseString(line).getAsJsonObject();
-                Instant timestamp = MessageTime.parseInstant(JsonSupport.string(object, "timestamp"));
-                if (timestamp.isAfter(latest)) {
-                    latest = timestamp;
+            Instant latest = Instant.EPOCH;
+            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                if (line.isBlank()) {
+                    continue;
                 }
-            } catch (RuntimeException ignored) {
+                try {
+                    JsonObject object = JsonParser.parseString(line).getAsJsonObject();
+                    Instant timestamp = MessageTime.parseInstant(JsonSupport.string(object, "timestamp"));
+                    if (timestamp.isAfter(latest)) {
+                        latest = timestamp;
+                    }
+                } catch (RuntimeException ignored) {
+                }
             }
+            return latest.equals(Instant.EPOCH) ? Optional.empty() : Optional.of(latest);
+        } finally {
+            processLock.unlock();
         }
-        return latest.equals(Instant.EPOCH) ? Optional.empty() : Optional.of(latest);
     }
 
     public boolean append(String id, String direction, String from, String to, String text, String status,
@@ -65,38 +96,75 @@ public class ChatAppHistoryStore {
     public WriteResult appendResult(String id, String direction, String from, String to, String text, String status,
                                     String timestamp, String raw, Map<String, String> extra) throws Exception {
         String messageId = ContactPointUtil.firstNonBlank(id, "sync-" + UUID.randomUUID());
-        if (config.chatappDataFile().getParent() != null) {
-            Files.createDirectories(config.chatappDataFile().getParent());
-        }
         Map<String, String> record = messageRecord(messageId, direction, from, to, text, status, timestamp, raw, extra);
-        if (Files.exists(config.chatappDataFile())) {
-            List<String> lines = Files.readAllLines(config.chatappDataFile(), StandardCharsets.UTF_8);
-            for (int i = 0; i < lines.size(); i++) {
-                String line = lines.get(i);
-                if (line.isBlank()) {
+        processLock.lockInterruptibly();
+        try {
+            Files.createDirectories(file.getParent());
+            Path lockFile = file.resolveSibling(file.getFileName() + ".lock");
+            try (FileChannel lockChannel = FileChannel.open(lockFile,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                 FileLock ignored = lockChannel.lock()) {
+                List<String> lines = Files.exists(file)
+                        ? new ArrayList<>(Files.readAllLines(file, StandardCharsets.UTF_8))
+                        : new ArrayList<>();
+                Mutation mutation = mergeOrAppend(lines, record);
+                if (mutation.result() == WriteResult.SKIPPED) {
+                    return WriteResult.SKIPPED;
+                }
+                Path temp = Files.createTempFile(file.getParent(), file.getFileName() + ".", ".tmp");
+                try {
+                    byte[] bytes = serializeLines(lines);
+                    try (FileChannel output = FileChannel.open(temp,
+                            StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+                        while (buffer.hasRemaining()) {
+                            output.write(buffer);
+                        }
+                        output.force(true);
+                    }
+                    atomicCommitter.move(temp, file);
+                } finally {
+                    Files.deleteIfExists(temp);
+                }
+                return mutation.result();
+            }
+        } finally {
+            processLock.unlock();
+        }
+    }
+
+    private static Mutation mergeOrAppend(List<String> lines, Map<String, String> record) {
+        String messageId = record.get("id");
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (line.isBlank()) {
+                continue;
+            }
+            try {
+                JsonObject object = JsonParser.parseString(line).getAsJsonObject();
+                if (!messageId.equals(JsonSupport.string(object, "id"))) {
                     continue;
                 }
-                try {
-                    JsonObject object = JsonParser.parseString(line).getAsJsonObject();
-                    if (!messageId.equals(JsonSupport.string(object, "id"))) {
-                        continue;
-                    }
-                    Map<String, String> existing = toStringMap(object);
-                    Map<String, String> merged = mergeRecord(existing, record);
-                    if (existing.equals(merged)) {
-                        return WriteResult.SKIPPED;
-                    }
-                    lines.set(i, GSON.toJson(merged));
-                    Files.write(config.chatappDataFile(), lines, StandardCharsets.UTF_8,
-                            StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-                    return WriteResult.UPDATED;
-                } catch (RuntimeException ignored) {
+                Map<String, String> existing = toStringMap(object);
+                Map<String, String> merged = mergeRecord(existing, record);
+                if (existing.equals(merged)) {
+                    return new Mutation(WriteResult.SKIPPED);
                 }
+                lines.set(i, GSON.toJson(merged));
+                return new Mutation(WriteResult.UPDATED);
+            } catch (RuntimeException ignored) {
             }
         }
-        Files.writeString(config.chatappDataFile(), GSON.toJson(record) + System.lineSeparator(), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        return WriteResult.INSERTED;
+        lines.add(GSON.toJson(record));
+        return new Mutation(WriteResult.INSERTED);
+    }
+
+    private static byte[] serializeLines(List<String> lines) {
+        StringBuilder content = new StringBuilder();
+        for (String line : lines) {
+            content.append(line).append(System.lineSeparator());
+        }
+        return content.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private static Map<String, String> messageRecord(String messageId, String direction, String from, String to,
@@ -165,5 +233,8 @@ public class ChatAppHistoryStore {
             value = value.substring("状态:".length()).trim();
         }
         return value;
+    }
+
+    private record Mutation(WriteResult result) {
     }
 }

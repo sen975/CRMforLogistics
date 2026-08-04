@@ -3,24 +3,34 @@ package com.crmforlogistics.messagecenter;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Bounded HTTP gateway for service-provider WeCom credentials. */
 public final class WeComAuthorizationGateway implements WeComAuthorizationClient {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    private static final Pattern UPSTREAM_HINT = Pattern.compile(
+            "(?i)(?:^|\\s)hint\\s*:\\s*\\[([A-Za-z0-9_-]{1,128})]");
     private final Config config;
     private final HttpClient client;
     private final URI apiBase;
@@ -45,7 +55,7 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         require(suiteId, "suiteId", 128);
         require(suiteTicket, "suiteTicket", 512);
         if (receivedAt == null) throw new IllegalArgumentException("receivedAt is required");
-        if (!suiteId.equals(config.wecomSuiteId())) {
+        if (!isKnownSuite(suiteId)) {
             throw new WeComAuthorizationException("WECOM_CALLBACK_SUITE_MISMATCH", 403, "企业微信 SuiteId 不匹配");
         }
         tickets.put(suiteId, new SuiteTicket(suiteTicket, receivedAt.plusSeconds(30 * 60)));
@@ -66,11 +76,12 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         if (ticket == null || !clock.instant().isBefore(ticket.expiresAt())) {
             throw new WeComAuthorizationException("WECOM_SUITE_TICKET_NOT_READY", 503, "企业微信 suite_ticket 尚未就绪");
         }
-        JsonObject body = postJson("/cgi-bin/service/get_suite_token", Map.of(
-                "suite_id", config.wecomSuiteId(),
-                "suite_secret", config.wecomSuiteSecret(),
+        String path = "/cgi-bin/service/get_suite_token";
+        JsonObject body = postJson(path, Map.of(
+                "suite_id", suiteId,
+                "suite_secret", suiteSecret(suiteId),
                 "suite_ticket", ticket.value()), remaining(deadline));
-        String token = successString(body, "suite_access_token");
+        String token = successString(body, "suite_access_token", path);
         int expiresIn = positiveInt(body, "expires_in", 7200);
         suiteTokens.put(suiteId, new SuiteToken(token, now + expiresIn));
         return token;
@@ -78,9 +89,10 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
 
     public PermanentCodeResponse getPermanentCode(String authCode) throws WeComAuthorizationException {
         require(authCode, "authCode", 512);
-        JsonObject body = postJson("/cgi-bin/service/v2/get_permanent_code?suite_access_token="
+        String path = "/cgi-bin/service/v2/get_permanent_code";
+        JsonObject body = postJson(path + "?suite_access_token="
                 + encode(suiteAccessToken(config.wecomSuiteId())), Map.of("auth_code", authCode));
-        String permanentCode = successString(body, "permanent_code");
+        String permanentCode = successString(body, "permanent_code", path);
         JsonObject authInfo = body.has("auth_corp_info") && body.get("auth_corp_info").isJsonObject()
                 ? body.getAsJsonObject("auth_corp_info") : new JsonObject();
         String corpId = string(authInfo, "corpid");
@@ -95,10 +107,11 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         JsonObject body = postJson("/cgi-bin/service/v2/get_auth_info?suite_access_token="
                 + encode(suiteAccessToken(config.wecomSuiteId())), Map.of("auth_corpid", authCorpId,
                 "permanent_code", permanentCode));
-        String corpId = string(body, "auth_corpid");
+        JsonObject authCorpInfo = body.has("auth_corp_info") && body.get("auth_corp_info").isJsonObject()
+                ? body.getAsJsonObject("auth_corp_info") : new JsonObject();
+        String corpId = string(authCorpInfo, "corpid");
         JsonObject authInfo = body.has("auth_info") && body.get("auth_info").isJsonObject()
                 ? body.getAsJsonObject("auth_info") : new JsonObject();
-        if (corpId.isBlank()) corpId = string(authInfo, "corpid");
         require(corpId, "authCorpId", 128);
         java.util.ArrayList<AuthorizedAgent> agents = new java.util.ArrayList<>();
         if (authInfo.has("agent") && authInfo.get("agent").isJsonArray()) {
@@ -124,12 +137,85 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         require(authCorpId, "authCorpId", 128);
         require(permanentCode, "permanentCode", 512);
         long deadline = deadline(timeout);
-        JsonObject body = postJson("/cgi-bin/service/get_corp_token?suite_access_token="
+        String path = "/cgi-bin/service/get_corp_token";
+        JsonObject body = postJson(path + "?suite_access_token="
                 + encode(suiteAccessToken(config.wecomSuiteId(), remaining(deadline))), Map.of(
                 "auth_corpid", authCorpId,
                 "permanent_code", permanentCode), remaining(deadline));
-        return new CorpTokenResponse(successString(body, "access_token"),
+        return new CorpTokenResponse(successString(body, "access_token", path),
                 positiveInt(body, "expires_in", 7200));
+    }
+
+    public CorpTokenResponse getDevelopedAppToken(String authCorpId, String developedAppSecret,
+                                                   Duration timeout)
+            throws WeComAuthorizationException {
+        require(authCorpId, "authCorpId", 128);
+        require(developedAppSecret, "developedAppSecret", 512);
+        long deadline = deadline(timeout);
+        String path = "/cgi-bin/gettoken";
+        JsonObject body = getJson(path + "?corpid=" + encode(authCorpId)
+                + "&corpsecret=" + encode(developedAppSecret), remaining(deadline));
+        return new CorpTokenResponse(successString(body, "access_token", path),
+                positiveInt(body, "expires_in", 7200));
+    }
+
+    public LoginIdentity getLoginIdentity(String code) throws WeComAuthorizationException {
+        return getLoginIdentity(code, TIMEOUT);
+    }
+
+    public LoginIdentity getLoginIdentity(String code, Duration timeout) throws WeComAuthorizationException {
+        require(code, "code", 512);
+        if (!config.hasCompleteWeComLoginSuiteConfiguration()) {
+            throw new WeComAuthorizationException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
+                    "企业微信登录授权 Suite 尚未配置");
+        }
+        long deadline = deadline(timeout);
+        String path = "/cgi-bin/service/auth/getuserinfo3rd?suite_access_token="
+                + encode(suiteAccessToken(config.wecomLoginSuiteId(), remaining(deadline))) + "&code=" + encode(code);
+        JsonObject body = getJson(path, remaining(deadline));
+        String corpId = string(body, "corpid");
+        String userId = string(body, "userid");
+        if (corpId.isBlank() || userId.isBlank()) {
+            throw new WeComAuthorizationException("WECOM_LOGIN_IDENTITY_UNAVAILABLE", 403,
+                    "企业微信登录未返回企业成员身份");
+        }
+        require(corpId, "corpId", 128);
+        require(userId, "userId", 128);
+        return new LoginIdentity(corpId, userId);
+    }
+
+    private boolean isKnownSuite(String suiteId) {
+        return suiteId.equals(config.wecomSuiteId())
+                || (!config.wecomLoginSuiteId().isBlank() && suiteId.equals(config.wecomLoginSuiteId()));
+    }
+
+    private String suiteSecret(String suiteId) throws WeComAuthorizationException {
+        if (suiteId.equals(config.wecomSuiteId())) return config.wecomSuiteSecret();
+        if (!config.wecomLoginSuiteId().isBlank() && suiteId.equals(config.wecomLoginSuiteId())) {
+            return config.wecomLoginSuiteSecret();
+        }
+        throw new WeComAuthorizationException("WECOM_CALLBACK_SUITE_MISMATCH", 403,
+                "企业微信 SuiteId 不匹配");
+    }
+
+    private JsonObject getJson(String path, Duration timeout) throws WeComAuthorizationException {
+        try {
+            long requestDeadline = deadline(timeout);
+            HttpRequest request = HttpRequest.newBuilder(apiBase.resolve(path))
+                    .timeout(remaining(requestDeadline))
+                    .GET()
+                    .build();
+            return sendJson(request, requestDeadline);
+        } catch (Exception exception) {
+            if (exception instanceof WeComAuthorizationException authorizationException) {
+                throw authorizationException;
+            }
+            if (exception instanceof UpstreamResponseException upstream) {
+                throw upstreamUnavailable(upstream);
+            }
+            throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                    "企业微信上游服务暂时不可用", exception);
+        }
     }
 
     private JsonObject postJson(String path, Map<String, String> values) throws WeComAuthorizationException {
@@ -139,32 +225,64 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
     private JsonObject postJson(String path, Map<String, String> values, Duration timeout)
             throws WeComAuthorizationException {
         try {
+            long requestDeadline = deadline(timeout);
             JsonObject json = new JsonObject();
             for (Map.Entry<String, String> entry : values.entrySet()) {
                 json.addProperty(entry.getKey(), entry.getValue());
             }
             HttpRequest request = HttpRequest.newBuilder(apiBase.resolve(path))
-                    .timeout(timeout)
+                    .timeout(remaining(requestDeadline))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(json.toString(), StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream stream = response.body()) {
-                byte[] bytes = stream.readNBytes(MAX_RESPONSE_BYTES + 1);
-                if (bytes.length > MAX_RESPONSE_BYTES || response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw new IOException("upstream response unavailable");
-                }
-                JsonObject body = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
-                int errcode = body.has("errcode") ? body.get("errcode").getAsInt() : -1;
-                if (errcode != 0) {
-                    throw new IOException("upstream rejected request");
-                }
-                return body;
-            }
+            return sendJson(request, requestDeadline);
         } catch (Exception exception) {
+            if (exception instanceof UpstreamResponseException upstream) {
+                throw upstreamUnavailable(upstream);
+            }
             throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
                     "企业微信上游服务暂时不可用", exception);
         }
+    }
+
+    private static WeComAuthorizationException upstreamUnavailable(UpstreamResponseException failure) {
+        return new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                "企业微信上游服务暂时不可用", failure.errcode(), failure.path(),
+                failure.statusCode(), failure.hint(), failure);
+    }
+
+    private JsonObject sendJson(HttpRequest request, long requestDeadline) throws Exception {
+        CompletableFuture<HttpResponse<byte[]>> responseFuture = client.sendAsync(
+                request, ignored -> new BoundedBodySubscriber(MAX_RESPONSE_BYTES));
+        final HttpResponse<byte[]> response;
+        try {
+            response = responseFuture.get(remaining(requestDeadline).toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException exception) {
+            responseFuture.cancel(true);
+            throw new IOException("upstream response unavailable", exception);
+        } catch (InterruptedException exception) {
+            responseFuture.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IOException("upstream response unavailable", exception);
+        }
+        byte[] bytes = response.body();
+        if (bytes == null || response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new UpstreamResponseException(request.uri().getPath(), response.statusCode(), null, null);
+        }
+        JsonObject body = JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
+        Integer errcode = body.has("errcode") && body.get("errcode").isJsonPrimitive()
+                ? body.get("errcode").getAsInt() : null;
+        if (errcode != null && errcode != 0) {
+            throw new UpstreamResponseException(request.uri().getPath(), response.statusCode(), errcode,
+                    extractHint(string(body, "errmsg")));
+        }
+        return body;
+    }
+
+    private static String extractHint(String errmsg) {
+        if (errmsg == null || errmsg.isBlank() || errmsg.length() > 4096) return null;
+        Matcher matcher = UPSTREAM_HINT.matcher(errmsg);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private static long deadline(Duration timeout) throws WeComAuthorizationException {
@@ -184,10 +302,12 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         return Duration.ofNanos(remaining);
     }
 
-    private static String successString(JsonObject body, String field) throws WeComAuthorizationException {
+    private static String successString(JsonObject body, String field, String upstreamPath)
+            throws WeComAuthorizationException {
         String value = string(body, field);
         if (value.isBlank() || value.length() > 4096) {
-            throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503, "企业微信上游响应缺少凭证");
+            throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                    "企业微信上游响应缺少凭证", null, upstreamPath, 200, null);
         }
         return value;
     }
@@ -210,10 +330,101 @@ public final class WeComAuthorizationGateway implements WeComAuthorizationClient
         return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
+    private static final class UpstreamResponseException extends IOException {
+        private final String path;
+        private final int statusCode;
+        private final Integer errcode;
+        private final String hint;
+
+        private UpstreamResponseException(String path, int statusCode, Integer errcode, String hint) {
+            super("upstream response rejected");
+            this.path = path;
+            this.statusCode = statusCode;
+            this.errcode = errcode;
+            this.hint = hint;
+        }
+
+        private String path() {
+            return path;
+        }
+
+        private Integer errcode() {
+            return errcode;
+        }
+
+        private int statusCode() {
+            return statusCode;
+        }
+
+        private String hint() {
+            return hint;
+        }
+    }
+
+    private static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {
+        private final int maximumBytes;
+        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private Flow.Subscription subscription;
+        private int size;
+
+        private BoundedBodySubscriber(int maximumBytes) {
+            this.maximumBytes = maximumBytes;
+        }
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            if (this.subscription != null) {
+                subscription.cancel();
+                return;
+            }
+            this.subscription = subscription;
+            subscription.request(1);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> items) {
+            try {
+                for (ByteBuffer item : items) {
+                    int length = item.remaining();
+                    if ((long) size + length > maximumBytes) {
+                        subscription.cancel();
+                        body.completeExceptionally(new IOException("upstream response too large"));
+                        return;
+                    }
+                    byte[] chunk = new byte[length];
+                    item.get(chunk);
+                    bytes.writeBytes(chunk);
+                    size += length;
+                }
+                subscription.request(1);
+            } catch (RuntimeException exception) {
+                subscription.cancel();
+                body.completeExceptionally(exception);
+            }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            body.completeExceptionally(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            body.complete(bytes.toByteArray());
+        }
+    }
+
     public record PermanentCodeResponse(String authCorpId, String permanentCode) {}
     public record AuthorizationInfo(String authCorpId, List<AuthorizedAgent> agents) {}
     public record AuthorizedAgent(String agentId) {}
     public record CorpTokenResponse(String accessToken, int expiresIn) {}
+    public record LoginIdentity(String corpId, String userId) {}
     private record SuiteTicket(String value, Instant expiresAt) {}
     private record SuiteToken(String token, long expiresAtEpochSecond) {}
 }

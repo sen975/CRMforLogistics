@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -29,13 +30,21 @@ class WeComAuthorizationServiceTest {
     void handlesTicketCreateChangeReplayAndCancellation() throws Exception {
         WeComAuthorizationStore store = store();
         FakeGateway gateway = new FakeGateway();
-        try (WeComAuthorizationService service = new WeComAuthorizationService(config(4), store, gateway)) {
+        AtomicInteger registrationRequests = new AtomicInteger();
+        try (WeComAuthorizationService service = new WeComAuthorizationService(
+                config(4), store, gateway, registrationRequests::incrementAndGet)) {
             assertTrue(service.handle(callback("suite_ticket", "", "", "ticket-1")).success());
             assertEquals("ticket-1", gateway.suiteTicket);
+            assertEquals(1, registrationRequests.get());
+            String ticketAudit = Files.readString(tempDir.resolve("authorization-audit.jsonl"));
+            assertTrue(ticketAudit.contains("\"action\":\"wecom.authorization.suite_ticket\""));
+            assertTrue(ticketAudit.contains("\"result\":\"succeeded\""));
+            assertFalse(ticketAudit.contains("ticket-1"));
 
             WeComCallbackCodec.DecodedCallback create = callback("create_auth", "ww-corp", "auth-code", "");
             assertTrue(service.handle(create).success());
             waitUntil(() -> store.find("dk-suite", "ww-corp").isPresent());
+            waitUntil(() -> registrationRequests.get() == 2);
             assertEquals(1, gateway.permanentCodeCalls.get());
             assertTrue(service.handle(create).success());
             Thread.sleep(50);
@@ -44,11 +53,92 @@ class WeComAuthorizationServiceTest {
             gateway.agentId = "1000003";
             assertTrue(service.handle(callback("change_auth", "ww-corp", "", "")).success());
             waitUntil(() -> store.requireActive("dk-suite", "ww-corp").version() == 2);
+            waitUntil(() -> registrationRequests.get() == 3);
             assertEquals("1000003", store.requireActive("dk-suite", "ww-corp").agentId());
 
             assertTrue(service.handle(callback("cancel_auth", "ww-corp", "", "")).success());
             assertEquals(WeComAuthorizationStore.AuthStatus.REVOKED,
                     store.find("dk-suite", "ww-corp").orElseThrow().authStatus());
+        }
+    }
+
+    @Test
+    void registrationTriggerFailureCannotRejectCallbackOrPoisonInstallation() throws Exception {
+        WeComAuthorizationStore store = store();
+        FakeGateway gateway = new FakeGateway();
+        try (WeComAuthorizationService service = new WeComAuthorizationService(
+                config(2), store, gateway, () -> {
+                    throw new IllegalStateException("registration trigger unavailable");
+                })) {
+            assertTrue(service.handle(callback("suite_ticket", "", "", "ticket-1")).success());
+            assertTrue(service.handle(callback("create_auth", "ww-corp", "auth-code", "")).success());
+            waitUntil(() -> store.find("dk-suite", "ww-corp").isPresent());
+            assertEquals(WeComAuthorizationStore.AuthStatus.ACTIVE,
+                    store.requireActive("dk-suite", "ww-corp").authStatus());
+        }
+    }
+
+    @Test
+    void resetPermanentCodeReplacesExistingEncryptedCredential() throws Exception {
+        WeComAuthorizationStore store = store();
+        WeComAuthorizationStore.Installation original =
+                store.upsertActive("dk-suite", "ww-corp", "1000002", "old-permanent-code");
+        FakeGateway gateway = new FakeGateway();
+        AtomicInteger registrationRequests = new AtomicInteger();
+        try (WeComAuthorizationService service = new WeComAuthorizationService(
+                config(2), store, gateway, registrationRequests::incrementAndGet)) {
+            WeComCallbackCodec.DecodedCallback reset =
+                    callback("reset_permanent_code", "", "reset-code", "");
+
+            assertTrue(service.handle(reset).success());
+            waitUntil(() -> store.requireActive("dk-suite", "ww-corp").version() == original.version() + 1);
+
+            WeComAuthorizationStore.Installation updated = store.requireActive("dk-suite", "ww-corp");
+            assertEquals(original.installationId(), updated.installationId());
+            assertEquals("permanent-reset-code",
+                    store.resolveActive("dk-suite", "ww-corp").permanentCode());
+            assertEquals("permanent-reset-code", gateway.lastAuthInfoPermanentCode);
+            assertEquals(1, registrationRequests.get());
+        }
+    }
+
+    @Test
+    void rejectsInvalidResetAndDoesNotCreateUnknownInstallation() throws Exception {
+        WeComAuthorizationStore store = store();
+        FakeGateway gateway = new FakeGateway();
+        try (WeComAuthorizationService service = new WeComAuthorizationService(config(2), store, gateway)) {
+            assertFalse(service.handle(callback("reset_permanent_code", "", "", "")).success());
+            WeComCallbackCodec.DecodedCallback wrongSuite = new WeComCallbackCodec.DecodedCallback(
+                    "ww-login-suite", "reset_permanent_code", "", "reset-code", "", "", NOW);
+            assertFalse(service.handle(wrongSuite).success());
+            assertEquals(0, gateway.permanentCodeCalls.get());
+
+            assertTrue(service.handle(callback("reset_permanent_code", "", "reset-code", "")).success());
+            waitUntil(() -> service.pendingCount() == 0);
+            assertTrue(store.find("dk-suite", "ww-corp").isEmpty());
+            assertEquals(1, gateway.permanentCodeCalls.get());
+            assertEquals(0, gateway.authInfoCalls.get());
+        }
+    }
+
+    @Test
+    void acceptsLoginSuiteTicketWithoutTriggeringChatdataRegistration() throws Exception {
+        WeComAuthorizationStore store = store();
+        FakeGateway gateway = new FakeGateway();
+        AtomicInteger registrationRequests = new AtomicInteger();
+        Config config = new Config(Map.of(
+                "DATA_DIR", tempDir.toString(),
+                "WECOM_SUITE_ID", "dk-suite",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-secret",
+                "WECOM_AUTHORIZATION_QUEUE_CAPACITY", "2"));
+        try (WeComAuthorizationService service = new WeComAuthorizationService(
+                config, store, gateway, registrationRequests::incrementAndGet)) {
+            WeComCallbackCodec.DecodedCallback callback = new WeComCallbackCodec.DecodedCallback(
+                    "ww-login-suite", "suite_ticket", "", "", "login-ticket", "", NOW);
+            assertTrue(service.handle(callback).success());
+            assertEquals("login-ticket", gateway.suiteTicket);
+            assertEquals(0, registrationRequests.get());
         }
     }
 
@@ -65,6 +155,34 @@ class WeComAuthorizationServiceTest {
             assertTrue(service.handle(create).success());
             waitUntil(() -> store.find("dk-suite", "ww-corp").isPresent());
             assertEquals(2, gateway.permanentCodeCalls.get());
+        }
+    }
+
+    @Test
+    void recordsSanitizedUpstreamFailureForPermanentCodeReset() throws Exception {
+        WeComAuthorizationStore store = store();
+        store.upsertActive("dk-suite", "ww-corp", "1000002", "old-permanent-code");
+        FakeGateway gateway = new FakeGateway();
+        gateway.failAuthInfoWithUpstreamDetails = true;
+        Path auditFile = tempDir.resolve("authorization-audit.jsonl");
+        WeComAuthorizationAuditTrail audit = new WeComAuthorizationAuditTrail(
+                auditFile, 4_096L, Clock.fixed(NOW, ZoneOffset.UTC));
+        try (WeComAuthorizationService service = new WeComAuthorizationService(
+                config(2), store, gateway, () -> {}, audit)) {
+            assertTrue(service.handle(callback("reset_permanent_code", "", "sensitive-auth-code", "")).success());
+            waitUntil(() -> store.find("dk-suite", "ww-corp").orElseThrow().authStatus()
+                    == WeComAuthorizationStore.AuthStatus.FAILED);
+            waitUntil(() -> Files.exists(auditFile)
+                    && Files.readString(auditFile).contains("\"result\":\"failed\""));
+
+            String entries = Files.readString(auditFile);
+            assertTrue(entries.contains("\"action\":\"wecom.authorization.reset_permanent_code\""));
+            assertTrue(entries.contains("\"authCorpId\":\"ww-corp\""));
+            assertTrue(entries.contains("\"errorCode\":\"WECOM_UPSTREAM_UNAVAILABLE\""));
+            assertTrue(entries.contains("\"upstreamErrcode\":40085"));
+            assertTrue(entries.contains("\"upstreamPath\":\"/cgi-bin/service/v2/get_auth_info\""));
+            assertFalse(entries.contains("sensitive-auth-code"));
+            assertFalse(entries.contains("permanent-reset-code"));
         }
     }
 
@@ -130,7 +248,8 @@ class WeComAuthorizationServiceTest {
     private Config config(int capacity) {
         return new Config(Map.of(
                 "WECOM_SUITE_ID", "dk-suite",
-                "WECOM_AUTHORIZATION_QUEUE_CAPACITY", Integer.toString(capacity)));
+                "WECOM_AUTHORIZATION_QUEUE_CAPACITY", Integer.toString(capacity),
+                "WECOM_AUTHORIZATION_AUDIT_FILE", tempDir.resolve("authorization-audit.jsonl").toString()));
     }
 
     private WeComAuthorizationStore store() {
@@ -161,15 +280,18 @@ class WeComAuthorizationServiceTest {
 
     private static final class FakeGateway implements WeComAuthorizationClient {
         private final AtomicInteger permanentCodeCalls = new AtomicInteger();
+        private final AtomicInteger authInfoCalls = new AtomicInteger();
         private final CountDownLatch firstCallEntered = new CountDownLatch(1);
         private final CountDownLatch releaseFirstCall = new CountDownLatch(1);
         private final CountDownLatch authInfoEntered = new CountDownLatch(1);
         private final CountDownLatch releaseAuthInfo = new CountDownLatch(1);
         private volatile String suiteTicket = "";
         private volatile String agentId = "1000002";
+        private volatile String lastAuthInfoPermanentCode = "";
         private volatile boolean failPermanentCodeOnce;
         private volatile boolean blockFirstCall;
         private volatile boolean failAuthInfoOnce;
+        private volatile boolean failAuthInfoWithUpstreamDetails;
         private volatile boolean blockAuthInfo;
 
         @Override
@@ -206,9 +328,16 @@ class WeComAuthorizationServiceTest {
         @Override
         public WeComAuthorizationGateway.AuthorizationInfo getAuthInfo(String authCorpId, String permanentCode)
                 throws WeComAuthorizationException {
+            authInfoCalls.incrementAndGet();
+            lastAuthInfoPermanentCode = permanentCode;
             if (failAuthInfoOnce) {
                 failAuthInfoOnce = false;
                 throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503, "temporary failure");
+            }
+            if (failAuthInfoWithUpstreamDetails) {
+                throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                        "企业微信上游服务暂时不可用", 40085,
+                        "/cgi-bin/service/v2/get_auth_info", 200, null, null);
             }
             if (blockAuthInfo) {
                 authInfoEntered.countDown();

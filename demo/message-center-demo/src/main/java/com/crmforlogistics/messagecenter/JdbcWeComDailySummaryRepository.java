@@ -166,7 +166,7 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
                     throw new IllegalStateException("daily summary complete transition rejected");
                 }
             }
-            finalizeGroup(connection, group, coverage, now);
+            finalizeGroup(connection, group, now);
             return null;
         });
     }
@@ -202,6 +202,7 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
         requireText(state, 32, "state");
         Objects.requireNonNull(now, "now");
         database.transaction(connection -> {
+            JobGroup group = lockJobGroup(connection, jobId);
             try (PreparedStatement statement = connection.prepareStatement("""
                     update wecom_daily_summary_jobs
                     set status='FAILED',last_error_code=?,failure_state=?,lease_owner=null,
@@ -217,6 +218,7 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
                     throw new IllegalStateException("daily summary failure transition rejected");
                 }
             }
+            finalizeGroup(connection, group, now);
             return null;
         });
     }
@@ -353,13 +355,22 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
     }
 
     private static void finalizeGroup(java.sql.Connection connection, JobGroup group,
-                                      Coverage coverage, Instant now) throws Exception {
+                                      Instant now) throws Exception {
         int nonTerminal;
+        int batchCount;
+        int messageCount;
         int completedBatches;
+        int completedMessageCount;
+        int failedBatches;
         String combinedSummary;
         try (PreparedStatement statement = connection.prepareStatement("""
                 select count(*) filter (where status not in ('COMPLETED','FAILED')) as non_terminal,
+                       count(*) as batch_count,
+                       coalesce(sum(message_count),0) as message_count,
                        count(*) filter (where status='COMPLETED') as completed_batches,
+                       coalesce(sum(message_count) filter (where status='COMPLETED'),0)
+                           as completed_message_count,
+                       count(*) filter (where status='FAILED') as failed_batches,
                        string_agg(batch_summary, E'\n\n' order by slice_start)
                            filter (where status='COMPLETED') as combined_summary
                 from wecom_daily_summary_jobs
@@ -370,7 +381,11 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
             try (ResultSet rows = statement.executeQuery()) {
                 rows.next();
                 nonTerminal = rows.getInt("non_terminal");
+                batchCount = rows.getInt("batch_count");
+                messageCount = rows.getInt("message_count");
                 completedBatches = rows.getInt("completed_batches");
+                completedMessageCount = rows.getInt("completed_message_count");
+                failedBatches = rows.getInt("failed_batches");
                 combinedSummary = rows.getString("combined_summary");
             }
         }
@@ -386,11 +401,11 @@ public final class JdbcWeComDailySummaryRepository implements WeComDailySummaryR
                 """)) {
             int index = bindGroup(statement, group, 1);
             statement.setString(index++, combinedSummary);
-            statement.setInt(index++, coverage.messageCount());
-            statement.setInt(index++, coverage.completedMessageCount());
-            statement.setInt(index++, coverage.batchCount());
+            statement.setInt(index++, messageCount);
+            statement.setInt(index++, completedMessageCount);
+            statement.setInt(index++, batchCount);
             statement.setInt(index++, completedBatches);
-            statement.setString(index++, coverage.completeness());
+            statement.setString(index++, failedBatches == 0 ? "COMPLETE" : "PARTIAL");
             statement.setTimestamp(index, Timestamp.from(now));
             statement.executeUpdate();
         }

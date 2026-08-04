@@ -59,7 +59,7 @@ class WeComChatDataGatewayTest {
             JsonObject inner = JsonParser.parseString(outerRequest.get("request_data").getAsString()).getAsJsonObject();
             assertFalse(inner.has("mode"));
             assertEquals(200, inner.get("limit").getAsInt());
-            assertFalse(inner.has("cursor"));
+            assertEquals("", inner.get("cursor").getAsString());
             assertFalse(inner.has("token"));
         } finally {
             server.stop(0);
@@ -80,10 +80,34 @@ class WeComChatDataGatewayTest {
 
             assertEquals("WECOM_CHATDATA_PROGRAM_ERROR", exception.code());
             assertEquals(502, exception.httpStatus());
+            assertEquals(40001, exception.upstreamErrcode());
+            assertEquals("/cgi-bin/chatdata/sync_call_program", exception.upstreamPath());
+            assertEquals(200, exception.upstreamHttpStatus());
             assertFalse(exception.getMessage().contains("secret"));
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void preservesSafeAuthorizationHintWhenCorpTokenIsRejected() throws Exception {
+        Config config = new Config(Map.of(
+                "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                "WECOM_CHATDATA_ABILITY_ID", "ability-1"));
+        WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                URI.create("http://127.0.0.1:1"), (ignored, timeout) -> {
+                    throw new WeComAuthorizationException("WECOM_UPSTREAM_UNAVAILABLE", 503,
+                            "企业微信上游服务暂时不可用", 48002,
+                            "/cgi-bin/gettoken", 200, "abc123", null);
+                });
+
+        WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+
+        assertEquals(48002, exception.upstreamErrcode());
+        assertEquals("/cgi-bin/gettoken", exception.upstreamPath());
+        assertEquals(200, exception.upstreamHttpStatus());
+        assertEquals("abc123", exception.upstreamHint());
     }
 
     @Test

@@ -58,6 +58,99 @@ public class Config {
     public Path emailContactGroupFile() { return Path.of(value("EMAIL_CONTACT_GROUP_FILE", emailDataDir().resolve("contact-groups.jsonl").toString())); }
     public Path chatappDataFile() { return Path.of(value("CHATAPP_DATA_FILE", "../chatapp-send-receive-demo/data/messages.jsonl")); }
     public Path chatappTemplateFile() { return Path.of(value("CHATAPP_TEMPLATE_FILE", "../chatapp-send-receive-demo/data/templates.json")); }
+    public boolean chatappMessageAutoSyncEnabled() {
+        return strictBoolean("CHATAPP_MESSAGE_AUTO_SYNC_ENABLED", true);
+    }
+    public boolean hasChatAppMessageSyncConfiguration() {
+        return !value("CUST_SPACE_ID", "").isBlank();
+    }
+    public Path callRecordDataDir() {
+        return Path.of(value("CALL_RECORD_DATA_DIR", dataDir().resolve("call-records").toString()));
+    }
+    public long callRecordMaxAudioBytes() {
+        return boundedLong("CALL_RECORD_MAX_AUDIO_BYTES", 104_857_600L, 1_048_576L, 104_857_600L);
+    }
+    public int callRecordMaxDurationSeconds() {
+        return boundedInt("CALL_RECORD_MAX_DURATION_SECONDS", 7_200, 1, 7_200);
+    }
+    public long callRecordStorageMaxBytes() {
+        return boundedLong("CALL_RECORD_STORAGE_MAX_BYTES", 10_737_418_240L,
+                104_857_600L, 1_099_511_627_776L);
+    }
+    public int callRecordMaxRecords() {
+        return boundedInt("CALL_RECORD_MAX_RECORDS", 10_000, 1, 100_000);
+    }
+    public int callRecordQueueCapacity() {
+        return boundedInt("CALL_RECORD_QUEUE_CAPACITY", 64, 1, 1_024);
+    }
+    public int callRecordWorkerConcurrency() {
+        return boundedInt("CALL_RECORD_WORKER_CONCURRENCY", 1, 1, 4);
+    }
+    public int callRecordLeaseSeconds() {
+        return boundedInt("CALL_RECORD_LEASE_SECONDS", 2_100, 60, 7_200);
+    }
+    public int callRecordMaxAttempts() {
+        return boundedInt("CALL_RECORD_MAX_ATTEMPTS", 3, 1, 10);
+    }
+    public long callRecordMaxResponseBytes() {
+        return boundedLong("CALL_RECORD_MAX_RESPONSE_BYTES", 10_485_760L, 1_024L, 10_485_760L);
+    }
+    public int callRecordMaxSegments() {
+        return boundedInt("CALL_RECORD_MAX_SEGMENTS", 20_000, 1, 20_000);
+    }
+    public int callRecordMaxRevisions() {
+        return boundedInt("CALL_RECORD_MAX_REVISIONS", 20, 1, 20);
+    }
+    public int callAudioSessionTtlSeconds() {
+        return boundedInt("CALL_AUDIO_SESSION_TTL_SECONDS", 300, 60, 600);
+    }
+    public int callAudioSessionMaxPerActor() {
+        return boundedInt("CALL_AUDIO_SESSION_MAX_PER_ACTOR", 8, 1, 32);
+    }
+    public int callAudioSessionMaxActive() {
+        return boundedInt("CALL_AUDIO_SESSION_MAX_ACTIVE", 256, 8, 1_024);
+    }
+    public boolean callAudioCookieSecure() {
+        return "https".equalsIgnoreCase(java.net.URI.create(wecomLoginRedirectUri()).getScheme());
+    }
+    public java.net.URI funAsrBaseUri() {
+        final java.net.URI uri;
+        try {
+            uri = java.net.URI.create(value("FUNASR_BASE_URL", "http://funasr:8000"));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(
+                    "FUNASR_BASE_URL must be an absolute private HTTP(S) service URL", exception);
+        }
+        String scheme = uri.getScheme() == null ? ""
+                : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        String host = uri.getHost() == null ? ""
+                : uri.getHost().toLowerCase(java.util.Locale.ROOT);
+        String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+        int port = uri.getPort();
+        if (!(scheme.equals("http") || scheme.equals("https")) || host.isBlank()
+                || uri.getUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+                || !(path.isBlank() || path.equals("/")) || (port != -1 && (port < 1 || port > 65_535))
+                || !isPrivateServiceHost(host)) {
+            throw new IllegalArgumentException(
+                    "FUNASR_BASE_URL must be an absolute private HTTP(S) service URL");
+        }
+        return uri;
+    }
+    public String funAsrModel() {
+        String model = value("FUNASR_MODEL", "sensevoice").trim();
+        if (!model.equals("sensevoice")) {
+            throw new IllegalArgumentException("FUNASR_MODEL must be sensevoice");
+        }
+        return model;
+    }
+    public java.time.Duration funAsrConnectTimeout() {
+        return java.time.Duration.ofSeconds(
+                boundedInt("FUNASR_CONNECT_TIMEOUT_SECONDS", 3, 1, 30));
+    }
+    public java.time.Duration funAsrRequestTimeout() {
+        return java.time.Duration.ofSeconds(
+                boundedInt("FUNASR_REQUEST_TIMEOUT_SECONDS", 1_800, 30, 3_600));
+    }
     public boolean chatappTemplateAutoSyncEnabled() {
         return strictBoolean("CHATAPP_TEMPLATE_AUTO_SYNC_ENABLED", true);
     }
@@ -73,8 +166,35 @@ public class Config {
     public boolean hasChatAppTemplateSyncConfiguration() {
         return !value("CUST_SPACE_ID", "").isBlank();
     }
-    public Path wecomDataFile() { return dataFile("WECOM_DATA_FILE", "wecom-messages.jsonl"); }
+    public Path wecomDataFile() {
+        if (localDevMode()) {
+            return dataFile("LOCAL_WECOM_TARGET_FILE", "local-wecom-messages.jsonl");
+        }
+        return dataFile("WECOM_DATA_FILE", "wecom-messages.jsonl");
+    }
     public int webPort() { return Integer.parseInt(value("WEB_PORT", value("MESSAGE_CENTER_PORT", "8099"))); }
+    public boolean localDevMode() {
+        return strictBoolean("LOCAL_DEV_MODE", false);
+    }
+    public String localWeComDataSource() {
+        String source = value("LOCAL_WECOM_DATA_SOURCE", "fixture").trim().toLowerCase(java.util.Locale.ROOT);
+        if (!source.equals("fixture") && !source.equals("jsonl")) {
+            throw new IllegalArgumentException("LOCAL_WECOM_DATA_SOURCE must be fixture or jsonl");
+        }
+        return source;
+    }
+    public Path localWeComDataFile() {
+        return dataFile("LOCAL_WECOM_DATA_FILE", "local-wecom-source.jsonl");
+    }
+    public String webBindAddress() {
+        String fallback = localDevMode() ? "127.0.0.1" : "0.0.0.0";
+        String address = value("WEB_BIND_ADDRESS", fallback).trim();
+        if (address.isBlank()) throw new IllegalArgumentException("WEB_BIND_ADDRESS is required");
+        if (localDevMode() && !isLoopbackAddress(address)) {
+            throw new IllegalArgumentException("LOCAL_DEV_MODE requires WEB_BIND_ADDRESS to be loopback");
+        }
+        return address;
+    }
     public long mediaMaxBytes() { return Long.parseLong(value("MEDIA_MAX_BYTES", "20971520")); }
     public Path mediaCacheDir() { return Path.of(value("MEDIA_CACHE_DIR", dataDir().resolve("media-cache").toString())); }
     public String databaseUrl() { return value("DATABASE_URL", "jdbc:postgresql://localhost:5432/message_center"); }
@@ -103,7 +223,22 @@ public class Config {
         return Path.of(value("WECOM_AUTHORIZATION_INSTALLATIONS_FILE",
                 dataDir().resolve("wecom-authorization-installations.jsonl").toString()));
     }
+    public Path wecomAuthorizationAuditFile() {
+        return Path.of(value("WECOM_AUTHORIZATION_AUDIT_FILE",
+                dataDir().resolve("wecom-authorization-audit.jsonl").toString()));
+    }
+    public long wecomAuthorizationAuditMaxBytes() {
+        return boundedLong("WECOM_AUTHORIZATION_AUDIT_MAX_BYTES", 1_048_576L, 4_096L, 20_971_520L);
+    }
     public String wecomLoginAuthCorpId() { return value("WECOM_LOGIN_AUTH_CORP_ID", ""); }
+    public String wecomLoginSuiteId() { return value("WECOM_LOGIN_SUITE_ID", ""); }
+    public String wecomLoginSuiteSecret() { return value("WECOM_LOGIN_SUITE_SECRET", ""); }
+    public boolean hasCompleteWeComLoginSuiteConfiguration() {
+        return !wecomLoginSuiteId().isBlank() && !wecomLoginSuiteSecret().isBlank();
+    }
+    public boolean hasAnyWeComLoginSuiteConfiguration() {
+        return !wecomLoginSuiteId().isBlank() || !wecomLoginSuiteSecret().isBlank();
+    }
     public int wecomAuthorizationQueueCapacity() {
         return boundedInt("WECOM_AUTHORIZATION_QUEUE_CAPACITY", 64, 1, 256);
     }
@@ -180,6 +315,13 @@ public class Config {
     }
     public int wecomChatDataPublicKeyVersion() {
         return boundedInt("WECOM_CHATDATA_PUBLIC_KEY_VERSION", 1, 1, Integer.MAX_VALUE);
+    }
+    public boolean wecomChatDataPublicKeyAutoRegister() {
+        return strictBoolean("WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER", false);
+    }
+    public Path wecomChatDataPublicKeyRegistrationFile() {
+        return dataFile("WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE",
+                "wecom-chatdata-public-key-registration.json");
     }
     public Path wecomChatDataCursorFile() {
         return dataFile("WECOM_CHATDATA_CURSOR_FILE", "wecom-chatdata-cursor.json");
@@ -291,6 +433,54 @@ public class Config {
         if ("true".equalsIgnoreCase(raw)) return true;
         if ("false".equalsIgnoreCase(raw)) return false;
         throw new IllegalArgumentException(key + " must be true or false");
+    }
+
+    private static boolean isPrivateServiceHost(String host) {
+        if (host.equals("localhost")) return true;
+        if (isIpv4Literal(host)) {
+            String[] octets = host.split("\\.");
+            int first = Integer.parseInt(octets[0]);
+            int second = Integer.parseInt(octets[1]);
+            return first == 10 || first == 127 || (first == 172 && second >= 16 && second <= 31)
+                    || (first == 192 && second == 168);
+        }
+        if (!isDnsName(host)) return false;
+        return !host.contains(".") || host.endsWith(".internal") || host.endsWith(".local");
+    }
+
+    private static boolean isLoopbackAddress(String address) {
+        return address.equalsIgnoreCase("localhost") || address.equals("127.0.0.1")
+                || address.equals("::1") || address.equals("0:0:0:0:0:0:0:1");
+    }
+
+    private static boolean isIpv4Literal(String host) {
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4) return false;
+        for (String octet : octets) {
+            if (octet.isEmpty() || octet.length() > 3) return false;
+            for (int index = 0; index < octet.length(); index++) {
+                if (!Character.isDigit(octet.charAt(index))) return false;
+            }
+            if (Integer.parseInt(octet) > 255) return false;
+        }
+        return true;
+    }
+
+    private static boolean isDnsName(String host) {
+        if (host.length() > 253) return false;
+        String[] labels = host.split("\\.", -1);
+        for (String label : labels) {
+            if (label.isEmpty() || label.length() > 63
+                    || !Character.isLetterOrDigit(label.charAt(0))
+                    || !Character.isLetterOrDigit(label.charAt(label.length() - 1))) {
+                return false;
+            }
+            for (int index = 1; index < label.length() - 1; index++) {
+                char current = label.charAt(index);
+                if (!Character.isLetterOrDigit(current) && current != '-') return false;
+            }
+        }
+        return true;
     }
 
     private static String stripQuotes(String value) {

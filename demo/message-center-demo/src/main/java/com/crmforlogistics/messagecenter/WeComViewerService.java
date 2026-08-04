@@ -59,8 +59,14 @@ public class WeComViewerService {
 
     public WeComViewerService(Config config, WeComAuthorizationStore authorizationStore,
                               WeComAccessTokenService accessTokens) {
+        this(config, authorizationStore, accessTokens, null);
+    }
+
+    public WeComViewerService(Config config, WeComAuthorizationStore authorizationStore,
+                              WeComAccessTokenService accessTokens,
+                              WeComAuthorizationGateway authorizationGateway) {
         this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                new JdkWeComHttpGateway(config, accessTokens), authorizationStore);
+                new JdkWeComHttpGateway(config, accessTokens, authorizationGateway), authorizationStore);
     }
 
     private WeComViewerService(Config config, Clock clock, NonceSource nonceSource, WeComHttpGateway gateway) {
@@ -140,33 +146,49 @@ public class WeComViewerService {
     public LoginExchangeResponse exchangeLoginCode(String code,
                                                     WeComLoginAttemptService.InstallationBinding binding)
             throws Exception {
-        if (authorizationStore == null || binding == null) {
-            throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
-                    "企业微信授权安装存储不可用");
+        String userId = "";
+        try {
+            if (authorizationStore == null || binding == null) {
+                throw new WeComAuthorizationException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                        "企业微信授权安装存储不可用");
+            }
+            WeComAuthorizationStore.ResolvedInstallation resolved = authorizationStore.resolveActive(
+                    binding.suiteId(), binding.authCorpId());
+            if (!resolved.installation().installationId().equals(binding.installationId())
+                    || resolved.installation().version() != binding.version()) {
+                throw new WeComAuthorizationException("WECOM_INSTALLATION_CHANGED", 403,
+                        "企业微信授权安装已变化，请重新扫码");
+            }
+            WeComAuthorizationGateway.LoginIdentity identity = gateway.exchangeLoginIdentity(code, resolved);
+            if (!identity.corpId().equals(binding.authCorpId())) {
+                throw new WeComAuthorizationException("WECOM_LOGIN_CORP_MISMATCH", 403,
+                        "企业微信登录企业与当前授权企业不一致");
+            }
+            userId = identity.userId();
+            requireBounded(userId, "WeCom user id", 128);
+            String token = UUID.randomUUID().toString().replace("-", "");
+            long now = clock.instant().getEpochSecond();
+            cleanupExpiredViewerAuth(now);
+            enforceViewerAuthLimit();
+            auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
+            viewerAuthTokens.put(token, new ViewerAuth(token, userId,
+                    now + config.wecomViewerSessionTtlSeconds(), sessionOrder.incrementAndGet(),
+                    binding.installationId(), binding.version()));
+            return new LoginExchangeResponse(userId, token, config.wecomViewerSessionTtlSeconds());
+        } catch (Exception exception) {
+            recordFailure("wecom.viewer.login_exchange", "failed", userId, "", "", exception);
+            throw exception;
         }
-        WeComAuthorizationStore.ResolvedInstallation resolved = authorizationStore.resolveActive(
-                binding.suiteId(), binding.authCorpId());
-        if (!resolved.installation().installationId().equals(binding.installationId())
-                || resolved.installation().version() != binding.version()) {
-            throw new WeComAuthorizationException("WECOM_INSTALLATION_CHANGED", 403,
-                    "企业微信授权安装已变化，请重新扫码");
-        }
-        String userId = gateway.exchangeLoginCode(code, resolved);
-        requireBounded(userId, "WeCom user id", 128);
-        String token = UUID.randomUUID().toString().replace("-", "");
-        long now = clock.instant().getEpochSecond();
-        cleanupExpiredViewerAuth(now);
-        enforceViewerAuthLimit();
-        auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
-        viewerAuthTokens.put(token, new ViewerAuth(token, userId,
-                now + config.wecomViewerSessionTtlSeconds(), sessionOrder.incrementAndGet(),
-                binding.installationId(), binding.version()));
-        return new LoginExchangeResponse(userId, token, config.wecomViewerSessionTtlSeconds());
     }
 
     int activeViewerAuthTokenCount() {
         cleanupExpiredViewerAuth(clock.instant().getEpochSecond());
         return viewerAuthTokens.size();
+    }
+
+    /** Resolves a live viewer token to the actor used by downstream services. */
+    public String requireViewerActor(String viewerAuthToken) throws Exception {
+        return resolveViewerAuthRecord(viewerAuthToken, clock.instant().getEpochSecond()).wecomUserId();
     }
 
     public ViewerSyncContext viewerSyncContext(String viewerAuthToken) throws Exception {
@@ -293,11 +315,54 @@ public class WeComViewerService {
 
     private void recordFailure(String action, String result, String wecomUserId,
                                String contactPointId, String viewerSessionId, Exception exception) {
+        if ("wecom.viewer.login_exchange".equals(action)) {
+            logLoginExchangeFailure(exception);
+            try {
+                if (exception instanceof WeComAuthorizationException authorization) {
+                            auditTrail.recordDiagnostic(action, result, wecomUserId, contactPointId,
+                            viewerSessionId, safeToken(authorization.code()),
+                            authorization.upstreamErrcode(), authorization.upstreamPath(),
+                            authorization.upstreamHttpStatus(), authorization.upstreamHint());
+                } else {
+                    auditTrail.recordDiagnostic(action, result, wecomUserId, contactPointId,
+                            viewerSessionId, "WECOM_LOGIN_EXCHANGE_FAILED", null, null);
+                }
+            } catch (Exception auditFailure) {
+                exception.addSuppressed(auditFailure);
+            }
+            return;
+        }
         try {
             auditTrail.record(action, result, wecomUserId, contactPointId, viewerSessionId);
         } catch (Exception auditFailure) {
             exception.addSuppressed(auditFailure);
         }
+    }
+
+    private static void logLoginExchangeFailure(Exception exception) {
+        if (!(exception instanceof WeComAuthorizationException authorization)) {
+            return;
+        }
+        StringBuilder event = new StringBuilder(
+                "{\"event\":\"wecom.viewer.login_exchange\",\"status\":\"failed\",\"code\":\"")
+                .append(safeToken(authorization.code())).append('"');
+        if (authorization.upstreamErrcode() != null) {
+            event.append(",\"upstreamErrcode\":").append(authorization.upstreamErrcode());
+        }
+        if (authorization.upstreamPath() != null) {
+            event.append(",\"upstreamPath\":\"").append(authorization.upstreamPath()).append('"');
+        }
+        if (authorization.upstreamHttpStatus() != null) {
+            event.append(",\"upstreamHttpStatus\":").append(authorization.upstreamHttpStatus());
+        }
+        if (authorization.upstreamHint() != null) {
+            event.append(",\"upstreamHint\":\"").append(authorization.upstreamHint()).append('"');
+        }
+        System.err.println(event.append('}'));
+    }
+
+    private static String safeToken(String value) {
+        return value != null && value.matches("[A-Z0-9_]{1,128}") ? value : "WECOM_LOGIN_EXCHANGE_FAILED";
     }
 
     private String resolveViewerAuth(String viewerAuthToken, long now) throws Exception {
@@ -597,6 +662,11 @@ public class WeComViewerService {
                 throws Exception {
             return exchangeLoginCode(code);
         }
+        default WeComAuthorizationGateway.LoginIdentity exchangeLoginIdentity(
+                String code, WeComAuthorizationStore.ResolvedInstallation installation) throws Exception {
+            return new WeComAuthorizationGateway.LoginIdentity(installation.installation().authCorpId(),
+                    exchangeLoginCode(code, installation));
+        }
         default TicketResponse fetchCorpJsapiTicket(WeComAuthorizationStore.ResolvedInstallation installation)
                 throws Exception { return fetchCorpJsapiTicket(); }
         default TicketResponse fetchAgentJsapiTicket(WeComAuthorizationStore.ResolvedInstallation installation)
@@ -630,23 +700,44 @@ public class WeComViewerService {
         }
     }
 
-    private static class JdkWeComHttpGateway implements WeComHttpGateway {
+    static class JdkWeComHttpGateway implements WeComHttpGateway {
         private final Config config;
         private final WeComAccessTokenService installationAccessTokens;
-        private final HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(WECOM_HTTP_TIMEOUT)
-                .build();
+        private final HttpClient client;
+        private final URI apiBase;
+        private final WeComAuthorizationGateway authorizationGateway;
         private String accessToken;
         private long accessTokenExpiresAt;
 
         JdkWeComHttpGateway(Config config) {
-            this.config = config;
-            this.installationAccessTokens = null;
+            this(config, null);
         }
 
         JdkWeComHttpGateway(Config config, WeComAccessTokenService installationAccessTokens) {
+            this(config, installationAccessTokens, null);
+        }
+
+        JdkWeComHttpGateway(Config config, WeComAccessTokenService installationAccessTokens,
+                           WeComAuthorizationGateway authorizationGateway) {
+            this(config, installationAccessTokens,
+                    HttpClient.newBuilder().connectTimeout(WECOM_HTTP_TIMEOUT).build(),
+                    URI.create(config.value("WECOM_API_BASE_URL", "https://qyapi.weixin.qq.com")),
+                    authorizationGateway);
+        }
+
+        JdkWeComHttpGateway(Config config, WeComAccessTokenService installationAccessTokens,
+                           HttpClient client, URI apiBase) {
+            this(config, installationAccessTokens, client, apiBase, null);
+        }
+
+        JdkWeComHttpGateway(Config config, WeComAccessTokenService installationAccessTokens,
+                           HttpClient client, URI apiBase,
+                           WeComAuthorizationGateway authorizationGateway) {
             this.config = config;
             this.installationAccessTokens = installationAccessTokens;
+            this.client = Objects.requireNonNull(client, "client");
+            this.apiBase = Objects.requireNonNull(apiBase, "apiBase");
+            this.authorizationGateway = authorizationGateway;
         }
 
         @Override public TicketResponse fetchCorpJsapiTicket() throws Exception {
@@ -672,36 +763,17 @@ public class WeComViewerService {
         }
 
         @Override public String exchangeLoginCode(String code) throws Exception {
-            if (code == null || code.isBlank()) {
-                throw new IllegalArgumentException("WeCom login code is required");
-            }
-            JsonObject body = getJson("https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token="
-                    + queryParam(accessToken()) + "&code=" + queryParam(code));
-            int errcode = body.has("errcode") ? body.get("errcode").getAsInt() : -1;
-            if (errcode != 0) {
-                throw new IOException("Unable to exchange WeCom login code: " + JsonSupport.string(body, "errmsg"));
-            }
-            String userId = JsonSupport.string(body, "userid");
-            if (userId.isBlank()) {
-                userId = JsonSupport.string(body, "UserId");
-            }
-            if (userId.isBlank()) {
-                throw new IOException("WeCom login code did not return userid");
-            }
-            return userId;
+            throw new WeComAuthorizationException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
+                    "企业微信登录授权 Suite 网关不可用");
         }
 
-        @Override public String exchangeLoginCode(String code,
-                                                   WeComAuthorizationStore.ResolvedInstallation installation)
-                throws Exception {
-            if (code == null || code.isBlank()) throw new IllegalArgumentException("WeCom login code is required");
-            JsonObject body = getJson("https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token="
-                    + queryParam(accessToken(installation)) + "&code=" + queryParam(code));
-            int errcode = body.has("errcode") ? body.get("errcode").getAsInt() : -1;
-            if (errcode != 0) throw new IOException("Unable to exchange WeCom login code");
-            String userId = firstNonBlank(JsonSupport.string(body, "userid"), JsonSupport.string(body, "UserId"));
-            if (userId.isBlank()) throw new IOException("WeCom login code did not return userid");
-            return userId;
+        @Override public WeComAuthorizationGateway.LoginIdentity exchangeLoginIdentity(
+                String code, WeComAuthorizationStore.ResolvedInstallation installation) throws Exception {
+            if (authorizationGateway == null) {
+                throw new WeComAuthorizationException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
+                        "企业微信登录授权 Suite 网关不可用");
+            }
+            return authorizationGateway.getLoginIdentity(code);
         }
 
         private synchronized String accessToken() throws Exception {
@@ -712,8 +784,9 @@ public class WeComViewerService {
             if (config.wecomCorpId().isBlank() || config.wecomSecret().isBlank()) {
                 throw new IOException("WeCom corp id or secret is not configured");
             }
-            String url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid="
-                    + queryParam(config.wecomCorpId()) + "&corpsecret=" + queryParam(config.wecomSecret());
+            String url = apiBase.resolve("/cgi-bin/gettoken?corpid="
+                    + queryParam(config.wecomCorpId()) + "&corpsecret="
+                    + queryParam(config.wecomSecret())).toString();
             JsonObject body = getJson(url);
             int errcode = body.has("errcode") ? body.get("errcode").getAsInt() : -1;
             if (errcode != 0) {
