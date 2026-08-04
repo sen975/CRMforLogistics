@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSendService;
+import com.crmforlogistics.messagecenter.channel.email.EmailSendService;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
@@ -33,17 +34,20 @@ public class MessageController {
     private final ConversationMapper conversationMapper;
     private final ContactIdentityMapper contactIdentityMapper;
     private final ChatAppSendService chatAppSendService;
+    private final EmailSendService emailSendService;
 
     public MessageController(MessageMapper messageMapper,
                              ChannelAccountMapper channelAccountMapper,
                              ConversationMapper conversationMapper,
                              ContactIdentityMapper contactIdentityMapper,
-                             ChatAppSendService chatAppSendService) {
+                             ChatAppSendService chatAppSendService,
+                             EmailSendService emailSendService) {
         this.messageMapper = messageMapper;
         this.channelAccountMapper = channelAccountMapper;
         this.conversationMapper = conversationMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.chatAppSendService = chatAppSendService;
+        this.emailSendService = emailSendService;
     }
 
     @GetMapping("/messages/{id}")
@@ -56,8 +60,16 @@ public class MessageController {
     }
 
     @PostMapping("/send/email")
-    public ResponseEntity<Void> sendEmail() {
-        return ResponseEntity.status(501).build();
+    public ResponseEntity<?> sendEmail(@RequestBody Map<String, Object> body) {
+        try {
+            String to = (String) body.get("to");
+            String subject = (String) body.getOrDefault("subject", "");
+            String text = (String) body.getOrDefault("body", "");
+            EmailSendService.SendResult result = emailSendService.send(to, subject, text);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/send/chatapp")

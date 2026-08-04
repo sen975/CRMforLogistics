@@ -29,3 +29,28 @@ app:
   aliyun-access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
   cams-region: ap-southeast-1
   cams-endpoint: cams.ap-southeast-1.aliyuncs.com
+
+  email-sync-enabled: false
+
+  smtp-host: ${SMTP_HOST:}
+  smtp-port: ${SMTP_PORT:465}
+  smtp-user: ${SMTP_USERNAME:}
+  smtp-password: ${SMTP_PASSWORD:}
+  smtp-localhost: ${SMTP_LOCALHOST:}
+  smtp-ssl: ${SMTP_SSL:true}
+  smtp-start-tls: ${SMTP_STARTTLS:false}
+  smtp-resolve-ipv4: ${SMTP_RESOLVE_IPV4:true}
+  mail-from: ${MAIL_FROM:}
+  mail-from-name: ${MAIL_FROM_NAME:}
+
+  imap-host: ${IMAP_HOST:}
+  imap-port: ${IMAP_PORT:993}
+  imap-user: ${IMAP_USERNAME:}
+  imap-password: ${IMAP_PASSWORD:}
+  imap-ssl: ${IMAP_SSL:true}
+  receive-limit: ${RECEIVE_LIMIT:10}
+  mail-provider: ${MAIL_PROVIDER:auto}
+  imap-139-use-openssl: ${IMAP_139_USE_OPENSSL:true}
+  openssl-bin: ${OPENSSL_BIN:/usr/bin/openssl}
+  inbox-folder: ${INBOX_FOLDER:INBOX}
+  sent-folder: ${SENT_FOLDER:Sent}
