@@ -453,6 +453,72 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/phone-contacts:
+    post:
+      operationId: createPhoneContact
+      description: Create a phone-only contact or bind a normalized phone point to an existing contact.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneContactRequest'
+      responses:
+        '200':
+          description: Normalized phone contact projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneContact'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/phone-repository:
+    get:
+      operationId: listPhoneRepository
+      description: Return a bounded cross-contact phone-record page filtered by the current viewer's anchors.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CursorParameter'
+        - $ref: '#/components/parameters/LimitParameter'
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 512
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      responses:
+        '200':
+          description: Authorized phone repository page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneRepositoryPage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/contacts/{contactId}/timeline:
     get:
       operationId: getContactTimeline
@@ -635,6 +701,39 @@ paths:
       responses:
         '200':
           description: Updated call record with the appended revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRecordDetail'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}/note:
+    patch:
+      operationId: reviseCallRecordNote
+      description: Replace the current bounded call-record note using optimistic version checking and the authenticated viewer actor.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviseCallRecordNoteRequest'
+      responses:
+        '200':
+          description: Updated call record detail with the current note
           content:
             application/json:
               schema:
@@ -1994,11 +2093,12 @@ components:
           const: true
     CreateCallRecordRequest:
       type: object
-      required: [direction, occurredAt, clientRequestId, file]
+      required: [phonePointId, direction, occurredAt, clientRequestId, file]
       additionalProperties: false
       properties:
         phonePointId:
           type: string
+          minLength: 6
           maxLength: 512
         direction:
           type: string
@@ -2010,6 +2110,9 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+        note:
+          type: string
+          maxLength: 4000
         file:
           type: string
           format: binary
@@ -2071,7 +2174,7 @@ components:
           maxProperties: 30
     CallRecordDetail:
       type: object
-      required: [id, contactAnchorPointId, phonePointId, direction, occurredAt, createdAt, clientRequestId, audio, transcription, revisions, currentRevisionId, version]
+      required: [id, contactAnchorPointId, phonePointId, direction, occurredAt, createdAt, clientRequestId, audio, transcription, revisions, currentRevisionId, version, note]
       additionalProperties: false
       properties:
         id:
@@ -2109,6 +2212,95 @@ components:
         currentRevisionId:
           type: string
           maxLength: 64
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+        note:
+          type: string
+          maxLength: 4000
+    PhoneContactRequest:
+      type: object
+      required: [phoneNumber]
+      additionalProperties: false
+      properties:
+        contactId:
+          type: string
+          maxLength: 512
+        contactName:
+          type: string
+          maxLength: 512
+        phoneNumber:
+          type: string
+          minLength: 1
+          maxLength: 64
+    PhoneContact:
+      type: object
+      required: [contactId, phonePointId, displayName]
+      additionalProperties: false
+      properties:
+        contactId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        phonePointId:
+          type: string
+          pattern: '^phone:[0-9]{6,20}$'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 512
+    PhoneRepositoryPage:
+      type: object
+      required: [items, nextCursor, totalCount]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PhoneRepositoryItem'
+        nextCursor:
+          type: string
+          maxLength: 2731
+        totalCount:
+          type: integer
+          minimum: 0
+    PhoneRepositoryItem:
+      type: object
+      required: [id, contactId, contactAnchorPointId, contactDisplayName, phonePointId, occurredAt, direction, note, transcriptionState, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        contactAnchorPointId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        contactDisplayName:
+          type: string
+          minLength: 1
+          maxLength: 512
+        phonePointId:
+          type: string
+          pattern: '^phone:[0-9]{6,20}$'
+        occurredAt:
+          type: string
+          format: date-time
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        note:
+          type: string
+          maxLength: 4000
+        transcriptionState:
+          type: string
+          enum: [queued, processing, completed, failed]
         version:
           type: integer
           format: int64
@@ -2257,6 +2449,18 @@ components:
           type: string
           minLength: 1
           maxLength: 100000
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+    ReviseCallRecordNoteRequest:
+      type: object
+      required: [note, expectedVersion]
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+          maxLength: 4000
         expectedVersion:
           type: integer
           format: int64

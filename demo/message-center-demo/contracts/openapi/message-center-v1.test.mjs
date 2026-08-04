@@ -18,12 +18,15 @@ const requiredPaths = [
   '/api/v1/conversations/{conversationId}/read',
   '/api/v1/attachments/{attachmentId}/content',
   '/api/v1/contacts/{contactId}/call-records',
+  '/api/v1/phone-contacts',
+  '/api/v1/phone-repository',
   '/api/v1/contacts/{contactId}/timeline',
   '/api/v1/call-records/{callRecordId}',
   '/api/v1/call-records/{callRecordId}/audio-sessions',
   '/api/v1/call-records/{callRecordId}/audio',
   '/api/v1/call-records/{callRecordId}/retry',
   '/api/v1/call-records/{callRecordId}/transcript',
+  '/api/v1/call-records/{callRecordId}/note',
   '/api/v1/channel-accounts',
   '/api/v1/sync/{channelType}',
   '/api/v1/events',
@@ -283,12 +286,15 @@ assert.match(schema(contract, 'WeComViewerEventRequest'), /const: component_erro
 assert.doesNotMatch(schema(contract, 'WeComViewerEventRequest'), /viewerAuthToken|secretKey/);
 for (const [method, path, operationId] of [
   ['post', '/api/v1/contacts/{contactId}/call-records', 'createCallRecord'],
+  ['post', '/api/v1/phone-contacts', 'createPhoneContact'],
+  ['get', '/api/v1/phone-repository', 'listPhoneRepository'],
   ['get', '/api/v1/contacts/{contactId}/timeline', 'getContactTimeline'],
   ['get', '/api/v1/call-records/{callRecordId}', 'getCallRecord'],
   ['post', '/api/v1/call-records/{callRecordId}/audio-sessions', 'createCallAudioSession'],
   ['get', '/api/v1/call-records/{callRecordId}/audio', 'streamCallAudio'],
   ['post', '/api/v1/call-records/{callRecordId}/retry', 'retryCallRecordTranscription'],
-  ['patch', '/api/v1/call-records/{callRecordId}/transcript', 'reviseCallRecordTranscript']
+  ['patch', '/api/v1/call-records/{callRecordId}/transcript', 'reviseCallRecordTranscript'],
+  ['patch', '/api/v1/call-records/{callRecordId}/note', 'reviseCallRecordNote']
 ]) {
   const callOperation = operation(operations, method, path);
   assert.match(callOperation.body, new RegExp(`operationId: ${operationId}`));
@@ -296,9 +302,13 @@ for (const [method, path, operationId] of [
 }
 assert.match(contract, /^    CallRecordDetail:$/m);
 assert.match(contract, /^    CreateCallRecordRequest:$/m);
+assert.match(schema(contract, 'CreateCallRecordRequest'), /required: \[phonePointId, direction, occurredAt, clientRequestId, file\]/);
+assert.match(schema(contract, 'CallRecordDetail'), /note/);
+assert.match(schema(contract, 'ReviseCallRecordNoteRequest'), /required: \[note, expectedVersion\]/);
+assert.match(schema(contract, 'PhoneRepositoryPage'), /required: \[items, nextCursor, totalCount\]/);
 assert.match(contract, /audio\/mpeg/);
 assert.match(contract, /104857600/);
-assert.equal(operations.length, 35);
+assert.equal(operations.length, 38);
 
 console.log(`validated ${operations.length} OpenAPI operations`);
 

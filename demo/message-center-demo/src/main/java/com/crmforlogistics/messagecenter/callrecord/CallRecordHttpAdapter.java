@@ -1,7 +1,9 @@
 package com.crmforlogistics.messagecenter.callrecord;
 
 import com.crmforlogistics.messagecenter.Config;
+import com.crmforlogistics.messagecenter.UnifiedContact;
 import com.crmforlogistics.messagecenter.UnifiedMessage;
+import com.crmforlogistics.messagecenter.UnifiedMessageStore;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -45,18 +47,32 @@ public final class CallRecordHttpAdapter {
     private final LocalAudioStore audioStore;
     private final CallAudioSessionService audioSessions;
     private final ViewerActorResolver actors;
+    private final PhoneRepository phoneRepository;
+    private final UnifiedMessageStore contacts;
 
     public CallRecordHttpAdapter(Config config, CallRecordService service,
                                  ContactTimelineService timeline,
                                  LocalAudioStore audioStore,
                                  CallAudioSessionService audioSessions,
                                  ViewerActorResolver actors) {
+        this(config, service, timeline, audioStore, audioSessions, actors, null, null);
+    }
+
+    public CallRecordHttpAdapter(Config config, CallRecordService service,
+                                 ContactTimelineService timeline,
+                                 LocalAudioStore audioStore,
+                                 CallAudioSessionService audioSessions,
+                                 ViewerActorResolver actors,
+                                 PhoneRepository phoneRepository,
+                                 UnifiedMessageStore contacts) {
         this.config = java.util.Objects.requireNonNull(config, "config");
         this.service = java.util.Objects.requireNonNull(service, "service");
         this.timeline = java.util.Objects.requireNonNull(timeline, "timeline");
         this.audioStore = java.util.Objects.requireNonNull(audioStore, "audioStore");
         this.audioSessions = java.util.Objects.requireNonNull(audioSessions, "audioSessions");
         this.actors = java.util.Objects.requireNonNull(actors, "actors");
+        this.phoneRepository = phoneRepository;
+        this.contacts = contacts;
     }
 
     public boolean handle(HttpExchange exchange) throws IOException {
@@ -78,8 +94,13 @@ public final class CallRecordHttpAdapter {
                 && "retry".equals(segments[5]);
         boolean transcriptPath = segments.length == 6 && "call-records".equals(segments[3])
                 && "transcript".equals(segments[5]);
+        boolean phoneContactPath = segments.length == 4 && "phone-contacts".equals(segments[3]);
+        boolean phoneRepositoryPath = segments.length == 4 && "phone-repository".equals(segments[3]);
+        boolean notePath = segments.length == 6 && "call-records".equals(segments[3])
+                && "note".equals(segments[5]);
         if (!(createPath || timelinePath || detailPath || audioSessionPath
-                || audioPath || retryPath || transcriptPath)) return false;
+                || audioPath || retryPath || transcriptPath || phoneContactPath
+                || phoneRepositoryPath || notePath)) return false;
         boolean createRoute = createPath && "POST".equals(exchange.getRequestMethod());
         boolean timelineRoute = timelinePath && "GET".equals(exchange.getRequestMethod());
         boolean detailRoute = detailPath && "GET".equals(exchange.getRequestMethod());
@@ -87,18 +108,22 @@ public final class CallRecordHttpAdapter {
         boolean audioRoute = audioPath && "GET".equals(exchange.getRequestMethod());
         boolean retryRoute = retryPath && "POST".equals(exchange.getRequestMethod());
         boolean transcriptRoute = transcriptPath && "PATCH".equals(exchange.getRequestMethod());
+        boolean phoneContactRoute = phoneContactPath && "POST".equals(exchange.getRequestMethod());
+        boolean phoneRepositoryRoute = phoneRepositoryPath && "GET".equals(exchange.getRequestMethod());
+        boolean noteRoute = notePath && "PATCH".equals(exchange.getRequestMethod());
         try {
             if (!(createRoute || timelineRoute || detailRoute || audioSessionRoute
-                    || audioRoute || retryRoute || transcriptRoute)) {
+                    || audioRoute || retryRoute || transcriptRoute || phoneContactRoute
+                    || phoneRepositoryRoute || noteRoute)) {
                 writeMethodNotAllowed(exchange);
                 return true;
             }
             String contactId = createRoute || timelineRoute
                     ? decodeRawPathSegment(segments[4]) : null;
-            if ((detailRoute || audioSessionRoute || audioRoute || retryRoute || transcriptRoute)
+            if ((detailRoute || audioSessionRoute || audioRoute || retryRoute || transcriptRoute || noteRoute)
                     && segments[4].indexOf('%') >= 0) throw routePathInvalid();
             UUID callId = detailRoute || audioSessionRoute || audioRoute
-                    || retryRoute || transcriptRoute
+                    || retryRoute || transcriptRoute || noteRoute
                     ? parseUuid(segments[4]) : null;
             if (audioRoute) {
                 CallAudioSessionService.AudioAuthorization authorization =
@@ -117,7 +142,23 @@ public final class CallRecordHttpAdapter {
                 throw new CallRecordException(
                         "AUTH_REQUIRED", 401, "无法取得认证操作人", false, exception);
             }
-            if (createRoute) {
+            if (phoneContactRoute) {
+                createPhoneContact(exchange);
+            } else if (phoneRepositoryRoute) {
+                if (phoneRepository == null || contacts == null) throw unavailable();
+                writeJson(exchange, 200, phoneRepositoryProjection(phoneRepository.page(
+                        queryValue(exchange, "cursor"), queryInt(exchange, "limit", 20),
+                        queryValue(exchange, "query"), allContactAnchors())));
+            } else if (noteRoute) {
+                JsonObject body = readJson(exchange, "note", "expectedVersion");
+                String note = requiredString(body, "note");
+                if (!body.has("expectedVersion") || !body.get("expectedVersion").isJsonPrimitive()
+                        || !body.get("expectedVersion").getAsJsonPrimitive().isNumber()) {
+                    throw jsonFieldInvalid();
+                }
+                writeJson(exchange, 200, detailProjection(service.reviseNote(
+                        callId, note, actor, body.get("expectedVersion").getAsLong())));
+            } else if (createRoute) {
                 create(exchange, contactId, actor);
             } else if (timelineRoute) {
                 writeJson(exchange, 200, timelineProjection(timeline.page(
@@ -166,10 +207,13 @@ public final class CallRecordHttpAdapter {
         if (segments == null || !apiV1(segments)) return false;
         return (segments.length == 6 && "contacts".equals(segments[3])
                 && ("call-records".equals(segments[5]) || "timeline".equals(segments[5])))
+                || (segments.length == 4 && "phone-repository".equals(segments[3]))
+                || (segments.length == 4 && "phone-contacts".equals(segments[3]))
                 || (segments.length == 5 && "call-records".equals(segments[3]))
                 || (segments.length == 6 && "call-records".equals(segments[3])
                 && ("audio-sessions".equals(segments[5]) || "audio".equals(segments[5])
-                || "retry".equals(segments[5]) || "transcript".equals(segments[5])));
+                || "retry".equals(segments[5]) || "transcript".equals(segments[5])
+                || "note".equals(segments[5])));
     }
 
     private static JsonObject readJson(HttpExchange exchange, String... allowed)
@@ -323,6 +367,82 @@ public final class CallRecordHttpAdapter {
                 "threadRevision", page.threadRevision());
     }
 
+    private void createPhoneContact(HttpExchange exchange) throws Exception {
+        if (contacts == null) throw unavailable();
+        JsonObject body = readJson(exchange, "contactId", "contactName", "phoneNumber");
+        String contactId = optionalString(body, "contactId");
+        String contactName = optionalString(body, "contactName");
+        String phoneNumber = requiredString(body, "phoneNumber");
+        UnifiedContact contact;
+        try {
+            contact = contacts.ensurePhoneContact(contactId, phoneNumber, contactName);
+        } catch (IllegalArgumentException | IllegalStateException exception) {
+            throw contactError(exception);
+        }
+        String phonePointId = contacts.contactGroup(contact.id).stream()
+                .filter(point -> point.startsWith("phone:"))
+                .filter(point -> point.equals(com.crmforlogistics.messagecenter.ContactPointUtil
+                        .normalizePointId("phone:" + phoneNumber)))
+                .findFirst().orElseThrow(() -> new CallRecordException(
+                        "PHONE_NUMBER_INVALID", 400, "电话号码无效", false));
+        writeJson(exchange, 200, Map.of(
+                "contactId", contact.id,
+                "phonePointId", phonePointId,
+                "displayName", scalar(contact.displayName)));
+    }
+
+    private java.util.Set<String> allContactAnchors() throws IOException {
+        java.util.LinkedHashSet<String> anchors = new java.util.LinkedHashSet<>();
+        for (UnifiedContact contact : contacts.contacts()) {
+            for (var point : contact.points) {
+                if (point != null && point.id != null && !point.id.isBlank()) anchors.add(point.id);
+            }
+        }
+        return anchors;
+    }
+
+    private static Map<String, Object> phoneRepositoryProjection(
+            PhoneRepository.PhoneRecordPage page) {
+        return Map.of(
+                "items", page.items().stream().map(item -> Map.of(
+                        "id", item.id().toString(),
+                        "contactId", item.contactId(),
+                        "contactAnchorPointId", item.contactAnchorPointId(),
+                        "contactDisplayName", item.contactDisplayName(),
+                        "phonePointId", item.phonePointId(),
+                        "occurredAt", item.occurredAt().toString(),
+                        "direction", item.direction(),
+                        "note", item.note(),
+                        "transcriptionState", item.transcriptionState(),
+                        "version", item.version())).toList(),
+                "nextCursor", page.nextCursor(),
+                "totalCount", page.totalCount());
+    }
+
+    private static String optionalString(JsonObject object, String name) throws CallRecordException {
+        if (!object.has(name) || object.get(name).isJsonNull()) return "";
+        if (!object.get(name).isJsonPrimitive()
+                || !object.get(name).getAsJsonPrimitive().isString()) throw jsonFieldInvalid();
+        return object.get(name).getAsString();
+    }
+
+    private static CallRecordException contactError(RuntimeException exception) {
+        String code = exception.getMessage();
+        return switch (code == null ? "" : code) {
+            case "PHONE_CONTACT_REQUIRED" -> new CallRecordException(code, 400, "联系人必填", false, exception);
+            case "PHONE_NUMBER_INVALID" -> new CallRecordException(code, 400, "电话号码无效", false, exception);
+            case "CONTACT_NOT_FOUND" -> new CallRecordException(code, 404, "联系人不存在", false, exception);
+            case "PHONE_POINT_CONFLICT" -> new CallRecordException(code, 409, "电话号码已属于其他联系人", false, exception);
+            default -> new CallRecordException("CALL_RECORD_INTERNAL_ERROR", 500,
+                    "电话联系人处理失败", false, exception);
+        };
+    }
+
+    private static CallRecordException unavailable() {
+        return new CallRecordException(
+                "CALL_RECORD_UNAVAILABLE", 503, "电话记录服务不可用", false);
+    }
+
     private static Map<String, Object> timelineItemProjection(
             ContactTimelineService.TimelineItem item) {
         Map<String, Object> projected = new LinkedHashMap<>();
@@ -406,6 +526,7 @@ public final class CallRecordHttpAdapter {
                 "editedBy", revision.editedBy())).toList());
         detail.put("currentRevisionId", record.currentRevisionId() == null
                 ? "" : record.currentRevisionId().toString());
+        detail.put("note", record.note());
         detail.put("version", record.version());
         return detail;
     }
@@ -429,7 +550,14 @@ public final class CallRecordHttpAdapter {
         if (raw == null || raw.isBlank()) return "";
         for (String pair : raw.split("&")) {
             String[] parts = pair.split("=", 2);
-            if (name.equals(parts[0])) return parts.length == 1 ? "" : parts[1];
+            if (name.equals(parts[0])) {
+                try {
+                    return parts.length == 1 ? "" : java.net.URLDecoder.decode(
+                            parts[1], StandardCharsets.UTF_8);
+                } catch (IllegalArgumentException exception) {
+                    return "";
+                }
+            }
         }
         return "";
     }
@@ -480,7 +608,7 @@ public final class CallRecordHttpAdapter {
                                 contactId, fields.getOrDefault("phonePointId", ""),
                                 fields.get("direction"), parseInstant(fields.get("occurredAt")),
                                 fields.get("clientRequestId"), item.getName(),
-                                item.getContentType(), actor);
+                                item.getContentType(), actor, fields.getOrDefault("note", ""));
                 try (CallRecordService.PreparedCreate prepared =
                              service.prepareCreate(command)) {
                     if (prepared.existing() != null) {
@@ -523,7 +651,8 @@ public final class CallRecordHttpAdapter {
 
     private static boolean allowedField(String name) {
         return "phonePointId".equals(name) || "direction".equals(name)
-                || "occurredAt".equals(name) || "clientRequestId".equals(name);
+                || "occurredAt".equals(name) || "clientRequestId".equals(name)
+                || "note".equals(name);
     }
 
     private static String readField(InputStream input) throws IOException, CallRecordException {

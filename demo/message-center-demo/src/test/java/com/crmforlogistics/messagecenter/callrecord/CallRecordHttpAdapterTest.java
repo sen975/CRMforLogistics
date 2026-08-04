@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CallRecordHttpAdapterTest {
     private static final Instant NOW = Instant.parse("2026-07-30T10:00:00Z");
     private static final String CONTACT = "email:buyer@example.com";
+    private static final String PHONE = "phone:13800000000";
 
     @TempDir
     Path tempDir;
@@ -102,7 +103,7 @@ class CallRecordHttpAdapterTest {
             assertEquals(3, createdJson.size());
             assertEquals(false, createdJson.has("id"));
             UUID.fromString(createdJson.get("callRecordId").getAsString());
-            assertEquals(1, fixture.repository().listByAnchors(Set.of(CONTACT)).size());
+            assertEquals(1, fixture.repository().listByAnchors(Set.of(PHONE)).size());
 
             HttpRequest noToken = createRequest(
                     fixture.server().baseUri(), requestFields("request-no-token"),
@@ -171,7 +172,7 @@ class CallRecordHttpAdapterTest {
         try (CreateFixture fixture = CreateFixture.open(tempDir, 2);
              CallRecordService.PreparedCreate ignored = fixture.service().prepareCreate(
                      new CallRecordService.CreateCallRecordCommand(
-                             CONTACT, "", "inbound", NOW.minusSeconds(60),
+                             CONTACT, PHONE, "inbound", NOW.minusSeconds(60),
                              "in-flight-duplicate", "call.mp3", "audio/mpeg", "viewer-1"))) {
             RawResponse duplicate = fixture.server()
                     .postMultipartHeaderOnly("in-flight-duplicate");
@@ -313,6 +314,44 @@ class CallRecordHttpAdapterTest {
     }
 
     @Test
+    void supportsPhoneContactRepositoryAndVersionedNoteUpdate() throws Exception {
+        try (CreateFixture fixture = CreateFixture.open(tempDir)) {
+            HttpResponse<String> bound = fixture.server().json(
+                    "/api/v1/phone-contacts", "POST",
+                    "{\"contactName\":\"新联系人\",\"phoneNumber\":\"+86 139-0000-0000\"}", true);
+            assertEquals(200, bound.statusCode());
+            assertEquals("phone:8613900000000",
+                    JsonParser.parseString(bound.body()).getAsJsonObject()
+                            .get("phonePointId").getAsString());
+
+            Map<String, String> fields = fields();
+            fields.put("note", "首次回电");
+            HttpResponse<String> created = fixture.server().send(createRequest(
+                    fixture.server().baseUri(), fields, List.of(fixtureMp3()), false));
+            assertEquals(202, created.statusCode());
+            String id = JsonParser.parseString(created.body()).getAsJsonObject()
+                    .get("callRecordId").getAsString();
+
+            HttpResponse<String> repository = fixture.server().authenticatedGet(
+                    "/api/v1/phone-repository?limit=10&query=%E5%9B%9E%E7%94%B5");
+            assertEquals(200, repository.statusCode(), repository.body());
+            assertEquals(1, JsonParser.parseString(repository.body()).getAsJsonObject()
+                    .getAsJsonArray("items").size());
+
+            HttpResponse<String> detail = fixture.server().authenticatedGet(
+                    "/api/v1/call-records/" + id);
+            long version = JsonParser.parseString(detail.body()).getAsJsonObject()
+                    .get("version").getAsLong();
+            HttpResponse<String> revised = fixture.server().json(
+                    "/api/v1/call-records/" + id + "/note", "PATCH",
+                    "{\"note\":\"已确认\",\"expectedVersion\":" + version + "}", true);
+            assertEquals(200, revised.statusCode());
+            assertEquals("已确认", JsonParser.parseString(revised.body()).getAsJsonObject()
+                    .get("note").getAsString());
+        }
+    }
+
+    @Test
     void allSevenTelephoneShapesOwnMethodMismatchWhileOtherPathsFallThrough()
             throws Exception {
         try (CreateFixture fixture = CreateFixture.open(tempDir)) {
@@ -333,6 +372,9 @@ class CallRecordHttpAdapterTest {
                         .method(route.method(), HttpRequest.BodyPublishers.noBody()).build());
                 assertEquals(405, response.statusCode(), route.suffix());
             }
+            assertTrue(CallRecordHttpAdapter.matchesRoute("/api/v1/phone-contacts"));
+            assertTrue(CallRecordHttpAdapter.matchesRoute("/api/v1/phone-repository"));
+            assertTrue(CallRecordHttpAdapter.matchesRoute("/api/v1/call-records/" + id + "/note"));
             assertEquals(418, fixture.server().get("/api/threads").statusCode());
         }
     }
@@ -341,12 +383,12 @@ class CallRecordHttpAdapterTest {
                                                   Map<String, String> fields,
                                                   List<Path> files, boolean trailingField,
                                                   String expectedCode) throws Exception {
-        int before = fixture.repository().listByAnchors(Set.of(CONTACT)).size();
+        int before = fixture.repository().listByAnchors(Set.of(PHONE)).size();
         HttpResponse<String> response = fixture.server().send(createRequest(
                 fixture.server().baseUri(), fields, files, trailingField));
         assertEquals(400, response.statusCode(), requestId);
         assertEquals(expectedCode, code(response), requestId);
-        assertEquals(before, fixture.repository().listByAnchors(Set.of(CONTACT)).size(), requestId);
+        assertEquals(before, fixture.repository().listByAnchors(Set.of(PHONE)).size(), requestId);
         try (var audio = Files.list(tempDir.resolve("audio"))) {
             assertEquals(before, audio.count(), requestId);
         }
@@ -358,6 +400,7 @@ class CallRecordHttpAdapterTest {
 
     private static Map<String, String> requestFields(String requestId) {
         LinkedHashMap<String, String> fields = new LinkedHashMap<>();
+        fields.put("phonePointId", "phone:13800000000");
         fields.put("direction", "inbound");
         fields.put("occurredAt", "2026-07-30T09:00:00Z");
         fields.put("clientRequestId", requestId);
@@ -596,6 +639,7 @@ class CallRecordHttpAdapterTest {
                     "CALL_RECORD_MAX_RECORDS", "100",
                     "CALL_RECORD_QUEUE_CAPACITY", Integer.toString(queueCapacity)));
             UnifiedMessageStore store = new UnifiedMessageStore(config);
+            store.bindPhonePoint(CONTACT, "13800000000");
             FileCallRecordRepository repository = FileCallRecordRepository.open(
                     config, Clock.fixed(NOW, ZoneOffset.UTC));
             CallRecordService service = new CallRecordService(repository,
@@ -604,7 +648,8 @@ class CallRecordHttpAdapterTest {
             ContactTimelineService timeline = new ContactTimelineService(store, service);
             CallRecordHttpAdapter adapter = new CallRecordHttpAdapter(
                     config, service, timeline, new LocalAudioStore(config),
-                    new CallAudioSessionService(config), actors);
+                    new CallAudioSessionService(config), actors,
+                    new PhoneRepository(service, store), store);
             return new CreateFixture(TestServer.start(adapter), repository, timeline, service);
         }
 
@@ -634,7 +679,7 @@ class CallRecordHttpAdapterTest {
         private CallRecord create(String requestId) throws Exception {
             try (InputStream input = Files.newInputStream(fixtureMp3())) {
                 return service.create(new CallRecordService.CreateCallRecordCommand(
-                        CONTACT, "", "inbound", NOW.minusSeconds(60), requestId,
+                        CONTACT, "phone:13800000000", "inbound", NOW.minusSeconds(60), requestId,
                         "call.mp3", "audio/mpeg", "fixture"), input);
             }
         }

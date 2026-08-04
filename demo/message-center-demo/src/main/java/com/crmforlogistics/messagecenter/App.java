@@ -171,10 +171,12 @@ public class App {
         CallRecordHttpAdapter callRecordHttp = null;
         if (callRuntime.available()) {
             ContactTimelineService timeline = new ContactTimelineService(store, callRuntime.service());
+            PhoneRepository phoneRepository = new PhoneRepository(callRuntime.service(), store);
             CallAudioSessionService audioSessions = new CallAudioSessionService(config);
             callRecordHttp = new CallRecordHttpAdapter(
                     config, callRuntime.service(), timeline, callRuntime.audioStore(),
-                    audioSessions, localWeCom == null ? weComViewer::requireViewerActor : localWeCom::requireViewerActor);
+                    audioSessions, localWeCom == null ? weComViewer::requireViewerActor : localWeCom::requireViewerActor,
+                    phoneRepository, store);
         }
         WeComAuthorizationService finalAuthorizationService = authorizationService;
         WeComChatDataPublicKeyRegistrar finalPublicKeyRegistrar = publicKeyRegistrar;
