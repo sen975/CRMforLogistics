@@ -86,7 +86,46 @@ class ContactTimelineServiceTest {
     void reusesMessageTimeParsingForLegacyMessageTimestamps() throws Exception {
         assertEquals(Instant.parse("2026-07-30T09:00:00Z"),
                 ContactTimelineService.messageOccurredAt(
-                        "Wed Jul 30 09:00:00 UTC 2026"));
+                "Wed Jul 30 09:00:00 UTC 2026"));
+    }
+
+    @Test
+    void projectsPhoneOnlyContactTimelineAndReloadsCurrentNote() throws Exception {
+        Path root = tempDir.resolve("phone-only");
+        Files.createDirectories(root.resolve("email"));
+        Config config = new Config(Map.of(
+                "DATA_DIR", root.toString(),
+                "EMAIL_DATA_DIR", root.resolve("email").toString(),
+                "CHATAPP_DATA_FILE", root.resolve("messages.jsonl").toString(),
+                "CALL_RECORD_DATA_DIR", root.resolve("calls").toString()));
+        UnifiedMessageStore store = new UnifiedMessageStore(config);
+        String phone = "phone:13800000000";
+        store.ensurePhoneContact("", "13800000000", "电话采购");
+        UUID id = UUID.randomUUID();
+        CallRecord record = new CallRecord(id, phone, phone, "inbound", NOW, NOW,
+                "actor", "phone-only-request",
+                new AudioAsset("audio/" + id + ".mp3", "call.mp3", 3,
+                        "a".repeat(64), "audio/mpeg", 2),
+                new Transcription("queued", "sensevoice", 0, null, NOW, null, null),
+                List.of(), null, 1, "重启后仍可见");
+        Files.createDirectories(config.callRecordDataDir().resolve("audio"));
+        Files.write(config.callRecordDataDir().resolve(record.audio().relativePath()), new byte[]{1, 2, 3});
+        try (FileCallRecordRepository repository = FileCallRecordRepository.open(config,
+                Clock.fixed(NOW, ZoneOffset.UTC))) {
+            repository.saveNew(record);
+        }
+        try (FileCallRecordRepository restarted = FileCallRecordRepository.open(config,
+                Clock.fixed(NOW, ZoneOffset.UTC))) {
+            assertEquals("重启后仍可见", restarted.find(id).orElseThrow().note());
+            CallRecordService calls = new CallRecordService(restarted,
+                    new LocalAudioStore(config), store::contactGroup, config,
+                    Clock.fixed(NOW, ZoneOffset.UTC));
+            ContactTimelineService timeline = new ContactTimelineService(store, calls);
+            ContactTimelineService.TimelinePage page = timeline.page(phone, "", 10);
+            assertEquals(List.of(id.toString()), page.items().stream()
+                    .map(ContactTimelineService.TimelineItem::sortId).toList());
+            assertEquals("callRecord", page.items().get(0).type());
+        }
     }
 
     private Fixture fixture() throws Exception {
