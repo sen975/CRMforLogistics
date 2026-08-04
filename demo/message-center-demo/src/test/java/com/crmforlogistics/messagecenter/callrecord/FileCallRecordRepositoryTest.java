@@ -68,6 +68,33 @@ class FileCallRecordRepositoryTest {
     }
 
     @Test
+    void persistsNoteInRecordSnapshotAndReloadsIt() throws Exception {
+        Config config = config(tempDir, 10);
+        UUID recordId = UUID.fromString("550e8400-e29b-41d4-a716-446655440099");
+        CallRecord record = new CallRecord(
+                recordId, ANCHOR, ANCHOR, "inbound", NOW, NOW,
+                "zhangsan", "request-note",
+                new AudioAsset("audio/" + recordId + ".mp3", "call.mp3", 3,
+                        "a".repeat(64), "audio/mpeg", 2.0),
+                new Transcription("queued", "sensevoice", 0, null,
+                        NOW, null, null),
+                List.of(), null, 1, "录音备注");
+        createAudio(tempDir, record.id());
+
+        try (FileCallRecordRepository repository =
+                     FileCallRecordRepository.open(config, fixedClock())) {
+            repository.saveNew(record);
+        }
+
+        Path snapshot = tempDir.resolve("records").resolve(record.id() + ".json");
+        assertTrue(Files.readString(snapshot).contains("录音备注"));
+        try (FileCallRecordRepository restarted =
+                     FileCallRecordRepository.open(config, fixedClock())) {
+            assertEquals("录音备注", restarted.find(record.id()).orElseThrow().note());
+        }
+    }
+
+    @Test
     void preservesTheFirstIdempotencyWinner() throws Exception {
         CallRecord winner = queuedRecord(
                 UUID.fromString("550e8400-e29b-41d4-a716-446655440001"),

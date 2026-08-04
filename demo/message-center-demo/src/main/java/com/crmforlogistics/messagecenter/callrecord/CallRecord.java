@@ -18,7 +18,27 @@ public record CallRecord(
         Transcription transcription,
         List<TranscriptRevision> revisions,
         UUID currentRevisionId,
-        long version) {
+        long version,
+        String note) {
+    public CallRecord(
+            UUID id,
+            String contactAnchorPointId,
+            String phonePointId,
+            String direction,
+            Instant occurredAt,
+            Instant createdAt,
+            String createdBy,
+            String clientRequestId,
+            AudioAsset audio,
+            Transcription transcription,
+            List<TranscriptRevision> revisions,
+            UUID currentRevisionId,
+            long version) {
+        this(id, contactAnchorPointId, phonePointId, direction, occurredAt, createdAt,
+                createdBy, clientRequestId, audio, transcription, revisions,
+                currentRevisionId, version, "");
+    }
+
     public CallRecord {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(contactAnchorPointId, "contactAnchorPointId");
@@ -31,6 +51,7 @@ public record CallRecord(
         Objects.requireNonNull(audio, "audio");
         Objects.requireNonNull(transcription, "transcription");
         revisions = revisions == null ? List.of() : List.copyOf(revisions);
+        note = note == null || note.isBlank() ? "" : note;
     }
 }
 

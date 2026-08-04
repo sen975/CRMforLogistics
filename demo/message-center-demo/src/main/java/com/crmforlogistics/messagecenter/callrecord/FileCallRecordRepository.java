@@ -528,6 +528,9 @@ public final class FileCallRecordRepository implements CallRecordRepository {
                     || record.occurredAt() == null || record.createdAt() == null
                     || invalidCharacterText(record.createdBy(), 128)
                     || invalidCharacterText(record.clientRequestId(), 255)
+                    || record.note() == null
+                    || record.note().indexOf('\u0000') >= 0
+                    || record.note().codePointCount(0, record.note().length()) > 4_000
                     || record.version() < 1) {
                 throw corrupt("Record fields are invalid", null);
             }

@@ -51,11 +51,57 @@ class CallRecordServiceTest {
     }
 
     @Test
+    void requiresPhonePointWhenContactGroupHasPhoneIdentities() throws Exception {
+        try (TestContext context = open(
+                contactId -> List.of(EMAIL, "phone:+86 138-0000-0000"), 4)) {
+            CallRecordException missing = assertThrows(CallRecordException.class,
+                    () -> context.service().create(commandWithoutPhone("missing-phone-required"),
+                            unreadableStream()));
+            assertEquals("PHONE_CONTACT_REQUIRED", missing.code());
+            assertEquals(400, missing.httpStatus());
+        }
+    }
+
+    @Test
+    void validatesAndRevisesNoteWithUnicodeCodePointAndVersionRules() throws Exception {
+        try (TestContext context = open(contactId -> List.of(EMAIL, PHONE), 4)) {
+            CallRecordService.CreateCallRecordCommand withNote =
+                    new CallRecordService.CreateCallRecordCommand(
+                            EMAIL, PHONE, "inbound", NOW, "note-create",
+                            "call.mp3", "audio/mpeg", "zhangsan", "初始备注");
+            CallRecord created;
+            try (InputStream input = fixture()) {
+                created = context.service().create(withNote, input);
+            }
+            assertEquals("初始备注", created.note());
+
+            CallRecord revised = context.service().reviseNote(
+                    created.id(), "😀".repeat(4_000), "editor", created.version());
+            assertEquals(4_000, revised.note().codePointCount(0, revised.note().length()));
+            assertEquals(created.version() + 1, revised.version());
+
+            CallRecordException stale = assertThrows(CallRecordException.class,
+                    () -> context.service().reviseNote(
+                            created.id(), "stale", "editor", created.version()));
+            assertEquals("CALL_RECORD_VERSION_CONFLICT", stale.code());
+
+            CallRecordException tooLong = assertThrows(CallRecordException.class,
+                    () -> context.service().reviseNote(
+                            created.id(), "😀".repeat(4_001), "editor", revised.version()));
+            assertEquals("CALL_RECORD_NOTE_INVALID", tooLong.code());
+
+            CallRecord cleared = context.service().reviseNote(
+                    created.id(), "   ", "editor", revised.version());
+            assertEquals("", cleared.note());
+        }
+    }
+
+    @Test
     void validatesContactBindingAndUsesPrimaryWhenTheGroupHasNoPhone() throws Exception {
         try (TestContext withPhone = open(
                 contactId -> List.of(EMAIL, "phone:+86 138-0000-0000"), 4)) {
-            assertCode("CONTACT_BINDING_INVALID", () -> withPhone.service().create(
-                    command("", "missing-phone"), unreadableStream()));
+            assertCode("PHONE_CONTACT_REQUIRED", () -> withPhone.service().create(
+                    commandWithoutPhone("missing-phone"), unreadableStream()));
             assertCode("CONTACT_BINDING_INVALID", () -> withPhone.service().create(
                     command("phone:+86 139-0000-0000", "foreign-phone"),
                     unreadableStream()));
@@ -79,26 +125,26 @@ class CallRecordServiceTest {
             assertEquals(401, auth.httpStatus());
         }
 
-        Path withoutPhoneRoot = tempDir.resolve("without-phone");
-        try (TestContext withoutPhone = open(withoutPhoneRoot,
-                contactId -> List.of(EMAIL, "wecom:buyer-1"), 4)) {
+        Path withPhoneRoot = tempDir.resolve("with-phone-primary");
+        try (TestContext withPhonePrimary = open(withPhoneRoot,
+                contactId -> List.of(EMAIL, "phone:+86 138-0000-0000", "wecom:buyer-1"), 4)) {
             CallRecord created;
             try (InputStream input = fixture()) {
-                created = withoutPhone.service().create(command("", "request-primary"), input);
+                created = withPhonePrimary.service().create(command("", "request-primary"), input);
             }
-            assertEquals(EMAIL, created.contactAnchorPointId());
-            assertEquals("", created.phonePointId());
+            assertEquals(PHONE, created.contactAnchorPointId());
+            assertEquals(PHONE, created.phonePointId());
         }
     }
 
     @Test
     void enforcesRequestAndQueueBoundsBeforeReadingAudio() throws Exception {
-        try (TestContext context = open(contactId -> List.of(EMAIL), 2)) {
+        try (TestContext context = open(contactId -> List.of(EMAIL, PHONE), 2)) {
             String acceptedRequestId = "请".repeat(255);
             try (InputStream input = fixture()) {
                 assertEquals(acceptedRequestId,
                         context.service().create(new CallRecordService.CreateCallRecordCommand(
-                                        EMAIL, "", "inbound", NOW, acceptedRequestId,
+                                        EMAIL, PHONE, "inbound", NOW, acceptedRequestId,
                                         "录音.mp3", "audio/mpeg", "张".repeat(128)), input)
                                 .clientRequestId());
             }
@@ -107,7 +153,7 @@ class CallRecordServiceTest {
         }
 
         Path queueRoot = tempDir.resolve("queue");
-        try (TestContext context = open(queueRoot, contactId -> List.of(EMAIL), 1)) {
+        try (TestContext context = open(queueRoot, contactId -> List.of(EMAIL, PHONE), 1)) {
             try (InputStream input = fixture()) {
                 context.service().create(command("", "queued-1"), input);
             }
@@ -120,7 +166,7 @@ class CallRecordServiceTest {
     @Test
     void preparesIdempotentWinnerAndQueueDecisionBeforeAudioStage() throws Exception {
         try (TestContext context = open(tempDir.resolve("prepare"),
-                contactId -> List.of(EMAIL), 1)) {
+                contactId -> List.of(EMAIL, PHONE), 1)) {
             CallRecordService.CreateCallRecordCommand first = command("", "prepared-1");
             try (InputStream input = fixture()) {
                 context.service().create(first, input);
@@ -140,7 +186,7 @@ class CallRecordServiceTest {
     void reservesQueueCapacityAcrossInFlightPreparedCreatesAndReleasesOnAbort()
             throws Exception {
         try (TestContext context = open(tempDir.resolve("reservation"),
-                contactId -> List.of(EMAIL), 1)) {
+                contactId -> List.of(EMAIL, PHONE), 1)) {
             CallRecordService.CreateCallRecordCommand reserved =
                     command("", "reserved-1");
             try (CallRecordService.PreparedCreate first = context.service()
@@ -167,7 +213,7 @@ class CallRecordServiceTest {
     @Test
     void countsManualRetryAgainstInFlightCreateReservations() throws Exception {
         try (TestContext context = open(tempDir.resolve("retry-reservation"),
-                contactId -> List.of(EMAIL), 1)) {
+                contactId -> List.of(EMAIL, PHONE), 1)) {
             CallRecord created = create(context.service(), "failed-for-reservation");
             CallRecord processing = CallRecordStateMachine.lease(
                     created, "worker", NOW, NOW.plusSeconds(60));
@@ -194,7 +240,7 @@ class CallRecordServiceTest {
     @Test
     void rejectsMissingOrClosedPreparedCreateWithStructuredFailure() throws Exception {
         try (TestContext context = open(tempDir.resolve("invalid-prepare"),
-                contactId -> List.of(EMAIL), 1)) {
+                contactId -> List.of(EMAIL, PHONE), 1)) {
             assertCode("CALL_RECORD_PREPARE_INVALID",
                     () -> context.service().create(
                             (CallRecordService.PreparedCreate) null, null));
@@ -208,7 +254,7 @@ class CallRecordServiceTest {
 
     @Test
     void scopesReadsAndOwnsRetryAndRevisionStateChanges() throws Exception {
-        try (TestContext context = open(contactId -> List.of(EMAIL), 8)) {
+        try (TestContext context = open(contactId -> List.of(EMAIL, PHONE), 8)) {
             CallRecord failedSource = create(context.service(), "failed-source");
             CallRecord processing = CallRecordStateMachine.lease(
                     failedSource, "worker-1", NOW, NOW.plusSeconds(60));
@@ -249,8 +295,8 @@ class CallRecordServiceTest {
                     completed.id(), "stale", "editor-2", completed.version()));
 
             assertEquals(failed.id(), context.service().detail(
-                    failed.id(), Set.of(EMAIL)).id());
-            assertTrue(context.service().list(Set.of(EMAIL)).stream()
+                    failed.id(), Set.of(PHONE)).id());
+            assertTrue(context.service().list(Set.of(PHONE)).stream()
                     .anyMatch(record -> record.id().equals(failed.id())));
             assertCode("CALL_RECORD_FORBIDDEN", () -> context.service().detail(
                     failed.id(), Set.of("email:other@example.com")));
@@ -278,7 +324,13 @@ class CallRecordServiceTest {
     private static CallRecordService.CreateCallRecordCommand command(
             String phonePointId, String requestId) {
         return new CallRecordService.CreateCallRecordCommand(
-                EMAIL, phonePointId, "inbound", NOW, requestId,
+                EMAIL, phonePointId.isBlank() ? PHONE : phonePointId, "inbound", NOW, requestId,
+                "call.mp3", "audio/mpeg", "zhangsan");
+    }
+
+    private static CallRecordService.CreateCallRecordCommand commandWithoutPhone(String requestId) {
+        return new CallRecordService.CreateCallRecordCommand(
+                EMAIL, "", "inbound", NOW, requestId,
                 "call.mp3", "audio/mpeg", "zhangsan");
     }
 

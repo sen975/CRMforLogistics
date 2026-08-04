@@ -19,6 +19,7 @@ public final class CallRecordService {
     private static final int MAX_REQUEST_ID_LENGTH = 255;
     private static final int MAX_ACTOR_LENGTH = 128;
     private static final int MAX_REVISION_LENGTH = 100_000;
+    private static final int MAX_NOTE_CODE_POINTS = 4_000;
 
     private final CallRecordRepository repository;
     private final LocalAudioStore audioStore;
@@ -101,7 +102,7 @@ public final class CallRecordService {
                     validated.occurredAt(), createdAt, validated.actor(),
                     validated.clientRequestId(), asset,
                     new Transcription("queued", model, 0, null, createdAt, null, null),
-                    List.of(), null, 1);
+                    List.of(), null, 1, validated.note());
             try {
                 repository.saveNew(record);
                 return record;
@@ -190,6 +191,31 @@ public final class CallRecordService {
         }
     }
 
+    public CallRecord reviseNote(UUID id, String note, String actor, long expectedVersion)
+            throws CallRecordException {
+        Objects.requireNonNull(id, "id");
+        requireActor(actor);
+        String normalizedNote = validateNote(note);
+        CallRecord current = repository.find(id).orElseThrow(CallRecordService::notFound);
+        if (current.version() != expectedVersion) {
+            throw versionConflict(null);
+        }
+        CallRecord revised = new CallRecord(
+                current.id(), current.contactAnchorPointId(), current.phonePointId(),
+                current.direction(), current.occurredAt(), current.createdAt(),
+                current.createdBy(), current.clientRequestId(), current.audio(),
+                current.transcription(), current.revisions(), current.currentRevisionId(),
+                current.version() + 1, normalizedNote);
+        try {
+            return repository.replace(revised, expectedVersion);
+        } catch (CallRecordException exception) {
+            if ("CALL_RECORD_VERSION_CONFLICT".equals(exception.code())) {
+                throw versionConflict(exception);
+            }
+            throw exception;
+        }
+    }
+
     private ValidatedCreate validateCreate(CreateCallRecordCommand command)
             throws CallRecordException {
         if (command == null) throw invalidInput("Create command is required");
@@ -213,13 +239,19 @@ public final class CallRecordService {
         requireActor(command.actor());
         String phone = command.phonePointId() == null || command.phonePointId().isBlank()
                 ? "" : ContactPointUtil.normalizePointId(command.phonePointId());
-        if (!phone.isEmpty() && !phone.startsWith("phone:")) {
+        if (phone.isEmpty()) {
+            throw new CallRecordException(
+                    "PHONE_CONTACT_REQUIRED", 400,
+                    "A contact phone point is required", false);
+        }
+        if (!phone.startsWith("phone:")) {
             throw bindingInvalid();
         }
+        String note = validateNote(command.note());
         return new ValidatedCreate(
                 command.contactId().trim(), phone, command.direction(), command.occurredAt(),
                 command.clientRequestId().trim(), command.originalFileName(),
-                command.contentType(), command.actor().trim());
+                command.contentType(), command.actor().trim(), note);
     }
 
     private Binding resolveBinding(String contactId, String selectedPhone)
@@ -309,6 +341,23 @@ public final class CallRecordService {
                 "Transcript version has changed", false, cause);
     }
 
+    private static CallRecordException versionConflict(Throwable cause) {
+        return new CallRecordException(
+                "CALL_RECORD_VERSION_CONFLICT", 409,
+                "Call record version has changed", false, cause);
+    }
+
+    private static String validateNote(String note) throws CallRecordException {
+        if (note == null || note.isBlank()) return "";
+        if (note.indexOf('\u0000') >= 0
+                || note.codePointCount(0, note.length()) > MAX_NOTE_CODE_POINTS) {
+            throw new CallRecordException(
+                    "CALL_RECORD_NOTE_INVALID", 400,
+                    "Call record note is invalid", false);
+        }
+        return note;
+    }
+
     private static CallRecordException invalidPreparedCreate() {
         return new CallRecordException(
                 "CALL_RECORD_PREPARE_INVALID", 500,
@@ -335,7 +384,16 @@ public final class CallRecordService {
             String clientRequestId,
             String originalFileName,
             String contentType,
-            String actor) {}
+            String actor,
+            String note) {
+        public CreateCallRecordCommand(String contactId, String phonePointId,
+                                       String direction, Instant occurredAt,
+                                       String clientRequestId, String originalFileName,
+                                       String contentType, String actor) {
+            this(contactId, phonePointId, direction, occurredAt, clientRequestId,
+                    originalFileName, contentType, actor, "");
+        }
+    }
 
     public static final class PreparedCreate implements AutoCloseable {
         private final CallRecordService owner;
@@ -380,7 +438,8 @@ public final class CallRecordService {
             String clientRequestId,
             String originalFileName,
             String contentType,
-            String actor) {}
+            String actor,
+            String note) {}
 
     private record Binding(String anchor, String phonePointId) {}
 }
