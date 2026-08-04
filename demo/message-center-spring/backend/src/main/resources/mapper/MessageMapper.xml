@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.crmforlogistics.messagecenter.mapper.MessageMapper">
+
+    <resultMap id="messageResultMap" type="com.crmforlogistics.messagecenter.entity.MessageEntity">
+        <id column="id" property="id"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="channel_account_id" property="channelAccountId"/>
+        <result column="source_event_id" property="sourceEventId"/>
+        <result column="provider_message_id" property="providerMessageId"/>
+        <result column="client_request_id" property="clientRequestId"/>
+        <result column="direction" property="direction"/>
+        <result column="message_kind" property="messageKind"/>
+        <result column="subject" property="subject"/>
+        <result column="body_text" property="bodyText"/>
+        <result column="body_html" property="bodyHtml"/>
+        <result column="occurred_at" property="occurredAt"/>
+        <result column="received_at" property="receivedAt"/>
+        <result column="ingest_sequence" property="ingestSequence"/>
+        <result column="counts_as_unread" property="countsAsUnread"/>
+        <result column="current_status" property="currentStatus"/>
+        <result column="current_status_at" property="currentStatusAt"/>
+        <result column="created_by_user_id" property="createdByUserId"/>
+        <result column="metadata_jsonb" property="metadataJsonb"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <!--
+        insertWithSequence — ported from JdbcMessageRepository.insert().
+
+        Atomically increments the conversation's next_ingest_sequence via a CTE
+        UPDATE ... RETURNING, then uses that value in the INSERT.
+        This preserves the same atomicity contract as the original:
+        every message inserted gets a monotonic sequence number scoped to the conversation.
+    -->
+    <insert id="insertWithSequence">
+        with seq as (
+            update conversations
+            set next_ingest_sequence = next_ingest_sequence + 1,
+                version = version + 1
+            where id = #{conversationId}::uuid
+            returning next_ingest_sequence
+        )
+        insert into messages
+            (id, conversation_id, channel_account_id, source_event_id,
+             provider_message_id, client_request_id, direction, message_kind,
+             subject, body_text, body_html, occurred_at, ingest_sequence,
+             counts_as_unread, current_status, current_status_at, created_by_user_id)
+        select #{id}::uuid, #{conversationId}::uuid, #{channelAccountId}::uuid,
+               #{sourceEventId}::uuid, #{providerMessageId}, #{clientRequestId},
+               #{direction}, #{messageKind}, #{subject}, #{bodyText}, #{bodyHtml},
+               #{occurredAt}, seq.next_ingest_sequence,
+               #{countsAsUnread}, #{currentStatus}, #{currentStatusAt},
+               #{createdByUserId}::uuid
+        from seq
+    </insert>
+
+    <!--
+        listMessages — ported from JdbcMessageRepository.queryMessages().
+
+        Authorization scope (userId):
+        - user is directly assigned to the conversation (assigned_user_id)
+        - OR user is on a team assigned to the conversation (team_members)
+        - OR user has an active, non-expired access grant (conversation_access_grants)
+
+        Cursor-based pagination: (occurred_at, id) descending with an optional
+        cursor boundary for keyset pagination.
+    -->
+    <select id="listMessages" resultMap="messageResultMap">
+        select m.id, m.provider_message_id, m.channel_account_id, m.conversation_id,
+               m.source_event_id, m.client_request_id, m.direction, m.message_kind,
+               m.subject, m.body_text, m.body_html, m.occurred_at, m.received_at,
+               m.ingest_sequence, m.counts_as_unread, m.current_status,
+               m.current_status_at, m.created_by_user_id, m.metadata_jsonb, m.created_at
+        from messages m
+        join conversations cv on cv.id = m.conversation_id
+        where m.conversation_id = #{conversationId}::uuid
+          and (
+              cv.assigned_user_id = #{userId}
+              or exists (select 1 from team_members tm
+                         where tm.team_id = cv.assigned_team_id
+                           and tm.user_id = #{userId})
+              or exists (select 1 from conversation_access_grants g
+                         where g.conversation_id = cv.id
+                           and g.user_id = #{userId}
+                           and g.revoked_at is null
+                           and (g.expires_at is null or g.expires_at > now()))
+          )
+        <if test="beforeCursor != null and beforeId != null">
+          and (m.occurred_at &lt; #{beforeCursor}
+               or (m.occurred_at = #{beforeCursor} and m.id &lt; #{beforeId}))
+        </if>
+        order by m.occurred_at desc, m.id desc
+        limit ${page.size}
+    </select>
+
+    <!--
+        Idempotency lookup by provider_message_id for a channel account.
+        Ported from JdbcMessageRepository.findByKey().
+    -->
+    <select id="findByProviderMessageId" resultMap="messageResultMap">
+        select id, provider_message_id, channel_account_id, conversation_id,
+               source_event_id, client_request_id, direction, message_kind,
+               subject, body_text, body_html, occurred_at, received_at,
+               ingest_sequence, counts_as_unread, current_status,
+               current_status_at, created_by_user_id, metadata_jsonb, created_at
+        from messages
+        where channel_account_id = #{channelAccountId}::uuid
+          and provider_message_id = #{providerMessageId}
+        limit 1
+    </select>
+
+    <!--
+        Idempotency lookup by client_request_id for a channel account.
+        Ported from JdbcMessageRepository.findByKey().
+    -->
+    <select id="findByClientRequestId" resultMap="messageResultMap">
+        select id, provider_message_id, channel_account_id, conversation_id,
+               source_event_id, client_request_id, direction, message_kind,
+               subject, body_text, body_html, occurred_at, received_at,
+               ingest_sequence, counts_as_unread, current_status,
+               current_status_at, created_by_user_id, metadata_jsonb, created_at
+        from messages
+        where channel_account_id = #{channelAccountId}::uuid
+          and client_request_id = #{clientRequestId}
+        limit 1
+    </select>
+
+</mapper>
