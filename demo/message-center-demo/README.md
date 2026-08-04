@@ -38,6 +38,8 @@ LOCAL_WECOM_DATA_SOURCE=fixture
 `fixture` 会提供两个本地联系人和三条样例消息；使用 `jsonl` 时，将输入文件配置到
 `LOCAL_WECOM_DATA_FILE`，每行至少包含 `msgid`、`external_userid`、`userid`、`send_time`、
 `secret_key` 和 `msgtype`。本地模式仍执行 viewer token、过期和一次性会话校验，但页面会跳过企业微信脚本，直接展示本地消息引用。生产环境保持 `LOCAL_DEV_MODE=false`。
+内置本地服务只提供 loopback HTTP；录音播放 Cookie 在本地模式下不会继承生产
+`WECOM_LOGIN_REDIRECT_URI` 的 HTTPS `Secure` 属性。
 
 如果 8099 被占用，在 `.env` 里修改：
 

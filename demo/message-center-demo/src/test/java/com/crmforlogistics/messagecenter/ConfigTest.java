@@ -153,6 +153,13 @@ class ConfigTest {
                 "WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099",
                 "WECOM_LOGIN_REDIRECT_URI", "http://localhost:8099/"));
         assertFalse(localHttp.callAudioCookieSecure());
+
+        Config localDevelopment = new Config(Map.of(
+                "LOCAL_DEV_MODE", "true",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/"));
+        assertFalse(localDevelopment.callAudioCookieSecure(),
+                "loopback HTTP development must not emit a Secure audio cookie");
     }
 
     @Test

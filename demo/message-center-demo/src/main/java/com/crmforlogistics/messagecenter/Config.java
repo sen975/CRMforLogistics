@@ -111,7 +111,8 @@ public class Config {
         return boundedInt("CALL_AUDIO_SESSION_MAX_ACTIVE", 256, 8, 1_024);
     }
     public boolean callAudioCookieSecure() {
-        return "https".equalsIgnoreCase(java.net.URI.create(wecomLoginRedirectUri()).getScheme());
+        return !localDevMode()
+                && "https".equalsIgnoreCase(java.net.URI.create(wecomLoginRedirectUri()).getScheme());
     }
     public java.net.URI funAsrBaseUri() {
         final java.net.URI uri;
