@@ -5,8 +5,8 @@ spring:
     active: dev
 
 mybatis-plus:
-  mapper-locations: classpath*:mapper/**/*.xml
   type-aliases-package: com.crmforlogistics.messagecenter.entity
+  type-handlers-package: com.crmforlogistics.messagecenter.typehandler
   global-config:
     db-config:
       id-type: auto

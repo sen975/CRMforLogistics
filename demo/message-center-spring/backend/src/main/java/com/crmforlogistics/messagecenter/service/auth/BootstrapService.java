@@ -13,6 +13,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class BootstrapService {
@@ -44,6 +45,7 @@ public class BootstrapService {
         }
 
         UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID());
         user.setUsername(username.trim());
         user.setUsernameNormalized(normalized);
         user.setPasswordHash(passwordEncoder.encode(password));
