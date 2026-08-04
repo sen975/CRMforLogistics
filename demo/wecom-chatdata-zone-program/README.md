@@ -21,10 +21,11 @@
 输入字段只有：
 
 ```json
-{"cursor":"可选，最多128字节","limit":200,"token":"可选，最多128字节"}
+{"cursor":"首次为空字符串，后续为分页游标，最多128字节","limit":200}
 ```
 
-程序固定向 SDK 发送 `mode=0`，固定调用 `sync_msg`。输出只包含：
+外层能力调用必须始终携带 `cursor` 和 `limit`；不接受其他字段。程序在 `cursor` 为空时不向
+SDK 传游标，并固定发送 `mode=0`、固定调用 `sync_msg`。输出只包含：
 
 ```text
 errcode, errmsg, has_more, next_cursor, msg_list[
@@ -33,6 +34,8 @@ errcode, errmsg, has_more, next_cursor, msg_list[
   service_encrypt_info.public_key_ver
 ]
 ```
+
+输出始终包含 `chatid`；单聊时其值为空字符串。
 
 未知输入、SDK 失败、畸形或超大响应统一返回 `errcode=710660`，不回显 SDK 响应或敏感数据。
 

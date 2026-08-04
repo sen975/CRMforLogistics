@@ -10,7 +10,7 @@ public final class SyncMessageAbility {
     private static final int INTERNAL_ERROR = 710660;
     private static final int MAX_INPUT_BYTES = 4096;
     private static final int MAX_SDK_RESPONSE_BYTES = 1_048_576;
-    private static final Set<String> INPUT_FIELDS = Set.of("cursor", "limit", "token");
+    private static final Set<String> INPUT_FIELDS = Set.of("cursor", "limit");
     private final SdkInvoker sdk;
 
     public SyncMessageAbility(SdkInvoker sdk) {
@@ -24,17 +24,16 @@ public final class SyncMessageAbility {
             }
             JSONObject input = JSON.parseObject(rawInput);
             if (input == null || !INPUT_FIELDS.containsAll(input.keySet())
-                    || !input.containsKey("limit") || !(input.get("limit") instanceof Number)) {
+                    || !input.containsKey("cursor") || !input.containsKey("limit")
+                    || !(input.get("limit") instanceof Number)) {
                 return error();
             }
             int limit = input.getIntValue("limit");
             String cursor = optionalBoundedString(input, "cursor", 128);
-            String token = optionalBoundedString(input, "token", 128);
             if (limit < 1 || limit > 200) return error();
 
             JSONObject sdkInput = new JSONObject();
             if (!cursor.isBlank()) sdkInput.put("cursor", cursor);
-            if (!token.isBlank()) sdkInput.put("token", token);
             sdkInput.put("limit", limit);
             sdkInput.put("mode", 0);
             InvocationResult invocation = sdk.invoke(sdkInput.toJSONString());
@@ -74,7 +73,7 @@ public final class SyncMessageAbility {
             }
             projected.put("receiver_list", projectedReceivers);
             String chatId = optionalBoundedString(message, "chatid", 256);
-            if (!chatId.isBlank()) projected.put("chatid", chatId);
+            projected.put("chatid", chatId);
             long sendTime = requiredNonNegativeLong(message, "send_time");
             int msgType = requiredInt(message, "msgtype");
             projected.put("send_time", sendTime);

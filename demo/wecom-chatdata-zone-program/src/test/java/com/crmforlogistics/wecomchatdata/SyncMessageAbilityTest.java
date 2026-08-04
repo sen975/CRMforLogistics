@@ -35,9 +35,40 @@ class SyncMessageAbilityTest {
         assertEquals(0, request.getIntValue("mode"));
         JSONObject response = JSON.parseObject(output);
         assertEquals(0, response.getIntValue("errcode"));
-        assertEquals("msg-1", response.getJSONArray("msg_list").getJSONObject(0).getString("msgid"));
+        JSONObject message = response.getJSONArray("msg_list").getJSONObject(0);
+        assertEquals("msg-1", message.getString("msgid"));
+        assertEquals("", message.getString("chatid"));
         assertFalse(output.contains("must-not-leave-zone"));
         assertFalse(output.contains("topic"));
+    }
+
+    @Test
+    void requiresCursorEvenOnTheFirstPage() {
+        AtomicInteger calls = new AtomicInteger();
+        SyncMessageAbility ability = new SyncMessageAbility(request -> {
+            calls.incrementAndGet();
+            return new SyncMessageAbility.InvocationResult(0, "{}", "sync_msg");
+        });
+
+        JSONObject output = JSON.parseObject(ability.process("{\"limit\":200}"));
+
+        assertEquals(710660, output.getIntValue("errcode"));
+        assertEquals(0, calls.get());
+    }
+
+    @Test
+    void rejectsFieldsOutsideThePublishedInputProtocol() {
+        AtomicInteger calls = new AtomicInteger();
+        SyncMessageAbility ability = new SyncMessageAbility(request -> {
+            calls.incrementAndGet();
+            return new SyncMessageAbility.InvocationResult(0, "{}", "sync_msg");
+        });
+
+        JSONObject output = JSON.parseObject(
+                ability.process("{\"cursor\":\"\",\"limit\":200,\"token\":\"legacy\"}"));
+
+        assertEquals(710660, output.getIntValue("errcode"));
+        assertEquals(0, calls.get());
     }
 
     @Test
@@ -61,7 +92,7 @@ class SyncMessageAbilityTest {
                         {"errcode":0,"errmsg":"ok","has_more":0,"msg_list":[]}
                         """, "sync_msg"));
 
-        JSONObject output = JSON.parseObject(ability.process("{\"limit\":200}"));
+        JSONObject output = JSON.parseObject(ability.process("{\"cursor\":\"\",\"limit\":200}"));
 
         assertEquals(0, output.getIntValue("errcode"));
         assertEquals("", output.getString("next_cursor"));
@@ -72,9 +103,9 @@ class SyncMessageAbilityTest {
         SyncMessageAbility ability = new SyncMessageAbility(request ->
                 new SyncMessageAbility.InvocationResult(-910006, "secret upstream body", "sync_msg"));
 
-        String invalidLimit = ability.process("{\"limit\":201}");
+        String invalidLimit = ability.process("{\"cursor\":\"\",\"limit\":201}");
         String invalidCursor = ability.process("{\"limit\":200,\"cursor\":\"" + "x".repeat(129) + "\"}");
-        String sdkFailure = ability.process("{\"limit\":200}");
+        String sdkFailure = ability.process("{\"cursor\":\"\",\"limit\":200}");
 
         assertTrue(invalidLimit.contains("\"errcode\":710660"));
         assertTrue(invalidCursor.contains("\"errcode\":710660"));
