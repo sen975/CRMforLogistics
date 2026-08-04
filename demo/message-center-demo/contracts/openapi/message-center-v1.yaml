@@ -13,6 +13,7 @@ tags:
   - name: Companies
   - name: Messaging
   - name: Media
+  - name: CallRecords
   - name: Channels
   - name: Events
 security:
@@ -416,6 +417,232 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contacts/{contactId}/call-records:
+    post:
+      operationId: createCallRecord
+      description: Upload one MP3 telephone recording for an authorized contact. The file is bounded to 100 MiB and two hours, and transcription is queued asynchronously.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordContactId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateCallRecordRequest'
+            encoding:
+              file:
+                contentType: audio/mpeg
+      responses:
+        '202':
+          description: Call record accepted and transcription queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRecordAccepted'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/contacts/{contactId}/timeline:
+    get:
+      operationId: getContactTimeline
+      description: Return one bounded newest-first timeline containing ordinary messages and telephone recording cards with a stable cursor and thread revision.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordContactId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/TimelineCursorParameter'
+        - $ref: '#/components/parameters/TimelineLimitParameter'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      responses:
+        '200':
+          description: Authorized mixed message and call-record timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactTimelinePage'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}:
+    get:
+      operationId: getCallRecord
+      description: Return the authorized telephone recording, asynchronous transcription projection and bounded revision history.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      responses:
+        '200':
+          description: Authorized telephone recording detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRecordDetail'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}/audio-sessions:
+    post:
+      operationId: createCallAudioSession
+      description: Create a short-lived HttpOnly playback cookie bound to one call record and the current viewer actor.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      responses:
+        '204':
+          description: Playback cookie issued; no response body is returned.
+          headers:
+            Set-Cookie:
+              description: Short-lived path-bound HttpOnly playback cookie.
+              schema:
+                type: string
+                maxLength: 1024
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}/audio:
+    get:
+      operationId: streamCallAudio
+      description: Stream an authorized MP3 recording after the short-lived playback cookie is issued. Single byte ranges are supported.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+            pattern: '^bytes=[0-9]*-[0-9]*$'
+      responses:
+        '200':
+          description: Complete MP3 recording, limited to 100 MiB
+          x-max-response-bytes: 104857600
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+                maxLength: 104857600
+        '206':
+          description: Single-range partial MP3 recording
+          x-max-response-bytes: 104857600
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+                maxLength: 104857600
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}/retry:
+    post:
+      operationId: retryCallRecordTranscription
+      description: Retry a failed telephone transcription using the authenticated viewer actor and a bounded client request id.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetryCallRecordRequest'
+      responses:
+        '200':
+          description: Updated call record queued for transcription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRecordDetail'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/call-records/{callRecordId}/transcript:
+    patch:
+      operationId: reviseCallRecordTranscript
+      description: Append one bounded human transcript revision using optimistic version checking and the authenticated viewer actor.
+      tags:
+        - CallRecords
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviseCallRecordTranscriptRequest'
+      responses:
+        '200':
+          description: Updated call record with the appended revision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRecordDetail'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/channel-accounts:
     get:
       operationId: listChannelAccounts
@@ -678,6 +905,53 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/conversation-view/sync:
+    post:
+      operationId: syncWeComConversationView
+      description: Synchronize bounded WeCom chatdata indexes without requiring an existing contact point. A successful sync may create wecom external-user contacts for the next refresh.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              maxProperties: 0
+      responses:
+        '200':
+          description: Bounded WeCom chatdata synchronization result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeComConversationSyncResult'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '409':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '429':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '500':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '502':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '503':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '504':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/wecom/conversation-view/sessions:
     post:
       operationId: createWeComConversationViewerSession
@@ -886,6 +1160,40 @@ components:
       schema:
         type: string
         format: uuid
+    CallRecordContactId:
+      name: contactId
+      in: path
+      required: true
+      description: Canonical contact or contact-point anchor accepted by the local contact-group store.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    CallRecordId:
+      name: callRecordId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TimelineCursorParameter:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2731
+    TimelineLimitParameter:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
     IdentityId:
       name: identityId
       in: path
@@ -1533,17 +1841,16 @@ components:
           $ref: '#/components/schemas/WeComJsSdkSignature'
     WeComLoginAttemptResponse:
       type: object
-      required: [corpId, agentId, redirectUri, state, expiresIn]
+      required: [loginType, appId, redirectUri, state, expiresIn]
       additionalProperties: false
       properties:
-        corpId:
+        loginType:
+          type: string
+          const: ServiceApp
+        appId:
           type: string
           minLength: 1
-          maxLength: 64
-        agentId:
-          type: string
-          minLength: 1
-          maxLength: 32
+          maxLength: 128
         redirectUri:
           type: string
           format: uri
@@ -1603,6 +1910,20 @@ components:
           type: string
           minLength: 16
           maxLength: 128
+    WeComConversationSyncResult:
+      type: object
+      required: [pages, stored, skipped]
+      additionalProperties: false
+      properties:
+        pages:
+          type: integer
+          minimum: 1
+        stored:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
     WeComViewerSessionCreateResponse:
       type: object
       required: [viewerSessionId, expiresIn]
@@ -1671,6 +1992,275 @@ components:
         accepted:
           type: boolean
           const: true
+    CreateCallRecordRequest:
+      type: object
+      required: [direction, occurredAt, clientRequestId, file]
+      additionalProperties: false
+      properties:
+        phonePointId:
+          type: string
+          maxLength: 512
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        occurredAt:
+          type: string
+          format: date-time
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        file:
+          type: string
+          format: binary
+          maxLength: 104857600
+    CallRecordAccepted:
+      type: object
+      required: [callRecordId, state, clientRequestId]
+      additionalProperties: false
+      properties:
+        callRecordId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [queued, transcribing, completed, failed]
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+    ContactTimelinePage:
+      type: object
+      required: [items, nextCursor, itemCount, threadRevision]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ContactTimelineItem'
+        nextCursor:
+          type: string
+          maxLength: 2731
+        itemCount:
+          type: integer
+          format: int32
+          minimum: 0
+        threadRevision:
+          type: string
+          minLength: 1
+          maxLength: 128
+    ContactTimelineItem:
+      type: object
+      required: [type, occurredAt, sortId, payload]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [message, callRecord]
+        occurredAt:
+          type: string
+          format: date-time
+        sortId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        payload:
+          type: object
+          additionalProperties: true
+          maxProperties: 30
+    CallRecordDetail:
+      type: object
+      required: [id, contactAnchorPointId, phonePointId, direction, occurredAt, createdAt, clientRequestId, audio, transcription, revisions, currentRevisionId, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactAnchorPointId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        phonePointId:
+          type: string
+          maxLength: 512
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        occurredAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        audio:
+          $ref: '#/components/schemas/CallAudioAsset'
+        transcription:
+          $ref: '#/components/schemas/CallTranscription'
+        revisions:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CallTranscriptRevision'
+        currentRevisionId:
+          type: string
+          maxLength: 64
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+    CallAudioAsset:
+      type: object
+      required: [originalFileName, sizeBytes, sha256, contentType, durationSeconds]
+      additionalProperties: false
+      properties:
+        originalFileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 104857600
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        contentType:
+          type: string
+          const: audio/mpeg
+        durationSeconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 7200
+    CallTranscription:
+      type: object
+      required: [state, model, attempts, result, error]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [queued, transcribing, completed, failed]
+        model:
+          type: string
+          maxLength: 100
+        attempts:
+          type: integer
+          minimum: 0
+          maximum: 10
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/CallTranscriptionResult'
+            - type: object
+              maxProperties: 0
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/CallRecordError'
+            - type: object
+              maxProperties: 0
+    CallTranscriptionResult:
+      type: object
+      required: [model, durationSeconds, originalText, segments, completedAt]
+      additionalProperties: false
+      properties:
+        model:
+          type: string
+          maxLength: 100
+        durationSeconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 7200
+        originalText:
+          type: string
+          maxLength: 1000000
+        segments:
+          type: array
+          maxItems: 20000
+          items:
+            $ref: '#/components/schemas/CallTranscriptSegment'
+        completedAt:
+          type: string
+          format: date-time
+    CallTranscriptSegment:
+      type: object
+      required: [startSeconds, endSeconds, text]
+      additionalProperties: false
+      properties:
+        startSeconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 7200
+        endSeconds:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 7200
+        text:
+          type: string
+          maxLength: 100000
+    CallRecordError:
+      type: object
+      required: [code, message, retryable]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 100
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        retryable:
+          type: boolean
+    CallTranscriptRevision:
+      type: object
+      required: [id, text, editedAt, editedBy]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        text:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        editedAt:
+          type: string
+          format: date-time
+        editedBy:
+          type: string
+          minLength: 1
+          maxLength: 128
+    RetryCallRecordRequest:
+      type: object
+      required: [clientRequestId]
+      additionalProperties: false
+      properties:
+        clientRequestId:
+          type: string
+          minLength: 1
+          maxLength: 255
+    ReviseCallRecordTranscriptRequest:
+      type: object
+      required: [text, expectedVersion]
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 100000
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
     SseEvent:
       type: object
       additionalProperties: false
