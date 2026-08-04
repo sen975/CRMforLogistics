@@ -306,6 +306,10 @@ public class UnifiedMessageStoreTest {
 					if (control.deferMutation) return new Promise(resolve => { control.resolveMutation = () => resolve(result); });
 					return result;
 				  }
+				  if (String(url).includes('/api/v1/phone-repository')) {
+					const page = { items:[{ id:'call-1', contactDisplayName:'Buyer', phonePointId:'phone:8613800000000', note:'回电', transcriptionState:'queued' }], nextCursor:'', totalCount:1 };
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(page), json:async () => page };
+				  }
 				  if (String(url).includes('/api/v1/call-records/call-1')) {
 					if (control.failDetail) return { ok:false, status:503, statusText:'Unavailable', text:async () => JSON.stringify({ code:'CALL_DETAIL_UNAVAILABLE', message:'详情暂不可用' }), json:async () => ({}) };
 					const detail = { ...callDetail, transcription:{ ...callDetail.transcription, state:control.detailState } };
@@ -355,6 +359,12 @@ public class UnifiedMessageStoreTest {
 				  state.selectedChannel = 'callRecord';
 				  state.wecomAuth = { viewerAuthToken:'viewer-token' };
 				  state.wecomAuthExpiresAt = Date.now() + 60000;
+				  state.selectedPointId = '';
+				  state.selectedChannel = 'phoneRepository';
+				  renderComposer();
+				  await renderPhoneRepositoryPanel();
+				  assert.match($('phoneRepositoryItems').innerHTML, /回电/);
+				  state.selectedPointId = 'contact-1';
 
 				  state.selectedChannel = 'phone';
 				  renderComposer();
@@ -369,11 +379,14 @@ public class UnifiedMessageStoreTest {
 				  $('callFile').files = [{ name:'call.mp3', size:123 }];
 				  $('callDirection').value = 'inbound';
 				  $('callOccurredAt').value = '2026-08-01T10:00';
+				  $('callContactId').value = 'contact-1';
 				  $('callPhonePoint').disabled = false;
 				  $('callPhonePoint').value = 'phone:8613800000000';
+				  $('callNote').value = '首次回电';
 				  const upload = uploadCallRecord();
-				  assert.equal(JSON.stringify(upload.form.entries.map(entry => entry[0])), JSON.stringify(['direction','occurredAt','clientRequestId','phonePointId','file']));
+				  assert.equal(JSON.stringify(upload.form.entries.map(entry => entry[0])), JSON.stringify(['direction','occurredAt','clientRequestId','phonePointId','note','file']));
 				  assert.equal(upload.form.entries.find(entry => entry[0] === 'phonePointId')[1], 'phone:8613800000000');
+				  assert.equal(upload.form.entries.find(entry => entry[0] === 'note')[1], '首次回电');
 				  assert.equal(upload.headers['X-WeCom-Viewer-Auth'], 'viewer-token');
 				  assert.equal(upload.headers['Content-Type'], undefined);
 				  upload.status = 201;
@@ -390,9 +403,9 @@ public class UnifiedMessageStoreTest {
 				  $('callFile').files = [{ name:'call.mp3', size:123 }];
 				  $('callDirection').value = 'outbound';
 				  $('callOccurredAt').value = '2026-08-01T11:00';
-				  $('callPhonePoint').disabled = true;
+				  $('callPhonePoint').value = '';
 				  const noPhoneUpload = uploadCallRecord();
-				  assert.equal(noPhoneUpload.form.entries.some(entry => entry[0] === 'phonePointId'), false);
+				  assert.equal(noPhoneUpload, undefined);
 
 				  state.selectedPointId = 'contact-1';
 				  renderCallRecordUploadPanel(phoneContact);

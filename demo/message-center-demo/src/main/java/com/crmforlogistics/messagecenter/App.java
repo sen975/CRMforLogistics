@@ -2413,14 +2413,35 @@ public class App {
 
     function renderComposer() {
       const contact = selectedContact();
-      if (!contact) { $('composer').innerHTML = ''; return; }
+      if (!contact) {
+        $('composer').innerHTML = '<div class="composer-tabs"><button class="active" data-channel="phoneRepository">电话仓库</button></div><div id="sendPanel"></div>';
+        renderPhoneRepositoryPanel();
+        return;
+      }
 	  const channels = [...contact.channels.filter(channel => ['email', 'chatapp', 'wecom'].includes(channel)), 'wecom'].filter((v,i,a)=>a.indexOf(v)===i);
 	  if (![...channels, 'callRecord'].includes(state.selectedChannel)) state.selectedChannel = channels[0];
       $('composer').innerHTML = `
-		<div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}<button class="${state.selectedChannel==='callRecord'?'active':''}" data-channel="callRecord">电话记录</button></div>
+		<div class="composer-tabs">${channels.map(ch => `<button class="${state.selectedChannel===ch?'active':''}" data-channel="${esc(ch)}">${esc(label(ch))}</button>`).join('')}<button class="${state.selectedChannel==='callRecord'?'active':''}" data-channel="callRecord">电话记录</button><button class="${state.selectedChannel==='phoneRepository'?'active':''}" data-channel="phoneRepository">电话仓库</button></div>
         <div id="sendPanel"></div>`;
       document.querySelectorAll('[data-channel]').forEach(btn => btn.onclick = () => { state.selectedChannel = btn.dataset.channel; renderComposer(); });
-      renderSendPanel(contact);
+      if (state.selectedChannel === 'phoneRepository') renderPhoneRepositoryPanel();
+      else renderSendPanel(contact);
+    }
+
+    async function renderPhoneRepositoryPanel() {
+      const panel = $('sendPanel');
+      if (!panel) return;
+      panel.innerHTML = '<div class="phone-repository-panel"><div class="field"><label for="phoneRepositoryQuery">搜索电话、联系人或备注</label><input id="phoneRepositoryQuery" type="search" maxlength="512"><button id="phoneRepositorySearch" type="button">查询</button></div><div id="phoneRepositoryItems" class="call-repository-items">加载中</div></div>';
+      const load = async () => {
+        const items = $('phoneRepositoryItems');
+        try {
+          const page = await viewerApi('/api/v1/phone-repository?limit=50&query=' + encodeURIComponent($('phoneRepositoryQuery')?.value || ''));
+          items.innerHTML = page.items?.length ? page.items.map(item => `<article class="call-card" data-call-record-id="${esc(item.id)}" tabindex="0"><div class="call-card-title">${esc(item.contactDisplayName)} · ${esc(item.phonePointId)}</div><div class="small">${esc(item.note || '')} · ${esc(item.transcriptionState)}</div></article>`).join('') : '<div class="empty">暂无电话记录</div>';
+          items.querySelectorAll('[data-call-record-id]').forEach(item => item.onclick = () => openCallRecordDetail(item.dataset.callRecordId));
+        } catch (error) { items.textContent = error.message || '电话仓库加载失败'; }
+      };
+      $('phoneRepositorySearch').onclick = load;
+      await load();
     }
 
 	function phonePoints(contact) {
@@ -2434,35 +2455,36 @@ public class App {
 
 	function renderCallRecordUploadPanel(contact) {
 	  const points = phonePoints(contact);
-	  const options = points.length === 0
-		? '<option value="">未绑定电话</option>'
-		: (points.length > 1 ? '<option value="">选择号码</option>' : '') + points.map((point, index) => `<option value="${esc(point.id)}" ${points.length === 1 && index === 0 ? 'selected' : ''}>${esc(point.label || point.value)}</option>`).join('');
+	  const options = points.map(point => `<option value="${esc(point.id)}">${esc(point.label || point.value)}</option>`).join('');
+	  const contactOptions = (state.contacts || []).map(item => `<option value="${esc(item.id)}">${esc(item.displayName || item.id)}</option>`).join('');
 	  $('sendPanel').innerHTML = `
 		<div class="call-upload-form">
+		  <div class="field"><label for="callContactId">联系人</label><input id="callContactId" list="callContactOptions" value="${esc(contact?.id || state.selectedPointId || '')}" maxlength="512"><datalist id="callContactOptions">${contactOptions}</datalist></div>
 		  <div class="call-upload-grid">
 			<div class="field"><label for="callFile">MP3 录音</label><input id="callFile" type="file" accept="audio/mpeg,.mp3"></div>
 			<div class="field"><label for="callDirection">方向</label><select id="callDirection"><option value="">选择方向</option><option value="inbound">呼入</option><option value="outbound">呼出</option></select></div>
 			<div class="field"><label for="callOccurredAt">通话时间</label><input id="callOccurredAt" type="datetime-local" value="${esc(localDateTimeValue())}"></div>
-			<div class="field"><label for="callPhonePoint">绑定号码</label><select id="callPhonePoint" ${points.length === 0 ? 'disabled' : ''}>${options}</select></div>
+			<div class="field"><label for="callPhonePoint">绑定号码</label><input id="callPhonePoint" list="callPhoneOptions" value="${esc(points[0]?.id || '')}" maxlength="64"><datalist id="callPhoneOptions">${options}</datalist>${points.length === 0 ? '<div class="small">未绑定电话，可手动填写</div>' : ''}</div>
 		  </div>
+		  <div class="field"><label for="callNote">备注（可选）</label><textarea id="callNote" maxlength="4000" rows="3"></textarea></div>
 		  <div class="call-upload-actions"><div><progress class="call-upload-progress" id="callUploadProgress" max="100" value="0"></progress><div class="small" id="callUploadStatus">最大 100 MiB，最长 2 小时</div></div><button class="primary" id="uploadCallRecordButton" type="button" aria-label="上传电话录音">上传录音</button></div>
 		</div>`;
 	  $('uploadCallRecordButton').onclick = uploadCallRecord;
 	}
 
 	function uploadCallRecord() {
-	  const contactId = state.selectedPointId;
+	  const contactId = $('callContactId')?.value?.trim() || state.selectedPointId;
 	  const file = $('callFile')?.files?.[0];
 	  const direction = $('callDirection')?.value || '';
 	  const occurredAtValue = $('callOccurredAt')?.value || '';
-	  const phonePointId = $('callPhonePoint')?.disabled ? '' : ($('callPhonePoint')?.value || '');
-	  const phoneChoices = phonePoints(selectedContact());
+	  const phonePointId = $('callPhonePoint')?.value?.trim() || '';
 	  if (!contactId || !file) { toast('请选择 MP3 录音'); return; }
 	  if (!/\\.mp3$/i.test(file.name || '')) { toast('只支持 MP3 录音'); return; }
 	  if (Number(file.size || 0) > CALL_MAX_AUDIO_BYTES) { toast('MP3 文件不能超过 100 MiB'); return; }
 	  if (!direction) { toast('请选择呼入或呼出'); return; }
 	  if (!occurredAtValue || Number.isNaN(new Date(occurredAtValue).getTime())) { toast('请选择有效的通话时间'); return; }
-	  if (phoneChoices.length > 1 && !phonePointId) { toast('请选择绑定号码'); return; }
+	  if (!contactId) { toast('请选择或填写联系人'); return; }
+	  if (!phonePointId) { toast('请选择或填写绑定号码'); return; }
 	  let viewerAuthToken;
 	  try { viewerAuthToken = currentWeComAuth().viewerAuthToken; }
 	  catch (err) { toast(err.message); return; }
@@ -2471,7 +2493,9 @@ public class App {
 	  form.append('direction', direction);
 	  form.append('occurredAt', new Date(occurredAtValue).toISOString());
 	  form.append('clientRequestId', requestId());
-	  if (phonePointId) form.append('phonePointId', phonePointId);
+	  form.append('phonePointId', phonePointId);
+	  const note = $('callNote')?.value || '';
+	  if (note.trim()) form.append('note', note);
 	  form.append('file', file);
 
 	  const progress = $('callUploadProgress');
