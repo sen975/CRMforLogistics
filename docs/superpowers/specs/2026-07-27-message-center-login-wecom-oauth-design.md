@@ -23,7 +23,7 @@
 
 - 普通浏览器使用会话展示组件时，必须使用企业微信 Web 登录组件，不能自行构造登录链接。
 - 登录面板使用 `@wecom/jssdk >= 2.3.2`；本项目继续使用当前 `2.3.4`。
-- 登录 API 使用 `ww.createWWLoginPanel()`，并设置 `login_type: 'CorpApp'`、`redirect_type: 'callback'`。
+- 登录 API 使用 `ww.createWWLoginPanel()`，并设置 `login_type: 'ServiceApp'`、登录授权 SuiteID 作为 `appid`、`redirect_type: 'callback'`，不发送 `agentid`。
 - `onLoginSuccess({ code })` 在当前页面返回临时 code，不进行 OAuth callback 页面跳转。
 - 登录面板所在域名与会话展示组件所在域名必须完全一致。
 - 会话展示组件必须运行在 top frame，不能嵌套在业务 iframe 中。
@@ -62,9 +62,8 @@
 ww.createWWLoginPanel({
   el: '#wwLoginPanel',
   params: {
-    login_type: 'CorpApp',
-    appid: corpId,
-    agentid: agentId,
+    login_type: 'ServiceApp',
+    appid: loginSuiteId,
     redirect_uri: redirectUri,
     state,
     redirect_type: 'callback',
@@ -106,7 +105,13 @@ ww.createWWLoginPanel({
 
 登录 attempt service 不复制 code 交换和 viewer 权限逻辑。
 
-### 6.3 HTTP 合同
+### 6.3 双认证上下文
+
+浏览器登录授权 Suite 与代开发 Suite 是两个独立 owner。登录授权由 `WECOM_LOGIN_SUITE_ID/WECOM_LOGIN_SUITE_SECRET` 唯一拥有；会话展示及专区能力仍由 `WECOM_SUITE_ID/WECOM_SUITE_SECRET`、目标企业 active 安装记录和 `permanent_code` 拥有。代开发授权返回的 `permanent_code` 即该代开发应用的 Secret，后端必须以安装企业 `authCorpId` 和该 Secret 调用自建应用 `/cgi-bin/gettoken`，不得调用第三方应用 `/cgi-bin/service/get_corp_token`。两项登录 Suite 配置必须同时存在，部分或缺失配置结构化拒绝，不保留 CorpApp 回退。两套 Suite 的 ticket/token 按 SuiteID 隔离缓存。
+
+登录 attempt 的安装绑定仍由 `WECOM_LOGIN_AUTH_CORP_ID` 选择。二维码投影使用 `ServiceApp + WECOM_LOGIN_SUITE_ID`，换码走登录 Suite 的 `suite_access_token` 与官方 `service/auth/getuserinfo3rd`。返回的 `corpid` 必须与 attempt 绑定的 active 安装企业一致；绑定、viewer session、JS-SDK 签名和会话展示均不接受浏览器传入的企业标识覆盖。
+
+### 6.4 HTTP 合同
 
 新增：
 
@@ -118,8 +123,8 @@ POST /api/v1/wecom/login/attempts
 
 ```json
 {
-  "corpId": "ww123",
-  "agentId": "1000002",
+  "loginType": "ServiceApp",
+  "appId": "ww登录授权SuiteID",
   "redirectUri": "https://crm.example.com/",
   "state": "安全随机值",
   "expiresIn": 300

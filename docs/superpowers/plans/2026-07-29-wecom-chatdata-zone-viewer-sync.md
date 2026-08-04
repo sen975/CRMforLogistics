@@ -1,10 +1,12 @@
 # 企业微信专区会话展示索引同步 Implementation Plan
 
+> **2026-07-31 凭证更正：** 本计划的专区同步主体仍有效，但代开发 access token 获取以 `2026-07-31-wecom-developed-app-access-token.md` 为当前真源。官方定义代开发授权返回的 `permanent_code` 即应用 Secret，8107 必须使用 `authCorpId + permanent_code` 调用 `GET /cgi-bin/gettoken`，不得调用第三方应用 `/cgi-bin/service/get_corp_token`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 制作 Java 17、`linux/amd64` 最小专区镜像，并让现有 viewer session 创建链路同步真实 `msgid + secret_key` 后交给 `ww-open-message` 展示。
 
-**Architecture:** 专区镜像沿用企业微信 Java SDK 1.4.0 的加密 HTTP server，只允许固定能力调用 `sync_msg` 并投影最小索引字段。8107 使用代开发授权安装的 `permanent_code` 经 `service/get_corp_token` 获取应用 access token，调用 `sync_call_program`，校验并解密每一页后原子发布 viewer JSONL 与 cursor；现有 `WeComViewerService` 继续独占 token、owner、限流和一次性 session 语义。
+**Architecture:** 专区镜像沿用企业微信 Java SDK 1.4.0 的加密 HTTP server，只允许固定能力调用 `sync_msg` 并投影最小索引字段。8107 使用代开发授权安装的 `authCorpId + permanent_code` 经 `GET /cgi-bin/gettoken` 获取应用 access token，调用 `sync_call_program`，校验并解密每一页后原子发布 viewer JSONL 与 cursor；现有 `WeComViewerService` 继续独占 token、owner、限流和一次性 session 语义。
 
 **Tech Stack:** JDK 17、Maven、Gson 2.11、JDK `HttpClient`、JCA RSA、企业微信 SpecSDK Java 1.4.0、Netty 4.1、Docker/BuildKit `linux/amd64`。
 
@@ -42,22 +44,22 @@
 
 **Interfaces:**
 - Produces: `String WeComAccessTokenService.accessToken(WeComAuthorizationStore.ResolvedInstallation installation)`。
-- Produces: `WeComAuthorizationGateway.CorpTokenResponse getCorpToken(String authCorpId, String permanentCode)`，请求 `POST /cgi-bin/service/get_corp_token?suite_access_token=...`。
+- Produces: `WeComAuthorizationGateway.CorpTokenResponse getDevelopedAppToken(String authCorpId, String developedAppSecret, Duration timeout)`，请求 `GET /cgi-bin/gettoken?corpid=...&corpsecret=...`。
 - Consumes: `ResolvedInstallation.installation().installationId()/version()/authCorpId()` 与解密后的 `permanentCode()`。
 
 - [ ] **Step 1: 写失败测试**
 
-  覆盖 `service/get_corp_token` 的 URL 和请求体、`access_token/expires_in` 解析、同一安装版本缓存、版本变化后重新获取、上游错误脱敏。测试不得断言或输出 permanent code。
+  覆盖 `/cgi-bin/gettoken` 的 GET URL、`access_token/expires_in` 解析、同一安装版本缓存、版本变化后重新获取、上游错误脱敏。测试使用固定假 Secret，不输出真实 permanent code。
 
 - [ ] **Step 2: 验证测试先失败**
 
   Run: `cd demo/message-center-demo && mvn -q -Dtest=WeComAccessTokenServiceTest,WeComAuthorizationGatewayTest test`
 
-  Expected: FAIL，原因是 `WeComAccessTokenService` 和 `getCorpToken` 尚不存在。
+  Expected: FAIL，原因是 `WeComAccessTokenService` 和 `getDevelopedAppToken` 尚不存在。
 
 - [ ] **Step 3: 最小实现**
 
-  缓存键固定为 `installationId + ':' + version`，刷新条件为 `now >= expiresAt - WECOM_TOKEN_REFRESH_SKEW_SECONDS`。`WeComViewerService.JdkWeComHttpGateway.accessToken(ResolvedInstallation)` 改为委托该 owner，删除把 `permanent_code` 当作 `corpsecret` 的代开发分支；自建应用 `WECOM_CORP_ID/WECOM_SECRET` 路径保持不变。
+  缓存键固定为 `installationId + ':' + version`，刷新条件为 `now >= expiresAt - WECOM_TOKEN_REFRESH_SKEW_SECONDS`。`WeComAccessTokenService` 将 resolved installation 中的 `permanent_code` 按官方代开发语义作为应用 Secret，调用 `getDevelopedAppToken`；viewer、专区同步和公钥注册只委托该 owner。
 
 - [ ] **Step 4: 运行针对性测试**
 
@@ -111,7 +113,7 @@
 
 - [ ] **Step 1: 写失败测试**
 
-  使用本地 `HttpServer` 断言请求路径只可能是 `/cgi-bin/chatdata/sync_call_program`，body 精确包含 `program_id`、`ability_id` 和字符串 `request_data`，内部 input 只含 cursor/limit/token 且首次不含空 cursor/token；`mode=0` 由专区程序独占注入。覆盖 HTTP 非 2xx、外层 `errcode != 0`、缺失/超大 `response_data`、内部 `errcode != 0`、未知字段、超过 200 条、字段越界和 timeout。
+  使用本地 `HttpServer` 断言请求路径只可能是 `/cgi-bin/chatdata/sync_call_program`，body 精确包含 `program_id`、`ability_id` 和字符串 `request_data`，内部 input 只含 cursor/limit 且首次显式发送空 cursor；`mode=0` 由专区程序独占注入。覆盖 HTTP 非 2xx、外层 `errcode != 0`、缺失/超大 `response_data`、内部 `errcode != 0`、未知字段、超过 200 条、字段越界和 timeout。
 
 - [ ] **Step 2: 验证测试先失败**
 

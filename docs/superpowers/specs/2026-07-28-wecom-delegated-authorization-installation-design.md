@@ -150,6 +150,8 @@ WECOM_TOKEN=...
 WECOM_ENCODING_AES_KEY=...
 WECOM_CALLBACK_RECEIVE_ID=...
 WECOM_AUTHORIZATION_INSTALLATIONS_FILE=data/wecom-authorization-installations.jsonl
+WECOM_AUTHORIZATION_AUDIT_FILE=data/wecom-authorization-audit.jsonl
+WECOM_AUTHORIZATION_AUDIT_MAX_BYTES=1048576
 CREDENTIAL_MASTER_KEY_FILE=secrets/credential_master_key
 WECOM_LOGIN_AUTH_CORP_ID=ww...
 WECOM_ALLOWED_JSAPI_ORIGINS=https://crm.example.com
@@ -159,6 +161,8 @@ WECOM_LOGIN_REDIRECT_URI=https://crm.example.com/
 `WECOM_CALLBACK_RECEIVE_ID` 只拥有 GET 指令回调 AES 明文末尾 `receiveId` 的校验语义，未配置时回退到 `WECOM_SUITE_ID`。它不能替代业务 SuiteID；Suite API、安装记录和 POST 授权事件中的 SuiteID 仍由 `WECOM_SUITE_ID` 唯一拥有。
 
 安装级配置只存在于 `WeComAuthorizationStore`，包括 `authCorpId`、AgentID、加密 `permanent_code`、授权状态、时间戳和版本。
+
+`WeComAuthorizationAuditTrail` 将已验签的 Suite 回调及异步处理结果写入有界 JSONL。审计只允许记录 `InfoType`、SuiteID、授权企业、结果、内部错误码、企业微信 `errcode`、上游路径、HTTP 状态和安全 hint；禁止记录 AuthCode、permanent_code、suite_ticket、access token、签名或密文。默认文件为 `data/wecom-authorization-audit.jsonl`，上限为 1 MiB。
 
 `WECOM_AGENT_ID` 和 `WECOM_SECRET` 不再是代开发认证配置。检测到缺少 active 安装记录时必须返回安装配置错误，禁止回退。
 
@@ -190,9 +194,19 @@ WECOM_LOGIN_REDIRECT_URI=https://crm.example.com/
        -> get_auth_info
        -> encrypt(permanent_code)
        -> WeComAuthorizationStore.upsert(active)
+  -> reset_permanent_code AuthCode（10 分钟内有效）
+       -> get_permanent_code
+       -> 要求返回 CorpID 已存在且未撤销
+       -> 使用新的 permanent_code 校验 get_auth_info
+       -> encrypt(new permanent_code)
+       -> 保留 installationId，递增 version 并恢复 active
 ```
 
 授权回调必须使用官方签名与加解密规则；当前 `/webhook/wecom` 的模拟 XML 解析不能作为正式授权入口。
+企业微信把重置事件发送到代开发 Suite 的指令回调 URL。生产部署保留既有公网
+`/hook_path`，但由 Nginx 精确转发到 8107；它与版本化
+`/api/v1/wecom/authorization/callback` 进入同一个回调 owner，不恢复任何模拟 webhook 或
+`/api/wecom/*` 别名。回调不得记录 `AuthCode` 或明文 Secret。
 
 ### 10.2 浏览器扫码登录
 
@@ -286,10 +300,13 @@ git diff --check
 
 ## 15. 实现状态（2026-07-28）
 
-- 已实现 Suite 回调验签解密、`suite_ticket`、`create_auth`、`change_auth` 和 `cancel_auth` 编排。
+- 已实现 Suite 回调验签解密、`suite_ticket`、`create_auth`、`change_auth`、`cancel_auth` 和
+  `reset_permanent_code` 编排；重置只更新已有安装并通过版本递增使旧 token 缓存失效。
 - 已实现 AES-256-GCM 加密 JSONL 安装 owner、损坏失败关闭、稳定 installationId 和版本递增。
 - 登录 attempt、扫码换码、JS-SDK 签名、viewer token/session/detail 已绑定同一 `installationId + version`。
 - 登录首屏只接受服务端 `WECOM_LOGIN_AUTH_CORP_ID` 选定的 active 安装，不接受浏览器 CorpID。
-- 正式回调为 `GET/POST /api/v1/wecom/authorization/callback`：保存地址时 GET 负责验签、解密并返回 `echostr`，校验通过后 POST 接收 `suite_ticket`、安装变更等事件；OpenAPI 共 27 个 operation。
+- 正式合同入口为 `GET/POST /api/v1/wecom/authorization/callback`；生产兼容入口
+  `GET/POST /hook_path` 复用完全相同的处理器，以便从 8067 原路径无损切换到 8107。
+  GET 负责验签、解密并返回 `echostr`，POST 接收 `suite_ticket`、安装变更和 Secret 重置事件。
 - 授权 worker 已覆盖有界背压、成功重放、失败后重新投递、变更失败恢复和撤销不被并发旧任务覆盖。
 - 尚未完成的外部验收是使用真实 Suite 配置、active 安装记录和公网 HTTPS 域名扫码，并保存桌面/移动真实截图。

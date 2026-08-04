@@ -1,5 +1,7 @@
 # 企业微信会话展示组件 Implementation Plan
 
+> **非当前计划：** 本文记录最早的企业自建应用方案，已被 `docs/superpowers/specs/2026-07-27-wecom-conversation-viewer-design.md` 的服务商代开发主线取代，不得作为当前凭证、登录或部署依据。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a WeCom self-built-application conversation viewer path to the current message center demo while preserving the existing frontend layout and multi-channel merge behavior.

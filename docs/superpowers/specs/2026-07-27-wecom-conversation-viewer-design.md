@@ -95,10 +95,17 @@ unified contact + unified timeline
 
 职责：
 
-- 从 `WeComAuthorizationStore` 读取服务端选定的 active 安装记录，使用 `authCorpId` 和解密后的 `permanent_code` 获取并缓存该代开发应用的 `access_token`。
+- 从 `WeComAuthorizationStore` 读取服务端选定的 active 代开发安装记录。企业微信官方把代开发授权返回的 `permanent_code` 定义为该代开发应用的 Secret；服务使用安装记录中的 `authCorpId` 与解密后的 `permanent_code` 调用 `GET /cgi-bin/gettoken?corpid=...&corpsecret=...`，获取并缓存该应用的 `access_token`。
+- 生产代开发链路禁止调用第三方应用凭证接口 `/cgi-bin/service/get_corp_token`。该接口使用 Suite access token 和永久授权码，适用于第三方应用，不适用于代开发应用；误用会返回 `48002`。
 - access token 缓存必须绑定 `installationId + version`；安装记录更新或撤销后立即失效。
 - 缓存必须带过期时间和提前刷新窗口，例如过期前 5 分钟刷新。
 - 不把 token 写入普通日志或前端响应。
+- 上游错误只允许输出结构化的 HTTP 状态、`errcode`、路径和格式受限的 `hint`，不得记录 Secret、access token 或完整 `errmsg`。
+
+官方依据：
+
+- [代开发授权应用 Secret 的获取](https://developer.work.weixin.qq.com/document/path/97163)：代开发授权返回的 `permanent_code` 即应用 Secret。
+- [代开发授权应用 access_token 的获取](https://developer.work.weixin.qq.com/document/path/97164)：使用自建应用 `/cgi-bin/gettoken` 接口，不使用第三方应用凭证接口。
 
 ### 7.2 `WeComJsSdkSignatureService`
 
@@ -136,12 +143,25 @@ unified contact + unified timeline
 - 把官方错误码映射为项目结构化错误。
 - 不直接写消息表，不决定联系人合并，不判断消息中心权限。
 
+### 7.6 `WeComChatDataPublicKeyRegistrar`
+
+职责：
+
+- 只在配置显式启用时，从受 owner-only 权限保护的 PKCS#8 RSA-2048 私钥派生 X.509 PEM 公钥。
+- `App.startWeb()` 不得同步读取私钥或因公钥注册依赖错误终止；registrar `open()` 只建立可选后台生命周期，缺少授权 owner 时降级为关闭状态并输出脱敏失败事件。
+- `suite_ticket` 进入当前 8107 进程内存、或目标企业安装记录成功创建/更新后，只接收容量为 1 的合并式异步信号；授权回调不得等待企业微信上游 HTTP。
+- worker 首次处理信号时才加载私钥；加载失败不缓存，下一次外部信号重新尝试；首次成功加载后缓存公钥材料。
+- 使用 `WECOM_LOGIN_AUTH_CORP_ID` 唯一选定的 active 安装获取授权企业 access token，并调用官方 `chatdata/set_public_key`。
+- 以 `authCorpId + publicKeyVersion + publicKeySha256` 为幂等键原子写脱敏状态；状态不得包含 ticket、token、permanent code、私钥或完整公钥。
+- 注册失败不写成功状态、不改变授权安装状态，等待下一次 ticket 或安装变更事件重试。
+- 公钥未注册时只阻断企业微信会话同步和 viewer，消息中心网页、登录、Email 与 ChatApp 必须继续可用。
+
 ## 8. 前端接入
 
 消息中心登录页作为普通浏览器首屏，扫码成功后在同一标签页显示现有消息中心；企业微信会话查看入口放在现有发送区的企业微信 tab 中，替换原“企业微信 API 接入位已预留”占位，不重做消息中心结构：
 
 - 登录页和会话组件必须位于完全相同的域名与 top frame。
-- 登录页异步加载 `@wecom/jssdk 2.3.4`，调用 `ww.createWWLoginPanel()`，使用 `login_type=CorpApp` 和 `redirect_type=callback`。
+- 登录页异步加载 `@wecom/jssdk 2.3.4`，调用 `ww.createWWLoginPanel()`，使用 `login_type=ServiceApp`、登录授权 SuiteID 作为 `appid` 和 `redirect_type=callback`，不发送 `agentid`。
 - 扫码前不请求联系人、消息、模板、SSE 或同步 API；SDK 10 秒未完成时显示可重试错误态。
 - 扫码成功后用临时 `code + state` 交换一次短时 `viewerAuthToken`，仅保存在当前页面 JavaScript 内存；刷新或过期后重新扫码。
 - 联系人或消息属于 `wecom` 渠道时，发送区的企业微信 tab 显示“打开企业微信会话”操作。
@@ -183,7 +203,7 @@ GET /api/v1/wecom/js-sdk-config?url={encodedCurrentUrl}
 POST /api/v1/wecom/login/attempts
 ```
 
-请求体必须为空对象。返回只读 `corpId`、`agentId`、同域 `redirectUri`、一次性 `state` 和有效期，不返回 secret、ticket、签名或 viewer token。
+请求体必须为空对象。返回只读 `loginType=ServiceApp`、登录授权 `appId`、同域 `redirectUri`、一次性 `state` 和有效期，不返回 AgentID、secret、ticket、签名或 viewer token。
 
 ```text
 POST /api/v1/wecom/login/exchange
@@ -219,6 +239,9 @@ WECOM_SUITE_ID
 WECOM_SUITE_SECRET
 WECOM_AUTHORIZATION_INSTALLATIONS_FILE
 WECOM_LOGIN_AUTH_CORP_ID
+# 服务商登录授权 Suite；两项必须同时配置
+WECOM_LOGIN_SUITE_ID
+WECOM_LOGIN_SUITE_SECRET
 CREDENTIAL_MASTER_KEY_FILE
 WECOM_ALLOWED_JSAPI_ORIGINS
 WECOM_LOGIN_REDIRECT_URI
@@ -240,11 +263,15 @@ WECOM_VIEWER_SESSION_RATE_LIMIT
 WECOM_VIEWER_AUDIT_FILE
 WECOM_VIEWER_AUDIT_MAX_BYTES
 WECOM_TOKEN_REFRESH_SKEW_SECONDS
+WECOM_CHATDATA_PRIVATE_KEY_FILE
+WECOM_CHATDATA_PUBLIC_KEY_VERSION
+WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER
+WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
 ```
 
 本地 demo 的 `WECOM_DATA_FILE` 用 JSONL 存放会话展示组件消息引用；每行必须带 `msgid`、`external_userid`、解密后的 `secret_key` 或 `secretKey`，以及当前企业微信用户归属字段（`userid`、`UserId`、`wecom_userid` 或 `wecomUserId`），用于阻断一个短时授权 token 打开其他企业微信用户的会话引用。
 
-AgentID 和 `permanent_code` 来自企业安装后的授权记录，不从静态 `WECOM_AGENT_ID/WECOM_SECRET` 读取。生产环境服务商密钥必须通过项目既有 secret 机制或环境配置下传。不得提交真实企业微信密钥。
+浏览器登录授权的 SuiteID、SuiteSecret 只用于 `ServiceApp` Web 登录二维码和 `service/auth/getuserinfo3rd` 换码；二维码不发送 AgentID。会话展示链路的 AgentID 和 `permanent_code` 仍来自企业安装后的授权记录，不从登录 Suite 或静态 `WECOM_AGENT_ID/WECOM_SECRET` 读取。代开发语义下该 `permanent_code` 是应用 Secret，只能在后端作为 `/cgi-bin/gettoken` 的 `corpsecret` 使用。生产环境服务商密钥必须通过项目既有 secret 机制或环境配置下传。不得提交真实企业微信密钥。
 
 ## 11. 安全与资源治理
 
@@ -260,16 +287,16 @@ AgentID 和 `permanent_code` 来自企业安装后的授权记录，不从静态
 - 打开组件、授权失败、越权、签名失败、官方接口失败都写审计。
 - 本地 demo 使用有字节上限的结构化 JSONL audit adapter，达到上限时 viewer 操作失败关闭；生产模块化路径把同一事件交给现有 `AuditService`。audit 事件不得包含 token、ticket、签名或 `secretKey`。
 
-## 12. 与现有 WIP 的关系
+## 12. 与会话存档专区同步的关系
 
-现有 `WeComReceiver` 主要覆盖微信客服模拟回调、`sync_msg` 和本地 JSONL 注入。它可以继续作为可同步 WeCom 消息的 demo adapter。
+8107 不再挂载模拟 `/webhook/wecom`、无版本 `/api/wecom/*`、本地消息注入或模拟 `gettoken` 路由。`WeComReceiver` helper 只保留给隔离测试，不能成为真实 viewer 数据入口。
 
-本设计新增的是会话展示组件链路。两者关系如下：
+真实 viewer 引用由当前授权企业关联的会话存档专区程序能力同步：
 
-- `sync_msg` 拉到并允许保存的消息进入统一时间线。
-- 会话展示组件只作为查看官方会话内容的受控窗口。
-- 两者通过企业微信外部联系人或客服账号映射到同一个消息中心联系人。
-- 后续模块化迁移时，`WeComReceiver` 中的企业微信 API 能力应拆入 `channel/wecom`，消息投影进入 `messaging` application port。
+- 公钥注册成功后，企业微信开始生成可由该私钥解密的 `encrypted_secret_key`。
+- 8107 调用固定 `conversation_viewer_sync` 能力获取会话索引，在本机 JSONL 只保存一对一会话的 `msgid`、解密后的 `secret_key`、员工/外部联系人 ID 和发送时间。
+- 前端把这些最小引用交给官方 `ww-open-message` 展示原始内容；不把组件内正文复制进消息中心数据库或浏览器持久化。
+- 后续摘要能力是独立阶段，默认关闭，不是 viewer 组件可用的前置条件。
 
 ## 13. 验收标准
 
@@ -277,6 +304,8 @@ AgentID 和 `permanent_code` 来自企业安装后的授权记录，不从静态
 - 扫码成功后地址栏不出现 code、state 或 token，并在同一标签页进入现有消息中心。
 - 后端能原子消费一次性 state、识别企业微信用户并签发短时 viewer token；重放 state 被拒绝。
 - 用户有消息中心会话读权限时，可以创建 `viewerSession` 并挂载官方会话展示组件。
+- 8107 收到真实 `suite_ticket` 后立即响应，并在后台为唯一目标授权企业完成公钥注册；同版本和摘要不重复注册，失败不污染安装状态。
+- 专区同步生成至少一条合法 `msgid + secret_key` 引用后，viewer 能把该引用交给官方组件展示原始消息。
 - 用户无消息中心会话读权限时，后端拒绝创建 `viewerSession`，并写审计。
 - 现有消息中心前端样式和交互保持不变；新增企业微信 UI 只作为入口、授权状态、组件容器和错误态出现。
 - 每个联系人统一时间线首次仅有最近 10 条，顶部滚动继续增量加载；官方 viewer 默认只挂载最近 10 条引用。
@@ -295,6 +324,8 @@ AgentID 和 `permanent_code` 来自企业安装后的授权记录，不从静态
 - API 合同测试：新增 `/api/v1/wecom/*` 接口写入 OpenAPI 并通过合同探针。
 - 前端行为测试：二维码态、授权成功态、组件加载态、组件失败态、无权限态、预览态和重新扫码态。
 - 回归测试：现有 Email、ChatApp/WhatsApp、WeCom `sync_msg` 统一联系人和线程分页不回退。
+- 代开发凭证测试：真实生产 owner 只调用 `GET /cgi-bin/gettoken`，请求使用安装记录的 `authCorpId + permanent_code`；测试必须证明不请求 Suite token 或 `/cgi-bin/service/get_corp_token`。
+- 既有安装兼容测试：已有加密 JSONL 安装记录无需迁移或重新授权即可获取代开发应用 token；安装版本变化仍使缓存失效。
 
 ## 15. 后续路线
 

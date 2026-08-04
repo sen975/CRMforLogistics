@@ -82,13 +82,12 @@ Browser
 
 ```json
 {
-  "cursor": "string，可选，首次不传",
-  "limit": "number，1 到 200",
-  "token": "string，可选，后续接入专区会话回调时透传"
+  "cursor": "string，必填，首次传空字符串，后续传 next_cursor",
+  "limit": "number，必填，1 到 200"
 }
 ```
 
-镜像固定使用 `mode=0`。本轮不接受 `begin_time`、`page_id`、任意 SDK 方法名或任意输出字段，避免把镜像变成通用代理。
+企业微信会在程序执行前按能力模板校验 `request_data`，因此 8107 首次调用也必须显式发送空字符串 `cursor`。镜像收到空游标时不向官方 `sync_msg` 传 cursor，并固定使用 `mode=0`。本轮不接受 `token`、`begin_time`、`page_id`、任意 SDK 方法名或任意输出字段，避免把镜像变成通用代理。
 
 ### 7.2 输出协议
 
@@ -163,7 +162,7 @@ demo/wecom-chatdata-zone-program/
 
 ### 9.2 首次和增量
 
-官方 `sync_msg` 首次不传 cursor，从最近 5 天最早消息开始升序返回。后续必须使用上次成功页的 `next_cursor` 增量拉取。`begin_time` 只用于人工恢复，不进入本轮运行路径。
+外层能力首次调用传 `cursor=""`；镜像调用官方 `sync_msg` 时不传空 cursor，从最近 5 天最早消息开始升序返回。后续必须使用上次成功页的 `next_cursor` 增量拉取。`begin_time` 只用于人工恢复，不进入本轮运行路径。
 
 没有回调 token 时允许进行低频点击同步，并依赖本项目 viewer session 限流和企业维度单飞锁。专区回调 token 与事件驱动同步属于后续独立实现。
 
