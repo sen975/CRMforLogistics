@@ -310,6 +310,10 @@ public class UnifiedMessageStoreTest {
 					const page = { items:[{ id:'call-1', contactDisplayName:'Buyer', phonePointId:'phone:8613800000000', note:'回电', transcriptionState:'queued' }], nextCursor:'', totalCount:1 };
 					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(page), json:async () => page };
 				  }
+				  if (String(url).endsWith('/api/v1/phone-contacts')) {
+					const binding = { contactId:'contact-new', phonePointId:'phone:1390000000000', displayName:'新联系人' };
+					return { ok:true, status:200, statusText:'', text:async () => JSON.stringify(binding), json:async () => binding };
+				  }
 				  if (String(url).includes('/api/v1/call-records/call-1')) {
 					if (control.failDetail) return { ok:false, status:503, statusText:'Unavailable', text:async () => JSON.stringify({ code:'CALL_DETAIL_UNAVAILABLE', message:'详情暂不可用' }), json:async () => ({}) };
 					const detail = { ...callDetail, transcription:{ ...callDetail.transcription, state:control.detailState } };
@@ -406,6 +410,20 @@ public class UnifiedMessageStoreTest {
 				  $('callPhonePoint').value = '';
 				  const noPhoneUpload = uploadCallRecord();
 				  assert.equal(noPhoneUpload, undefined);
+
+				  state.contacts = [phoneContact];
+				  state.selectedPointId = 'contact-1';
+				  renderCallRecordUploadPanel(phoneContact);
+				  $('callContactId').value = 'contact-new';
+				  $('callContactName').value = '新联系人';
+				  $('callPhonePoint').value = 'phone:1390000000000';
+				  $('callDirection').value = 'inbound';
+				  $('callOccurredAt').value = '2026-08-01T12:00';
+				  $('callFile').files = [{ name:'call.mp3', size:123 }];
+				  const newContactUpload = uploadCallRecord();
+				  assert.equal(typeof newContactUpload.then, 'function');
+				  await newContactUpload;
+				  assert.ok(requests.some(item => item.url.endsWith('/api/v1/phone-contacts')));
 
 				  state.selectedPointId = 'contact-1';
 				  renderCallRecordUploadPanel(phoneContact);

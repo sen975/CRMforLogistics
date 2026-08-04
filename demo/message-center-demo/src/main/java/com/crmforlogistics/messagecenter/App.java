@@ -2460,6 +2460,7 @@ public class App {
 	  $('sendPanel').innerHTML = `
 		<div class="call-upload-form">
 		  <div class="field"><label for="callContactId">联系人</label><input id="callContactId" list="callContactOptions" value="${esc(contact?.id || state.selectedPointId || '')}" maxlength="512"><datalist id="callContactOptions">${contactOptions}</datalist></div>
+		  <div class="field"><label for="callContactName">新联系人名称（新建时填写）</label><input id="callContactName" maxlength="512" value="${esc(contact?.displayName || '')}"></div>
 		  <div class="call-upload-grid">
 			<div class="field"><label for="callFile">MP3 录音</label><input id="callFile" type="file" accept="audio/mpeg,.mp3"></div>
 			<div class="field"><label for="callDirection">方向</label><select id="callDirection"><option value="">选择方向</option><option value="inbound">呼入</option><option value="outbound">呼出</option></select></div>
@@ -2488,6 +2489,26 @@ public class App {
 	  let viewerAuthToken;
 	  try { viewerAuthToken = currentWeComAuth().viewerAuthToken; }
 	  catch (err) { toast(err.message); return; }
+	  const knownContact = (state.contacts || []).find(item => item.id === contactId);
+	  const knownPhone = knownContact && phonePoints(knownContact).some(point => point.id === phonePointId);
+	  if (!knownContact || !knownPhone) {
+		const button = $('uploadCallRecordButton');
+		const status = $('callUploadStatus');
+		button.disabled = true;
+		status.textContent = '正在绑定联系人和号码';
+		return viewerApi('/api/v1/phone-contacts', {
+		  method:'POST', headers:{'Content-Type':'application/json'},
+		  body:JSON.stringify({ contactId:knownContact?.id || '', contactName:$('callContactName')?.value?.trim() || contactId, phoneNumber:phonePointId.replace(/^phone:/, '') })
+		}).then(binding => {
+		  const projection = knownContact || { id:binding.contactId, displayName:binding.displayName, channels:['phone'], points:[] };
+		  projection.id = binding.contactId;
+		  projection.points = [...(projection.points || []).filter(point => point.id !== binding.phonePointId), { id:binding.phonePointId, channel:'phone', type:'phone', value:binding.phonePointId.slice(6), label:binding.phonePointId.slice(6) }];
+		  if (!knownContact) state.contacts = [...(state.contacts || []), projection];
+		  $('callContactId').value = binding.contactId;
+		  $('callPhonePoint').value = binding.phonePointId;
+		  return uploadCallRecord();
+		}).catch(error => { button.disabled = false; status.textContent = '绑定失败'; toast(`联系人绑定失败：${error.message}`); return undefined; });
+	  }
 
 	  const form = new FormData();
 	  form.append('direction', direction);
