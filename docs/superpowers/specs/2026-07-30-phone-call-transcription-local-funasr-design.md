@@ -1,7 +1,9 @@
 # 消息中心本地电话录音转录设计
 
 **日期：** 2026-07-30
-**状态：** 已确认，等待书面复核
+**状态：** 已被 `2026-08-04-phone-repository-phone-only-contact-design.md` supersede；仅保留作为历史实现记录
+
+> 当前电话身份、电话仓库、联系人必填和备注合同以 2026-08-04 设计为准。本文件中的旧联系人绑定边界不得作为实现依据。
 **适用范围：** `demo/message-center-demo` 当前 pre-split 运行面
 
 ## 1. 决策摘要
@@ -191,7 +193,7 @@ POST  /api/v1/call-records/{callRecordId}/retry
 PATCH /api/v1/call-records/{callRecordId}/transcript
 ```
 
-除音频内容 GET 外，所有接口都要求既有 `X-WeCom-Viewer-Auth`。服务端先验证 token，再校验目标联系人或电话记录仍属于当前可读联系人组；上传、重试和修订从 token 解析员工 actor。token 缺失、过期或无法解析员工身份时返回 `AUTH_REQUIRED`，不得接受请求体传入的人员 ID。音频内容 GET 只接受服务端创建的短时播放会话 Cookie，不接受 query token、本地路径或任意 caller ID。
+除音频内容 GET 外，所有接口都要求既有 `X-WeCom-Viewer-Auth`。当前本地单实例运行面的明确权限边界是：有效企业微信 viewer 对本实例全部 CRM 联系人和电话记录 tenant-wide 可见；上传时仍必须验证电话 identity 属于目标联系人，上传、重试和修订从 token 解析员工 actor。当前没有 actor-specific 联系人 ACL 的服务端 owner，因此不得在 adapter、页面或测试里伪造该权限结论；未来引入权限 owner 时，再在服务端边界收窄。token 缺失、过期或无法解析员工身份时返回 `AUTH_REQUIRED`，不得接受请求体传入的人员 ID。音频内容 GET 只接受服务端创建的短时播放会话 Cookie，不接受 query token、本地路径或任意 caller ID。
 
 ### 8.1 创建电话记录
 
@@ -215,7 +217,7 @@ clientRequestId  必填，幂等键
 }
 ```
 
-同一 `clientRequestId + contactAnchorPointId` 重放返回同一记录，不重复保存 MP3 或排队。
+同一 `clientRequestId + contactAnchorPointId` 重放在 winner 已持久化后返回同一记录，不重复保存 MP3 或排队；winner 仍在上传时，同键并发请求在读取 MP3 前按 `TRANSCRIPTION_QUEUE_FULL` 做 429 背压，客户端稍后重放即可取得 winner。
 
 ### 8.2 联系人时间线
 
@@ -232,8 +234,8 @@ payload
 
 ### 8.3 详情、播放会话、重试与修订
 
-- 详情接口只返回授权聊天对象下的记录。
-- 右侧详情挂载播放器前，用认证头调用 `POST /audio-sessions`。服务端校验 actor 与电话记录归属后创建 5 分钟内存播放会话，返回 `204` 并设置随机 opaque Cookie：`HttpOnly`、`SameSite=Strict`、路径只限当前记录的 `/audio`，HTTPS 部署必须带 `Secure`。
+- 详情接口在验证 viewer 后返回本地实例内存在的记录；当前不伪造 actor-specific 联系人 ACL。
+- 右侧详情挂载播放器前，用认证头调用 `POST /audio-sessions`。服务端校验 actor 且电话记录存在于本实例后创建 5 分钟内存播放会话，返回 `204` 并设置随机 opaque Cookie：`HttpOnly`、`SameSite=Strict`、路径只限当前记录的 `/audio`，HTTPS 部署必须带 `Secure`。
 - 播放会话只绑定当前 viewer actor、`callRecordId`、到期时间和最近创建顺序；不保存音频内容。每个 actor 最多 8 个、全局最多 256 个，超限时淘汰该作用域最旧会话。
 - 音频 GET 按 `callRecordId` 与播放 Cookie 双向匹配后解析服务端相对路径，支持标准单区间 `Range` 请求以便浏览器播放；拒绝多区间请求，绝不接受任意文件路径。
 - `<audio>` 不能携带自定义认证头。详情保持打开时，前端每 4 分钟重新创建同一记录的播放会话并旋转 Cookie；离开详情、切换记录或页面隐藏时停止续期。播放请求因会话失效返回 401 时，UI 重新创建会话，恢复原 `currentTime` 后继续播放，最多自动恢复一次，避免认证故障形成无限循环。
@@ -385,7 +387,7 @@ sidecar 不可用不阻断消息中心启动。电话子系统对新任务提供
 ## 14. 安全与隐私
 
 - FunASR 容器只加入私有 Compose 网络；不声明宿主机端口映射。
-- 所有音频读取必须先验证记录属于当前可见联系人，不能只凭 UUID 猜测访问。
+- 所有音频读取必须先验证短时播放 Cookie 与本实例内记录双向绑定，不能只凭 UUID 猜测访问；本期 viewer 可见性按 tenant-wide 本地权限边界执行。
 - 音频 URL 不携带认证 token；浏览器只能使用路径限定、HttpOnly、SameSite=Strict 的短时播放 Cookie。HTTPS 下 Cookie 必须带 `Secure`。
 - 上传文件名只用于安全展示；存储路径完全由服务端 ID 生成。
 - multipart、JSON、分段、修订文本、错误文本和 SSE payload 都有长度上限。
