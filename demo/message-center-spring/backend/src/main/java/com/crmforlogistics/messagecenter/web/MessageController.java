@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSendService;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
@@ -15,10 +16,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -29,15 +32,18 @@ public class MessageController {
     private final ChannelAccountMapper channelAccountMapper;
     private final ConversationMapper conversationMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final ChatAppSendService chatAppSendService;
 
     public MessageController(MessageMapper messageMapper,
                              ChannelAccountMapper channelAccountMapper,
                              ConversationMapper conversationMapper,
-                             ContactIdentityMapper contactIdentityMapper) {
+                             ContactIdentityMapper contactIdentityMapper,
+                             ChatAppSendService chatAppSendService) {
         this.messageMapper = messageMapper;
         this.channelAccountMapper = channelAccountMapper;
         this.conversationMapper = conversationMapper;
         this.contactIdentityMapper = contactIdentityMapper;
+        this.chatAppSendService = chatAppSendService;
     }
 
     @GetMapping("/messages/{id}")
@@ -55,8 +61,28 @@ public class MessageController {
     }
 
     @PostMapping("/send/chatapp")
-    public ResponseEntity<Void> sendChatApp() {
-        return ResponseEntity.status(501).build();
+    public ResponseEntity<?> sendChatApp(@RequestBody Map<String, Object> body) {
+        try {
+            String mode = (String) body.getOrDefault("mode", "text");
+            String to = (String) body.get("to");
+            String clientRequestId = (String) body.getOrDefault("clientRequestId",
+                    UUID.randomUUID().toString());
+
+            ChatAppSendService.SendResult result;
+            if ("template".equals(mode)) {
+                String templateCode = (String) body.get("templateCode");
+                String templateName = (String) body.get("templateName");
+                String languageCode = (String) body.get("languageCode");
+                result = chatAppSendService.sendTemplate(to, templateCode, templateName,
+                        languageCode, Map.of(), clientRequestId);
+            } else {
+                String text = (String) body.getOrDefault("text", "");
+                result = chatAppSendService.sendText(to, text, clientRequestId);
+            }
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/channel-capabilities")
