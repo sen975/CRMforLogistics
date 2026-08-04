@@ -19,7 +19,7 @@ public final class ContactPointUtil {
             return "email:" + extractEmail(parts[1]).toLowerCase(Locale.ROOT);
         }
         if (parts.length == 2 && "phone".equalsIgnoreCase(parts[0])) {
-            String phone = normalizePhone(parts[1]);
+            String phone = normalizePhonePoint(parts[1]);
             return phone.isBlank() ? "" : "phone:" + phone;
         }
         if (parts.length == 3 && "chatapp".equalsIgnoreCase(parts[0])) {
@@ -70,6 +70,14 @@ public final class ContactPointUtil {
 
     static String normalizePhone(String value) {
         return value == null ? "" : value.replaceAll("[^0-9]", "");
+    }
+
+    private static String normalizePhonePoint(String value) {
+        if (value == null || !value.matches("[0-9\\s+()\\-]*")) {
+            return "";
+        }
+        String digits = value.replaceAll("[^0-9]", "");
+        return digits.matches("[0-9]{6,20}") ? digits : "";
     }
 
     static String firstNonBlank(String... values) {

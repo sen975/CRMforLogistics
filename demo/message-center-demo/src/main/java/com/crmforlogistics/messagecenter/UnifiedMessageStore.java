@@ -39,6 +39,7 @@ public class UnifiedMessageStore {
     private final ContactRepository contactRepository;
     private final MessageRepository messageRepository;
     private final UUID userId;
+    private final Object contactMutationLock = new Object();
 
     public static class ThreadPage {
         public final List<UnifiedMessage> items;
@@ -230,26 +231,28 @@ public class UnifiedMessageStore {
         requireFileContactStore();
         String phonePointId = normalizedPhonePoint(phoneNumber);
         String contactPoint = ContactPointUtil.normalizePointId(contactPointId);
-        if (contactPoint.isBlank()) {
-            String name = displayName == null ? "" : displayName.trim();
-            if (name.isBlank()) {
-                throw new IllegalArgumentException("PHONE_CONTACT_REQUIRED");
+        synchronized (contactMutationLock) {
+            if (contactPoint.isBlank()) {
+                String name = displayName == null ? "" : displayName.trim();
+                if (name.isBlank()) {
+                    throw new IllegalArgumentException("PHONE_CONTACT_REQUIRED");
+                }
+                Map<String, List<String>> groups = contactGroups();
+                String existingPrimary = primaryFor(phonePointId, groups);
+                if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
+                    return contactProjection(existingPrimary);
+                }
+                Map<String, String> remarks = contactRemarks();
+                Map<String, List<String>> tags = contactTags();
+                groups.put(phonePointId, List.of(phonePointId));
+                remarks.put(phonePointId, name);
+                writeContactGroups(groups, remarks, tags);
+                return contactProjection(phonePointId);
             }
-            Map<String, List<String>> groups = contactGroups();
-            String existingPrimary = primaryFor(phonePointId, groups);
-            if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
-                return contactProjection(existingPrimary);
-            }
-            Map<String, String> remarks = contactRemarks();
-            Map<String, List<String>> tags = contactTags();
-            groups.put(phonePointId, List.of(phonePointId));
-            remarks.put(phonePointId, name);
-            writeContactGroups(groups, remarks, tags);
-            return contactProjection(phonePointId);
-        }
 
-        bindPhonePoint(contactPoint, phoneNumber);
-        return contactProjection(contactPoint);
+            bindPhonePoint(contactPoint, phoneNumber);
+            return contactProjection(primaryFor(contactPoint, contactGroups()));
+        }
     }
 
     public String bindPhonePoint(String contactPointId, String phoneNumber) throws IOException {
@@ -259,26 +262,28 @@ public class UnifiedMessageStore {
             throw new IllegalArgumentException("CONTACT_NOT_FOUND");
         }
         String phonePointId = normalizedPhonePoint(phoneNumber);
-        Map<String, List<String>> groups = contactGroups();
-        String primary = primaryFor(contactPoint, groups);
-        if (!contactExists(contactPoint, groups)) {
-            throw new IllegalArgumentException("CONTACT_NOT_FOUND");
-        }
-        String existingPrimary = primaryFor(phonePointId, groups);
-        if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
-            if (!existingPrimary.equals(primary)) {
-                throw new IllegalStateException("PHONE_POINT_CONFLICT");
+        synchronized (contactMutationLock) {
+            Map<String, List<String>> groups = contactGroups();
+            String primary = primaryFor(contactPoint, groups);
+            if (!contactExists(contactPoint, groups)) {
+                throw new IllegalArgumentException("CONTACT_NOT_FOUND");
             }
+            String existingPrimary = primaryFor(phonePointId, groups);
+            if (!existingPrimary.equals(phonePointId) || groups.containsKey(phonePointId)) {
+                if (!existingPrimary.equals(primary)) {
+                    throw new IllegalStateException("PHONE_POINT_CONFLICT");
+                }
+                return phonePointId;
+            }
+
+            Map<String, String> remarks = contactRemarks();
+            Map<String, List<String>> tags = contactTags();
+            LinkedHashSet<String> points = new LinkedHashSet<>(groups.getOrDefault(primary, List.of(primary)));
+            points.add(phonePointId);
+            groups.put(primary, new ArrayList<>(points));
+            writeContactGroups(groups, remarks, tags);
             return phonePointId;
         }
-
-        Map<String, String> remarks = contactRemarks();
-        Map<String, List<String>> tags = contactTags();
-        LinkedHashSet<String> points = new LinkedHashSet<>(groups.getOrDefault(primary, List.of(primary)));
-        points.add(phonePointId);
-        groups.put(primary, new ArrayList<>(points));
-        writeContactGroups(groups, remarks, tags);
-        return phonePointId;
     }
 
     public void mergeContacts(String primaryPointId, String mergedPointId) throws IOException {
