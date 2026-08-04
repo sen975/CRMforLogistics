@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/message_center
+    username: message_center
+    password: ${postgres_password}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+postgres_password: placeholder
