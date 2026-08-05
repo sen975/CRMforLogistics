@@ -7,6 +7,11 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
 import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.internet.MimeUtility;
+import jakarta.activation.DataHandler;
+import jakarta.activation.FileDataSource;
 import jakarta.mail.internet.MimeMessage;
 
 import javax.net.ssl.SNIHostName;
@@ -31,13 +36,31 @@ import java.util.UUID;
 public class MailSender {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     private final Config config;
+    private final MailTransport injectedTransport;
+    private EmailAttachmentStore attachmentStore;
 
     public MailSender(Config config) {
+        this(config, null);
+    }
+
+    MailSender(Config config, MailTransport injectedTransport) {
+        this(config, injectedTransport, null);
+    }
+
+    MailSender(Config config, MailTransport injectedTransport, EmailAttachmentStore attachmentStore) {
         this.config = config;
+        this.injectedTransport = injectedTransport;
+        this.attachmentStore = attachmentStore;
     }
 
     public UnifiedMessage send(String to, String subject, String body) throws Exception {
-        String cleanTo = required(to, "to");
+        return send(new EmailSendCommand(to, subject, body, UUID.randomUUID().toString(), List.of()));
+    }
+
+    public UnifiedMessage send(EmailSendCommand command) throws Exception {
+        String cleanTo = required(command.to(), "to");
+        String subject = command.subject() == null ? "" : command.subject();
+        String body = command.body() == null ? "" : command.body();
         SmtpEndpoint endpoint = smtpEndpoint();
         Session session = Session.getInstance(smtpProperties(endpoint));
         MimeMessage message = new MimeMessage(session);
@@ -52,31 +75,70 @@ public class MailSender {
             throw new MessagingException("Failed to encode sender name", ex);
         }
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(cleanTo, false));
-        message.setSubject(subject == null ? "" : subject, "UTF-8");
-        message.setText(body == null ? "" : body, "UTF-8");
+        message.setSubject(subject, "UTF-8");
+        if (command.attachments().isEmpty()) {
+            message.setText(body, "UTF-8");
+        } else {
+            MimeMultipart multipart = new MimeMultipart("mixed");
+            MimeBodyPart text = new MimeBodyPart();
+            text.setText(body, "UTF-8");
+            multipart.addBodyPart(text);
+            for (StagedAttachment attachment : command.attachments()) {
+                MimeBodyPart part = new MimeBodyPart();
+                part.setDataHandler(new DataHandler(new FileDataSource(attachment.temporaryPath().toFile())));
+                part.setFileName(MimeUtility.encodeText(attachment.fileName(), "UTF-8", null));
+                part.setHeader("Content-Type", attachment.mimeType());
+                multipart.addBodyPart(part);
+            }
+            message.setContent(multipart);
+        }
         message.saveChanges();
         message.setHeader("Message-ID", messageIdHeader(mailFrom(), endpoint.serverName()));
-
-        try (Transport transport = session.getTransport("smtp")) {
-            transport.connect(endpoint.connectHost(), smtpPort(),
-                    config.value("SMTP_USERNAME", ""), config.value("SMTP_PASSWORD", ""));
-            transport.sendMessage(message, message.getAllRecipients());
+        EmailRecoveryJournal journal = new EmailRecoveryJournal(config.emailDataDir());
+        EmailAttachmentStore attachmentStore = attachmentStore();
+        journal.prepare(command.messageId(), cleanTo, subject, body);
+        try {
+            if (injectedTransport != null) {
+                injectedTransport.send(message, message.getAllRecipients());
+            } else {
+                try (Transport transport = session.getTransport("smtp")) {
+                    transport.connect(endpoint.connectHost(), smtpPort(),
+                            config.value("SMTP_USERNAME", ""), config.value("SMTP_PASSWORD", ""));
+                    transport.sendMessage(message, message.getAllRecipients());
+                }
+            }
+        } catch (Exception exception) {
+            journal.remove(command.messageId());
+            attachmentStore.discard(command.attachments());
+            throw exception;
         }
 
+        journal.accepted(command.messageId(), cleanTo, subject, body);
+        List<EmailAttachment> attachments = command.attachments().isEmpty()
+                ? List.of() : attachmentStore.publish(command.messageId(), command.attachments());
         String messageId = message.getMessageID() == null ? "" : message.getMessageID();
-        appendOutgoing(cleanTo, subject, body, messageId);
+        appendOutgoing(cleanTo, subject, body, messageId, attachments);
+        journal.remove(command.messageId());
         UnifiedMessage stored = new UnifiedMessageStore(config).thread("email:" + cleanTo).stream()
                 .filter(item -> messageId.isBlank() || messageId.equals(extractEmailMessageId(item.raw)))
                 .reduce((first, second) -> second)
                 .orElse(null);
-        return stored == null ? localResult(cleanTo, subject, body, messageId) : stored;
+        return stored == null ? localResult(cleanTo, subject, body, messageId, attachments) : stored;
     }
 
-    private void appendOutgoing(String to, String subject, String body, String messageId) throws Exception {
+    private EmailAttachmentStore attachmentStore() throws IOException {
+        if (attachmentStore == null) {
+            attachmentStore = new EmailAttachmentStore(config);
+        }
+        return attachmentStore;
+    }
+
+    private void appendOutgoing(String to, String subject, String body, String messageId,
+                                List<EmailAttachment> attachments) throws Exception {
         if (config.emailInboxFile().getParent() != null) {
             Files.createDirectories(config.emailInboxFile().getParent());
         }
-        Map<String, String> record = new LinkedHashMap<>();
+        Map<String, Object> record = new LinkedHashMap<>();
         record.put("id", UUID.randomUUID().toString());
         record.put("storedAt", Instant.now().toString());
         record.put("direction", "out");
@@ -89,6 +151,7 @@ public class MailSender {
         record.put("summary", body == null ? "" : body);
         record.put("bodyText", body == null ? "" : body);
         record.put("messageId", messageId == null ? "" : messageId);
+        record.put("attachments", attachments);
         if (isDuplicate(messageId)) {
             return;
         }
@@ -108,7 +171,8 @@ public class MailSender {
         return false;
     }
 
-    private UnifiedMessage localResult(String to, String subject, String body, String messageId) {
+    private UnifiedMessage localResult(String to, String subject, String body, String messageId,
+                                       List<EmailAttachment> attachments) {
         UnifiedMessage message = new UnifiedMessage();
         message.id = "email:local-" + UUID.randomUUID();
         message.sourceId = messageId == null ? "" : messageId;
@@ -121,7 +185,13 @@ public class MailSender {
         message.title = subject == null ? "" : subject;
         message.text = body == null ? "" : body;
         message.bodyText = message.text;
+        message.attachments = attachments == null ? List.of() : List.copyOf(attachments);
         return message;
+    }
+
+    @FunctionalInterface
+    interface MailTransport {
+        void send(MimeMessage message, jakarta.mail.Address[] recipients) throws MessagingException;
     }
 
     private Properties smtpProperties(SmtpEndpoint endpoint) {

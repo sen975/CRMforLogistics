@@ -80,6 +80,17 @@ public class EmailAttachmentStore {
         catch (IOException | java.nio.channels.OverlappingFileLockException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e); }
     }
 
+    public void discard(List<StagedAttachment> staged) {
+        if (staged == null) return;
+        synchronized (lock) {
+            for (StagedAttachment attachment : staged) {
+                if (attachment == null || attachment.temporaryPath() == null) continue;
+                cleanup(attachment.temporaryPath().getParent());
+                stagedBudgets.remove(attachment.id());
+            }
+        }
+    }
+
     private List<EmailAttachment> publishInternal(String messageId, List<StagedAttachment> staged) {
         synchronized (lock) {
             validateMessageId(messageId);
@@ -270,7 +281,14 @@ public class EmailAttachmentStore {
     }
     private static String safeMimeType(String mimeType) { return mimeType == null || mimeType.isBlank() ? "application/octet-stream" : mimeType; }
     private static String sanitize(String name) {
-        String sanitized = name == null || name.isBlank() ? "attachment" : name.replaceAll("[^A-Za-z0-9._-]", "_");
+        String source = name == null || name.isBlank() ? "attachment" : name;
+        StringBuilder builder = new StringBuilder(source.length());
+        for (int index = 0; index < source.length(); index++) {
+            char character = source.charAt(index);
+            builder.append(character == '/' || character == '\\' || Character.isISOControl(character)
+                    ? '_' : character);
+        }
+        String sanitized = builder.toString();
         return sanitized.length() > MAX_FILE_NAME_BYTES ? sanitized.substring(0, MAX_FILE_NAME_BYTES) : sanitized;
     }
     private static String hex(byte[] bytes) { StringBuilder value = new StringBuilder(); for (byte b : bytes) value.append(String.format("%02x", b)); return value.toString(); }
