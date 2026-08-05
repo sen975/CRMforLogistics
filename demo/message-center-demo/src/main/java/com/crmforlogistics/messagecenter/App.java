@@ -23,6 +23,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +34,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -309,6 +311,45 @@ public class App {
             }
             return;
         }
+        if (path.startsWith("/api/email/attachments/")) {
+            if (!"GET".equals(method)) {
+                writeJson(exchange, 405, Map.of("code", "METHOD_NOT_ALLOWED", "message", "GET required"));
+                return;
+            }
+            if (viewerAuthToken(exchange).isBlank()) {
+                writeJson(exchange, 401, Map.of("code", "EMAIL_ATTACHMENT_VIEWER_REQUIRED", "message", "viewer auth required"));
+                return;
+            }
+            String[] segments = path.split("/", -1);
+            if (segments.length != 5 || segments[3].isBlank() || segments[4].isBlank()) {
+                writeJson(exchange, 404, Map.of("code", "EMAIL_ATTACHMENT_NOT_FOUND", "message", "attachment not found"));
+                return;
+            }
+            String messageId = segments[3];
+            String attachmentId = segments[4];
+            UnifiedMessage message = store.findMessage(messageId);
+            if (message == null) message = store.findMessage("email:" + messageId);
+            EmailAttachment attachment = message == null ? null : message.attachments.stream()
+                    .filter(item -> attachmentId.equals(item.id()) && "stored".equals(item.state()))
+                    .findFirst().orElse(null);
+            if (attachment == null) {
+                writeJson(exchange, 404, Map.of("code", "EMAIL_ATTACHMENT_NOT_FOUND", "message", "attachment not found"));
+                return;
+            }
+            try (InputStream input = new EmailAttachmentStore(config).open(messageId, attachmentId)) {
+                Headers headers = exchange.getResponseHeaders();
+                headers.set("Content-Type", ContactPointUtil.firstNonBlank(attachment.mimeType(), "application/octet-stream"));
+                headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + percentEncodedFileName(attachment.fileName()));
+                headers.set("Content-Length", Long.toString(attachment.sizeBytes()));
+                headers.set("Cache-Control", "private, no-store");
+                headers.set("X-Content-Type-Options", "nosniff");
+                exchange.sendResponseHeaders(200, attachment.sizeBytes());
+                try (OutputStream output = exchange.getResponseBody()) {
+                    input.transferTo(output);
+                }
+            }
+            return;
+        }
         if ("GET".equals(method) && "/api/contact-groups".equals(path)) {
             writeJson(exchange, 200, store.contactGroup(query(exchange).getOrDefault("contactPointId", "")));
             return;
@@ -347,8 +388,11 @@ public class App {
             return;
         }
         if ("POST".equals(method) && "/api/send/email".equals(path)) {
-            JsonObject body = readJson(exchange);
-            UnifiedMessage message = mailSender.send(json(body, "to"), json(body, "subject"), json(body, "body"));
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
+                throw new EmailMultipartException("EMAIL_MULTIPART_REQUIRED", 400);
+            }
+            UnifiedMessage message = mailSender.send(new EmailMultipartParser(config).parse(exchange));
             events.publish(message);
             writeJson(exchange, 200, message);
             return;
@@ -605,6 +649,9 @@ public class App {
                 || exception instanceof WeComLoginAttemptService.PendingLimitException) {
             status = 429;
             code = "RATE_LIMITED";
+        } else if (exception instanceof EmailMultipartException multipartException) {
+            status = multipartException.status();
+            code = multipartException.code();
         } else if (exception instanceof SecurityException) {
             status = 403;
             code = "FORBIDDEN";
@@ -771,6 +818,12 @@ public class App {
                 .replace("\"", "")
                 .replace("\r", "")
                 .replace("\n", "");
+    }
+
+    private static String percentEncodedFileName(String value) {
+        return URLEncoder.encode(safeHeaderFileName(value), StandardCharsets.UTF_8)
+                .replace("+", "%20")
+                .replace("%2F", "%2F");
     }
 
     static String pageHtml() {

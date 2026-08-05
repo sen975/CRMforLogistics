@@ -26,6 +26,8 @@ public class EmailAttachmentStore {
     private final Path tempRoot;
     private final Path attachmentRoot;
     private final long configuredStorageBytes;
+    private final int configuredMaxCount;
+    private final long configuredMaxTotalBytes;
     private final Object lock = new Object();
     private final Map<String, AttachmentBudget> stagedBudgets = new HashMap<>();
 
@@ -34,6 +36,8 @@ public class EmailAttachmentStore {
         this.tempRoot = dataDir.resolve("attachment-tmp");
         this.attachmentRoot = dataDir.resolve("attachments");
         this.configuredStorageBytes = config.emailAttachmentStorageMaxBytes();
+        this.configuredMaxCount = config.emailAttachmentMaxCount();
+        this.configuredMaxTotalBytes = config.emailAttachmentMaxTotalBytes();
         Files.createDirectories(tempRoot);
         Files.createDirectories(attachmentRoot);
     }
@@ -227,10 +231,11 @@ public class EmailAttachmentStore {
         AttachmentBudget effective = null;
         long total = 0;
         for (StagedAttachment attachment : batch) {
-            if (attachment == null || !stagedBudgets.containsKey(attachment.id())) {
+            if (attachment == null) {
                 throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
             }
-            AttachmentBudget budget = stagedBudgets.get(attachment.id());
+            AttachmentBudget budget = stagedBudgets.getOrDefault(attachment.id(),
+                    new AttachmentBudget(configuredMaxCount, configuredMaxTotalBytes, configuredStorageBytes));
             effective = effective == null ? budget : new AttachmentBudget(
                     Math.min(effective.maxCount(), budget.maxCount()),
                     Math.min(effective.maxTotalBytes(), budget.maxTotalBytes()),
