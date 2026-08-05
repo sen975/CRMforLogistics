@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -37,6 +39,15 @@ public class EmailAttachmentStore {
     }
 
     public StagedAttachment stage(InputStream input, String fileName, String mimeType, AttachmentBudget budget) {
+        try (FileChannel channel = FileChannel.open(dataDir.resolve("attachment-reservations.lock"), java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+             FileLock ignored = channel.lock()) {
+            return stageInternal(input, fileName, mimeType, budget);
+        } catch (IOException | java.nio.channels.OverlappingFileLockException e) {
+            throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e);
+        }
+    }
+
+    private StagedAttachment stageInternal(InputStream input, String fileName, String mimeType, AttachmentBudget budget) {
         if (input == null || budget == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
         synchronized (lock) {
             Path requestDir = tempRoot.resolve(UUID.randomUUID().toString());
@@ -72,6 +83,7 @@ public class EmailAttachmentStore {
             if (!target.startsWith(attachmentRoot) || Files.exists(target)) {
                 throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
             }
+            for (StagedAttachment attachment : staged) if (attachment == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
             List<StagedAttachment> batch = List.copyOf(staged);
             Path assembly = tempRoot.resolve("publish-" + UUID.randomUUID());
             boolean published = false;
@@ -124,6 +136,10 @@ public class EmailAttachmentStore {
                 if (!root.startsWith(attachmentRoot) || !Files.isDirectory(root)) {
                     throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
                 }
+                if (Files.isSymbolicLink(root)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                for (Path component = attachmentRoot; component != null && !component.equals(root); component = component.resolve(component.relativize(root).getName(0)).normalize()) {
+                    if (Files.isSymbolicLink(component)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                }
                 Properties metadata = new Properties();
                 try (InputStream in = Files.newInputStream(root.resolve("metadata.properties"))) {
                     metadata.load(in);
@@ -157,7 +173,11 @@ public class EmailAttachmentStore {
         if (maxEntries <= 0) return 0;
         synchronized (lock) {
             try (var entries = Files.list(tempRoot)) {
-                List<Path> stale = entries.sorted().limit(maxEntries).toList();
+                long cutoff = System.currentTimeMillis() - 3_600_000L;
+                List<Path> stale = entries.filter(path -> {
+                    try { return Files.getLastModifiedTime(path).toMillis() < cutoff; }
+                    catch (IOException e) { return false; }
+                }).sorted().limit(maxEntries).toList();
                 stale.forEach(EmailAttachmentStore::cleanup);
                 return stale.size();
             } catch (IOException e) {
@@ -179,7 +199,8 @@ public class EmailAttachmentStore {
                     Math.min(effective.maxCount(), budget.maxCount()),
                     Math.min(effective.maxTotalBytes(), budget.maxTotalBytes()),
                     Math.min(effective.maxStorageBytes(), budget.maxStorageBytes()));
-            total = Math.addExact(total, attachment.sizeBytes());
+            try { total = Math.addExact(total, attachment.sizeBytes()); }
+            catch (ArithmeticException overflow) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_SIZE_LIMIT", overflow); }
         }
         if (batch.size() > effective.maxCount() || total > effective.maxTotalBytes()) {
             throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_SIZE_LIMIT");

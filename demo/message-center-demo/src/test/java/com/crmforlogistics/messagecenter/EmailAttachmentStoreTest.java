@@ -9,7 +9,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.stream.Collectors;
+import java.util.concurrent.TimeUnit;
+import java.nio.channels.FileChannel;
+import java.nio.file.StandardOpenOption;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -65,7 +69,7 @@ class EmailAttachmentStoreTest {
                 () -> store.stage(new ByteArrayInputStream(new byte[]{1, 2}), "too-big.bin", "application/octet-stream",
                         new AttachmentBudget(1, 1, 10240)));
         assertEquals("EMAIL_ATTACHMENT_SIZE_LIMIT", error.errorCode());
-        assertTrue(Files.list(tempDir.resolve("attachment-tmp")).findAny().isEmpty());
+        try (var entries = Files.list(tempDir.resolve("attachment-tmp"))) { assertTrue(entries.findAny().isEmpty()); }
     }
 
     @Test
@@ -140,7 +144,39 @@ class EmailAttachmentStoreTest {
 
         Files.createDirectories(tempDir.resolve("attachment-tmp/a"));
         Files.createDirectories(tempDir.resolve("attachment-tmp/b"));
+        Files.setLastModifiedTime(tempDir.resolve("attachment-tmp/a"), java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 3_600_000L));
         assertEquals(1, store.reconcile(1));
-        assertEquals(1, Files.list(tempDir.resolve("attachment-tmp")).collect(Collectors.toList()).size());
+        try (var entries = Files.list(tempDir.resolve("attachment-tmp"))) { assertEquals(1, entries.collect(Collectors.toList()).size()); }
+    }
+
+    @Test
+    void rejectsMalformedStagedAndOverflowWithStableError() throws Exception {
+        EmailAttachmentStore store = new EmailAttachmentStore(new Config(Map.of("EMAIL_DATA_DIR", tempDir.toString())));
+        assertEquals("EMAIL_ATTACHMENT_PATH_INVALID", assertThrows(EmailAttachmentStoreException.class,
+                () -> store.publish("bad", new ArrayList<>(java.util.Collections.singletonList(null)))).errorCode());
+        StagedAttachment staged = store.stage(new ByteArrayInputStream(new byte[]{1}), "x", "text/plain", new AttachmentBudget(2, 10, 100));
+        StagedAttachment overflow = new StagedAttachment(staged.id(), staged.fileName(), staged.mimeType(), Long.MAX_VALUE, staged.sha256(), staged.temporaryPath());
+        assertEquals("EMAIL_ATTACHMENT_SIZE_LIMIT", assertThrows(EmailAttachmentStoreException.class,
+                () -> store.publish("overflow", List.of(staged, overflow))).errorCode());
+    }
+
+    @Test
+    void rejectsSymlinkMessageRoot() throws Exception {
+        EmailAttachmentStore store = new EmailAttachmentStore(new Config(Map.of("EMAIL_DATA_DIR", tempDir.toString())));
+        StagedAttachment staged = store.stage(new ByteArrayInputStream(new byte[]{1}), "x", "text/plain", new AttachmentBudget(1, 10, 100));
+        EmailAttachment attachment = store.publish("real", List.of(staged)).get(0);
+        Files.createSymbolicLink(tempDir.resolve("attachments/sym"), tempDir.resolve("attachments/real"));
+        assertEquals("EMAIL_ATTACHMENT_PATH_INVALID", assertThrows(EmailAttachmentStoreException.class,
+                () -> store.open("sym", attachment.id())).errorCode());
+    }
+
+    @Test
+    void rejectsCompetingOperationWhenReservationLockIsHeld() throws Exception {
+        EmailAttachmentStore store = new EmailAttachmentStore(new Config(Map.of("EMAIL_DATA_DIR", tempDir.toString())));
+        try (FileChannel channel = FileChannel.open(tempDir.resolve("attachment-reservations.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+             var held = channel.lock()) {
+            assertEquals("EMAIL_ATTACHMENT_STORAGE_FULL", assertThrows(EmailAttachmentStoreException.class,
+                    () -> store.stage(new ByteArrayInputStream(new byte[]{1}), "blocked", "text/plain", new AttachmentBudget(1, 10, 100))).errorCode());
+        }
     }
 }
