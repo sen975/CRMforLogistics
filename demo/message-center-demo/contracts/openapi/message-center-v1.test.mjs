@@ -16,6 +16,8 @@ const requiredPaths = [
   '/api/v1/companies',
   '/api/v1/conversations/{conversationId}/messages',
   '/api/v1/conversations/{conversationId}/read',
+  '/api/v1/email/messages',
+  '/api/v1/email/attachments/{messageId}/{attachmentId}',
   '/api/v1/attachments/{attachmentId}/content',
   '/api/v1/contacts/{contactId}/call-records',
   '/api/v1/phone-contacts',
@@ -144,6 +146,36 @@ assert.match(media.body, /maxLength: 20971520/);
 assert.ok((contract.match(/20971520/g) ?? []).length >= 8,
   'all stream and attachment byte limits must use the Config 20 MiB default');
 assert.doesNotMatch(contract, /26214400/, 'the stale 25 MiB media limit is forbidden');
+
+const emailSend = operation(operations, 'post', '/api/v1/email/messages');
+assert.match(emailSend.body, /multipart\/form-data:/,
+  'email sending must use streaming multipart form data');
+assert.match(emailSend.body, /#\/components\/schemas\/EmailSendMultipartRequest/);
+assert.match(emailSend.body, /EMAIL_MULTIPART_REQUIRED|EMAIL_MULTIPART_FIELD_INVALID/);
+const emailRequest = schema(contract, 'EmailSendMultipartRequest');
+assert.match(emailRequest, /required: \[to, subject\]/);
+assert.match(emailRequest, /file:/);
+assert.match(emailRequest, /maxItems: 16/);
+assert.match(emailRequest, /maxLength: 20971520/);
+assert.match(emailRequest, /format: binary/);
+
+const emailDownload = operation(operations, 'get', '/api/v1/email/attachments/{messageId}/{attachmentId}');
+assert.match(emailDownload.body, /X-WeCom-Viewer-Auth/);
+assert.match(emailDownload.body, /Content-Disposition:/);
+assert.match(emailDownload.body, /attachment; filename\*=UTF-8''/);
+assert.match(emailDownload.body, /Content-Length:/);
+assert.match(emailDownload.body, /Cache-Control:/);
+assert.match(emailDownload.body, /private, no-store/);
+assert.match(emailDownload.body, /X-Content-Type-Options:/);
+assert.match(emailDownload.body, /nosniff/);
+assert.match(emailDownload.body, /EMAIL_ATTACHMENT_VIEWER_REQUIRED|EMAIL_ATTACHMENT_NOT_FOUND/);
+const emailProjection = schema(contract, 'EmailAttachmentProjection');
+assert.match(emailProjection, /required: \[id, fileName, mimeType, sizeBytes, state, errorCode\]/);
+assert.match(emailProjection, /enum: \[stored, rejected\]/);
+assert.match(emailProjection, /EMAIL_ATTACHMENT_(COUNT_LIMIT|SIZE_LIMIT|STORAGE_FULL|READ_FAILED|STORE_FAILED)/);
+assert.doesNotMatch(emailProjection, /relativePath/);
+assert.doesNotMatch(emailDownload.body, /Content-Disposition:[\s\S]{0,300}inline;/i,
+  'email attachments must not be served with inline disposition');
 
 assert.match(contract, /^    ApiError:$/m);
 assert.match(contract, /^      required: \[code, message, traceId, fieldErrors\]$/m);
@@ -308,7 +340,7 @@ assert.match(schema(contract, 'ReviseCallRecordNoteRequest'), /required: \[note,
 assert.match(schema(contract, 'PhoneRepositoryPage'), /required: \[items, nextCursor, totalCount\]/);
 assert.match(contract, /audio\/mpeg/);
 assert.match(contract, /104857600/);
-assert.equal(operations.length, 38);
+assert.equal(operations.length, 40);
 
 console.log(`validated ${operations.length} OpenAPI operations`);
 

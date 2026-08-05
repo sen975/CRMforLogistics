@@ -361,6 +361,87 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/email/messages:
+    post:
+      operationId: sendEmailMessage
+      description: Send one UTF-8 plain-text email with zero to sixteen ordinary MIME attachments. The request is streamed and attachment content is bounded to 20 MiB in total. Stable client errors include EMAIL_MULTIPART_REQUIRED, EMAIL_MULTIPART_FIELD_INVALID, EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT, EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_ATTACHMENT_STORE_FAILED and EMAIL_SEND_FAILED.
+      tags:
+        - Messaging
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EmailSendMultipartRequest'
+      responses:
+        '200':
+          description: Email accepted and persisted with its attachment projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailMessageProjection'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/email/attachments/{messageId}/{attachmentId}:
+    get:
+      operationId: downloadEmailAttachment
+      description: Download a stored ordinary email attachment after viewer authorization. The attachment is always downloaded, never previewed inline, and viewer credentials are supplied in X-WeCom-Viewer-Auth rather than a query parameter. Stable errors include EMAIL_ATTACHMENT_VIEWER_REQUIRED and EMAIL_ATTACHMENT_NOT_FOUND.
+      tags:
+        - Media
+      parameters:
+        - $ref: '#/components/parameters/EmailMessageId'
+        - $ref: '#/components/parameters/EmailAttachmentId'
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: X-WeCom-Viewer-Auth
+          in: header
+          required: true
+          description: Current viewer authorization token. Never place this credential in a URL query parameter.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+      responses:
+        '200':
+          description: Stored email attachment download
+          headers:
+            Content-Disposition:
+              description: UTF-8 filename encoded as `attachment; filename*=UTF-8''<percent-encoded-file-name>`; inline preview is forbidden.
+              schema:
+                type: string
+                pattern: "^attachment; filename\\*=UTF-8''"
+                maxLength: 2048
+            Content-Length:
+              description: Exact attachment size in bytes.
+              schema:
+                type: integer
+                format: int64
+                minimum: 0
+                maximum: 20971520
+            Cache-Control:
+              description: Prevent private attachment bytes from being cached.
+              schema:
+                type: string
+                const: private, no-store
+            X-Content-Type-Options:
+              description: Prevent MIME sniffing.
+              schema:
+                type: string
+                const: nosniff
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                maxLength: 20971520
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/attachments/{attachmentId}/content:
     get:
       operationId: getAttachmentContent
@@ -1314,6 +1395,22 @@ components:
       schema:
         type: string
         format: uuid
+    EmailMessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+        pattern: '^[A-Za-z0-9._:-]+$'
+    EmailAttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     ChannelType:
       name: channelType
       in: path
@@ -1836,6 +1933,91 @@ components:
         status:
           type: string
           enum: [pending, ready, failed, deleted]
+    EmailSendMultipartRequest:
+      type: object
+      additionalProperties: false
+      description: Multipart fields are ordered as to, subject, body, then zero or more repeated file parts. Attachment bytes are streamed and the aggregate file content is limited to 20 MiB.
+      required: [to, subject]
+      properties:
+        to:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: One recipient address encoded as UTF-8 text.
+        subject:
+          type: string
+          maxLength: 998
+          description: UTF-8 plain-text subject.
+        body:
+          type: string
+          maxLength: 1048576
+          description: Optional UTF-8 plain-text body; HTML and CID inline content are not supported.
+        file:
+          type: array
+          maxItems: 16
+          x-max-total-bytes: 20971520
+          description: Repeated ordinary attachment parts, in user-selected order. Total content is at most 20 MiB.
+          items:
+            type: string
+            format: binary
+            maxLength: 20971520
+    EmailAttachmentProjection:
+      type: object
+      additionalProperties: false
+      required: [id, fileName, mimeType, sizeBytes, state, errorCode]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 500
+        mimeType:
+          type: string
+          minLength: 1
+          maxLength: 255
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 20971520
+        state:
+          type: string
+          enum: [stored, rejected]
+        errorCode:
+          type: [string, 'null']
+          enum: [null, EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT,
+            EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_ATTACHMENT_READ_FAILED,
+            EMAIL_ATTACHMENT_STORE_FAILED]
+          maxLength: 64
+    EmailMessageProjection:
+      type: object
+      additionalProperties: false
+      required: [messageId, status, to, subject, body, attachments]
+      properties:
+        messageId:
+          type: string
+          minLength: 1
+          maxLength: 255
+        status:
+          type: string
+          enum: [sent, history_failed, outcome_unknown]
+        to:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        subject:
+          type: string
+          maxLength: 998
+        body:
+          type: string
+          maxLength: 1048576
+        attachments:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/EmailAttachmentProjection'
     ChannelAccount:
       type: object
       additionalProperties: false
