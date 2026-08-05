@@ -113,12 +113,17 @@ public class MailSender {
             throw exception;
         }
 
-        journal.accepted(command.messageId(), cleanTo, subject, body);
-        List<EmailAttachment> attachments = command.attachments().isEmpty()
-                ? List.of() : attachmentStore.publish(command.messageId(), command.attachments());
+        List<EmailAttachment> attachments;
         String messageId = message.getMessageID() == null ? "" : message.getMessageID();
-        appendOutgoing(cleanTo, subject, body, messageId, attachments);
-        journal.remove(command.messageId());
+        try {
+            journal.accepted(command.messageId(), cleanTo, subject, body);
+            attachments = command.attachments().isEmpty()
+                    ? List.of() : attachmentStore.publish(command.messageId(), command.attachments());
+            appendOutgoing(cleanTo, subject, body, messageId, attachments);
+            journal.remove(command.messageId());
+        } catch (Exception exception) {
+            throw new EmailSendException("EMAIL_SENT_HISTORY_FAILED", exception);
+        }
         UnifiedMessage stored = new UnifiedMessageStore(config).thread("email:" + cleanTo).stream()
                 .filter(item -> messageId.isBlank() || messageId.equals(extractEmailMessageId(item.raw)))
                 .reduce((first, second) -> second)
@@ -361,5 +366,18 @@ public class MailSender {
             }
             return socket;
         }
+    }
+}
+
+class EmailSendException extends Exception {
+    private final String errorCode;
+
+    EmailSendException(String errorCode, Throwable cause) {
+        super(errorCode, cause);
+        this.errorCode = errorCode;
+    }
+
+    String errorCode() {
+        return errorCode;
     }
 }
