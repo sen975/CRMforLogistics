@@ -1,102 +1,241 @@
 package com.crmforlogistics.messagecenter;
 
-import java.io.InputStream;
 import java.io.IOException;
-import java.nio.file.*;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.UUID;
 
 public class EmailAttachmentStore {
-    private final Path dataDir, tempRoot, attachmentRoot;
+    private static final int MAX_FILE_NAME_BYTES = 128;
+    private final Path dataDir;
+    private final Path tempRoot;
+    private final Path attachmentRoot;
+    private final long configuredStorageBytes;
+    private final Object lock = new Object();
+    private final Map<String, AttachmentBudget> stagedBudgets = new HashMap<>();
 
     public EmailAttachmentStore(Config config) throws IOException {
         this.dataDir = config.emailDataDir().toAbsolutePath().normalize();
         this.tempRoot = dataDir.resolve("attachment-tmp");
         this.attachmentRoot = dataDir.resolve("attachments");
+        this.configuredStorageBytes = config.emailAttachmentStorageMaxBytes();
         Files.createDirectories(tempRoot);
         Files.createDirectories(attachmentRoot);
     }
 
     public StagedAttachment stage(InputStream input, String fileName, String mimeType, AttachmentBudget budget) {
-        String id = UUID.randomUUID().toString();
-        Path requestDir = tempRoot.resolve(UUID.randomUUID().toString());
-        try {
-            Files.createDirectories(requestDir);
-            Path target = requestDir.resolve(id + ".bin");
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            long size = 0;
-            try (InputStream in = input; java.io.OutputStream out = Files.newOutputStream(target)) {
-                byte[] buffer = new byte[8192]; int n;
-                while ((n = in.read(buffer)) >= 0) { if (n == 0) continue; size += n; if (size > budget.maxTotalBytes()) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_SIZE_LIMIT"); digest.update(buffer, 0, n); out.write(buffer, 0, n); }
+        if (input == null || budget == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+        synchronized (lock) {
+            Path requestDir = tempRoot.resolve(UUID.randomUUID().toString());
+            try {
+                long occupiedBefore = storedAttachmentBytes() + stagedBytes();
+                Files.createDirectories(requestDir);
+                String id = UUID.randomUUID().toString();
+                Path target = requestDir.resolve(id + ".bin");
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                long size = copyAndDigest(input, target, digest, budget.maxTotalBytes());
+                if (occupiedBefore + size > storageLimit(budget)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL");
+                }
+                StagedAttachment staged = new StagedAttachment(id, sanitize(fileName), safeMimeType(mimeType),
+                        size, hex(digest.digest()), target);
+                stagedBudgets.put(id, budget);
+                return staged;
+            } catch (EmailAttachmentStoreException e) {
+                cleanup(requestDir);
+                throw e;
+            } catch (IOException | NoSuchAlgorithmException | InvalidPathException e) {
+                cleanup(requestDir);
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
             }
-            if (storedAttachmentBytes() + size > budget.maxStorageBytes()) {
-                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL");
-            }
-            return new StagedAttachment(id, sanitize(fileName), mimeType == null ? "application/octet-stream" : mimeType,
-                    size, hex(digest.digest()), target);
-        } catch (EmailAttachmentStoreException e) { cleanup(requestDir); throw e;
-        } catch (IOException | NoSuchAlgorithmException e) { cleanup(requestDir); throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e); }
+        }
     }
 
     public List<EmailAttachment> publish(String messageId, List<StagedAttachment> staged) {
-        if (messageId == null || messageId.isBlank() || messageId.contains("/") || messageId.contains("\\")) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
-        Path target = attachmentRoot.resolve(messageId).normalize();
-        if (!target.startsWith(attachmentRoot) || Files.exists(target)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
-        Path assembly = tempRoot.resolve("publish-" + UUID.randomUUID());
-        try {
-            Files.createDirectories(assembly);
-            List<EmailAttachment> result = new ArrayList<>();
-            for (StagedAttachment s : staged) {
-                Path source = s.temporaryPath().toAbsolutePath().normalize();
-                if (!Files.exists(source)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
-                String name = s.id() + "-" + sanitize(s.fileName());
-                Files.copy(source, assembly.resolve(name));
-                result.add(new EmailAttachment(s.id(), s.fileName(), s.mimeType(), s.sizeBytes(),
-                        "attachments/" + messageId + "/" + name, "stored", null));
+        synchronized (lock) {
+            validateMessageId(messageId);
+            if (staged == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+            Path target = attachmentRoot.resolve(messageId).normalize();
+            if (!target.startsWith(attachmentRoot) || Files.exists(target)) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
             }
-            Properties meta = new Properties();
-            for (EmailAttachment a : result) meta.setProperty(a.id(), String.join("|", a.fileName(), a.mimeType(), Long.toString(a.sizeBytes()), a.relativePath(), a.state()));
-            try (var out = Files.newOutputStream(assembly.resolve("metadata.properties"))) { meta.store(out, "attachments"); }
-            Files.createDirectories(target.getParent());
-            Files.move(assembly, target, StandardCopyOption.ATOMIC_MOVE);
-            for (StagedAttachment s : staged) cleanup(s.temporaryPath().getParent());
-            return result;
-        } catch (EmailAttachmentStoreException e) { cleanup(assembly); throw e;
-        } catch (IOException e) { cleanup(assembly); throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e); }
+            List<StagedAttachment> batch = List.copyOf(staged);
+            Path assembly = tempRoot.resolve("publish-" + UUID.randomUUID());
+            boolean published = false;
+            try {
+                AttachmentBudget budget = validateBatch(batch);
+                if (storedAttachmentBytes() + stagedBytes() > storageLimit(budget)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL");
+                }
+                Files.createDirectories(assembly);
+                List<EmailAttachment> result = new ArrayList<>();
+                Properties metadata = new Properties();
+                for (StagedAttachment attachment : batch) {
+                    Path source = validateStagedPath(attachment);
+                    if (!Files.isRegularFile(source)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+                    String storedName = attachment.id() + "-" + sanitize(attachment.fileName());
+                    Files.copy(source, assembly.resolve(storedName));
+                    metadata.setProperty(attachment.id() + ".path", storedName);
+                    result.add(new EmailAttachment(attachment.id(), attachment.fileName(), attachment.mimeType(),
+                            attachment.sizeBytes(), "attachments/" + messageId + "/" + storedName, "stored", null));
+                }
+                try (OutputStream out = Files.newOutputStream(assembly.resolve("metadata.properties"))) {
+                    metadata.store(out, "attachments");
+                }
+                Files.createDirectories(target.getParent());
+                Files.move(assembly, target, StandardCopyOption.ATOMIC_MOVE);
+                published = true;
+                return result;
+            } catch (EmailAttachmentStoreException e) {
+                throw e;
+            } catch (IOException | InvalidPathException e) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
+            } finally {
+                cleanup(assembly);
+                for (StagedAttachment attachment : batch) {
+                    if (!published || Files.exists(attachment.temporaryPath())) cleanup(attachment.temporaryPath().getParent());
+                    stagedBudgets.remove(attachment.id());
+                }
+            }
+        }
     }
 
     public InputStream open(String messageId, String attachmentId) {
-        Path root = attachmentRoot.resolve(messageId == null ? "" : messageId).normalize();
-        if (!root.startsWith(attachmentRoot)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
-        try {
-            if (!Files.isDirectory(root)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
-            Properties meta = new Properties();
-            try (var in = Files.newInputStream(root.resolve("metadata.properties"))) { meta.load(in); }
-            String value = meta.getProperty(attachmentId);
-            if (value == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
-            String relative = value.split("\\|", -1)[3];
-            Path file = dataDir.resolve(relative).normalize();
-            if (!file.startsWith(root) || !Files.isRegularFile(file)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
-            return Files.newInputStream(file);
-        } catch (EmailAttachmentStoreException e) { throw e;
-        } catch (IOException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND", e); }
+        synchronized (lock) {
+            try {
+                validateMessageId(messageId);
+                if (attachmentId == null || !attachmentId.matches("[0-9a-fA-F-]{36}")) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                }
+                Path root = attachmentRoot.resolve(messageId).normalize();
+                if (!root.startsWith(attachmentRoot) || !Files.isDirectory(root)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+                }
+                Properties metadata = new Properties();
+                try (InputStream in = Files.newInputStream(root.resolve("metadata.properties"))) {
+                    metadata.load(in);
+                }
+                String storedName = metadata.getProperty(attachmentId + ".path");
+                if (storedName == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+                Path file = root.resolve(storedName).normalize();
+                if (!file.startsWith(root) || !Files.isRegularFile(file)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                }
+                return Files.newInputStream(file);
+            } catch (EmailAttachmentStoreException e) {
+                throw e;
+            } catch (IOException | InvalidPathException | NullPointerException e) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
+            }
+        }
     }
 
-    public long availableBytes() { try { return Files.getFileStore(dataDir).getUsableSpace(); } catch (IOException e) { return 0; } }
-    public int reconcile(int maxEntries) { return 0; }
-    private long storedAttachmentBytes() throws IOException {
-        try (var paths = Files.walk(attachmentRoot)) {
+    public long availableBytes() {
+        synchronized (lock) {
+            try {
+                return Math.max(0, configuredStorageBytes - storedAttachmentBytes() - stagedBytes());
+            } catch (IOException e) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
+            }
+        }
+    }
+
+    public int reconcile(int maxEntries) {
+        if (maxEntries <= 0) return 0;
+        synchronized (lock) {
+            try (var entries = Files.list(tempRoot)) {
+                List<Path> stale = entries.sorted().limit(maxEntries).toList();
+                stale.forEach(EmailAttachmentStore::cleanup);
+                return stale.size();
+            } catch (IOException e) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
+            }
+        }
+    }
+
+    private AttachmentBudget validateBatch(List<StagedAttachment> batch) throws IOException {
+        if (batch.isEmpty()) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+        AttachmentBudget effective = null;
+        long total = 0;
+        for (StagedAttachment attachment : batch) {
+            if (attachment == null || !stagedBudgets.containsKey(attachment.id())) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+            }
+            AttachmentBudget budget = stagedBudgets.get(attachment.id());
+            effective = effective == null ? budget : new AttachmentBudget(
+                    Math.min(effective.maxCount(), budget.maxCount()),
+                    Math.min(effective.maxTotalBytes(), budget.maxTotalBytes()),
+                    Math.min(effective.maxStorageBytes(), budget.maxStorageBytes()));
+            total = Math.addExact(total, attachment.sizeBytes());
+        }
+        if (batch.size() > effective.maxCount() || total > effective.maxTotalBytes()) {
+            throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_SIZE_LIMIT");
+        }
+        return effective;
+    }
+
+    private Path validateStagedPath(StagedAttachment attachment) {
+        if (attachment.temporaryPath() == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+        Path source = attachment.temporaryPath().toAbsolutePath().normalize();
+        if (!source.startsWith(tempRoot) || !source.getFileName().toString().equals(attachment.id() + ".bin")) {
+            throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+        }
+        return source;
+    }
+
+    private long copyAndDigest(InputStream input, Path target, MessageDigest digest, long maxBytes) throws IOException {
+        long size = 0;
+        try (InputStream in = input; OutputStream out = Files.newOutputStream(target)) {
+            byte[] buffer = new byte[8192];
+            for (int read; (read = in.read(buffer)) >= 0;) {
+                if (read == 0) continue;
+                size += read;
+                if (size > maxBytes) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_SIZE_LIMIT");
+                digest.update(buffer, 0, read);
+                out.write(buffer, 0, read);
+            }
+        }
+        return size;
+    }
+
+    private long storageLimit(AttachmentBudget budget) { return Math.min(configuredStorageBytes, budget.maxStorageBytes()); }
+    private long storedAttachmentBytes() throws IOException { return bytesBelow(attachmentRoot, false); }
+    private long stagedBytes() throws IOException { return bytesBelow(tempRoot, true); }
+    private static long bytesBelow(Path root, boolean stagedOnly) throws IOException {
+        try (var paths = Files.walk(root)) {
             return paths.filter(Files::isRegularFile)
                     .filter(path -> !path.getFileName().toString().equals("metadata.properties"))
-                    .mapToLong(path -> {
-                        try { return Files.size(path); } catch (IOException e) { throw new java.io.UncheckedIOException(e); }
-                    }).sum();
-        } catch (java.io.UncheckedIOException e) { throw e.getCause(); }
+                    .filter(path -> !stagedOnly || path.getFileName().toString().endsWith(".bin"))
+                    .mapToLong(path -> { try { return Files.size(path); } catch (IOException e) { throw new UncheckedIOException(e); } })
+                    .sum();
+        } catch (UncheckedIOException e) { throw e.getCause(); }
     }
-    private static String sanitize(String name) { if (name == null || name.isBlank()) return "attachment"; return name.replaceAll("[^A-Za-z0-9._-]", "_"); }
-    private static String hex(byte[] bytes) { StringBuilder s = new StringBuilder(); for (byte b : bytes) s.append(String.format("%02x", b)); return s.toString(); }
-    private static void cleanup(Path p) { if (p == null) return; try { if (Files.exists(p)) Files.walk(p).sorted(Comparator.reverseOrder()).forEach(x -> { try { Files.deleteIfExists(x); } catch (IOException ignored) {} }); } catch (IOException ignored) {} }
+    private static void validateMessageId(String messageId) {
+        if (messageId == null || messageId.isBlank() || messageId.equals(".") || messageId.equals("..")
+                || messageId.contains("/") || messageId.contains("\\") || messageId.chars().anyMatch(Character::isISOControl)) {
+            throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+        }
+    }
+    private static String safeMimeType(String mimeType) { return mimeType == null || mimeType.isBlank() ? "application/octet-stream" : mimeType; }
+    private static String sanitize(String name) {
+        String sanitized = name == null || name.isBlank() ? "attachment" : name.replaceAll("[^A-Za-z0-9._-]", "_");
+        return sanitized.length() > MAX_FILE_NAME_BYTES ? sanitized.substring(0, MAX_FILE_NAME_BYTES) : sanitized;
+    }
+    private static String hex(byte[] bytes) { StringBuilder value = new StringBuilder(); for (byte b : bytes) value.append(String.format("%02x", b)); return value.toString(); }
+    private static void cleanup(Path directory) { if (directory == null) return; try (var paths = Files.walk(directory)) { paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { Files.deleteIfExists(path); } catch (IOException ignored) { } }); } catch (IOException ignored) { } }
 }
 
 class EmailAttachmentStoreException extends RuntimeException {
