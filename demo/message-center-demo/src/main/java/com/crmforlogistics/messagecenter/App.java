@@ -1167,7 +1167,7 @@ public class App {
     const WECOM_LOGIN_EXPIRED_MARKERS = ['42006','42003','40029','Missing open sid'];
     let weComSdkLoadPromise = null;
     let weComJwxworkLoadPromise = null;
-	const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedCallRecordId:'', selectedChannel: '', selectedMode: 'text', mediaType: 'image', lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, viewerReloginPromise:null, messageCenterInitialized:false, eventSource:null, refreshTimer:null, callDetail:null, callDetailGeneration:0, callDetailPollTimer:null, callDetailPollFailures:0, callAudioRenewTimer:null, callAudioRecovered:false, callAudioSessionReady:false };
+	const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedCallRecordId:'', selectedChannel: '', selectedMode: 'text', mediaType: 'image', emailAttachments: [], lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, viewerReloginPromise:null, messageCenterInitialized:false, eventSource:null, refreshTimer:null, callDetail:null, callDetailGeneration:0, callDetailPollTimer:null, callDetailPollFailures:0, callAudioRenewTimer:null, callAudioRecovered:false, callAudioSessionReady:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
       '😎','🤔','😅','😇','🥳','😢','😭','😡','😤','😴','🤝','👏',
@@ -1722,6 +1722,22 @@ public class App {
       }
     }
 
+    async function openEmailAttachment(messageId, attachment) {
+      try {
+        const auth = currentWeComAuth();
+        const response = await fetch('/api/email/attachments/' + encodeURIComponent(messageId) + '/' + encodeURIComponent(attachment.id), {
+          headers: { 'X-WeCom-Viewer-Auth': auth.viewerAuthToken }, cache:'no-store'
+        });
+        if (!response.ok) throw new Error(response.statusText || attachment.errorCode || '附件暂不可用');
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        downloadBlob(url, attachment.fileName || 'attachment');
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        toast(`附件下载失败：${error.message}`);
+      }
+    }
+
     function shouldOpenInline(contentType) {
       const type = String(contentType || '').toLowerCase();
       return type.startsWith('image/') || type.startsWith('video/') || type === 'application/pdf' || type.startsWith('text/');
@@ -2185,6 +2201,9 @@ public class App {
     }
 
     function renderMessageDetail(m) {
+      const attachmentHtml = (m.attachments || []).map(attachment => attachment.state === 'stored'
+        ? `<button type="button" class="attachment-download" data-email-attachment-id="${esc(attachment.id)}">${esc(attachment.fileName)}（${formatBytes(attachment.sizeBytes)}）</button>`
+        : `<div class="attachment-rejected">${esc(attachment.fileName)}：${esc(attachment.errorCode || '附件不可用')}</div>`).join('');
       const html = `
         <div class="kv"><div class="small">渠道</div><div>${esc(label(m.channel))}</div></div>
         <div class="kv"><div class="small">方向</div><div>${esc(m.direction)}</div></div>
@@ -2194,8 +2213,13 @@ public class App {
         ${m.status ? `<div class="kv"><div class="small">状态</div><div>${esc(m.status)}</div></div>` : ''}
         ${m.title ? `<div class="kv"><div class="small">主题</div><div>${esc(m.title)}</div></div>` : ''}
         <h3>内容</h3><div class="msg-text">${esc(m.bodyText || m.text || '')}</div>
+        ${attachmentHtml ? `<h3>附件</h3><div class="attachment-list">${attachmentHtml}</div>` : ''}
         ${m.raw ? `<h3>Raw</h3><pre>${esc(m.raw)}</pre>` : ''}`;
       $('detail').innerHTML = `<div class="message-detail-panel message-detail-standalone" id="messageDetailPanel">${html}</div>`;
+      document.querySelectorAll('[data-email-attachment-id]').forEach(button => {
+        const attachment = (m.attachments || []).find(item => item.id === button.dataset.emailAttachmentId);
+        if (attachment) button.onclick = () => openEmailAttachment(m.sourceId || m.id.replace(/^email:/, ''), attachment);
+      });
     }
 
 """).append("""
@@ -2868,12 +2892,23 @@ public class App {
               <div class="field"><label>主题</label><input id="emailSubject"></div>
             </div>
             <div class="composer-editor"><textarea id="emailBody" rows="4" placeholder="请输入邮件正文"></textarea></div>
+            <div class="email-attachments-field">
+              <label class="file-drop" for="emailAttachments">选择附件（最多 16 个，合计 20 MiB）</label>
+              <input class="sr-only" id="emailAttachments" type="file" multiple>
+              <div id="emailAttachmentList" class="attachment-list"></div>
+            </div>
             <div class="composer-toolbar">
               <div class="tool-cluster"></div>
               <button class="primary" id="sendEmail">发送邮件</button>
             </div>
           </div>`;
         bindAccountSelect(contact);
+        $('emailAttachments').onchange = event => {
+          state.emailAttachments = state.emailAttachments.concat(Array.from(event.target.files || []));
+          renderEmailAttachmentList();
+          event.target.value = '';
+        };
+        renderEmailAttachmentList();
         $('sendEmail').onclick = sendEmail;
         return;
       }
@@ -3011,11 +3046,25 @@ public class App {
       const subject = $('emailSubject').value.trim();
       if (!to) { toast('请选择收件人'); return; }
       if (!subject) { toast('请输入邮件主题'); return; }
+      const totalBytes = state.emailAttachments.reduce((total, file) => total + file.size, 0);
+      if (state.emailAttachments.length > 16) { toast('附件数量不能超过 16 个'); return; }
+      if (totalBytes > 20971520) { toast('附件总大小不能超过 20 MiB'); return; }
       const button = $('sendEmail');
       button.disabled = true;
       try {
-        await postJson('/api/send/email', { to, subject, body:$('emailBody').value });
+        const form = new FormData();
+        form.append('to', to);
+        form.append('subject', subject);
+        form.append('body', $('emailBody').value);
+        state.emailAttachments.forEach(file => form.append('file', file, file.name));
+        await fetch('/api/send/email', { method:'POST', body:form }).then(async response => {
+          const data = await response.json();
+          if (!response.ok) throw Object.assign(new Error(data.message || data.code || response.statusText), { status:response.status, code:data.code });
+          return data;
+        });
         $('emailBody').value = '';
+        state.emailAttachments = [];
+        renderEmailAttachmentList();
         toast('邮件已发送');
         await refreshAll(false);
       } catch (err) {
@@ -3023,6 +3072,25 @@ public class App {
       } finally {
         button.disabled = false;
       }
+    }
+
+    function renderEmailAttachmentList() {
+      const list = $('emailAttachmentList');
+      if (!list) return;
+      const total = state.emailAttachments.reduce((sum, file) => sum + file.size, 0);
+      list.innerHTML = state.emailAttachments.map((file, index) =>
+        `<div class="attachment-row"><span>${esc(file.name)}（${formatBytes(file.size)}）</span><button type="button" class="icon-button" data-remove-email-attachment="${index}" aria-label="移除附件">×</button></div>`
+      ).join('') + `<div class="small">${state.emailAttachments.length}/16，${formatBytes(total)}/20 MiB</div>`;
+      list.querySelectorAll('[data-remove-email-attachment]').forEach(button => {
+        button.onclick = () => { state.emailAttachments.splice(Number(button.dataset.removeEmailAttachment), 1); renderEmailAttachmentList(); };
+      });
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value || 0);
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / 1048576).toFixed(1)} MiB`;
     }
 
     async function sendChatText() {
