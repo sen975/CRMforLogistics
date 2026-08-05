@@ -544,6 +544,13 @@ public class UnifiedMessageStore {
                     digestPart(digest, message.mediaUrl);
                     digestPart(digest, message.objectKey);
                     digestPart(digest, message.fileName);
+                    for (EmailAttachment attachment : message.attachments) {
+                        digestPart(digest, attachment.id());
+                        digestPart(digest, attachment.state());
+                        digestPart(digest, attachment.fileName());
+                        digestPart(digest, Long.toString(attachment.sizeBytes()));
+                        digestPart(digest, attachment.errorCode());
+                    }
                 }
             }
             return HexFormat.of().formatHex(digest.digest());
@@ -585,13 +592,58 @@ public class UnifiedMessageStore {
                 message.summary = JsonSupport.string(object, "summary");
                 message.bodyText = JsonSupport.string(object, "bodyText");
                 message.text = ContactPointUtil.firstNonBlank(message.summary, message.bodyText, message.title);
-                message.raw = line;
+                message.attachments = emailAttachments(object);
+                message.raw = redactedEmailRaw(object);
                 result.add(message);
             } catch (RuntimeException ignored) {
                 // Keep the projection resilient when one JSONL row is damaged.
             }
         }
         return result;
+    }
+
+    private static List<EmailAttachment> emailAttachments(JsonObject object) {
+        if (object == null || !object.has("attachments") || !object.get("attachments").isJsonArray()) {
+            return List.of();
+        }
+        List<EmailAttachment> attachments = new ArrayList<>();
+        try {
+            for (JsonElement element : object.getAsJsonArray("attachments")) {
+                if (!element.isJsonObject()) {
+                    return List.of();
+                }
+                JsonObject attachment = element.getAsJsonObject();
+                String id = JsonSupport.string(attachment, "id");
+                String fileName = JsonSupport.string(attachment, "fileName");
+                String mimeType = ContactPointUtil.firstNonBlank(
+                        JsonSupport.string(attachment, "mimeType"), "application/octet-stream");
+                String state = JsonSupport.string(attachment, "state");
+                String errorCode = JsonSupport.string(attachment, "errorCode");
+                long sizeBytes = attachment.has("sizeBytes") && !attachment.get("sizeBytes").isJsonNull()
+                        ? attachment.get("sizeBytes").getAsLong() : 0L;
+                if (id.isBlank() || fileName.isBlank() || sizeBytes < 0
+                        || !("stored".equals(state) || "rejected".equals(state))) {
+                    return List.of();
+                }
+                attachments.add(new EmailAttachment(id, fileName, mimeType, sizeBytes,
+                        null, state, errorCode));
+            }
+            return List.copyOf(attachments);
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
+    private static String redactedEmailRaw(JsonObject object) {
+        JsonObject copy = object.deepCopy();
+        if (copy.has("attachments") && copy.get("attachments").isJsonArray()) {
+            for (JsonElement element : copy.getAsJsonArray("attachments")) {
+                if (element.isJsonObject()) {
+                    element.getAsJsonObject().remove("relativePath");
+                }
+            }
+        }
+        return GSON.toJson(copy);
     }
 
     private List<UnifiedMessage> readChatAppMessages() throws IOException {
