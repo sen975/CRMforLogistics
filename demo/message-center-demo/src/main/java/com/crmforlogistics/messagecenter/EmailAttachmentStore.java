@@ -76,6 +76,11 @@ public class EmailAttachmentStore {
     }
 
     public List<EmailAttachment> publish(String messageId, List<StagedAttachment> staged) {
+        try (FileChannel channel = reservationChannel(); FileLock ignored = channel.lock()) { return publishInternal(messageId, staged); }
+        catch (IOException | java.nio.channels.OverlappingFileLockException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e); }
+    }
+
+    private List<EmailAttachment> publishInternal(String messageId, List<StagedAttachment> staged) {
         synchronized (lock) {
             validateMessageId(messageId);
             if (staged == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
@@ -118,7 +123,8 @@ public class EmailAttachmentStore {
             } finally {
                 cleanup(assembly);
                 for (StagedAttachment attachment : batch) {
-                    if (!published || Files.exists(attachment.temporaryPath())) cleanup(attachment.temporaryPath().getParent());
+                    Path temporaryPath = attachment.temporaryPath();
+                    if (temporaryPath != null && (!published || Files.exists(temporaryPath))) cleanup(temporaryPath.getParent());
                     stagedBudgets.remove(attachment.id());
                 }
             }
@@ -147,7 +153,7 @@ public class EmailAttachmentStore {
                 String storedName = metadata.getProperty(attachmentId + ".path");
                 if (storedName == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
                 Path file = root.resolve(storedName).normalize();
-                if (!file.startsWith(root) || !Files.isRegularFile(file)) {
+                if (!file.startsWith(root) || !Files.isRegularFile(file) || Files.isSymbolicLink(file)) {
                     throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
                 }
                 return Files.newInputStream(file);
@@ -160,6 +166,10 @@ public class EmailAttachmentStore {
     }
 
     public long availableBytes() {
+        try (FileChannel channel = reservationChannel(); FileLock ignored = channel.lock()) { return availableBytesInternal(); }
+        catch (IOException | java.nio.channels.OverlappingFileLockException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e); }
+    }
+    private long availableBytesInternal() {
         synchronized (lock) {
             try {
                 return Math.max(0, configuredStorageBytes - storedAttachmentBytes() - stagedBytes());
@@ -171,6 +181,10 @@ public class EmailAttachmentStore {
 
     public int reconcile(int maxEntries) {
         if (maxEntries <= 0) return 0;
+        try (FileChannel channel = reservationChannel(); FileLock ignored = channel.lock()) { return reconcileInternal(maxEntries); }
+        catch (IOException | java.nio.channels.OverlappingFileLockException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e); }
+    }
+    private int reconcileInternal(int maxEntries) {
         synchronized (lock) {
             try (var entries = Files.list(tempRoot)) {
                 long cutoff = System.currentTimeMillis() - 3_600_000L;
@@ -184,6 +198,10 @@ public class EmailAttachmentStore {
                 throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
             }
         }
+    }
+
+    private FileChannel reservationChannel() throws IOException {
+        return FileChannel.open(dataDir.resolve("attachment-reservations.lock"), java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
     }
 
     private AttachmentBudget validateBatch(List<StagedAttachment> batch) throws IOException {

@@ -110,7 +110,7 @@ class EmailAttachmentStoreTest {
         Files.delete(staged.temporaryPath());
         assertEquals("EMAIL_ATTACHMENT_NOT_FOUND", assertThrows(EmailAttachmentStoreException.class,
                 () -> store.publish("failed", List.of(staged))).errorCode());
-        assertTrue(Files.list(tempDir.resolve("attachment-tmp")).findAny().isEmpty());
+        try (var entries = Files.list(tempDir.resolve("attachment-tmp"))) { assertTrue(entries.findAny().isEmpty()); }
         store.stage(new ByteArrayInputStream(new byte[]{4}), "released.bin", "application/octet-stream", budget);
     }
 
@@ -144,7 +144,7 @@ class EmailAttachmentStoreTest {
 
         Files.createDirectories(tempDir.resolve("attachment-tmp/a"));
         Files.createDirectories(tempDir.resolve("attachment-tmp/b"));
-        Files.setLastModifiedTime(tempDir.resolve("attachment-tmp/a"), java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 3_600_000L));
+        Files.setLastModifiedTime(tempDir.resolve("attachment-tmp/a"), java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 7_200_000L));
         assertEquals(1, store.reconcile(1));
         try (var entries = Files.list(tempDir.resolve("attachment-tmp"))) { assertEquals(1, entries.collect(Collectors.toList()).size()); }
     }
