@@ -47,8 +47,15 @@ class MailSenderAttachmentTest {
             }
         }, attachmentStore);
 
-        sender.send(new EmailSendCommand("buyer@example.com", "Quote", "See attached", "local-mail-1",
+        UnifiedMessage stored = sender.send(new EmailSendCommand("buyer@example.com", "Quote", "See attached", "local-mail-1",
                 List.of(first, second)));
+
+        try (var opened = attachmentStore.open("local-mail-1", first.id())) {
+            assertArrayEquals("报价".getBytes(StandardCharsets.UTF_8), opened.readAllBytes());
+        }
+        try (var opened = attachmentStore.open(stored.sourceId, first.id())) {
+            assertArrayEquals("报价".getBytes(StandardCharsets.UTF_8), opened.readAllBytes());
+        }
 
         MimeMessage message = captured.get();
         assertNotNull(message);

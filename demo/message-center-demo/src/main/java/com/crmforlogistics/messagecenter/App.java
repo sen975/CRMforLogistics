@@ -652,6 +652,10 @@ public class App {
         } else if (exception instanceof EmailMultipartException multipartException) {
             status = multipartException.status();
             code = multipartException.code();
+        } else if (exception instanceof EmailSendException emailSendException) {
+            code = emailSendException.errorCode();
+            status = code.equals("EMAIL_ATTACHMENT_COUNT_LIMIT")
+                    || code.equals("EMAIL_ATTACHMENT_SIZE_LIMIT") ? 413 : 500;
         } else if (exception instanceof SecurityException) {
             status = 403;
             code = "FORBIDDEN";

@@ -61,6 +61,7 @@ public class MailSender {
         String cleanTo = required(command.to(), "to");
         String subject = command.subject() == null ? "" : command.subject();
         String body = command.body() == null ? "" : command.body();
+        validateAttachmentBudget(command.attachments());
         SmtpEndpoint endpoint = smtpEndpoint();
         Session session = Session.getInstance(smtpProperties(endpoint));
         MimeMessage message = new MimeMessage(session);
@@ -119,7 +120,7 @@ public class MailSender {
             journal.accepted(command.messageId(), cleanTo, subject, body);
             attachments = command.attachments().isEmpty()
                     ? List.of() : attachmentStore.publish(command.messageId(), command.attachments());
-            appendOutgoing(cleanTo, subject, body, messageId, attachments);
+            appendOutgoing(cleanTo, subject, body, command.messageId(), messageId, attachments);
             journal.remove(command.messageId());
         } catch (Exception exception) {
             throw new EmailSendException("EMAIL_SENT_HISTORY_FAILED", exception);
@@ -138,13 +139,42 @@ public class MailSender {
         return attachmentStore;
     }
 
-    private void appendOutgoing(String to, String subject, String body, String messageId,
+    private void validateAttachmentBudget(List<StagedAttachment> attachments) throws Exception {
+        String errorCode = null;
+        if (attachments.size() > config.emailAttachmentMaxCount()) {
+            errorCode = "EMAIL_ATTACHMENT_COUNT_LIMIT";
+        } else {
+            long totalBytes = 0;
+            try {
+                for (StagedAttachment attachment : attachments) {
+                    if (attachment == null || attachment.sizeBytes() < 0) {
+                        errorCode = "EMAIL_ATTACHMENT_SIZE_LIMIT";
+                        break;
+                    }
+                    totalBytes = Math.addExact(totalBytes, attachment.sizeBytes());
+                }
+            } catch (ArithmeticException overflow) {
+                errorCode = "EMAIL_ATTACHMENT_SIZE_LIMIT";
+            }
+            if (errorCode == null && totalBytes > config.emailAttachmentMaxTotalBytes()) {
+                errorCode = "EMAIL_ATTACHMENT_SIZE_LIMIT";
+            }
+        }
+        if (errorCode != null) {
+            attachmentStore().discard(attachments);
+            throw new EmailSendException(errorCode, null);
+        }
+    }
+
+    private void appendOutgoing(String to, String subject, String body, String localMessageId, String messageId,
                                 List<EmailAttachment> attachments) throws Exception {
         if (config.emailInboxFile().getParent() != null) {
             Files.createDirectories(config.emailInboxFile().getParent());
         }
         Map<String, Object> record = new LinkedHashMap<>();
-        record.put("id", UUID.randomUUID().toString());
+        // The JSONL row id is also the attachment directory key used by the
+        // download route; keep both sides bound to the same stable message id.
+        record.put("id", localMessageId == null || localMessageId.isBlank() ? UUID.randomUUID().toString() : localMessageId);
         record.put("storedAt", Instant.now().toString());
         record.put("direction", "out");
         record.put("contactEmail", ContactPointUtil.extractEmail(to));
