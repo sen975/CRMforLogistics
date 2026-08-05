@@ -91,6 +91,13 @@ public class EmailAttachmentStore {
         }
     }
 
+    public void deletePublished(String messageId) {
+        synchronized (lock) {
+            validateMessageId(messageId);
+            cleanup(attachmentRoot.resolve(messageId).normalize());
+        }
+    }
+
     private List<EmailAttachment> publishInternal(String messageId, List<StagedAttachment> staged) {
         synchronized (lock) {
             validateMessageId(messageId);

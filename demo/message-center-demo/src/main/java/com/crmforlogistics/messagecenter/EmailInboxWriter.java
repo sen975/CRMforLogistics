@@ -11,11 +11,14 @@ import jakarta.mail.Part;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeUtility;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +27,7 @@ public class EmailInboxWriter {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
 
     private final Config config;
+    private EmailAttachmentStore attachmentStore;
 
     public EmailInboxWriter(Config config) {
         this.config = config;
@@ -40,12 +44,29 @@ public class EmailInboxWriter {
         String contactSource = "out".equals(normalizedDirection) ? to : from;
         String contactEmail = ContactPointUtil.extractEmail(contactSource);
         String subject = decodeMimeText(message.getSubject());
-        String bodyText = bodyText(message);
+        String localMessageId = UUID.randomUUID().toString();
+        List<StagedAttachment> staged = new ArrayList<>();
+        List<EmailAttachment> attachments = new ArrayList<>();
+        String bodyText = bodyText(message, staged, attachments);
+        if (!staged.isEmpty()) {
+            List<EmailAttachment> rejected = attachments.stream()
+                    .filter(item -> "rejected".equals(item.state())).toList();
+            try {
+                List<EmailAttachment> stored = attachmentStore().publish(localMessageId, staged);
+                attachments = new ArrayList<>(stored);
+                attachments.addAll(rejected);
+            } catch (EmailAttachmentStoreException exception) {
+                attachmentStore().discard(staged);
+                attachments.clear();
+                addRejected(attachments, "attachment", "application/octet-stream", 0L,
+                        exception.errorCode());
+            }
+        }
         String sentDate = message.getSentDate() == null ? "" : message.getSentDate().toInstant().toString();
         String messageId = firstHeader(message, "Message-ID");
 
-        Map<String, String> record = new LinkedHashMap<>();
-        record.put("id", UUID.randomUUID().toString());
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("id", localMessageId);
         record.put("storedAt", Instant.now().toString());
         record.put("direction", normalizedDirection);
         record.put("contactEmail", contactEmail);
@@ -57,10 +78,16 @@ public class EmailInboxWriter {
         record.put("summary", summary(bodyText));
         record.put("bodyText", bodyText);
         record.put("messageId", messageId);
-        return appendRecord(record);
+        record.put("attachments", attachments);
+        try {
+            return appendRecord(record);
+        } catch (Exception exception) {
+            if (!staged.isEmpty()) attachmentStore().deletePublished(localMessageId);
+            throw exception;
+        }
     }
 
-    private boolean appendRecord(Map<String, String> record) throws Exception {
+    private boolean appendRecord(Map<String, Object> record) throws Exception {
         if (isDuplicate(record)) {
             return false;
         }
@@ -72,7 +99,7 @@ public class EmailInboxWriter {
         return true;
     }
 
-    private boolean isDuplicate(Map<String, String> candidate) throws Exception {
+    private boolean isDuplicate(Map<String, ?> candidate) throws Exception {
         if (!Files.exists(config.emailInboxFile())) {
             return false;
         }
@@ -106,19 +133,24 @@ public class EmailInboxWriter {
         return result;
     }
 
-    private static String messageKey(Map<String, String> record) {
-        String messageId = record.getOrDefault("messageId", "").trim().toLowerCase(Locale.ROOT);
+    private static String messageKey(Map<String, ?> record) {
+        String messageId = value(record, "messageId").trim().toLowerCase(Locale.ROOT);
         if (messageId.isBlank()) {
             return "";
         }
-        return record.getOrDefault("direction", "") + "|" + messageId;
+        return value(record, "direction") + "|" + messageId;
     }
 
-    private static String fallbackKey(Map<String, String> record) {
-        return record.getOrDefault("direction", "")
-                + "|" + ContactPointUtil.extractEmail(record.getOrDefault("contactEmail", ""))
-                + "|" + normalizeTextKey(record.getOrDefault("subject", ""))
-                + "|" + normalizeTextKey(record.getOrDefault("sentDate", ""));
+    private static String fallbackKey(Map<String, ?> record) {
+        return value(record, "direction")
+                + "|" + ContactPointUtil.extractEmail(value(record, "contactEmail"))
+                + "|" + normalizeTextKey(value(record, "subject"))
+                + "|" + normalizeTextKey(value(record, "sentDate"));
+    }
+
+    private static String value(Map<String, ?> record, String key) {
+        Object value = record.get(key);
+        return value == null ? "" : String.valueOf(value);
     }
 
     private static String addresses(Address[] addresses) {
@@ -152,28 +184,123 @@ public class EmailInboxWriter {
         return values == null || values.length == 0 ? "" : values[0];
     }
 
-    private static String bodyText(Message message) throws Exception {
-        return normalizeText(extractText(message));
+    private EmailAttachmentStore attachmentStore() throws IOException {
+        if (attachmentStore == null) attachmentStore = new EmailAttachmentStore(config);
+        return attachmentStore;
     }
 
-    private static String extractText(Part part) throws Exception {
-        if (part.isMimeType("text/plain")) {
-            Object content = part.getContent();
-            return content == null ? "" : content.toString();
+    private String bodyText(Message message, List<StagedAttachment> staged,
+                             List<EmailAttachment> attachments) throws Exception {
+        StringBuilder body = new StringBuilder();
+        extractText(message, body, staged, attachments, false);
+        return normalizeText(body.toString());
+    }
+
+    private void extractText(Part part, StringBuilder body, List<StagedAttachment> staged,
+                             List<EmailAttachment> attachments, boolean alternative) throws Exception {
+        String disposition = part.getDisposition();
+        if (Part.INLINE.equalsIgnoreCase(disposition)
+                && (!decodeMimeText(part.getFileName()).isBlank() || part.getHeader("Content-ID") != null)) {
+            drain(part, config.emailAttachmentMaxTotalBytes());
+            return;
         }
-        if (part.isMimeType("text/html")) {
-            Object content = part.getContent();
-            return content == null ? "" : htmlToText(content.toString());
+        if (isAttachmentPart(part)) {
+            saveAttachment(part, staged, attachments);
+            return;
+        }
+        if (part.isMimeType("multipart/alternative")) {
+            Multipart multipart = (Multipart) part.getContent();
+            Part plain = null;
+            Part html = null;
+            for (int i = 0; i < multipart.getCount(); i++) {
+                Part child = multipart.getBodyPart(i);
+                if (isAttachmentPart(child)) {
+                    saveAttachment(child, staged, attachments);
+                } else if (child.isMimeType("text/plain") && plain == null) {
+                    plain = child;
+                } else if (child.isMimeType("text/html") && html == null) {
+                    html = child;
+                }
+            }
+            if (plain != null) extractText(plain, body, staged, attachments, true);
+            else if (html != null) extractText(html, body, staged, attachments, true);
+            return;
         }
         if (part.isMimeType("multipart/*")) {
             Multipart multipart = (Multipart) part.getContent();
-            StringBuilder builder = new StringBuilder();
             for (int i = 0; i < multipart.getCount(); i++) {
-                builder.append(extractText(multipart.getBodyPart(i))).append(' ');
+                extractText(multipart.getBodyPart(i), body, staged, attachments, false);
             }
-            return builder.toString();
+            return;
         }
-        return "";
+        if (part.isMimeType("text/plain") || part.isMimeType("text/html")) {
+            Object content = part.getContent();
+            if (content != null) {
+                body.append(part.isMimeType("text/html") ? htmlToText(content.toString()) : content).append(' ');
+            }
+        }
+    }
+
+    private void saveAttachment(Part part, List<StagedAttachment> staged,
+                                List<EmailAttachment> attachments) throws Exception {
+        String fileName = decodeMimeText(part.getFileName());
+        String mimeType = part.getContentType().split(";", 2)[0].trim();
+        if (fileName.isBlank()) fileName = "attachment";
+        int storedCount = staged.size();
+        if (storedCount >= config.emailAttachmentMaxCount()
+                || attachments.stream().anyMatch(item -> "rejected".equals(item.state()))) {
+            drain(part, config.emailAttachmentMaxTotalBytes());
+            addRejected(attachments, fileName, mimeType, 0L, "EMAIL_ATTACHMENT_COUNT_LIMIT");
+            return;
+        }
+        try {
+            long remaining = config.emailAttachmentMaxTotalBytes() - staged.stream()
+                    .mapToLong(StagedAttachment::sizeBytes).sum();
+            if (remaining <= 0) {
+                drain(part, config.emailAttachmentMaxTotalBytes());
+                addRejected(attachments, fileName, mimeType, 0L, "EMAIL_ATTACHMENT_SIZE_LIMIT");
+                return;
+            }
+            StagedAttachment item = attachmentStore().stage(part.getInputStream(), fileName, mimeType,
+                    new AttachmentBudget(config.emailAttachmentMaxCount(), config.emailAttachmentMaxTotalBytes(),
+                            config.emailAttachmentStorageMaxBytes()));
+            if (staged.stream().mapToLong(StagedAttachment::sizeBytes).sum() + item.sizeBytes()
+                    > config.emailAttachmentMaxTotalBytes()) {
+                attachmentStore().discard(List.of(item));
+                addRejected(attachments, fileName, mimeType, item.sizeBytes(), "EMAIL_ATTACHMENT_SIZE_LIMIT");
+                return;
+            }
+            staged.add(item);
+        } catch (EmailAttachmentStoreException exception) {
+            addRejected(attachments, fileName, mimeType, 0L, exception.errorCode());
+        } catch (Exception exception) {
+            addRejected(attachments, fileName, mimeType, 0L, "EMAIL_ATTACHMENT_READ_FAILED");
+        }
+    }
+
+    private static boolean isAttachmentPart(Part part) throws Exception {
+        String disposition = part.getDisposition();
+        String fileName = decodeMimeText(part.getFileName());
+        if (Part.INLINE.equalsIgnoreCase(disposition)) return false;
+        return Part.ATTACHMENT.equalsIgnoreCase(disposition) || !fileName.isBlank();
+    }
+
+    private static void addRejected(List<EmailAttachment> attachments, String fileName,
+                                    String mimeType, long sizeBytes, String errorCode) {
+        if (attachments.stream().noneMatch(item -> "rejected".equals(item.state()))) {
+            attachments.add(new EmailAttachment(UUID.randomUUID().toString(), fileName, mimeType,
+                    Math.max(0L, sizeBytes), null, "rejected", errorCode));
+        }
+    }
+
+    private static void drain(Part part, long maxBytes) throws Exception {
+        try (var input = part.getInputStream()) {
+            byte[] buffer = new byte[8192];
+            long readTotal = 0;
+            for (int read; (read = input.read(buffer)) >= 0 && readTotal < maxBytes;) {
+                if (read > 0) readTotal += read;
+            }
+        }
     }
 
     private static String htmlToText(String html) {
