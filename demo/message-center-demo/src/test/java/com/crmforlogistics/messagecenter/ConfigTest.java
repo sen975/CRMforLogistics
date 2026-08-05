@@ -27,6 +27,20 @@ class ConfigTest {
     }
 
     @Test
+    void exposesBoundedEmailAttachmentSettings() {
+        Config config = new Config(Map.of("EMAIL_DATA_DIR", tempDir.toString()));
+        assertEquals(16, config.emailAttachmentMaxCount());
+        assertEquals(20_971_520L, config.emailAttachmentMaxTotalBytes());
+        assertEquals(10_737_418_240L, config.emailAttachmentStorageMaxBytes());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("EMAIL_ATTACHMENT_MAX_COUNT", "17")).emailAttachmentMaxCount());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("EMAIL_ATTACHMENT_MAX_TOTAL_BYTES", "1048575")).emailAttachmentMaxTotalBytes());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("EMAIL_ATTACHMENT_STORAGE_MAX_BYTES", "not-a-number")).emailAttachmentStorageMaxBytes());
+    }
+
+    @Test
     void localWeComModeDefaultsOffAndBindsToLoopbackWhenEnabled() {
         Config defaults = new Config(Map.of());
         assertFalse(defaults.localDevMode());

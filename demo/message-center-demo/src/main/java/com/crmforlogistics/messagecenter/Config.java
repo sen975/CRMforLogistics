@@ -54,6 +54,9 @@ public class Config {
     public Path dataDir() { return Path.of(value("DATA_DIR", "data")); }
     public Path contactGroupFile() { return Path.of(value("CONTACT_GROUP_FILE", dataDir().resolve("contact-groups.jsonl").toString())); }
     public Path emailDataDir() { return Path.of(value("EMAIL_DATA_DIR", "../email-send-receive-demo/data")); }
+    public int emailAttachmentMaxCount() { return boundedInt("EMAIL_ATTACHMENT_MAX_COUNT", 16, 1, 16); }
+    public long emailAttachmentMaxTotalBytes() { return boundedLong("EMAIL_ATTACHMENT_MAX_TOTAL_BYTES", 20_971_520L, 1_048_576L, 20_971_520L); }
+    public long emailAttachmentStorageMaxBytes() { return boundedLong("EMAIL_ATTACHMENT_STORAGE_MAX_BYTES", 10_737_418_240L, 20_971_520L, 1_099_511_627_776L); }
     public Path emailInboxFile() { return emailDataDir().resolve("inbox.jsonl"); }
     public Path emailContactGroupFile() { return Path.of(value("EMAIL_CONTACT_GROUP_FILE", emailDataDir().resolve("contact-groups.jsonl").toString())); }
     public Path chatappDataFile() { return Path.of(value("CHATAPP_DATA_FILE", "../chatapp-send-receive-demo/data/messages.jsonl")); }
