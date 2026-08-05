@@ -364,7 +364,7 @@ paths:
   /api/v1/email/messages:
     post:
       operationId: sendEmailMessage
-      description: Send one UTF-8 plain-text email with zero to sixteen ordinary MIME attachments. The request is streamed and attachment content is bounded to 20 MiB in total. Stable client errors include EMAIL_MULTIPART_REQUIRED, EMAIL_MULTIPART_FIELD_INVALID, EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT, EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_ATTACHMENT_STORE_FAILED and EMAIL_SEND_FAILED.
+      description: Send one UTF-8 plain-text email with zero to sixteen ordinary MIME attachments. The request is streamed and attachment content is bounded to 20 MiB in total. Stable errors include EMAIL_MULTIPART_REQUIRED, EMAIL_MULTIPART_FIELD_INVALID, EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT, EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_SENT_HISTORY_FAILED and EMAIL_SEND_OUTCOME_UNKNOWN.
       tags:
         - Messaging
       parameters:
@@ -404,7 +404,7 @@ paths:
           schema:
             type: string
             minLength: 1
-            maxLength: 500
+            maxLength: 128
       responses:
         '200':
           description: Stored email attachment download

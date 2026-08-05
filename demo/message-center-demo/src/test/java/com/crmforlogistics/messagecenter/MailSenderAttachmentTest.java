@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import jakarta.mail.Multipart;
 import jakarta.mail.Session;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class MailSenderAttachmentTest {
@@ -84,7 +86,69 @@ class MailSenderAttachmentTest {
         assertFalse(Files.exists(config.emailInboxFile()));
     }
 
+    @Test
+    void acceptedJournalRecoversHistoryAndAttachmentsWithoutResending() throws Exception {
+        Path dir = Files.createTempDirectory("mail-sender-recovery");
+        Path emailDir = dir.resolve("email");
+        Files.createDirectories(emailDir);
+        Config config = config(dir, emailDir);
+        EmailAttachmentStore attachmentStore = new EmailAttachmentStore(config);
+        StagedAttachment staged = attachmentStore.stage(new ByteArrayInputStream("recovery".getBytes(StandardCharsets.UTF_8)),
+                "recovery.txt", "text/plain", new AttachmentBudget(16, 20_971_520L, 10_737_418_240L));
+        EmailSendCommand command = new EmailSendCommand(
+                "buyer@example.com", "Recovered", "Accepted body", "accepted-local-id", List.of(staged));
+        EmailRecoveryJournal journal = new EmailRecoveryJournal(config.emailDataDir());
+        journal.prepare(command);
+        journal.accepted(command, "<accepted@example.com>");
+        AtomicBoolean resent = new AtomicBoolean();
+        MailSender sender = new MailSender(config, (message, recipients) -> resent.set(true), attachmentStore);
+
+        assertEquals(1, sender.reconcile(10));
+        assertFalse(resent.get());
+        UnifiedMessage recovered = new UnifiedMessageStore(config).findMessage("email:accepted-local-id");
+        assertNotNull(recovered);
+        assertEquals("Recovered", recovered.title);
+        assertEquals(1, recovered.attachments.size());
+        try (var input = attachmentStore.open(recovered.sourceId, recovered.attachments.get(0).id())) {
+            assertArrayEquals("recovery".getBytes(StandardCharsets.UTF_8), input.readAllBytes());
+        }
+        assertTrue(journal.entries(10).isEmpty());
+    }
+
+    @Test
+    void preSmtpFailureCleansStagedFilesAndUnknownOutcomeKeepsRecoveryEvidence() throws Exception {
+        Path dir = Files.createTempDirectory("mail-sender-failure-stages");
+        Path emailDir = dir.resolve("email");
+        Files.createDirectories(emailDir);
+        Config invalidHost = config(dir, emailDir, Map.of("SMTP_HOST", "invalid host name"));
+        EmailAttachmentStore failingStore = new EmailAttachmentStore(invalidHost);
+        StagedAttachment preSmtp = failingStore.stage(new ByteArrayInputStream(new byte[]{1}),
+                "pre.bin", "application/octet-stream", new AttachmentBudget(16, 20_971_520L, 10_737_418_240L));
+        assertThrows(Exception.class, () -> new MailSender(invalidHost, (message, recipients) -> {})
+                .send(new EmailSendCommand("buyer@example.com", "Subject", "Body", "pre-smtp-id", List.of(preSmtp))));
+        assertFalse(Files.exists(preSmtp.temporaryPath()));
+
+        Config config = config(dir.resolve("unknown"), dir.resolve("unknown/email"));
+        EmailAttachmentStore unknownStore = new EmailAttachmentStore(config);
+        StagedAttachment unknown = unknownStore.stage(new ByteArrayInputStream(new byte[]{2}),
+                "unknown.bin", "application/octet-stream", new AttachmentBudget(16, 20_971_520L, 10_737_418_240L));
+        EmailSendException outcome = assertThrows(EmailSendException.class, () ->
+                new MailSender(config, (message, recipients) -> {
+                    throw new jakarta.mail.MessagingException("connection dropped");
+                }, unknownStore).send(new EmailSendCommand(
+                        "buyer@example.com", "Subject", "Body", "unknown-id", List.of(unknown))));
+        assertEquals("EMAIL_SEND_OUTCOME_UNKNOWN", outcome.errorCode());
+        assertTrue(Files.exists(unknown.temporaryPath()));
+        assertEquals("prepared", new EmailRecoveryJournal(config.emailDataDir()).entries(10).get(0).state());
+        assertEquals(0, new MailSender(config, (message, recipients) -> {}, unknownStore).reconcile(10));
+        assertTrue(Files.exists(unknown.temporaryPath()));
+    }
+
     private static Config config(Path dir, Path emailDir) {
+        return config(dir, emailDir, Map.of());
+    }
+
+    private static Config config(Path dir, Path emailDir, Map<String, String> overrides) {
         Map<String, String> values = new HashMap<>();
         values.put("DATA_DIR", dir.toString());
         values.put("EMAIL_DATA_DIR", emailDir.toString());
@@ -97,6 +161,7 @@ class MailSenderAttachmentTest {
         values.put("SMTP_HOST", "localhost");
         values.put("SMTP_PORT", "2525");
         values.put("SMTP_SSL", "false");
+        values.putAll(overrides);
         return new Config(values);
     }
 }

@@ -14,7 +14,10 @@ import jakarta.mail.internet.MimeUtility;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.ArrayList;
@@ -80,7 +83,9 @@ public class EmailInboxWriter {
         record.put("messageId", messageId);
         record.put("attachments", attachments);
         try {
-            return appendRecord(record);
+            boolean appended = appendRecord(record);
+            if (!appended && !staged.isEmpty()) attachmentStore().deletePublished(localMessageId);
+            return appended;
         } catch (Exception exception) {
             if (!staged.isEmpty()) attachmentStore().deletePublished(localMessageId);
             throw exception;
@@ -88,15 +93,17 @@ public class EmailInboxWriter {
     }
 
     private boolean appendRecord(Map<String, Object> record) throws Exception {
-        if (isDuplicate(record)) {
-            return false;
-        }
         if (config.emailInboxFile().getParent() != null) {
             Files.createDirectories(config.emailInboxFile().getParent());
         }
-        Files.writeString(config.emailInboxFile(), GSON.toJson(record) + System.lineSeparator(), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        return true;
+        Path lockPath = config.emailDataDir().resolve("inbox.lock");
+        try (FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+             FileLock ignored = channel.lock()) {
+            if (isDuplicate(record)) return false;
+            Files.writeString(config.emailInboxFile(), GSON.toJson(record) + System.lineSeparator(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            return true;
+        }
     }
 
     private boolean isDuplicate(Map<String, ?> candidate) throws Exception {
@@ -247,10 +254,13 @@ public class EmailInboxWriter {
         String mimeType = part.getContentType().split(";", 2)[0].trim();
         if (fileName.isBlank()) fileName = "attachment";
         int storedCount = staged.size();
-        if (storedCount >= config.emailAttachmentMaxCount()
-                || attachments.stream().anyMatch(item -> "rejected".equals(item.state()))) {
+        boolean terminalRejection = attachments.stream().anyMatch(item -> "rejected".equals(item.state())
+                && !"EMAIL_ATTACHMENT_READ_FAILED".equals(item.errorCode()));
+        if (storedCount >= config.emailAttachmentMaxCount() || terminalRejection) {
             drain(part, config.emailAttachmentMaxTotalBytes());
-            addRejected(attachments, fileName, mimeType, 0L, "EMAIL_ATTACHMENT_COUNT_LIMIT");
+            if (storedCount >= config.emailAttachmentMaxCount()) {
+                addRejected(attachments, fileName, mimeType, 0L, "EMAIL_ATTACHMENT_COUNT_LIMIT");
+            }
             return;
         }
         try {

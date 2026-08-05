@@ -142,6 +142,11 @@ class EmailAttachmentStoreTest {
         store.publish("availability", List.of(staged));
         assertEquals(config.emailAttachmentStorageMaxBytes() - 2, store.availableBytes());
 
+        StagedAttachment unicode = store.stage(new ByteArrayInputStream(new byte[]{3}), "报价".repeat(100) + ".pdf",
+                "application/pdf", new AttachmentBudget(1, 10, 100));
+        assertTrue(unicode.fileName().getBytes(StandardCharsets.UTF_8).length <= 128);
+        store.discard(List.of(unicode));
+
         Files.createDirectories(tempDir.resolve("attachment-tmp/a"));
         Files.createDirectories(tempDir.resolve("attachment-tmp/b"));
         Files.setLastModifiedTime(tempDir.resolve("attachment-tmp/a"), java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 7_200_000L));

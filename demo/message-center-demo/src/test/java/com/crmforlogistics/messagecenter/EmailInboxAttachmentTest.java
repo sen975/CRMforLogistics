@@ -18,6 +18,8 @@ import jakarta.mail.util.ByteArrayDataSource;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -57,6 +59,66 @@ class EmailInboxAttachmentTest {
         assertEquals("rejected", attachments.get(16).getAsJsonObject().get("state").getAsString());
         assertEquals("EMAIL_ATTACHMENT_COUNT_LIMIT",
                 attachments.get(16).getAsJsonObject().get("errorCode").getAsString());
+    }
+
+    @Test
+    void duplicateMessageDoesNotLeaveAnOrphanAttachmentDirectory() throws Exception {
+        Path dir = Files.createTempDirectory("email-inbox-duplicate-attachments");
+        Path emailDir = dir.resolve("email");
+        Files.createDirectories(emailDir);
+        Config config = config(dir, emailDir);
+        EmailInboxWriter writer = new EmailInboxWriter(config);
+        MimeMessage message = mixedMessage(1, 8);
+        message.setHeader("Message-ID", "<duplicate@example.com>");
+
+        assertTrue(writer.append(message, "in"));
+        assertFalse(writer.append(message, "in"));
+
+        try (var directories = Files.list(emailDir.resolve("attachments"))) {
+            assertEquals(1, directories.count());
+        }
+    }
+
+    @Test
+    void isolatedReadFailureDoesNotDiscardLaterValidAttachment() throws Exception {
+        Path dir = Files.createTempDirectory("email-inbox-read-failure");
+        Path emailDir = dir.resolve("email");
+        Files.createDirectories(emailDir);
+        Config config = config(dir, emailDir);
+        MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
+        message.setFrom(new InternetAddress("buyer@example.com"));
+        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse("seller@example.com"));
+        MimeMultipart mixed = new MimeMultipart("mixed");
+        MimeBodyPart body = new MimeBodyPart();
+        body.setText("body", "UTF-8");
+        mixed.addBodyPart(body);
+        MimeBodyPart broken = new MimeBodyPart() {
+            @Override public InputStream getInputStream() throws IOException {
+                throw new IOException("broken attachment");
+            }
+        };
+        broken.setFileName("broken.bin");
+        broken.setDisposition(MimeBodyPart.ATTACHMENT);
+        mixed.addBodyPart(broken);
+        MimeBodyPart valid = new MimeBodyPart();
+        valid.setDataHandler(new DataHandler(new ByteArrayDataSource("valid".getBytes(StandardCharsets.UTF_8), "text/plain")));
+        valid.setFileName("valid.txt");
+        valid.setDisposition(MimeBodyPart.ATTACHMENT);
+        mixed.addBodyPart(valid);
+        message.setContent(mixed);
+        message.saveChanges();
+
+        assertTrue(new EmailInboxWriter(config).append(message, "in"));
+
+        JsonArray attachments = JsonParser.parseString(Files.readString(config.emailInboxFile()).trim())
+                .getAsJsonObject().getAsJsonArray("attachments");
+        assertEquals(2, attachments.size());
+        assertTrue(attachments.asList().stream().anyMatch(element ->
+                "valid.txt".equals(element.getAsJsonObject().get("fileName").getAsString())
+                        && "stored".equals(element.getAsJsonObject().get("state").getAsString())));
+        assertTrue(attachments.asList().stream().anyMatch(element ->
+                element.getAsJsonObject().has("errorCode")
+                        && "EMAIL_ATTACHMENT_READ_FAILED".equals(element.getAsJsonObject().get("errorCode").getAsString())));
     }
 
     private static MimeMessage mixedMessage(int ordinaryAttachmentCount, int bytesPerAttachment) throws Exception {

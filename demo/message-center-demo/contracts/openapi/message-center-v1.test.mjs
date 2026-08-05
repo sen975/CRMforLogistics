@@ -152,6 +152,8 @@ assert.match(emailSend.body, /multipart\/form-data:/,
   'email sending must use streaming multipart form data');
 assert.match(emailSend.body, /#\/components\/schemas\/EmailSendMultipartRequest/);
 assert.match(emailSend.body, /EMAIL_MULTIPART_REQUIRED|EMAIL_MULTIPART_FIELD_INVALID/);
+assert.match(emailSend.body, /EMAIL_SENT_HISTORY_FAILED/);
+assert.match(emailSend.body, /EMAIL_SEND_OUTCOME_UNKNOWN/);
 const emailRequest = schema(contract, 'EmailSendMultipartRequest');
 assert.match(emailRequest, /required: \[to, subject\]/);
 assert.match(emailRequest, /file:/);

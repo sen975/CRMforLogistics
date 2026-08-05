@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 
 public class EmailAttachmentStore {
@@ -113,7 +114,6 @@ public class EmailAttachmentStore {
             for (StagedAttachment attachment : staged) if (attachment == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
             List<StagedAttachment> batch = List.copyOf(staged);
             Path assembly = tempRoot.resolve("publish-" + UUID.randomUUID());
-            boolean published = false;
             try {
                 AttachmentBudget budget = validateBatch(batch);
                 if (storedAttachmentBytes() + stagedBytes() > storageLimit(budget)) {
@@ -126,7 +126,7 @@ public class EmailAttachmentStore {
                     Path source = validateStagedPath(attachment);
                     if (!Files.isRegularFile(source)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
                     String storedName = attachment.id() + "-" + sanitize(attachment.fileName());
-                    Files.copy(source, assembly.resolve(storedName));
+                    Files.move(source, assembly.resolve(storedName), StandardCopyOption.ATOMIC_MOVE);
                     metadata.setProperty(attachment.id() + ".path", storedName);
                     result.add(new EmailAttachment(attachment.id(), attachment.fileName(), attachment.mimeType(),
                             attachment.sizeBytes(), "attachments/" + messageId + "/" + storedName, "stored", null));
@@ -136,7 +136,6 @@ public class EmailAttachmentStore {
                 }
                 Files.createDirectories(target.getParent());
                 Files.move(assembly, target, StandardCopyOption.ATOMIC_MOVE);
-                published = true;
                 return result;
             } catch (EmailAttachmentStoreException e) {
                 throw e;
@@ -146,7 +145,7 @@ public class EmailAttachmentStore {
                 cleanup(assembly);
                 for (StagedAttachment attachment : batch) {
                     Path temporaryPath = attachment.temporaryPath();
-                    if (temporaryPath != null && (!published || Files.exists(temporaryPath))) cleanup(temporaryPath.getParent());
+                    if (temporaryPath != null) cleanup(temporaryPath.getParent());
                     stagedBudgets.remove(attachment.id());
                 }
             }
@@ -169,7 +168,11 @@ public class EmailAttachmentStore {
                     if (Files.isSymbolicLink(component)) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
                 }
                 Properties metadata = new Properties();
-                try (InputStream in = Files.newInputStream(root.resolve("metadata.properties"))) {
+                Path metadataPath = root.resolve("metadata.properties");
+                if (!Files.isRegularFile(metadataPath) || Files.isSymbolicLink(metadataPath)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                }
+                try (InputStream in = Files.newInputStream(metadataPath)) {
                     metadata.load(in);
                 }
                 String storedName = metadata.getProperty(attachmentId + ".path");
@@ -183,6 +186,48 @@ public class EmailAttachmentStore {
                 throw e;
             } catch (IOException | InvalidPathException | NullPointerException e) {
                 throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", e);
+            }
+        }
+    }
+
+    List<EmailAttachment> describePublished(String messageId, List<StagedAttachment> staged) {
+        synchronized (lock) {
+            validateMessageId(messageId);
+            Path root = attachmentRoot.resolve(messageId).normalize();
+            if (!root.startsWith(attachmentRoot) || !Files.isDirectory(root)) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+            }
+            if (Files.isSymbolicLink(root) || Files.isSymbolicLink(attachmentRoot)) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+            }
+            try {
+                Properties metadata = new Properties();
+                Path metadataPath = root.resolve("metadata.properties");
+                if (!Files.isRegularFile(metadataPath) || Files.isSymbolicLink(metadataPath)) {
+                    throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                }
+                try (InputStream input = Files.newInputStream(metadataPath)) {
+                    metadata.load(input);
+                }
+                List<EmailAttachment> result = new ArrayList<>();
+                for (StagedAttachment attachment : staged) {
+                    String storedName = metadata.getProperty(attachment.id() + ".path");
+                    if (storedName == null) throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_NOT_FOUND");
+                    Path file = root.resolve(storedName).normalize();
+                    if (!file.startsWith(root) || !Files.isRegularFile(file) || Files.isSymbolicLink(file)
+                            || Files.size(file) != attachment.sizeBytes()
+                            || !sha256(file).equals(attachment.sha256())) {
+                        throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID");
+                    }
+                    result.add(new EmailAttachment(attachment.id(), attachment.fileName(), attachment.mimeType(),
+                            attachment.sizeBytes(), "attachments/" + messageId + "/" + storedName,
+                            "stored", null));
+                }
+                return List.copyOf(result);
+            } catch (EmailAttachmentStoreException exception) {
+                throw exception;
+            } catch (IOException exception) {
+                throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_PATH_INVALID", exception);
             }
         }
     }
@@ -202,16 +247,29 @@ public class EmailAttachmentStore {
     }
 
     public int reconcile(int maxEntries) {
+        return reconcile(maxEntries, Set.of());
+    }
+
+    int reconcile(int maxEntries, Set<Path> protectedDirectories) {
         if (maxEntries <= 0) return 0;
-        try (FileChannel channel = reservationChannel(); FileLock ignored = channel.lock()) { return reconcileInternal(maxEntries); }
+        try (FileChannel channel = reservationChannel(); FileLock ignored = channel.lock()) {
+            return reconcileInternal(maxEntries, protectedDirectories == null ? Set.of() : protectedDirectories);
+        }
         catch (IOException | java.nio.channels.OverlappingFileLockException e) { throw new EmailAttachmentStoreException("EMAIL_ATTACHMENT_STORAGE_FULL", e); }
     }
-    private int reconcileInternal(int maxEntries) {
+    private int reconcileInternal(int maxEntries, Set<Path> protectedDirectories) {
         synchronized (lock) {
+            Set<Path> protectedPaths = protectedDirectories.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(path -> path.toAbsolutePath().normalize())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
             try (var entries = Files.list(tempRoot)) {
                 long cutoff = System.currentTimeMillis() - 3_600_000L;
                 List<Path> stale = entries.filter(path -> {
-                    try { return Files.getLastModifiedTime(path).toMillis() < cutoff; }
+                    try {
+                        return !protectedPaths.contains(path.toAbsolutePath().normalize())
+                                && Files.getLastModifiedTime(path).toMillis() < cutoff;
+                    }
                     catch (IOException e) { return false; }
                 }).sorted().limit(maxEntries).toList();
                 stale.forEach(EmailAttachmentStore::cleanup);
@@ -292,6 +350,20 @@ public class EmailAttachmentStore {
         }
     }
     private static String safeMimeType(String mimeType) { return mimeType == null || mimeType.isBlank() ? "application/octet-stream" : mimeType; }
+    private static String sha256(Path file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream input = Files.newInputStream(file)) {
+                byte[] buffer = new byte[8192];
+                for (int read; (read = input.read(buffer)) >= 0;) {
+                    if (read > 0) digest.update(buffer, 0, read);
+                }
+            }
+            return hex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 unavailable", exception);
+        }
+    }
     private static String sanitize(String name) {
         String source = name == null || name.isBlank() ? "attachment" : name;
         StringBuilder builder = new StringBuilder(source.length());
@@ -301,7 +373,18 @@ public class EmailAttachmentStore {
                     ? '_' : character);
         }
         String sanitized = builder.toString();
-        return sanitized.length() > MAX_FILE_NAME_BYTES ? sanitized.substring(0, MAX_FILE_NAME_BYTES) : sanitized;
+        StringBuilder bounded = new StringBuilder();
+        int bytes = 0;
+        for (int offset = 0; offset < sanitized.length();) {
+            int codePoint = sanitized.codePointAt(offset);
+            String value = new String(Character.toChars(codePoint));
+            int encodedBytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (bytes + encodedBytes > MAX_FILE_NAME_BYTES) break;
+            bounded.append(value);
+            bytes += encodedBytes;
+            offset += Character.charCount(codePoint);
+        }
+        return bounded.isEmpty() ? "attachment" : bounded.toString();
     }
     private static String hex(byte[] bytes) { StringBuilder value = new StringBuilder(); for (byte b : bytes) value.append(String.format("%02x", b)); return value.toString(); }
     private static void cleanup(Path directory) { if (directory == null) return; try (var paths = Files.walk(directory)) { paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { Files.deleteIfExists(path); } catch (IOException ignored) { } }); } catch (IOException ignored) { } }

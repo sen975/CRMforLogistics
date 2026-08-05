@@ -20,7 +20,9 @@ import java.util.UUID;
 
 final class EmailMultipartParser {
     private static final long OVERHEAD_BYTES = 128 * 1024L;
-    private static final int MAX_FIELD_BYTES = 8192;
+    private static final int MAX_TO_BYTES = 2048;
+    private static final int MAX_SUBJECT_BYTES = 998;
+    private static final int MAX_BODY_BYTES = 1024 * 1024;
 
     private final Config config;
     private final EmailAttachmentStore store;
@@ -42,7 +44,8 @@ final class EmailMultipartParser {
         }
         FileUpload upload = new FileUpload();
         upload.setFileSizeMax(config.emailAttachmentMaxTotalBytes());
-        upload.setSizeMax(config.emailAttachmentMaxTotalBytes() + OVERHEAD_BYTES + 3L * MAX_FIELD_BYTES);
+        upload.setSizeMax(config.emailAttachmentMaxTotalBytes() + OVERHEAD_BYTES
+                + MAX_TO_BYTES + MAX_SUBJECT_BYTES + MAX_BODY_BYTES);
         upload.setPartHeaderSizeMax(8192);
         Map<String, String> fields = new LinkedHashMap<>();
         List<StagedAttachment> staged = new ArrayList<>();
@@ -57,7 +60,7 @@ final class EmailMultipartParser {
                     if (fileSeen || !allowedField(name) || fields.containsKey(name)) {
                         throw new EmailMultipartException("EMAIL_MULTIPART_FIELD_INVALID", 400);
                     }
-                    fields.put(name, readField(item.openStream()));
+                    fields.put(name, readField(item.openStream(), maxFieldBytes(name)));
                     continue;
                 }
                 if (!"file".equals(name)) throw new EmailMultipartException("EMAIL_MULTIPART_FIELD_INVALID", 400);
@@ -102,14 +105,23 @@ final class EmailMultipartParser {
         return "to".equals(name) || "subject".equals(name) || "body".equals(name);
     }
 
-    private static String readField(InputStream input) throws IOException, EmailMultipartException {
+    private static int maxFieldBytes(String name) {
+        return switch (name) {
+            case "to" -> MAX_TO_BYTES;
+            case "subject" -> MAX_SUBJECT_BYTES;
+            case "body" -> MAX_BODY_BYTES;
+            default -> 0;
+        };
+    }
+
+    private static String readField(InputStream input, int maxBytes) throws IOException, EmailMultipartException {
         try (InputStream in = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[1024];
             int total = 0;
             for (int read; (read = in.read(buffer)) >= 0;) {
                 if (read == 0) continue;
                 total += read;
-                if (total > MAX_FIELD_BYTES) throw new EmailMultipartException("EMAIL_MULTIPART_FIELD_INVALID", 400);
+                if (total > maxBytes) throw new EmailMultipartException("EMAIL_MULTIPART_FIELD_INVALID", 400);
                 output.write(buffer, 0, read);
             }
             return output.toString(StandardCharsets.UTF_8);

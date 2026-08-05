@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
+import jakarta.mail.SendFailedException;
 import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeBodyPart;
@@ -31,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 public class MailSender {
@@ -58,10 +61,23 @@ public class MailSender {
     }
 
     public UnifiedMessage send(EmailSendCommand command) throws Exception {
-        String cleanTo = required(command.to(), "to");
-        String subject = command.subject() == null ? "" : command.subject();
-        String body = command.body() == null ? "" : command.body();
-        validateAttachmentBudget(command.attachments());
+        if (command == null) throw new IllegalArgumentException("command is required");
+        try {
+            String cleanTo = required(command.to(), "to");
+            String subject = command.subject() == null ? "" : command.subject();
+            String body = command.body() == null ? "" : command.body();
+            validateAttachmentBudget(command.attachments());
+            return sendValidated(command, cleanTo, subject, body);
+        } catch (EmailSendException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            attachmentStore().discard(command.attachments());
+            throw exception;
+        }
+    }
+
+    private UnifiedMessage sendValidated(EmailSendCommand command, String cleanTo,
+                                         String subject, String body) throws Exception {
         SmtpEndpoint endpoint = smtpEndpoint();
         Session session = Session.getInstance(smtpProperties(endpoint));
         MimeMessage message = new MimeMessage(session);
@@ -97,7 +113,7 @@ public class MailSender {
         message.setHeader("Message-ID", messageIdHeader(mailFrom(), endpoint.serverName()));
         EmailRecoveryJournal journal = new EmailRecoveryJournal(config.emailDataDir());
         EmailAttachmentStore attachmentStore = attachmentStore();
-        journal.prepare(command.messageId(), cleanTo, subject, body);
+        journal.prepare(command);
         try {
             if (injectedTransport != null) {
                 injectedTransport.send(message, message.getAllRecipients());
@@ -108,16 +124,21 @@ public class MailSender {
                     transport.sendMessage(message, message.getAllRecipients());
                 }
             }
-        } catch (Exception exception) {
+        } catch (SendFailedException exception) {
+            if (exception.getValidSentAddresses() != null && exception.getValidSentAddresses().length > 0) {
+                throw new EmailSendException("EMAIL_SEND_OUTCOME_UNKNOWN", exception);
+            }
             journal.remove(command.messageId());
             attachmentStore.discard(command.attachments());
             throw exception;
+        } catch (Exception exception) {
+            throw new EmailSendException("EMAIL_SEND_OUTCOME_UNKNOWN", exception);
         }
 
         List<EmailAttachment> attachments;
         String messageId = message.getMessageID() == null ? "" : message.getMessageID();
         try {
-            journal.accepted(command.messageId(), cleanTo, subject, body);
+            journal.accepted(command, messageId);
             attachments = command.attachments().isEmpty()
                     ? List.of() : attachmentStore.publish(command.messageId(), command.attachments());
             appendOutgoing(cleanTo, subject, body, command.messageId(), messageId, attachments);
@@ -130,6 +151,42 @@ public class MailSender {
                 .reduce((first, second) -> second)
                 .orElse(null);
         return stored == null ? localResult(cleanTo, subject, body, messageId, attachments) : stored;
+    }
+
+    int reconcile(int maxEntries) throws Exception {
+        EmailRecoveryJournal journal = new EmailRecoveryJournal(config.emailDataDir());
+        List<RecoveryEntry> entries = journal.entries(maxEntries);
+        Set<java.nio.file.Path> protectedDirectories = new HashSet<>();
+        for (RecoveryEntry entry : entries) {
+            for (StagedAttachment attachment : entry.stagedAttachments()) {
+                if (attachment.temporaryPath() != null) protectedDirectories.add(attachment.temporaryPath().getParent());
+            }
+        }
+        int recovered = 0;
+        for (RecoveryEntry entry : entries) {
+            if (!"accepted".equals(entry.state())) continue;
+            if (isDuplicate(entry.smtpMessageId())) {
+                journal.remove(entry.messageId());
+                recovered++;
+                continue;
+            }
+            List<StagedAttachment> staged = entry.stagedAttachments();
+            List<EmailAttachment> attachments = List.of();
+            if (!staged.isEmpty()) {
+                try {
+                    attachments = attachmentStore().describePublished(entry.messageId(), staged);
+                } catch (EmailAttachmentStoreException exception) {
+                    if (!"EMAIL_ATTACHMENT_NOT_FOUND".equals(exception.errorCode())) throw exception;
+                    attachments = attachmentStore().publish(entry.messageId(), staged);
+                }
+            }
+            appendOutgoing(entry.to(), entry.subject(), entry.body(), entry.messageId(),
+                    entry.smtpMessageId(), attachments);
+            journal.remove(entry.messageId());
+            recovered++;
+        }
+        attachmentStore().reconcile(maxEntries, protectedDirectories);
+        return recovered;
     }
 
     private EmailAttachmentStore attachmentStore() throws IOException {

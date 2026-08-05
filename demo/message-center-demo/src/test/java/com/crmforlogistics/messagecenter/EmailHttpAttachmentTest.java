@@ -70,6 +70,30 @@ class EmailHttpAttachmentTest {
         }
     }
 
+    @Test
+    void acceptsBodyAboveLegacyEightKibibyteLimit() throws Exception {
+        String boundary = "large-body-boundary";
+        String largeBody = "x".repeat(16 * 1024);
+        String body = "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"to\"\r\n\r\n"
+                + "buyer@example.com\r\n"
+                + "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"subject\"\r\n\r\n"
+                + "Quote\r\n"
+                + "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"body\"\r\n\r\n"
+                + largeBody + "\r\n"
+                + "--" + boundary + "--\r\n";
+        Path dir = Files.createTempDirectory("email-http-large-body");
+        Config config = config(dir, dir.resolve("email"));
+        FakeExchange exchange = new FakeExchange(body);
+        exchange.requestHeaders.set("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+        EmailSendCommand command = new EmailMultipartParser(config).parse(exchange);
+
+        assertEquals(largeBody, command.body());
+    }
+
     private static Config config(Path dir, Path emailDir) {
         Map<String, String> values = new HashMap<>();
         values.put("DATA_DIR", dir.toString());

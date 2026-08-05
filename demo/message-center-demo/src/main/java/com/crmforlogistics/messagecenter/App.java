@@ -127,6 +127,7 @@ public class App {
         LocalWeComDevelopmentService localWeCom = config.localDevMode()
                 ? new LocalWeComDevelopmentService(config) : null;
         MailSender mailSender = new MailSender(config);
+        mailSender.reconcile(100);
         ChatAppHistoryStore chatAppHistoryStore = new ChatAppHistoryStore(config);
         ChatAppSender chatAppSender = new ChatAppSender(config, chatAppHistoryStore);
         EmailSyncService emailSyncService = new EmailSyncService(config);
@@ -311,22 +312,37 @@ public class App {
             }
             return;
         }
-        if (path.startsWith("/api/email/attachments/")) {
+        String emailAttachmentPrefix = path.startsWith("/api/v1/email/attachments/")
+                ? "/api/v1/email/attachments/"
+                : path.startsWith("/api/email/attachments/") ? "/api/email/attachments/" : "";
+        if (!emailAttachmentPrefix.isBlank()) {
             if (!"GET".equals(method)) {
                 writeJson(exchange, 405, Map.of("code", "METHOD_NOT_ALLOWED", "message", "GET required"));
                 return;
             }
-            if (viewerAuthToken(exchange).isBlank()) {
+            String viewerToken = viewerAuthToken(exchange);
+            if (viewerToken.isBlank()) {
                 writeJson(exchange, 401, Map.of("code", "EMAIL_ATTACHMENT_VIEWER_REQUIRED", "message", "viewer auth required"));
                 return;
             }
-            String[] segments = path.split("/", -1);
-            if (segments.length != 5 || segments[3].isBlank() || segments[4].isBlank()) {
+            try {
+                if (localWeCom == null) weComViewer.requireViewerActor(viewerToken);
+                else localWeCom.requireViewerActor(viewerToken);
+            } catch (SecurityException exception) {
+                writeJson(exchange, 401, Map.of("code", "EMAIL_ATTACHMENT_VIEWER_REQUIRED", "message", "viewer auth required"));
+                return;
+            }
+            if (exchange.getRequestURI().getRawQuery() != null) {
+                writeJson(exchange, 400, Map.of("code", "EMAIL_ATTACHMENT_PATH_INVALID", "message", "query parameters are not allowed"));
+                return;
+            }
+            String[] segments = path.substring(emailAttachmentPrefix.length()).split("/", -1);
+            if (segments.length != 2 || segments[0].isBlank() || segments[1].isBlank()) {
                 writeJson(exchange, 404, Map.of("code", "EMAIL_ATTACHMENT_NOT_FOUND", "message", "attachment not found"));
                 return;
             }
-            String messageId = segments[3];
-            String attachmentId = segments[4];
+            String messageId = segments[0];
+            String attachmentId = segments[1];
             UnifiedMessage message = store.findMessage(messageId);
             if (message == null) message = store.findMessage("email:" + messageId);
             EmailAttachment attachment = message == null ? null : message.attachments.stream()
@@ -338,7 +354,7 @@ public class App {
             }
             try (InputStream input = new EmailAttachmentStore(config).open(messageId, attachmentId)) {
                 Headers headers = exchange.getResponseHeaders();
-                headers.set("Content-Type", ContactPointUtil.firstNonBlank(attachment.mimeType(), "application/octet-stream"));
+                headers.set("Content-Type", "application/octet-stream");
                 headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + percentEncodedFileName(attachment.fileName()));
                 headers.set("Content-Length", Long.toString(attachment.sizeBytes()));
                 headers.set("Cache-Control", "private, no-store");
@@ -387,14 +403,14 @@ public class App {
             writeJson(exchange, 200, store.contacts());
             return;
         }
-        if ("POST".equals(method) && "/api/send/email".equals(path)) {
+        if ("POST".equals(method) && ("/api/send/email".equals(path) || "/api/v1/email/messages".equals(path))) {
             String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
             if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
                 throw new EmailMultipartException("EMAIL_MULTIPART_REQUIRED", 400);
             }
             UnifiedMessage message = mailSender.send(new EmailMultipartParser(config).parse(exchange));
             events.publish(message);
-            writeJson(exchange, 200, message);
+            writeJson(exchange, 200, "/api/v1/email/messages".equals(path) ? emailMessageProjection(message) : message);
             return;
         }
         if ("POST".equals(method) && "/api/send/chatapp".equals(path)) {
@@ -654,7 +670,8 @@ public class App {
             code = multipartException.code();
         } else if (exception instanceof EmailSendException emailSendException) {
             code = emailSendException.errorCode();
-            status = code.equals("EMAIL_ATTACHMENT_COUNT_LIMIT")
+            status = code.equals("EMAIL_ATTACHMENT_STORAGE_FULL") ? 507
+                    : code.equals("EMAIL_ATTACHMENT_COUNT_LIMIT")
                     || code.equals("EMAIL_ATTACHMENT_SIZE_LIMIT") ? 413 : 500;
         } else if (exception instanceof SecurityException) {
             status = 403;
@@ -689,6 +706,29 @@ public class App {
 
     private static String viewerAuthToken(HttpExchange exchange) {
         return ContactPointUtil.firstNonBlank(exchange.getRequestHeaders().getFirst("X-WeCom-Viewer-Auth"));
+    }
+
+    private static JsonObject emailMessageProjection(UnifiedMessage message) {
+        JsonObject projection = new JsonObject();
+        projection.addProperty("messageId", ContactPointUtil.firstNonBlank(message.sourceId, message.id));
+        projection.addProperty("status", "sent");
+        projection.addProperty("to", message.to == null ? "" : message.to);
+        projection.addProperty("subject", message.title == null ? "" : message.title);
+        projection.addProperty("body", message.bodyText == null ? "" : message.bodyText);
+        com.google.gson.JsonArray attachments = new com.google.gson.JsonArray();
+        for (EmailAttachment attachment : message.attachments == null ? List.<EmailAttachment>of() : message.attachments) {
+            JsonObject item = new JsonObject();
+            item.addProperty("id", attachment.id());
+            item.addProperty("fileName", attachment.fileName());
+            item.addProperty("mimeType", attachment.mimeType());
+            item.addProperty("sizeBytes", attachment.sizeBytes());
+            item.addProperty("state", attachment.state());
+            if (attachment.errorCode() == null) item.add("errorCode", com.google.gson.JsonNull.INSTANCE);
+            else item.addProperty("errorCode", attachment.errorCode());
+            attachments.add(item);
+        }
+        projection.add("attachments", attachments);
+        return projection;
     }
 
     private static UnifiedMessage syncEvent(String channel, String messageText) {

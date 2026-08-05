@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,6 +41,18 @@ class EmailAttachmentContractTest {
         assertEquals("stored", attachment.state());
         assertNull(attachment.relativePath());
         assertFalse(message.raw.contains("relativePath"));
+    }
+
+    @Test
+    void runtimeOwnsTheVersionedRoutesAndValidatesViewerCredentials() throws Exception {
+        String source = Files.readString(Path.of(
+                "src/main/java/com/crmforlogistics/messagecenter/App.java"), StandardCharsets.UTF_8);
+
+        assertTrue(source.contains("/api/v1/email/messages"));
+        assertTrue(source.contains("/api/v1/email/attachments/"));
+        assertTrue(source.contains("weComViewer.requireViewerActor(viewerToken)"));
+        assertTrue(source.contains("localWeCom.requireViewerActor(viewerToken)"));
+        assertTrue(source.contains("emailMessageProjection(message)"));
     }
 
     private static Config config(Path root, Path emailDir) {

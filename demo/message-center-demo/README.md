@@ -60,7 +60,7 @@ WEB_PORT=8077
 - web 监听成功后会自动异步补拉 ChatApp 历史消息；顶部“同步 WhatsApp”保留为同一同步 owner 的手动入口。历史消息里带有效附件地址时会进入本地缓存队列，下载失败不会阻断消息写入。
 - 选择联系人后，发送区按该联系人已有联系方式显示“邮件 / WhatsApp”切换页。
 - 邮件发送使用主题和正文，发送成功后会同步写入旧邮件 demo 的 `inbox.jsonl`。
-- 邮件支持多个普通 MIME 附件：单封最多 16 个、附件内容总量最多 20 MiB。附件二进制只保存在 `EMAIL_DATA_DIR/attachments/<messageId>/`，暂存文件位于 `EMAIL_DATA_DIR/attachment-tmp/`，发送恢复记录位于 `EMAIL_DATA_DIR/attachment-recovery/`；启动时对账 accepted 恢复记录并清理过期、无引用的暂存/孤儿目录，绝不删除仍被邮件 JSONL 引用的附件。邮件 JSONL 只保存附件元数据。SMTP 接受后若本地历史写入失败，会返回 `EMAIL_SENT_HISTORY_FAILED`，不会自动重发；结果未知时返回 `EMAIL_SEND_OUTCOME_UNKNOWN`。
+- 邮件支持多个普通 MIME 附件：单封最多 16 个、附件内容总量最多 20 MiB。附件二进制只保存在 `EMAIL_DATA_DIR/attachments/<messageId>/`，暂存文件位于 `EMAIL_DATA_DIR/attachment-tmp/`，发送恢复记录位于 `EMAIL_DATA_DIR/attachment-recovery/`；启动时恢复 accepted 历史，保留 prepared 记录引用的暂存目录，并清理一小时前仍未被恢复记录引用的暂存目录。重复 IMAP 邮件不会留下无主附件目录。邮件 JSONL 只保存附件元数据。SMTP 接受后若本地历史写入失败，会返回 `EMAIL_SENT_HISTORY_FAILED`，不会自动重发；结果未知时返回 `EMAIL_SEND_OUTCOME_UNKNOWN`。
 - WhatsApp 支持文本、模板、图片、视频、文件发送。
 - ChatApp 模板发送从最近一次成功同步的本地模板快照生成下拉选项；web 启动后会异步同步并定时对账。
 - 企业微信 tab 会在当前发送区内打开会话展示组件容器，不改变原有三栏布局和消息滚动方式。
