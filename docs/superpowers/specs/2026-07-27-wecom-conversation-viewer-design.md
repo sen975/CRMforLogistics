@@ -20,7 +20,7 @@
 - 企业微信组件接入后，Email、ChatApp/WhatsApp、企业微信客服消息和企业微信会话组件仍能归并到同一个统一联系人。
 - 首版支持本地 demo、单一目标授权企业和真实 suite 授权安装验证。
 - 保留现有消息中心前端样式、三栏布局、滚动加载、发送入口、toast、详情栏和联系人交互；除新增企业微信会话入口和组件容器外，不重做现有 UI。
-- 统一时间线每个联系人首次加载最近 10 条，向上滚动时每次增量加载 10 条更早消息；官方 viewer 引用默认只挂载按 `send_time` 排序后的最近 10 条，配置硬上限为 20，不一次返回全部引用。
+- 统一时间线每个联系人首次加载最近 15 条，向上滚动时每次增量加载 15 条更早消息；每批只为该页实际包含的企业微信 `msgid` 申请 viewer 引用，不一次返回当前联系人的全部引用。
 - 前端不接触 `corpsecret`、`access_token`、`jsapi_ticket` 或任何长期密钥。
 - 所有打开会话组件、授权失败、越权尝试和组件错误必须进入审计。
 
@@ -30,7 +30,7 @@
 - 不把会话展示组件中的完整内容批量复制到 `UnifiedMessageStore` 或 PostgreSQL 消息表。
 - 不绕过消息中心自己的会话权限，直接凭企业微信用户身份决定可见范围。
 - 不把企业微信会话展示组件作为 Email、WhatsApp 或普通客服消息的通用 UI 组件。
-- 不借企业微信接入重做现有前端视觉、布局、消息气泡、联系人列表、滚动分页、发送区或已有交互。
+- 不借企业微信接入重做 Email、ChatApp、电话记录、联系人列表或发送区；企业微信消息气泡只做与现有时间线一致的紧凑布局、逐条就绪显示和虚拟挂载。
 - 不为了 demo 在前端硬编码企业微信密钥、签名、ticket 或用户身份。
 
 ## 4. 推荐主线
@@ -87,7 +87,7 @@ unified contact + unified timeline
 1. 可同步消息：例如微信客服 `sync_msg` 已拉取并允许保存的消息，进入 `UnifiedMessageStore`，参与统一时间线、未读、搜索、分页和 SSE 刷新。
 2. 官方展示内容：会话展示组件内部内容不直接进入统一消息库。消息中心保存最小引用，例如 `corpId`、`externalUserId`、`openKfid`、企业微信会话标识、关联联系人、打开审计和可展示入口状态。
 
-这样同一个客户仍可在左侧联系人列表中合并展示 Email、WhatsApp 和企业微信来源；中间时间线展示消息中心已经同步且有权限保存的消息；右侧或消息操作入口打开企业微信官方会话展示组件。
+这样同一个客户仍可在左侧联系人列表中合并展示 Email、WhatsApp 和企业微信来源；中间统一时间线继续按后端排序展示所有消息，企业微信官方会话组件在对应的 `msgid` 时间线节点内原位挂载。消息中心只保存最小引用，不把官方正文复制成自己的消息真相。
 
 ## 7. 后端组件
 
@@ -164,10 +164,12 @@ unified contact + unified timeline
 - 登录页异步加载 `@wecom/jssdk 2.3.4`，调用 `ww.createWWLoginPanel()`，使用 `login_type=ServiceApp`、登录授权 SuiteID 作为 `appid` 和 `redirect_type=callback`，不发送 `agentid`。
 - 扫码前不请求联系人、消息、模板、SSE 或同步 API；SDK 10 秒未完成时显示可重试错误态。
 - 扫码成功后用临时 `code + state` 交换一次短时 `viewerAuthToken`，仅保存在当前页面 JavaScript 内存；刷新或过期后重新扫码。
-- 联系人或消息属于 `wecom` 渠道时，发送区的企业微信 tab 显示“打开企业微信会话”操作。
+- 联系人或消息属于 `wecom` 渠道时，官方组件按当前 15 条时间线页中的 `msgid` 逐条回填对应节点；发送区只保留人工刷新和状态入口。
 - 授权完成后，请求后端创建 `viewerSession`。
-- 点击 viewer 后懒加载 `jwxwork-1.0.0.js`，再使用后端返回的配置初始化官方会话展示组件。
-- 组件加载中、授权失败、域名未配置、JSAPI 签名失败、无会话权限、企业微信接口错误必须有明确错误态。
+- 扫码登录成功后立即异步预加载 `@wecom/jssdk` 和 `jwxwork-1.0.0.js`；预加载不创建 viewer session、不读取联系人消息、不取得 `secretKey`，也不挂载隐藏联系人组件。
+- 当前联系人每批企业微信消息在不占用时间线布局的宿主中并行创建 OpenDataFrame。单条 `handleMounted()` 触发后才把该条消息原位显示，不等待同批其他消息。
+- 单条加载期间不显示骨架、空白框或加载文案；当前批次尚未全部结束时，只在联系人名字旁显示圆形加载动画。
+- 单条组件失败时必须在原时间位置显示紧凑失败标识、消息时间和单条重试入口，不能隐藏失败消息。整批请求失败时不推进分页游标，并在联系人名字旁显示可重试失败状态。
 
 官方组件接线必须使用：
 
@@ -177,14 +179,18 @@ unified contact + unified timeline
 - `ww.createOpenDataFrameFactory().createOpenDataFrame(...)` 挂载组件。
 - 模板中使用 `ww-open-message`，参数为 `message-id`、`secret-key`、`open-type="viewMessage"`。
 - 模板组件通过 `binderror` 把错误交给 OpenDataFrame `methods`；外部浏览器通过 `handleModal({modalUrl, modalSize})` 创建 iframe 预览。
+- OpenDataFrame 顶层 `handleMounted()` 是单条组件就绪的唯一成功信号；不得用固定延时、占位高度或 DOM 猜测代替。
 - `42006`、`42003`、`40029` 和 `Missing open sid` 视为登录态失效，清除内存 token 并返回扫码首屏。
 
 前端 UI 约束：
 
 - 现有三栏消息中心、联系人列表、消息线程、向上滚动加载、发送入口、附件预览、详情栏、toast 和按钮交互保持原样。
-- 企业微信只新增必要 UI：入口按钮、授权状态、组件容器、加载态和错误态。新增 UI 必须沿用现有 CSS class、按钮样式、toast 模式和详情栏布局。
+- 企业微信只新增必要 UI：入口按钮、授权状态、时间线消息宿主、加载态和错误态。新增 UI 必须沿用现有 CSS class、按钮样式、toast 模式和详情栏布局。
 - 首版可以把企业微信入口文案、空态和错误态直接写在当前前端页面里；不得硬编码真实 `corpId`、`secret`、`access_token`、ticket、签名或用户身份。
-- 新增组件容器优先复用现有发送区或消息详情区域，不改变联系人列表和中间消息线程的主交互。
+- 发送区只保留 viewer 加载入口和状态；官方组件宿主位于统一消息线程的对应企业微信节点内，不改变联系人列表和中间消息线程的主交互。
+- 企业微信消息不再提供“展开/收起”。成功组件使用和 Email、ChatApp 一致的内容自适应气泡，允许直接点击官方详情；容器使用自然高度和内容宽度，不使用固定 `88px`、`360px` 或大空白文本框。
+- 时间线更新按稳定消息键协调 DOM；已有 OpenDataFrame 节点必须原位复用，后台刷新和加载历史页不得整体销毁后重新挂载。
+- 上滑到当前已加载边界时，同一时刻最多加载一批 15 条；批次完成前不允许越过顶部边界。新增内容插入当前视口上方时必须补偿 `scrollTop`，避免用户正在查看的消息跳动。
 - 除了接线企业微信入口所必需的最小 DOM 和事件处理，不修改现有 Email、ChatApp/WhatsApp、线程分页、联系人合并和发送交互。
 
 前端不得保存完整企业微信密钥，不得把组件中展示的消息内容复制到全局状态或本地持久化。`viewerAuthToken` 不得写入 URL、cookie、localStorage 或 sessionStorage。
@@ -216,13 +222,13 @@ POST /api/v1/wecom/login/exchange
 POST /api/v1/wecom/conversation-view/sessions
 ```
 
-请求体包含消息中心 `conversationId` 或 `contactPointId`，以及登录换码得到的 `viewerAuthToken`。后端执行消息中心读权限校验，并通过 `viewerAuthToken` 解析企业微信用户身份后创建短时展示会话。
+请求体包含消息中心 `conversationId` 或 `contactPointId`、登录换码得到的 `viewerAuthToken`，以及当前时间线页实际需要渲染的 `messageIds`。`messageIds` 必须去重、每项有长度上限且每批最多 15 个。后端执行消息中心读权限校验，通过 `viewerAuthToken` 解析企业微信用户身份，并逐项验证消息确实属于当前联系人和当前员工后创建短时展示会话；不得因为前端传入 ID 就跳过归属校验。该接口不调用专区同步；专区数据新鲜度由独立后台 runtime 负责，避免页面刷新把同步延迟和失败耦合到 session 创建。
 
 ```text
 GET /api/v1/wecom/conversation-view/sessions/{viewerSessionId}
 ```
 
-请求带 `X-WeCom-Viewer-Auth` header。返回挂载官方会话展示组件所需参数。`viewerSessionId` 必须短时有效、可撤销，并绑定当前消息中心用户和企业微信用户。
+请求带 `X-WeCom-Viewer-Auth` header。返回挂载本批官方会话展示组件所需参数，且只返回已通过归属校验的请求消息。`viewerSessionId` 必须短时有效、可撤销，并绑定当前消息中心用户和企业微信用户。
 
 ```text
 POST /api/v1/wecom/conversation-view/events
@@ -257,6 +263,7 @@ WECOM_ENCODING_AES_KEY
 
 ```text
 WECOM_DATA_FILE
+WECOM_VIEWER_AUTH_TTL_SECONDS
 WECOM_VIEWER_SESSION_TTL_SECONDS
 WECOM_VIEWER_MAX_MESSAGES
 WECOM_VIEWER_SESSION_RATE_LIMIT
@@ -267,7 +274,11 @@ WECOM_CHATDATA_PRIVATE_KEY_FILE
 WECOM_CHATDATA_PUBLIC_KEY_VERSION
 WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER
 WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
+WECOM_CHATDATA_AUTO_SYNC_ENABLED
+WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS
 ```
+
+`WECOM_VIEWER_MAX_MESSAGES` 默认值和配置硬上限统一为 15，与时间线页大小和 `messageIds` 请求上限一致，禁止出现时间线已经加载 15 条但 viewer 只返回其中 10 条引用的双重分页语义。
 
 本地 demo 的 `WECOM_DATA_FILE` 用 JSONL 存放会话展示组件消息引用；每行必须带 `msgid`、`external_userid`、解密后的 `secret_key` 或 `secretKey`，以及当前企业微信用户归属字段（`userid`、`UserId`、`wecom_userid` 或 `wecomUserId`），用于阻断一个短时授权 token 打开其他企业微信用户的会话引用。
 
@@ -276,14 +287,16 @@ WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
 ## 11. 安全与资源治理
 
 - 登录 attempt 默认 5 分钟内有效、一次性消费并有 256 条容量上限。
-- `viewerSession` 默认 5 分钟内有效，且绑定创建它的短时 viewer token。
-- `viewerAuthToken` 默认 5 分钟内有效，只由后端根据企业微信授权 `code` 签发，创建和读取 viewer session 时都必须校验。
+- `viewerSession` 默认 5 分钟内有效，且绑定创建它的 viewer token。
+- `viewerAuthToken` 默认 8 小时内有效，只由后端根据企业微信授权 `code` 签发，创建和读取 viewer session 时都必须校验；令牌只保存在服务内存和浏览器内存，服务重启后失效。
 - 创建 `viewerSession` 前必须执行消息中心会话读权限校验。
 - JS-SDK 签名 URL 必须是当前允许域名，禁止为任意 URL 签名。
 - access token、ticket 和签名材料不得进入普通日志。
 - 调用企业微信 API 必须设置连接和请求超时，并限制响应体大小；viewer JSON 请求体也必须有独立上界。
 - 后端错误必须映射为结构化错误；官方组件 `binderror` 的四类登录态失效特征由前端按官方合同识别并返回扫码首屏。
 - 每个用户创建展示会话需要速率上限，防止刷新或脚本造成无界 session。
+- 浏览器只允许当前联系人持有活跃 OpenDataFrame；每批最多 15 个后台宿主，最多保留 4 批、合计 60 个已挂载组件。超过上限时释放距离当前视口最远的组件，但保留不含 `secretKey` 的时间线元数据，重新进入对应区域时按批次恢复。
+- SDK 脚本和初始化 Promise 为当前页面级单例；联系人数量增长不得增加 SDK 实例。联系人切换、登录失效、viewer session 过期和页面卸载必须清理当前联系人的引用、后台宿主和组件句柄。
 - 打开组件、授权失败、越权、签名失败、官方接口失败都写审计。
 - 本地 demo 使用有字节上限的结构化 JSONL audit adapter，达到上限时 viewer 操作失败关闭；生产模块化路径把同一事件交给现有 `AuditService`。audit 事件不得包含 token、ticket、签名或 `secretKey`。
 
@@ -293,9 +306,15 @@ WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
 
 真实 viewer 引用由当前授权企业关联的会话存档专区程序能力同步：
 
+- Web 监听成功后由 `WeComChatDataSyncRuntime` 立即异步执行首轮，此后默认每轮结束 60 秒再执行下一轮；同步不重叠，失败不终止 HTTP 服务。间隔必须在 15 到 3600 秒之间。
+- runtime 每轮重新解析 active 授权安装，以 `system:auto-sync` actor 复用 `WeComChatDataSyncService`；缺少安装、专区程序或私钥时记录脱敏跳过事件。本地 fixture 模式不启动生产专区轮询。
 - 公钥注册成功后，企业微信开始生成可由该私钥解密的 `encrypted_secret_key`。
-- 8107 调用固定 `conversation_viewer_sync` 能力获取会话索引，在本机 JSONL 只保存一对一会话的 `msgid`、解密后的 `secret_key`、员工/外部联系人 ID 和发送时间。
+- 8107 调用固定 `conversation_viewer_sync` 能力获取会话索引，在本机 JSONL 只保存一对一会话的 `msgid`、解密后的 `secret_key`、员工/外部联系人 ID、发送时间和结构化 `direction`。
+- 同步存储是方向语义的唯一 owner：`sender.type=1` 且外部联系人接收为 `outbound`，`sender.type=2` 且员工接收为 `inbound`。两个方向的统一联系人点都必须由 `external_userid` 生成，禁止用员工 ID、`open_kfid` 或前端样式判断联系人归属和方向。
+- 旧快照允许缺少 `direction` 并按旧 `origin` 读取；无任何旧方向证据时保留原 `inbound` 默认。历史消息只有重新执行专区同步后才能补齐真实方向，不得由页面猜测。
 - 前端把这些最小引用交给官方 `ww-open-message` 展示原始内容；不把组件内正文复制进消息中心数据库或浏览器持久化。
+- 页面每 5 秒静默读取本地统一时间线，并每 60 秒刷新当前企业微信联系人的短时 viewer 引用；同一时刻最多一个 viewer 批次请求。每页 15 条时间线消息，企业微信消息按 `handleMounted()` 逐条显示并最多保留 60 个活跃组件；底部面板不复制第二份消息列表。
+- 顶部“立即同步企业微信”只作为人工补偿入口；创建 viewer session 不得隐式调用专区同步。
 - 后续摘要能力是独立阶段，默认关闭，不是 viewer 组件可用的前置条件。
 
 ## 13. 验收标准
@@ -306,9 +325,14 @@ WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
 - 用户有消息中心会话读权限时，可以创建 `viewerSession` 并挂载官方会话展示组件。
 - 8107 收到真实 `suite_ticket` 后立即响应，并在后台为唯一目标授权企业完成公钥注册；同版本和摘要不重复注册，失败不污染安装状态。
 - 专区同步生成至少一条合法 `msgid + secret_key` 引用后，viewer 能把该引用交给官方组件展示原始消息。
+- 员工发送和外部联系人发送的消息进入同一个 `wecom:<external_userid>` 时间线，并分别投影为 `outbound` 和 `inbound`。
 - 用户无消息中心会话读权限时，后端拒绝创建 `viewerSession`，并写审计。
-- 现有消息中心前端样式和交互保持不变；新增企业微信 UI 只作为入口、授权状态、组件容器和错误态出现。
-- 每个联系人统一时间线首次仅有最近 10 条，顶部滚动继续增量加载；官方 viewer 默认只挂载最近 10 条引用。
+- 现有消息中心前端样式和交互保持不变；新增企业微信 UI 只作为入口、授权状态、时间线消息宿主和错误态出现。
+- 每个联系人统一时间线首次仅有最近 15 条，顶部滚动每次继续加载 15 条；批次未结束时顶部边界锁定，联系人名字旁显示圆形加载动画，整批失败时游标不推进且可以重试。
+- 企业微信消息加载期间不显示占位；单条 `handleMounted()` 后原位出现。单条失败时原位显示紧凑失败标识和重试入口，不能静默遗漏。
+- 已挂载组件按 `msgid` 复用，后台刷新、滚动加载和普通时间线重排不得导致已显示消息重新渲染。当前联系人最多保留 60 个活跃组件，超过后按距视口远近释放。
+- 后台专区同步首轮立即执行且固定延迟不重叠；失败时 Web、现有本地时间线和手动补偿入口继续可用。
+- 当前企业微信联系人引用每 60 秒自动刷新；成功消息使用内容自适应紧凑气泡并可直接查看详情，不再需要展开按钮。自动刷新失败不重复弹 toast。
 - Email、ChatApp/WhatsApp、WeCom `sync_msg` 消息仍按统一联系人合并展示。
 - 会话展示组件内容不被前端复制进全局状态或本地存储。
 - access token、ticket、secret 不出现在前端响应、日志和测试快照中。
@@ -323,6 +347,8 @@ WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE
 - 权限测试：有读权限才能创建 `viewerSession`，无读权限返回结构化拒绝并写审计。
 - API 合同测试：新增 `/api/v1/wecom/*` 接口写入 OpenAPI 并通过合同探针。
 - 前端行为测试：二维码态、授权成功态、组件加载态、组件失败态、无权限态、预览态和重新扫码态。
+- 前端行为测试：15 条分页、顶部并发锁、联系人名 spinner、`handleMounted()` 逐条显示、失败原位标识、单条重试、滚动锚点补偿、稳定键复用和 60 组件淘汰边界。
+- API 合同测试：`messageIds` 最多 15 个，拒绝重复、超长、跨联系人、跨员工和未存在消息；响应不得返回请求集合之外的引用。
 - 回归测试：现有 Email、ChatApp/WhatsApp、WeCom `sync_msg` 统一联系人和线程分页不回退。
 - 代开发凭证测试：真实生产 owner 只调用 `GET /cgi-bin/gettoken`，请求使用安装记录的 `authCorpId + permanent_code`；测试必须证明不请求 Suite token 或 `/cgi-bin/service/get_corp_token`。
 - 既有安装兼容测试：已有加密 JSONL 安装记录无需迁移或重新授权即可获取代开发应用 token；安装版本变化仍使缓存失效。
