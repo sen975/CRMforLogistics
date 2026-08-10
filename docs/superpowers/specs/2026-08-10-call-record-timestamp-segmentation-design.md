@@ -34,7 +34,7 @@ worker 读取原音频并重新调用 FunASR；成功后以新响应中的机器
 ## 错误处理与边界
 
 - 缺少 `text` 或响应结构非法：返回 `FUNASR_INVALID_RESPONSE`。
-- segments 缺失、为空或不可验证：转录仍可完成，但结果 segments 为空。
+- segments 字段缺失或不是数组：返回 `FUNASR_INVALID_RESPONSE`；合法空数组表示转录完成但没有时间轴。
 - 非法区间（负数、`end < start`、超出可信音频时长、时间倒退）：拒绝整份响应，避免保存错误时间轴。
 - 真实区间数量、文本长度和总文本长度继续沿用现有上界，防止无界响应。
 
