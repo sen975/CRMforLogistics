@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>统一消息中心</title>
+    <style>
+      *, *::before, *::after {
+        scrollbar-width: thin;
+        scrollbar-color: transparent transparent;
+      }
+      *:hover {
+        scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+      }
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.18); }
+      *:hover::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.12); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

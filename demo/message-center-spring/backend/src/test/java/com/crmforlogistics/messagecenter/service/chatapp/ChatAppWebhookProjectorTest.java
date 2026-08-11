@@ -1,0 +1,162 @@
+package com.crmforlogistics.messagecenter.service.chatapp;
+
+import com.crmforlogistics.messagecenter.entity.ChannelEventEntity;
+import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
+import com.crmforlogistics.messagecenter.entity.ConversationEntity;
+import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
+import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
+import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
+import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.ArgumentCaptor;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class ChatAppWebhookProjectorTest {
+    @Mock ChannelEventMapper channelEventMapper;
+    @Mock MessageMapper messageMapper;
+    @Mock MessageStatusEventMapper statusEventMapper;
+    @Mock ContactIdentityMapper contactIdentityMapper;
+    @Mock ContactMapper contactMapper;
+    @Mock ConversationMapper conversationMapper;
+    @Mock EventHub eventHub;
+
+    @Test
+    void statusWebhookProjectsOntoExistingOutboundMessage() {
+        UUID accountId = UUID.randomUUID();
+        MessageEntity message = new MessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setCurrentStatus("submitted");
+        when(messageMapper.findByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(Optional.of(message));
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setProviderEventId("event-1");
+        event.setPayloadJsonb(
+                "{\"MessageId\":\"wamid-1\",\"Status\":\"DELIVERED\"}");
+
+        ChatAppWebhookProjector projector = new ChatAppWebhookProjector(
+                channelEventMapper, messageMapper, statusEventMapper,
+                contactIdentityMapper, contactMapper, conversationMapper,
+                eventHub, new ObjectMapper());
+        var result = projector.project(event);
+
+        assertThat(result.type()).isEqualTo("status");
+        assertThat(message.getCurrentStatus()).isEqualTo("delivered");
+        verify(messageMapper, never()).updateById(message);
+        verify(messageMapper).updateDeliveryStatus(
+                eq(message.getId()), any(), eq("delivered"), any());
+        verify(statusEventMapper).insertIgnore(any());
+        verify(channelEventMapper).markProcessed(any(), any());
+    }
+
+    @Test
+    void lateFailureDoesNotRegressReadMessage() {
+        UUID accountId = UUID.randomUUID();
+        MessageEntity message = messageWithStatus("read");
+        when(messageMapper.findByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(Optional.of(message));
+
+        projector().project(statusEvent(accountId, "FAILED"));
+
+        assertThat(message.getCurrentStatus()).isEqualTo("read");
+        verify(messageMapper, never()).updateById(any(MessageEntity.class));
+        verify(statusEventMapper).insertIgnore(any());
+    }
+
+    @Test
+    void laterDeliveryCanRecoverMessageFromFailedStatus() {
+        UUID accountId = UUID.randomUUID();
+        MessageEntity message = messageWithStatus("failed");
+        when(messageMapper.findByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(Optional.of(message));
+
+        projector().project(statusEvent(accountId, "DELIVERED"));
+
+        assertThat(message.getCurrentStatus()).isEqualTo("delivered");
+        verify(messageMapper, never()).updateById(message);
+        verify(messageMapper).updateDeliveryStatus(
+                eq(message.getId()), any(), eq("delivered"), any());
+    }
+
+    @Test
+    void orphanOutboundStatusCreatesHistoryMessageInRecipientConversation() {
+        UUID accountId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.findByProviderMessageId(accountId, "wamid-orphan-1"))
+                .thenReturn(Optional.empty());
+        when(contactIdentityMapper.findByNormalizedValue("chatapp", "60123456789"))
+                .thenReturn(Optional.of(identity));
+        when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
+                .thenReturn(conversation);
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setProviderEventId("poll-orphan-1");
+        event.setPayloadJsonb("""
+                {"MessageId":"wamid-orphan-1","ClientRequestId":"task-orphan-1",
+                 "Direction":"outbound","To":"60123456789","Message":"order ready",
+                 "MessageKind":"template","Status":"DELIVERED"}
+                """);
+
+        var result = projector().project(event);
+
+        assertThat(result.type()).isEqualTo("status");
+        ArgumentCaptor<MessageEntity> inserted = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageMapper).insertWithSequence(inserted.capture());
+        assertThat(inserted.getValue().getConversationId()).isEqualTo(conversation.getId());
+        assertThat(inserted.getValue().getProviderMessageId()).isEqualTo("wamid-orphan-1");
+        assertThat(inserted.getValue().getClientRequestId()).isEqualTo("task-orphan-1");
+        assertThat(inserted.getValue().getDirection()).isEqualTo("outbound");
+        assertThat(inserted.getValue().getMessageKind()).isEqualTo("template");
+        assertThat(inserted.getValue().getBodyText()).isEqualTo("order ready");
+        assertThat(inserted.getValue().getCurrentStatus()).isEqualTo("delivered");
+        assertThat(inserted.getValue().getCountsAsUnread()).isFalse();
+        verify(statusEventMapper).insertIgnore(any());
+        verify(channelEventMapper).markProcessed(eq(event.getId()), any());
+    }
+
+    private ChatAppWebhookProjector projector() {
+        return new ChatAppWebhookProjector(
+                channelEventMapper, messageMapper, statusEventMapper,
+                contactIdentityMapper, contactMapper, conversationMapper,
+                eventHub, new ObjectMapper());
+    }
+
+    private static MessageEntity messageWithStatus(String status) {
+        MessageEntity message = new MessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setCurrentStatus(status);
+        return message;
+    }
+
+    private static ChannelEventEntity statusEvent(UUID accountId, String status) {
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setProviderEventId("event-1");
+        event.setPayloadJsonb("{\"MessageId\":\"wamid-1\",\"Status\":\"" + status + "\"}");
+        return event;
+    }
+}
