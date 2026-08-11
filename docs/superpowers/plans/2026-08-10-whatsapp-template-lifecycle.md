@@ -720,7 +720,24 @@ git add demo/message-center-spring/frontend/src/components/templates
 git commit -m "feat: build whatsapp template management ui"
 ```
 
-### Task 10: Complete integration, browser QA and documentation
+### Task 10: Complete persistent media upload idempotency prerequisite
+
+**Files:**
+- Execute: `docs/superpowers/plans/2026-08-11-whatsapp-template-media-idempotency.md`
+
+**Interfaces:**
+- Consumes the Task 9 template editor and the approved media idempotency design.
+- Produces V10 persistence, the short-transaction upload state machine, status-query HTTP contract, and bounded frontend recovery required by final lifecycle QA.
+
+- [ ] **Step 1: Execute the media idempotency sub-plan**
+
+Complete Tasks 1-4 in `docs/superpowers/plans/2026-08-11-whatsapp-template-media-idempotency.md` in order, including each RED/GREEN cycle and scoped commit. Do not start the browser lifecycle gate while any sub-plan task remains incomplete.
+
+- [ ] **Step 2: Verify the prerequisite completion definition**
+
+Confirm V10 fresh/upgrade migration tests, concurrent same-request gateway-once proof, no-active-transaction proof, admin POST/GET contracts, 45-read frontend bound, frontend build, and backend test suite all pass. Stop if the sub-plan documentation still reports an unresolved automated-test failure.
+
+### Task 11: Complete integration, browser QA and documentation
 
 **Files:**
 - Modify: `backend/src/test/java/com/crmforlogistics/messagecenter/AppIntegrationTest.java`
@@ -790,4 +807,4 @@ git commit -m "test: verify whatsapp template lifecycle"
 
 ## Completion Definition
 
-The feature is complete only when Tasks 1-10 are checked, backend and frontend verification pass, browser QA evidence exists, all provider writes remain behind the real-CAMS approval gate, and documentation states whether that external gate was actually executed.
+The feature is complete only when Tasks 1-11 are checked, the media idempotency sub-plan completion definition is satisfied, backend and frontend verification pass, browser QA evidence exists, all provider writes remain behind the real-CAMS approval gate, and documentation states whether that external gate was actually executed.
