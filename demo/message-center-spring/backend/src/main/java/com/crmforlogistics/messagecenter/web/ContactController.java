@@ -99,4 +99,14 @@ public class ContactController {
         contactGroupService.updateProfile(id, request.displayName(),
                 request.roleTitle(), userId);
     }
+
+    /**
+     * Mark all messages for a contact as read.
+     *
+     * @param id the contact UUID
+     */
+    @PostMapping("/{id}/mark-read")
+    public void markAsRead(@PathVariable UUID id) {
+        contactService.markAsRead(SecurityUtil.currentUserId(), id);
+    }
 }

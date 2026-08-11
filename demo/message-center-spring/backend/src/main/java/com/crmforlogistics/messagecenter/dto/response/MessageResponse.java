@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.dto.response;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public record MessageResponse(
@@ -15,5 +16,6 @@ public record MessageResponse(
         String to,
         Instant occurredAt,
         String status,
-        int ingestSequence
+        int ingestSequence,
+        List<MessageAttachmentResponse> attachments
 ) {}

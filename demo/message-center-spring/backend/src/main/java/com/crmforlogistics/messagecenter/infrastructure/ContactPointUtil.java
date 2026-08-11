@@ -16,6 +16,13 @@ public final class ContactPointUtil {
         return matcher.find() ? matcher.group().toLowerCase(Locale.ROOT) : value.trim().toLowerCase(Locale.ROOT);
     }
 
+    public static String normalizePhone(String phone) {
+        if (phone == null || phone.isBlank()) return "";
+        String digits = phone.replaceAll("[^0-9+]", "");
+        if (digits.startsWith("+")) digits = digits.substring(1);
+        return digits;
+    }
+
     public static String extractName(String value, String email) {
         if (value == null || value.isBlank() || email == null || email.isBlank()) return "";
         String result = value.replace("<" + email + ">", "").replace(email, "").trim();

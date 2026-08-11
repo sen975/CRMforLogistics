@@ -304,9 +304,15 @@ assert.match(wecomSession.body, /Synchronize bounded WeCom chatdata indexes/);
 for (const status of ['409', '429', '500', '502', '503', '504']) {
   assert.match(wecomSession.body, new RegExp(`^        '${status}':$`, 'm'));
 }
-assert.match(schema(contract, 'WeComViewerSessionCreateRequest'), /required: \[contactPointId, viewerAuthToken\]/);
-assert.match(schema(contract, 'WeComViewerSessionCreateRequest'), /^        viewerAuthToken:$/m);
-assert.doesNotMatch(schema(contract, 'WeComViewerSessionCreateRequest'), /^        wecomUserId:$/m);
+const weComViewerCreate = schema(contract, 'WeComViewerSessionCreateRequest');
+assert.match(weComViewerCreate, /required: \[contactPointId, viewerAuthToken, messageIds\]/);
+assert.match(weComViewerCreate, /^        viewerAuthToken:$/m);
+assert.match(weComViewerCreate,
+  /^        messageIds:\n          type: array\n          minItems: 1\n          maxItems: 15\n          uniqueItems: true\n          items:\n            type: string\n            minLength: 1\n            maxLength: 256$/m);
+assert.doesNotMatch(weComViewerCreate, /^        wecomUserId:$/m);
+const weComViewerDetail = schema(contract, 'WeComViewerSessionDetail');
+assert.match(weComViewerDetail,
+  /^        messages:\n          type: array\n          maxItems: 15$/m);
 const wecomSessionDetail = operation(operations, 'get', '/api/v1/wecom/conversation-view/sessions/{viewerSessionId}');
 assert.match(wecomSessionDetail.body, /^        - name: X-WeCom-Viewer-Auth$/m);
 assert.match(wecomSessionDetail.body, /^          in: header$/m);

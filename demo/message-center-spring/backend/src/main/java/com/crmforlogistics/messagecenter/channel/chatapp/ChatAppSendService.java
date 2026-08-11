@@ -14,25 +14,17 @@ import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import darabonba.core.client.ClientOverrideConfiguration;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 public class ChatAppSendService {
@@ -41,9 +33,23 @@ public class ChatAppSendService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AppConfig config;
+    private final ChatAppOssMediaUploader ossMediaUploader;
+    private final Supplier<AsyncClient> clientFactory;
 
     public ChatAppSendService(AppConfig config) {
+        this(config, new ChatAppOssMediaUploader(), null);
+    }
+
+    @Autowired
+    public ChatAppSendService(AppConfig config, ChatAppOssMediaUploader ossMediaUploader) {
+        this(config, ossMediaUploader, null);
+    }
+
+    ChatAppSendService(AppConfig config, ChatAppOssMediaUploader ossMediaUploader,
+                       Supplier<AsyncClient> clientFactory) {
         this.config = Objects.requireNonNull(config);
+        this.ossMediaUploader = Objects.requireNonNull(ossMediaUploader);
+        this.clientFactory = clientFactory;
     }
 
     public SendResult sendText(String to, String text, String clientRequestId) throws Exception {
@@ -114,9 +120,9 @@ public class ChatAppSendService {
                 throw new IllegalStateException("GetChatappUploadAuthorization returned empty data");
             }
 
-            String objectKey = uploadObjectKey(auth.getDir(), firstNonBlank(fileName, "upload.bin"));
-            String mediaUrl = ossObjectUrl(auth.getEndPoint(), auth.getBucketName(), objectKey);
-            uploadToOss(auth, objectKey, fileBytes, mimeType);
+            ChatAppOssMediaUploader.UploadedObject uploaded = ossMediaUploader.upload(
+                    auth, fileBytes, firstNonBlank(fileName, "upload.bin"), mimeType);
+            String mediaUrl = uploaded.url();
 
             String content = mediaContentJson(normalizedType, mediaUrl, caption, fileName);
             SendChatappMessageRequest.Builder builder = baseBuilder(cleanTo)
@@ -173,10 +179,16 @@ public class ChatAppSendService {
 
     private String responseMessageId(SendChatappMessageResponse response) {
         String messageId = response.getBody() == null ? "" : response.getBody().getMessageId();
-        return messageId == null || messageId.isBlank() ? "local-" + UUID.randomUUID() : messageId;
+        if (messageId == null || messageId.isBlank()) {
+            throw new IllegalStateException("CAMS_MESSAGE_ID_MISSING");
+        }
+        return messageId;
     }
 
     private AsyncClient createClient() {
+        if (clientFactory != null) {
+            return clientFactory.get();
+        }
         return AsyncClient.builder()
                 .region(defaulted(config.camsRegion(), "ap-southeast-1"))
                 .credentialsProvider(createCredentialsProvider())
@@ -207,68 +219,6 @@ public class ChatAppSendService {
             content.put("fileName", fileName);
         }
         try { return MAPPER.writeValueAsString(content); } catch (Exception e) { return "{}"; }
-    }
-
-    private static String uploadObjectKey(String dir, String fileName) {
-        String prefix = dir == null ? "" : dir.trim().replace('\\', '/');
-        while (prefix.startsWith("/")) { prefix = prefix.substring(1); }
-        if (!prefix.isBlank() && !prefix.endsWith("/")) { prefix += "/"; }
-        return prefix + UUID.randomUUID().toString().replace("-", "") + safeExtension(fileName);
-    }
-
-    private static String safeExtension(String fileName) {
-        if (fileName == null) return "";
-        int dot = fileName.lastIndexOf('.');
-        if (dot < 0 || dot == fileName.length() - 1) return "";
-        String ext = fileName.substring(dot).toLowerCase(Locale.ROOT);
-        return ext.matches("\\.[a-z0-9]{1,12}") ? ext : "";
-    }
-
-    private static String ossObjectUrl(String endpoint, String bucketName, String objectKey) {
-        String host = required(endpoint, "endpoint").trim()
-                .replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
-        if (!host.startsWith(bucketName + ".")) { host = bucketName + "." + host; }
-        return "https://" + host + "/" + objectKey;
-    }
-
-    private static void uploadToOss(GetChatappUploadAuthorizationResponseBody.Data auth,
-                                     String objectKey, byte[] bytes, String mimeType) throws Exception {
-        String bucket = required(auth.getBucketName(), "bucketName");
-        String date = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC));
-        String resource = "/" + bucket + "/" + objectKey;
-        String securityToken = auth.getSecurityToken();
-        String canonicalHeaders = securityToken == null || securityToken.isBlank()
-                ? "" : "x-oss-security-token:" + securityToken + "\n";
-        String stringToSign = "PUT\n\n" + mimeType + "\n" + date + "\n" + canonicalHeaders + resource;
-        String authorization = "OSS " + required(auth.getAccessKeyId(), "accessKeyId")
-                + ":" + hmacSha1Base64(required(auth.getAccessKeySecret(), "accessKeySecret"), stringToSign);
-
-        URL url = new URL(ossObjectUrl(auth.getEndPoint(), bucket, objectKey));
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("PUT");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(60000);
-        conn.setRequestProperty("Date", date);
-        conn.setRequestProperty("Content-Type", mimeType);
-        conn.setRequestProperty("Authorization", authorization);
-        if (securityToken != null && !securityToken.isBlank()) {
-            conn.setRequestProperty("x-oss-security-token", securityToken);
-        }
-        conn.setFixedLengthStreamingMode(bytes.length);
-        try (OutputStream output = conn.getOutputStream()) {
-            output.write(bytes);
-        }
-        int status = conn.getResponseCode();
-        if (status < 200 || status >= 300) {
-            throw new IllegalStateException("OSS upload failed: HTTP " + status);
-        }
-    }
-
-    private static String hmacSha1Base64(String secret, String value) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA1");
-        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA1"));
-        return Base64.getEncoder().encodeToString(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static String normalizeMediaType(String mediaType) {

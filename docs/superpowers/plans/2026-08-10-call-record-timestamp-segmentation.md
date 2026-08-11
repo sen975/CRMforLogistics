@@ -4,14 +4,15 @@
 
 **Goal:** 使用 FunASR 的真实 VAD/句级区间展示通话时间轴，并允许历史空时间轴记录重新转录，同时只在显示层按中英文标点换行。
 
-**Architecture:** FunASR 1.4.0 服务继续把 `sentence_info` 映射为 OpenAI `verbose_json.segments`，Spring adapter 只校验和持久化这些真实区间。状态机扩展现有 retry 合同以接纳 `completed + []`，React 通过纯显示 helper 分行并保持 segment 时间边界及原始字符不变。
+**Architecture:** Docker 中的 FunASR 1.4.0 使用 `SenseVoice + FSMN-VAD + ct-punc-c`，把 `sentence_info` 映射为 OpenAI `verbose_json.segments`，并用 `ffprobe` 返回真实媒体时长。Spring adapter 固定使用 HTTP/1.1 调用 Uvicorn，只校验和持久化这些真实区间。状态机扩展现有 retry 合同以接纳 `completed + []`，React 通过纯显示 helper 分行并保持 segment 时间边界及原始字符不变。
 
-**Tech Stack:** Java 17、Spring Boot 3.4、MyBatis-Plus、JUnit 5、AssertJ、Mockito、React 18、TypeScript 5.6、Ant Design 5、Node test runner、Vite 6
+**Tech Stack:** Java 17、Spring Boot 3.4、MyBatis-Plus、JUnit 5、AssertJ、Mockito、Python 3.10、FunASR 1.4.0、Docker Compose、React 18、TypeScript 5.6、Ant Design 5、Node test runner、Vite 6
 
 ## Global Constraints
 
 - 不根据音频总时长、文字长度、字符数或固定间隔推算时间戳。
-- 不修改 `/Users/z/FunASR` 外部仓库，不切换 SenseVoice，不增加常驻模型。
+- FunASR 模型组合和 OpenAI 兼容响应只在 `/Users/z/FunASR/examples/openai_api/` owner 中修改；Spring 不复制模型语义。
+- 不切换 SenseVoice，不自研分句或时间戳估算算法。
 - 只有 `failed` 或 `completed` 且机器转录 `segments` 为空的记录可以手动重新转录。
 - 重新转录保留 `call_transcript_revisions` 和 `currentRevisionId`。
 - 标点分行只影响渲染，所有行重新拼接后必须与 segment 原文逐字符相同。
@@ -340,3 +341,23 @@ Expected: 本任务文件无空白错误；其他线程的 dirty 文件仍保持
 git add docs/superpowers/plans/2026-08-10-call-record-timestamp-segmentation.md
 git commit -m "docs: verify timestamped call transcripts"
 ```
+
+### 本轮实际验收记录（2026-08-10）
+
+- [x] 前端 `npm test`：13/13 通过。
+- [x] 前端 `npm run build`：TypeScript 与 Vite 构建通过；Vite 报告既有的单 chunk 超过 500 kB 提示，未新增编译错误。
+- [x] 后端通话记录目标测试：`CallRecordServiceTest` 5、`CallRecordStateMachineTest` 3、`FunAsrClientTest` 5、`TranscriptionWorkerTest` 2，共 15/15 通过。
+- [x] 后端 `mvn -q -Dtest='!AppIntegrationTest' test`：157 项通过，0 失败、0 错误；输出包含 Spring 测试上下文生成临时密码的提示，以及 `EmailControllerTest` 预期失败路径产生的 SMTP 异常日志。
+- [ ] 未执行真实历史录音重转录、数据库核对和浏览器点击验收。本轮没有可用的内置浏览器实例，也未启动前端服务；这些步骤需在用户已启动的 Spring/FunASR 环境中完成。
+
+### 2026-08-11 运行时续测
+
+- [x] FunASR 改由 Docker Compose 运行；`openai_api-funasr-api-1` 为 `running/healthy`，模型缓存通过 named volume 持久化，开发机配置为 `intraop=1`、`interop=1`、`maxConcurrency=1`、`cpus=1.0`。正式 `funasr-api:local` 镜像已用当前 Dockerfile 重建，容器 image ID 与镜像标签一致，容器内 `server.py` 哈希与源码一致。
+- [x] `sensevoice` 正式组合 `fsmn-vad` 与 `ct-punc-c`，推理请求启用 `sentence_timestamp=True`；精简 CT-Punc 模型约 292 MB，支持当前中文及偶发英文场景。
+- [x] FunASR `duration` 改由 `ffprobe` 读取媒体时长，不再误用推理耗时。`/Users/z/FunASR/.venv/bin/python -m unittest tests/test_openai_api_timestamp_segments.py`：2/2 通过。
+- [x] 定位 Spring 422 根因：JDK `HttpClient` 默认尝试 HTTP/2 h2c upgrade，Uvicorn 拒绝 upgrade 后未正确解析 multipart，返回 `body.file Field required`。`FunAsrClient` 固定 `HttpClient.Version.HTTP_1_1` 后，同一请求返回 200；`mvn -Dtest=FunAsrClientTest test`：6/6 通过。
+- [x] 对历史记录 `3822d8ab-5741-47c8-b2cc-fb27247df701` 执行正式 retry：最终 `completed`、`durationSeconds=62.589`、23 个真实分段；首段 `0.15-0.75s`，末段 `58.60-61.79s`，时间有限、单调且未超过音频时长。
+- [x] 重转录前后人工修订保持 2 条，`currentRevisionId=71a72a21-77f2-4431-a52b-28451325a000` 未变化。
+- [x] 成功请求的容器日志为 `POST /v1/audio/transcriptions HTTP/1.1` 200；成功请求开始后的日志没有新的 upgrade warning 或 422。
+- [x] 重建正式镜像并强制重建容器后，再次直传同一 62.589 秒原始录音：返回 23 个分段，首尾时间仍为 `0.15-0.75s`、`58.60-61.79s`，证明结果不依赖旧验证容器。
+- [ ] 未进行页面点击验收：用户此前要求停止前端，本轮没有重启前端服务。后端响应与持久化链路已验收，右侧 Drawer 的真实渲染仍需下一次前端运行时检查。

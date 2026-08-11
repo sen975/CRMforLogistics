@@ -2,24 +2,31 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.crmforlogistics.messagecenter.dto.response.MessageResponse;
+import com.crmforlogistics.messagecenter.dto.response.MessageAttachmentResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSendService;
 import com.crmforlogistics.messagecenter.channel.email.EmailSendService;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.AttachmentMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMediaApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageApplicationService;
+import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
+import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -33,21 +40,33 @@ public class MessageController {
     private final ChannelAccountMapper channelAccountMapper;
     private final ConversationMapper conversationMapper;
     private final ContactIdentityMapper contactIdentityMapper;
-    private final ChatAppSendService chatAppSendService;
+    private final ChatAppMessageApplicationService chatAppMessageApplicationService;
+    private final ChatAppMediaApplicationService chatAppMediaApplicationService;
     private final EmailSendService emailSendService;
+    private final ConversationAccessService conversationAccessService;
+    private final TemplateMessageTextResolver templateMessageTextResolver;
+    private final AttachmentMapper attachmentMapper;
 
     public MessageController(MessageMapper messageMapper,
                              ChannelAccountMapper channelAccountMapper,
                              ConversationMapper conversationMapper,
                              ContactIdentityMapper contactIdentityMapper,
-                             ChatAppSendService chatAppSendService,
-                             EmailSendService emailSendService) {
+                             ChatAppMessageApplicationService chatAppMessageApplicationService,
+                             ChatAppMediaApplicationService chatAppMediaApplicationService,
+                             EmailSendService emailSendService,
+                             ConversationAccessService conversationAccessService,
+                             TemplateMessageTextResolver templateMessageTextResolver,
+                             AttachmentMapper attachmentMapper) {
         this.messageMapper = messageMapper;
         this.channelAccountMapper = channelAccountMapper;
         this.conversationMapper = conversationMapper;
         this.contactIdentityMapper = contactIdentityMapper;
-        this.chatAppSendService = chatAppSendService;
+        this.chatAppMessageApplicationService = chatAppMessageApplicationService;
+        this.chatAppMediaApplicationService = chatAppMediaApplicationService;
         this.emailSendService = emailSendService;
+        this.conversationAccessService = conversationAccessService;
+        this.templateMessageTextResolver = templateMessageTextResolver;
+        this.attachmentMapper = attachmentMapper;
     }
 
     @GetMapping("/messages/{id}")
@@ -56,6 +75,8 @@ public class MessageController {
         if (entity == null) {
             return ResponseEntity.notFound().build();
         }
+        conversationAccessService.requireAccessible(
+                entity.getConversationId(), entity.getChannelAccountId(), SecurityUtil.currentUserId());
         return ResponseEntity.ok(toMessageResponse(entity));
     }
 
@@ -72,6 +93,28 @@ public class MessageController {
         }
     }
 
+    @PostMapping("/send/chatapp-media")
+    public ResponseEntity<?> sendChatAppMedia(
+            @RequestParam("to") String to,
+            @RequestParam("mediaType") String mediaType,
+            @RequestParam(value = "caption", required = false) String caption,
+            @RequestParam(value = "clientRequestId", required = false) String clientRequestId,
+            @RequestParam("file") MultipartFile file) {
+        try {
+            var result = chatAppMediaApplicationService.accept(
+                    to, mediaType, file.getBytes(), file.getOriginalFilename(),
+                    file.getContentType(), caption == null ? "" : caption,
+                    clientRequestId == null || clientRequestId.isBlank()
+                            ? UUID.randomUUID().toString() : clientRequestId,
+                    SecurityUtil.currentUserId());
+            return ResponseEntity.ok(result);
+        } catch (SecurityException e) {
+            throw e;
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PostMapping("/send/chatapp")
     public ResponseEntity<?> sendChatApp(@RequestBody Map<String, Object> body) {
         try {
@@ -80,18 +123,29 @@ public class MessageController {
             String clientRequestId = (String) body.getOrDefault("clientRequestId",
                     UUID.randomUUID().toString());
 
-            ChatAppSendService.SendResult result;
+            var content = new java.util.LinkedHashMap<String, Object>();
             if ("template".equals(mode)) {
                 String templateCode = (String) body.get("templateCode");
                 String templateName = (String) body.get("templateName");
                 String languageCode = (String) body.get("languageCode");
-                result = chatAppSendService.sendTemplate(to, templateCode, templateName,
-                        languageCode, Map.of(), clientRequestId);
+                @SuppressWarnings("unchecked")
+                Map<String, String> templateParams = body.containsKey("templateParams")
+                        ? (Map<String, String>) body.get("templateParams")
+                        : Map.of();
+                content.put("templateCode", templateCode);
+                content.put("templateName", templateName);
+                content.put("languageCode", languageCode);
+                content.put("templateParams", templateParams);
             } else {
                 String text = (String) body.getOrDefault("text", "");
-                result = chatAppSendService.sendText(to, text, clientRequestId);
+                content.put("text", text);
             }
+            var result = chatAppMessageApplicationService.acceptRecipient(
+                    to, "template".equals(mode) ? "template" : "text",
+                    clientRequestId, content, SecurityUtil.currentUserId());
             return ResponseEntity.ok(result);
+        } catch (SecurityException e) {
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -141,14 +195,17 @@ public class MessageController {
                 entity.getDirection(),
                 entity.getMessageKind(),
                 entity.getSubject(),
-                entity.getBodyText(),
+                templateMessageTextResolver.resolve(entity),
                 entity.getBodyHtml(),
                 channelType,
                 from,
                 to,
                 entity.getOccurredAt(),
                 entity.getCurrentStatus(),
-                entity.getIngestSequence() != null ? entity.getIngestSequence().intValue() : 0
+                entity.getIngestSequence() != null ? entity.getIngestSequence().intValue() : 0,
+                attachmentMapper.listReadyByMessageId(entity.getId()).stream()
+                        .map(MessageAttachmentResponse::from)
+                        .toList()
         );
     }
 

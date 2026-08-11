@@ -25,6 +25,59 @@ Copy-Item .\config.example.env .\.env
 http://localhost:8099
 ```
 
+### 输出企业微信调试 access token
+
+专区调试模式不需要先经过授权回调。只要配置企业 CorpID 和 `permanent_code`（作为 `corpsecret`），demo 就可以直接获取应用 access token，输出内容只有 token，便于传给专区调试容器：
+
+```env
+WECOM_DEBUG_CORP_ID=企业ID
+WECOM_DEBUG_CORP_SECRET=permanent_code
+```
+
+直接调试取 token：
+
+```bash
+mvn -q exec:java "-Dexec.args=wecom-debug-access-token"
+```
+
+服务器 thin JAR 发布目录：
+
+```bash
+java -cp "message-center.jar:lib/*" \
+  com.crmforlogistics.messagecenter.App \
+  wecom-debug-access-token
+```
+
+已有正式授权安装记录时，仍可使用安装记录命令：
+
+```bash
+mvn -q exec:java "-Dexec.args=wecom-access-token --auth-corp-id <企业ID>"
+```
+
+PowerShell 也可以直接传参数：
+
+```powershell
+.\message-center-demo.ps1 wecom-access-token --auth-corp-id <企业ID>
+```
+
+服务器 thin JAR 发布目录：
+
+```bash
+java -cp "message-center.jar:lib/*" \
+  com.crmforlogistics.messagecenter.App \
+  wecom-access-token \
+  --auth-corp-id '<企业ID>'
+```
+
+将输出注入调试容器的 `-a` 参数：
+
+```bash
+export WECOM_ACCESS_TOKEN="$(java -cp "message-center.jar:lib/*" \
+  com.crmforlogistics.messagecenter.App \
+  wecom-access-token \
+  --auth-corp-id '<企业ID>')"
+```
+
 ### 本地企业微信开发模式
 
 本地开发不需要企业微信扫码、access token、RSA 或专区程序。复制配置后仅在本机启用：
@@ -35,7 +88,7 @@ WEB_BIND_ADDRESS=127.0.0.1
 LOCAL_WECOM_DATA_SOURCE=fixture
 ```
 
-`fixture` 会提供两个本地联系人和三条样例消息；使用 `jsonl` 时，将输入文件配置到
+`fixture` 会提供两个本地联系人和三条样例消息，其中第一个联系人同时包含一条接收和一条发送消息，用于验证统一时间线的双向排列；使用 `jsonl` 时，将输入文件配置到
 `LOCAL_WECOM_DATA_FILE`，每行至少包含 `msgid`、`external_userid`、`userid`、`send_time`、
 `secret_key` 和 `msgtype`。本地模式仍执行 viewer token、过期和一次性会话校验，但页面会跳过企业微信脚本，直接展示本地消息引用。生产环境保持 `LOCAL_DEV_MODE=false`。
 内置本地服务只提供 loopback HTTP；录音播放 Cookie 在本地模式下不会继承生产
@@ -53,7 +106,7 @@ WEB_PORT=8077
 - 拖动一个联系人到另一个联系人上会合并联系方式。
 - 点击头像可以查看该联系人已合并的联系方式，并拆分。
 - 邮件和 ChatApp 消息在同一个聊天时间线里按时间穿插。
-- 选择联系人时默认只加载最近 10 条消息，向上滚到消息区顶部会继续按 10 条加载更早消息。
+- 选择联系人时默认只加载最近 15 条消息，向上滚到消息区顶部会继续按 15 条加载更早消息；企业微信组件只为当前页实际出现的 `messageIds` 建立短时引用。
 - 点击消息可在右侧查看完整内容、From、To、状态和 raw。
 - 图片、视频、文件附件通过本 demo 后端代理下载到本地缓存，再在消息里预览或打开，不再让浏览器直连 OSS 临时链接。
 - 顶部“收取邮件”会用本 demo 的 IMAP 配置拉取 INBOX 和 SENT_FOLDER，并写回旧邮件 demo 的 `inbox.jsonl`。
@@ -63,7 +116,7 @@ WEB_PORT=8077
 - 邮件支持多个普通 MIME 附件：单封最多 16 个、附件内容总量最多 20 MiB。附件二进制只保存在 `EMAIL_DATA_DIR/attachments/<messageId>/`，暂存文件位于 `EMAIL_DATA_DIR/attachment-tmp/`，发送恢复记录位于 `EMAIL_DATA_DIR/attachment-recovery/`；启动时恢复 accepted 历史，保留 prepared 记录引用的暂存目录，并清理一小时前仍未被恢复记录引用的暂存目录。重复 IMAP 邮件不会留下无主附件目录。邮件 JSONL 只保存附件元数据。SMTP 接受后若本地历史写入失败，会返回 `EMAIL_SENT_HISTORY_FAILED`，不会自动重发；结果未知时返回 `EMAIL_SEND_OUTCOME_UNKNOWN`。
 - WhatsApp 支持文本、模板、图片、视频、文件发送。
 - ChatApp 模板发送从最近一次成功同步的本地模板快照生成下拉选项；web 启动后会异步同步并定时对账。
-- 企业微信 tab 会在当前发送区内打开会话展示组件容器，不改变原有三栏布局和消息滚动方式。
+- 企业微信 tab 只提供加载入口和状态；加载后官方会话组件按 `msgid` 回填统一时间线中的对应消息节点，不再在发送区下方生成独立消息列表。
 - 电话录音可作为联系人时间线中的独立卡片上传、异步转录、播放和人工修订；原始 MP3 只保存在本地受限目录，转录通过内部 FunASR 兼容服务完成。
 - 电话仓库通过 `/api/v1/phone-repository` 提供跨联系人的稳定游标查询；只有电话号码的联系人由统一联系人 store 管理，并可通过 `/api/v1/phone-contacts` 创建或绑定。上传时联系人、`phonePointId` 和 MP3 均为必填，备注通过 `note` 字段保存当前值。
 - 电话记录详情支持 `PATCH /api/v1/call-records/{callRecordId}/note`，请求必须携带 `expectedVersion`；联系人合并/拆分仍由统一联系人 store 负责，电话记录会按当前联系人组投影到时间线。
@@ -306,10 +359,13 @@ GET 回调校验只接受明确配置的代开发 SuiteID、登录授权 SuiteID
 
 真实链路由专区程序同步 `msgid + encrypted_secret_key`，8107 解密并原子发布到 `WECOM_DATA_FILE`。人工 JSONL 只用于本地单元测试，不能代替真实企业微信验收。配置：
 
+专区同步存储是企业微信消息方向的唯一 owner：员工发送且外部联系人接收时保存 `direction=outbound`，外部联系人发送且员工接收时保存 `direction=inbound`。两个方向都使用 `wecom:<external_userid>` 作为统一联系人点，因此双方消息进入同一联系人时间线；前端只消费该结构化方向，不自行反转消息。旧快照如果没有 `direction`，仍按历史 `origin` 兼容；两者都缺失时保持旧版 `inbound` 默认。要让旧消息获得真实双向方向，部署新 JAR 后必须从旧游标之前重新同步生成快照。
+
 ```env
 WECOM_DATA_FILE=wecom-messages.jsonl
 WECOM_CHATDATA_PROGRAM_ID=企业微信后台关联后的程序ID
 WECOM_CHATDATA_ABILITY_ID=conversation_viewer_sync
+WECOM_CHATDATA_DIAGNOSTICS=false
 WECOM_CHATDATA_PRIVATE_KEY_FILE=/www/wwwroot/message-center/secrets/wecom_chatdata_private_key.pem
 WECOM_CHATDATA_PUBLIC_KEY_VERSION=1
 WECOM_CHATDATA_CURSOR_FILE=/www/wwwroot/message-center/data/wecom-chatdata-cursor.json
@@ -318,8 +374,11 @@ WECOM_CHATDATA_SYNC_MAX_PAGES=5
 WECOM_CHATDATA_SYNC_TIMEOUT_SECONDS=15
 WECOM_CHATDATA_STORE_MAX_MESSAGES=5000
 WECOM_CHATDATA_STORE_MAX_BYTES=8388608
+# 浏览器企业微信登录令牌有效期（秒），仅保存在服务内存和浏览器内存
+WECOM_VIEWER_AUTH_TTL_SECONDS=28800
+# 单次官方会话展示 session 有效期（秒）
 WECOM_VIEWER_SESSION_TTL_SECONDS=300
-WECOM_VIEWER_MAX_MESSAGES=10
+WECOM_VIEWER_MAX_MESSAGES=15
 WECOM_VIEWER_SESSION_RATE_LIMIT=10
 WECOM_VIEWER_AUDIT_FILE=data/wecom-viewer-audit.jsonl
 WECOM_VIEWER_AUDIT_MAX_BYTES=1048576
@@ -327,6 +386,8 @@ WECOM_TOKEN_REFRESH_SKEW_SECONDS=300
 ```
 
 `WECOM_DATA_FILE` 和 `WECOM_CHATDATA_CURSOR_FILE` 使用相对路径时统一解析到 `DATA_DIR`；服务器也可以直接配置绝对路径。RSA 私钥路径必须是绝对路径。
+
+专区调用失败时，普通 `wecom-viewer-audit.jsonl` 会保留企业微信 `errmsg` 中格式合法的 `hint: [trace-id]`，不会保存完整 `errmsg`。仅在排查真实上游错误时临时设置 `WECOM_CHATDATA_DIAGNOSTICS=true` 并重启服务；服务端 stderr 会输出一行 `wecom.chatdata.upstream_diagnostic` JSON，包含路径、HTTP 状态、错误码和最多 4096 UTF-8 字节的完整 `errmsg`，不包含 access token、请求体或 `response_data`。排查结束后应恢复为 `false` 并重启。
 
 最小专区程序位于 `../wecom-chatdata-zone-program`。按该目录 README 使用企业微信官方 Java 1.4.0 示例构建后，上传：
 
@@ -368,7 +429,7 @@ WECOM_CHATDATA_PUBLIC_KEY_REGISTRATION_FILE=/www/wwwroot/message-center/data/wec
 
 这项变更只发生在 8107。专区程序能力和镜像未变化，部署时只需替换最新 `message-center.jar` 与现有 `lib/` 配套依赖，不需要重传专区镜像。
 
-点击 Viewer 后，8107 每页最多 200、最多 5 页、总超时 15 秒调用 `sync_call_program`，专区程序独占固定 `mode=0`。只保存一对一员工/外部联系人的展示引用，不保存正文；消息快照先于 cursor 发布。达到页上限返回 409，用户再次点击会从已保存 cursor 继续。
+Web 监听成功后，8107 立即异步执行首轮专区同步，之后默认在每轮完全结束 60 秒后再执行下一轮；固定延迟保证同步不重叠。每轮最多 200 条/页、最多 5 页、总超时 15 秒调用 `sync_call_program`，专区程序独占固定 `mode=0`。只保存一对一员工/外部联系人的展示引用和由双方类型确定的方向，不保存正文；消息快照先于 cursor 发布。达到页上限时本轮失败并保留已发布 cursor，下轮继续。缺少授权安装、专区程序或私钥时只记录脱敏的 `skipped_not_configured`，不阻断 Web 服务。可用 `WECOM_CHATDATA_AUTO_SYNC_ENABLED=false` 关闭，或用 `WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS=60` 设置 15 到 3600 秒的固定延迟。
 
 同一个专区程序还必须关联第二个固定能力 `conversation_daily_summary`，输入输出协议见专区程序 README。开启官方每日摘要后，8107 在北京时间每天 `00:05` 为前一自然日的每个员工-外部联系人单聊创建任务，调用企业微信官方摘要模型，并把同一对话的最终摘要写入 PostgreSQL。数据库只保存任务状态、不可逆消息引用摘要、覆盖统计和摘要文本，不保存 `secret_key`、原始 msgid 列表或会话正文。
 
@@ -391,7 +452,9 @@ DATABASE_PASSWORD_FILE=/www/wwwroot/message-center/secrets/postgres_password
 
 `WECOM_CHATDATA_PROGRAM_ID` 继续使用 viewer 所在的同一个程序 ID。官方返回输入过长错误 `790040` 时，8107 会按消息顺序二分并持久化新批次；每个员工-外部联系人每日最多 32 批，单条仍超限时标记部分失败，不伪造完整摘要。开启摘要后数据库或授权安装不可用会使摘要 runtime 失败关闭；HTTP viewer 在摘要关闭时仍保持原有无数据库路径。
 
-前端只调用 JS-SDK 签名接口和短时 viewer session，不接触 `corpsecret`、`access_token` 或 `jsapi_ticket`。统一时间线首次只取最近 10 条，用户滚到顶部时按 10 条继续加载更早消息；官方 viewer 引用则按 `send_time` 去重排序，默认只挂载最近 10 条，配置硬上限为 20，不会一次读取并返回全部引用。
+前端只调用 JS-SDK 签名接口和短时 viewer session，不接触 `corpsecret`、`access_token` 或 `jsapi_ticket`。统一时间线首次只取最近 15 条，用户滚到顶部时按 15 条继续加载更早消息；官方 viewer 引用按 `send_time` 去重排序，每批最多 15 个 `messageIds`，不会一次读取并返回全部引用。页面保持 Email、ChatApp、电话记录和企业微信的统一时间顺序，把相邻企业微信消息聚合成连续段；任意非企业微信条目都会断段，连续段超过 15 条时继续切块。每个段块只创建一个 OpenDataFrame，并通过官方 `wx:for` 模板渲染段内最多 15 条 `ww-open-message`。段在 `handleMounted` 前隐藏，首次失败只在原时间位置显示一个 32px 紧凑段级标识和重试按钮，不显示空框或大块占位。当前联系人最多保留 15 个活动段，三个联系人缓存合计最多 30 个段，不能保证企业微信冷联系人绝对零延迟。
+
+段内消息正文、方向和高度由企业微信官方组件负责，父页面不强制字体、字符截断或固定气泡高度；企业微信段也不使用统一消息选中态的大面积蓝色轮廓。点击官方消息后，合法 HTTPS 详情 iframe 在该段原位置展开，不再打开全局预览弹窗。多条消息可以同时展开，同一联系人最多保留 15 个详情 iframe；达到上限时优先收起最早展开且已离开视口的详情。详情内容高度采用企业微信返回的建议值，桌面限制为 120～560px，移动端还会限制为视口高度的 60%，卡片四周保留内边距且不产生横向滚动。刷新失败、组件错误、联系人窗口失效、组件淘汰、登录过期、消息离开时间线或页面真正卸载时会释放对应详情 iframe；进入浏览器前进/后退缓存时保留当前展开状态。
 
 本地 demo 的 viewer 打开、拒绝、限流、签名和组件错误写入有上限的 `WECOM_VIEWER_AUDIT_FILE`，不记录 `viewerAuthToken`、ticket 或 `secretKey`。会话同步失败时只追加安全诊断字段 `errorCode`、`upstreamErrcode`、`upstreamPath` 和 `upstreamHttpStatus`，不记录 access token、Secret、私钥、请求正文、响应正文或消息内容。文件达到 `WECOM_VIEWER_AUDIT_MAX_BYTES` 后 viewer 操作失败关闭，避免静默丢审计或无界增长。组件错误只接受与同一短时 token 最近成功读取的 viewer session，并通过原子消费阻断并发或顺序重放；事件请求拒绝合同之外的字段。该文件只是本地 demo audit adapter；生产模块化运行面应把同一结构化事件交给现有 `AuditService`，这不构成本地 viewer 的数据库依赖。
 
@@ -423,7 +486,9 @@ POST http://localhost:8099/api/v1/wecom/conversation-view/events
 
 首版按代开发授权安装记录接入，并由 `WECOM_LOGIN_AUTH_CORP_ID` 唯一选择登录企业。页面首屏异步加载企业微信 JSSDK，10 秒未完成就显示可重试错误；扫码前不请求联系人、消息、模板或 SSE。登录面板回调的临时 code 与后端生成的一次性 state 只交换一次，返回的 `viewerAuthToken` 仅保存在当前页面 JavaScript 内存，不写入 URL、cookie、localStorage 或 sessionStorage；刷新或到期后重新扫码。这是企业微信 viewer 的最小短时授权入口，不是完整 CRM 全局认证。
 
-首次登录后如果联系人列表还没有企业微信联系人，先点击顶部“同步企业微信会话”。页面调用独立的 `POST /api/v1/wecom/conversation-view/sync`，8107 使用当前登录的短时 viewer token 执行有界专区同步，并把消息引用写入 `WECOM_DATA_FILE`；同步完成后刷新联系人列表，生成 `wecom:<external_userid>` 联系人。之后点击企业微信 tab，页面再创建 viewer session 并显示会话展示组件。已有企业微信联系人时，点击 viewer 会自动执行同样的同步再创建 session。页面懒加载 `jwxwork-1.0.0.js`，调用 `ww.register()`、`ww.initOpenData()` 和 `ww.createOpenDataFrameFactory().createOpenDataFrame(...)`。消息用 `ww-open-message` 展示 `msgid + secretKey`；外部浏览器通过 `handleModal` 在 iframe 中预览图片、视频和聊天记录详情，模板 `binderror` 负责捕获组件错误。`42006`、`42003`、`40029` 或 `Missing open sid` 会清除内存授权并返回扫码首屏。后端把授权企业 CorpID 和安装记录中的 `permanent_code`（代开发应用 Secret）交给官方 `/cgi-bin/gettoken` 获取应用 access token；不会调用第三方应用的 `/cgi-bin/service/get_corp_token`。token、密钥和上游响应不进入前端或错误消息。
+专区消息由后端 runtime 自动同步，页面现有 5 秒静默刷新只读取本地联系人和统一时间线，不直接调用专区程序。顶部“立即同步企业微信”保留为排障和即时补偿入口，调用独立的 `POST /api/v1/wecom/conversation-view/sync`；viewer session 创建只做权限校验和短时展示引用签发，不再隐式触发同步。当前联系人有企业微信账号时，页面立即加载 viewer 引用，并在引用超过 60 秒后自动刷新；并发刷新会复用同一个请求，自动失败只更新状态，不反复弹 toast。
+
+页面预加载 `jwxwork-1.0.0.js`，调用 `ww.register()`、`ww.initOpenData()` 和 `ww.createOpenDataFrameFactory().createOpenDataFrame(...)`。每个连续企业微信段用一个 OpenDataFrame 展示段内的 `msgid + secretKey`，段 ID 只用于父页面 DOM 与 Frame registry，不替代后端真实 `msgid`。点击具体 `ww-open-message` 后通过 `handleModal` 在原段位置展开详情 iframe，并由独立图标按钮收起；无法确定具体消息时交给企业微信默认预览。后台刷新和历史分页按稳定段签名复用已挂载宿主，不销毁未变化的段；已有成功段刷新失败时继续保留旧 Frame，首次加载失败或组件自身失败时才释放该宿主的详情 iframe 并显示紧凑失败状态。底部企业微信面板只显示账号、刷新状态和最近引用刷新时间。`42006`、`42003`、`40029` 或 `Missing open sid` 会清除内存授权并返回扫码首屏。后端把授权企业 CorpID 和安装记录中的 `permanent_code`（代开发应用 Secret）交给官方 `/cgi-bin/gettoken` 获取应用 access token；不会调用第三方应用的 `/cgi-bin/service/get_corp_token`。token、密钥和上游响应不进入前端或错误消息。
 
 ## 验证
 

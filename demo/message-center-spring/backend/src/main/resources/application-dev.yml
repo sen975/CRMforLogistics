@@ -2,15 +2,18 @@ server:
   port: 8099
 
 spring:
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
   datasource:
     url: jdbc:postgresql://localhost:5432/message_center
     username: message_center
-    password: ${postgres_password}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   flyway:
     enabled: true
     locations: classpath:db/migration
-
-postgres_password: ${SPRING_DATASOURCE_PASSWORD:}
 
 minio:
   endpoint: http://localhost:9000
@@ -18,12 +21,17 @@ minio:
   secret-key: ${MINIO_SECRET_KEY:}
   bucket: message-center
 
+funasr:
+  base-url: http://127.0.0.1:8000
+
 app:
   data-dir: data-local
   local-dev-mode: true
+  web-bind-address: 127.0.0.1
 
-  chatapp:
-    sync-enabled: true
+  cust-space-id: cams-9dou6dubx2ww
+  chatapp-from: "8613266259485"
+  chatapp-sync-enabled: true
 
   aliyun-access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
   aliyun-access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
@@ -32,25 +40,36 @@ app:
 
   email-sync-enabled: false
 
-  smtp-host: ${SMTP_HOST:}
-  smtp-port: ${SMTP_PORT:465}
-  smtp-user: ${SMTP_USERNAME:}
+  smtp-host: smtp.139.com
+  smtp-port: "465"
+  smtp-user: 13266259485@139.com
   smtp-password: ${SMTP_PASSWORD:}
-  smtp-localhost: ${SMTP_LOCALHOST:}
-  smtp-ssl: ${SMTP_SSL:true}
-  smtp-start-tls: ${SMTP_STARTTLS:false}
-  smtp-resolve-ipv4: ${SMTP_RESOLVE_IPV4:true}
-  mail-from: ${MAIL_FROM:}
-  mail-from-name: ${MAIL_FROM_NAME:}
+  smtp-ssl: true
+  smtp-start-tls: false
+  smtp-resolve-ipv4: true
+  mail-from: 13266259485@139.com
+  mail-from-name:
 
-  imap-host: ${IMAP_HOST:}
-  imap-port: ${IMAP_PORT:993}
-  imap-user: ${IMAP_USERNAME:}
+  imap-host: imap.139.com
+  imap-port: "993"
+  imap-user: 13266259485@139.com
   imap-password: ${IMAP_PASSWORD:}
-  imap-ssl: ${IMAP_SSL:true}
-  receive-limit: ${RECEIVE_LIMIT:10}
-  mail-provider: ${MAIL_PROVIDER:auto}
-  imap-139-use-openssl: ${IMAP_139_USE_OPENSSL:true}
-  openssl-bin: ${OPENSSL_BIN:/usr/bin/openssl}
-  inbox-folder: ${INBOX_FOLDER:INBOX}
-  sent-folder: ${SENT_FOLDER:Sent}
+  imap-ssl: true
+  receive-limit: 10
+  mail-provider: "139"
+  imap-139-use-openssl: true
+  inbox-folder: INBOX
+  sent-folder: Sent
+
+  wecom-suite-id: ${WECOM_SUITE_ID:}
+  wecom-suite-secret: ${WECOM_SUITE_SECRET:}
+  wecom-token: krSo4BZhrz5Yhheziug9O8S4kccH
+  wecom-encoding-aes-key: OjKJYyKHMJYIUaOKVV9mvFHqeIxlXaF056btxhAvK9D
+  wecom-api-base-url: https://qyapi.weixin.qq.com
+  wecom-api-timeout-seconds: 10
+  wecom-token-refresh-skew-seconds: 300
+  wecom-sync-enabled: false
+  wecom-login-suite-id: ${WECOM_LOGIN_SUITE_ID:}
+  wecom-login-suite-secret: ${WECOM_LOGIN_SUITE_SECRET:}
+
+

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.text.Normalizer;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,6 +35,17 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         UserEntity user = userMapper.findByUsernameNormalized(normalized)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
 
+        return toUserDetails(user);
+    }
+
+    public UserDetails loadUserById(UUID userId) throws UsernameNotFoundException {
+        UserEntity user = userMapper.findByIdNotDeleted(userId)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + userId));
+
+        return toUserDetails(user);
+    }
+
+    private UserDetails toUserDetails(UserEntity user) {
         if (!"active".equals(user.getStatus())) {
             throw new org.springframework.security.authentication.DisabledException(
                     "User is not active: " + user.getStatus());

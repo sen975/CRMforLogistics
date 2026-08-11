@@ -739,19 +739,26 @@ public class UnifiedMessageStore {
                 long sendTime = object.has("send_time") ? object.get("send_time").getAsLong() : 0;
                 String externalUserid = JsonSupport.string(object, "external_userid");
                 String openKfid = JsonSupport.string(object, "open_kfid");
-                int origin = object.has("origin") ? object.get("origin").getAsInt() : 3;
+                String wecomUserid = ContactPointUtil.firstNonBlank(
+                        JsonSupport.string(object, "userid"),
+                        JsonSupport.string(object, "wecom_userid"));
+                String storedDirection = normalizeDirection(JsonSupport.string(object, "direction"));
+                String direction = object.has("direction") && !JsonSupport.string(object, "direction").isBlank()
+                        ? storedDirection
+                        : (!object.has("origin") || !object.get("origin").isJsonPrimitive()
+                                || object.get("origin").getAsInt() == 3 ? "inbound" : "outbound");
 
                 UnifiedMessage message = new UnifiedMessage();
                 message.sourceId = msgid;
                 message.id = "wecom:" + ContactPointUtil.firstNonBlank(msgid, Integer.toHexString(line.hashCode()));
                 message.channel = "wecom";
-                message.direction = origin == 3 ? "inbound" : "outbound";
+                message.direction = direction;
                 message.timestamp = sendTime > 0 ? Instant.ofEpochSecond(sendTime).toString() : "";
                 message.raw = JsonSupport.string(object, "_raw");
-                message.from = externalUserid;
-                message.to = openKfid;
-                String peer = "outbound".equals(message.direction) ? message.to : message.from;
-                message.contactPointId = ContactPointUtil.normalizePointId("wecom:" + peer);
+                message.from = "outbound".equals(message.direction) ? wecomUserid : externalUserid;
+                message.to = "outbound".equals(message.direction)
+                        ? externalUserid : ContactPointUtil.firstNonBlank(wecomUserid, openKfid);
+                message.contactPointId = ContactPointUtil.normalizePointId("wecom:" + externalUserid);
                 message.text = wecomDisplayText(object, msgtype);
                 message.summary = message.text;
                 result.add(message);

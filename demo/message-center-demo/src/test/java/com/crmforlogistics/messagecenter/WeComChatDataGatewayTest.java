@@ -5,7 +5,9 @@ import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -84,6 +86,173 @@ class WeComChatDataGatewayTest {
             assertEquals("/cgi-bin/chatdata/sync_call_program", exception.upstreamPath());
             assertEquals(200, exception.upstreamHttpStatus());
             assertFalse(exception.getMessage().contains("secret"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void extractsSafeHintFromProgramError() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange,
+                "{\"errcode\":790016,\"errmsg\":\"program failed, hint: [trace123]\"}"));
+        try {
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config(server), HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+
+            assertEquals(790016, exception.upstreamErrcode());
+            assertEquals("trace123", exception.upstreamHint());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void emitsCompleteErrmsgOnlyWhenDiagnosticsEnabled() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange,
+                "{\"errcode\":790016,\"errmsg\":\"program failed, hint: [trace123]\","
+                        + "\"response_data\":\"sensitive-response-data\"}"));
+        try {
+            Config config = new Config(Map.of(
+                    "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                    "WECOM_CHATDATA_ABILITY_ID", "ability-1",
+                    "WECOM_CHATDATA_DIAGNOSTICS", "true"));
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            String stderr = captureStderr(() -> assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2))));
+
+            JsonObject event = JsonParser.parseString(stderr.trim()).getAsJsonObject();
+            assertEquals("wecom.chatdata.upstream_diagnostic", event.get("event").getAsString());
+            assertEquals("/cgi-bin/chatdata/sync_call_program", event.get("path").getAsString());
+            assertEquals(200, event.get("httpStatus").getAsInt());
+            assertEquals(790016, event.get("errcode").getAsInt());
+            assertEquals("program failed, hint: [trace123]", event.get("errmsg").getAsString());
+            assertEquals(5, event.size());
+            assertFalse(stderr.contains("access_token"));
+            assertFalse(stderr.contains("installation-token"));
+            assertFalse(stderr.contains("sensitive-response-data"));
+            assertFalse(stderr.contains("program-1"));
+            assertFalse(stderr.contains("ability-1"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void doesNotEmitUpstreamErrmsgWhenDiagnosticsDisabled() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange,
+                "{\"errcode\":790016,\"errmsg\":\"secret upstream diagnostic\"}"));
+        try {
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config(server), HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            String stderr = captureStderr(() -> assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2))));
+
+            assertTrue(stderr.isBlank(), stderr);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void ignoresOversizedErrmsgWithoutLeakingIt() throws Exception {
+        String oversized = "错".repeat(1366);
+        HttpServer server = server(exchange -> respond(exchange,
+                "{\"errcode\":790016,\"errmsg\":\"" + oversized + "\"}"));
+        try {
+            Config config = new Config(Map.of(
+                    "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                    "WECOM_CHATDATA_ABILITY_ID", "ability-1",
+                    "WECOM_CHATDATA_DIAGNOSTICS", "true"));
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            String stderr = captureStderr(() -> {
+                WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                        () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+                assertEquals(790016, exception.upstreamErrcode());
+                assertEquals(null, exception.upstreamHint());
+            });
+
+            assertTrue(stderr.isBlank(), stderr);
+            assertFalse(stderr.contains(oversized));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void ignoresMissingOrNonStringErrmsg() throws Exception {
+        assertInvalidErrmsgNotLogged("{\"errcode\":790016}");
+        assertInvalidErrmsgNotLogged(
+                "{\"errcode\":790016,\"errmsg\":{\"secret\":\"must-not-log\"}}");
+        assertInvalidHintNotExposed("{\"errcode\":790016,\"errmsg\":\"hint: [bad hint]\"}");
+        assertInvalidHintNotExposed("{\"errcode\":790016,\"errmsg\":\"hint: ["
+                + "x".repeat(129) + "]\"}");
+    }
+
+    @Test
+    void preservesProgramErrorWhenDiagnosticsConfigurationIsInvalid() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange,
+                "{\"errcode\":790016,\"errmsg\":\"program failed, hint: [trace123]\"}"));
+        try {
+            Config config = new Config(Map.of(
+                    "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                    "WECOM_CHATDATA_ABILITY_ID", "ability-1",
+                    "WECOM_CHATDATA_DIAGNOSTICS", "invalid"));
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+
+            assertEquals(790016, exception.upstreamErrcode());
+            assertEquals("trace123", exception.upstreamHint());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void extractsAndLogsInnerProgramError() throws Exception {
+        JsonObject outer = new JsonObject();
+        outer.addProperty("errcode", 0);
+        outer.addProperty("errmsg", "ok");
+        outer.addProperty("response_data",
+                "{\"errcode\":790016,\"errmsg\":\"inner failed, hint: [inner123]\"}");
+        HttpServer server = server(exchange -> respond(exchange, outer.toString()));
+        try {
+            Config config = new Config(Map.of(
+                    "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                    "WECOM_CHATDATA_ABILITY_ID", "ability-1",
+                    "WECOM_CHATDATA_DIAGNOSTICS", "true"));
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+            AtomicReference<WeComChatDataException> failure = new AtomicReference<>();
+
+            String stderr = captureStderr(() -> failure.set(assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)))));
+
+            assertEquals(790016, failure.get().upstreamErrcode());
+            assertEquals("inner123", failure.get().upstreamHint());
+            JsonObject event = JsonParser.parseString(stderr.trim()).getAsJsonObject();
+            assertEquals("wecom.chatdata.upstream_diagnostic", event.get("event").getAsString());
+            assertEquals("/cgi-bin/chatdata/sync_call_program", event.get("path").getAsString());
+            assertEquals(200, event.get("httpStatus").getAsInt());
+            assertEquals(790016, event.get("errcode").getAsInt());
+            assertEquals("inner failed, hint: [inner123]", event.get("errmsg").getAsString());
+            assertEquals(5, event.size());
         } finally {
             server.stop(0);
         }
@@ -195,6 +364,61 @@ class WeComChatDataGatewayTest {
             Thread.currentThread().interrupt();
             throw new IOException("test server interrupted", exception);
         }
+    }
+
+    private static void assertInvalidErrmsgNotLogged(String responseBody) throws Exception {
+        HttpServer server = server(exchange -> respond(exchange, responseBody));
+        try {
+            Config config = new Config(Map.of(
+                    "WECOM_CHATDATA_PROGRAM_ID", "program-1",
+                    "WECOM_CHATDATA_ABILITY_ID", "ability-1",
+                    "WECOM_CHATDATA_DIAGNOSTICS", "true"));
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config, HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+
+            String stderr = captureStderr(() -> {
+                WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                        () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+                assertEquals(790016, exception.upstreamErrcode());
+                assertEquals(null, exception.upstreamHint());
+            });
+
+            assertTrue(stderr.isBlank(), stderr);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static void assertInvalidHintNotExposed(String responseBody) throws Exception {
+        HttpServer server = server(exchange -> respond(exchange, responseBody));
+        try {
+            WeComChatDataGateway gateway = WeComChatDataGateway.forTests(config(server), HttpClient.newHttpClient(),
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    (ignored, timeout) -> "installation-token");
+            WeComChatDataException exception = assertThrows(WeComChatDataException.class,
+                    () -> gateway.sync(installation(), "", 200, Duration.ofSeconds(2)));
+            assertEquals(790016, exception.upstreamErrcode());
+            assertEquals(null, exception.upstreamHint());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static String captureStderr(ThrowingRunnable runnable) throws Exception {
+        PrintStream original = System.err;
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(bytes, true, StandardCharsets.UTF_8));
+            runnable.run();
+            return bytes.toString(StandardCharsets.UTF_8);
+        } finally {
+            System.setErr(original);
+        }
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     private interface Handler {

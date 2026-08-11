@@ -19,11 +19,22 @@ public class TemplateEntity {
     private String name;
     private String body;
     private String status;
+    private String category;
+    private String templateType;
+    private String componentsJsonb;
+    private String examplesJsonb;
+    private Integer messageSendTtlSeconds;
+    private Boolean allowSend;
+    private String providerAuditStatus;
+    private String rejectionReason;
+    private String qualityScore;
     private Instant providerUpdatedAt;
     private String metadataJsonb;
     private Instant lastSyncedAt;
     private Instant createdAt;
     private Instant updatedAt;
+    private Instant deletedAt;
+    private Long version;
 
     public UUID getId() {
         return id;
@@ -81,6 +92,78 @@ public class TemplateEntity {
         this.status = status;
     }
 
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = category;
+    }
+
+    public String getTemplateType() {
+        return templateType;
+    }
+
+    public void setTemplateType(String templateType) {
+        this.templateType = templateType;
+    }
+
+    public String getComponentsJsonb() {
+        return componentsJsonb;
+    }
+
+    public void setComponentsJsonb(String componentsJsonb) {
+        this.componentsJsonb = componentsJsonb;
+    }
+
+    public String getExamplesJsonb() {
+        return examplesJsonb;
+    }
+
+    public void setExamplesJsonb(String examplesJsonb) {
+        this.examplesJsonb = examplesJsonb;
+    }
+
+    public Integer getMessageSendTtlSeconds() {
+        return messageSendTtlSeconds;
+    }
+
+    public void setMessageSendTtlSeconds(Integer messageSendTtlSeconds) {
+        this.messageSendTtlSeconds = messageSendTtlSeconds;
+    }
+
+    public Boolean getAllowSend() {
+        return allowSend;
+    }
+
+    public void setAllowSend(Boolean allowSend) {
+        this.allowSend = allowSend;
+    }
+
+    public String getProviderAuditStatus() {
+        return providerAuditStatus;
+    }
+
+    public void setProviderAuditStatus(String providerAuditStatus) {
+        this.providerAuditStatus = providerAuditStatus;
+    }
+
+    public String getRejectionReason() {
+        return rejectionReason;
+    }
+
+    public void setRejectionReason(String rejectionReason) {
+        this.rejectionReason = rejectionReason;
+    }
+
+    public String getQualityScore() {
+        return qualityScore;
+    }
+
+    public void setQualityScore(String qualityScore) {
+        this.qualityScore = qualityScore;
+    }
+
     public Instant getProviderUpdatedAt() {
         return providerUpdatedAt;
     }
@@ -119,5 +202,21 @@ public class TemplateEntity {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public Long getVersion() {
+        return version;
+    }
+
+    public void setVersion(Long version) {
+        this.version = version;
     }
 }

@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.callrecord.ContactTimelineService;
 import com.crmforlogistics.messagecenter.callrecord.PhoneRepository;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -82,7 +83,74 @@ public class App {
             System.out.println(GSON.toJson(new ChatAppHistorySyncService(config).syncTemplates()));
             return;
         }
-        System.out.println("Usage: ./message-center-demo.ps1 web|bootstrap-admin|contacts|receive|sync|sync-templates");
+        if ("wecom-access-token".equalsIgnoreCase(command)) {
+            String authCorpId = requiredOption(args, "--auth-corp-id");
+            System.out.println(fetchWeComAccessToken(config, authCorpId));
+            return;
+        }
+        if ("wecom-debug-access-token".equalsIgnoreCase(command)) {
+            if (args.length != 1) {
+                throw new IllegalArgumentException("Usage: wecom-debug-access-token");
+            }
+            System.out.println(fetchDebugWeComAccessToken(config));
+            return;
+        }
+        System.out.println("Usage: ./message-center-demo.ps1 web|bootstrap-admin|contacts|receive|sync|sync-templates|wecom-access-token --auth-corp-id <企业ID>|wecom-debug-access-token");
+    }
+
+    static String fetchWeComAccessToken(Config config, String authCorpId) throws Exception {
+        WeComAuthorizationStore authorizationStore = new WeComAuthorizationStore(config);
+        WeComAccessTokenService accessTokens = new WeComAccessTokenService(
+                config, new WeComAuthorizationGateway(config));
+        return fetchWeComAccessToken(config, authCorpId, authorizationStore, accessTokens);
+    }
+
+    static String fetchWeComAccessToken(Config config, String authCorpId,
+                                        WeComAuthorizationStore authorizationStore,
+                                        WeComAccessTokenService accessTokens) throws Exception {
+        if (config.wecomSuiteId().isBlank()) {
+            throw new IllegalArgumentException("WECOM_SUITE_ID is required");
+        }
+        if (authCorpId == null || authCorpId.isBlank()) {
+            throw new IllegalArgumentException("--auth-corp-id is required");
+        }
+        WeComAuthorizationStore.ResolvedInstallation installation = authorizationStore.resolveActive(
+                config.wecomSuiteId(), authCorpId.trim());
+        return accessTokens.accessToken(installation);
+    }
+
+    static String fetchDebugWeComAccessToken(Config config) throws Exception {
+        WeComAuthorizationGateway gateway = new WeComAuthorizationGateway(config);
+        return fetchDebugWeComAccessToken(config, gateway::getDevelopedAppToken);
+    }
+
+    static String fetchDebugWeComAccessToken(Config config,
+                                             WeComAccessTokenService.DevelopedAppTokenProvider provider)
+            throws Exception {
+        String corpId = config.value("WECOM_DEBUG_CORP_ID", config.wecomCorpId()).trim();
+        String corpSecret = config.value("WECOM_DEBUG_CORP_SECRET",
+                config.value("WECOM_PERMANENT_CODE", config.wecomSecret())).trim();
+        if (corpId.isBlank()) {
+            throw new IllegalArgumentException("WECOM_DEBUG_CORP_ID or WECOM_CORP_ID is required");
+        }
+        if (corpSecret.isBlank()) {
+            throw new IllegalArgumentException(
+                    "WECOM_DEBUG_CORP_SECRET, WECOM_PERMANENT_CODE or WECOM_SECRET is required");
+        }
+        WeComAuthorizationGateway.CorpTokenResponse response = provider.fetch(
+                corpId, corpSecret, Duration.ofSeconds(10));
+        if (response.accessToken() == null || response.accessToken().isBlank()) {
+            throw new IllegalStateException("企业微信未返回 access_token");
+        }
+        return response.accessToken();
+    }
+
+    private static String requiredOption(String[] args, String option) {
+        if (args.length != 3 || !option.equals(args[1]) || args[2].isBlank()) {
+            throw new IllegalArgumentException(
+                    "Usage: wecom-access-token --auth-corp-id <企业ID>");
+        }
+        return args[2].trim();
     }
 
     static BootstrapResult bootstrapAdmin(Config config) throws Exception {
@@ -168,6 +236,8 @@ public class App {
         WeComLoginAttemptService weComLoginAttempts = new WeComLoginAttemptService(config, authorizationStore);
         WeComChatDataSyncService chatDataSync = accessTokens == null ? null
                 : new WeComChatDataSyncService(config, new WeComChatDataGateway(config, accessTokens));
+        WeComChatDataSyncRuntime weComChatDataRuntime =
+                WeComChatDataSyncRuntime.open(config, authorizationStore, chatDataSync);
         WeComDailySummaryRuntime dailySummary = WeComDailySummaryRuntime.open(
                 config, authorizationStore, accessTokens);
         EventHub events = new EventHub();
@@ -196,6 +266,7 @@ public class App {
         } catch (Exception startupFailure) {
             closeCallRuntime(callRuntime);
             dailySummary.close();
+            weComChatDataRuntime.close();
             events.close();
             throw startupFailure;
         }
@@ -219,12 +290,14 @@ public class App {
             server.start();
             templateRuntime.start();
             messageRuntime.start();
+            weComChatDataRuntime.start();
         } catch (Exception startupFailure) {
             server.stop(0);
             closeCallRuntime(callRuntime);
             messageRuntime.close();
             templateRuntime.close();
             dailySummary.close();
+            weComChatDataRuntime.close();
             events.close();
             throw startupFailure;
         }
@@ -233,6 +306,7 @@ public class App {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             messageRuntime.close();
             templateRuntime.close();
+            weComChatDataRuntime.close();
             closeCallRuntime(finalCallRuntime);
             finalDailySummary.close();
             events.close();
@@ -533,12 +607,13 @@ public class App {
             return;
         }
         if ("POST".equals(method) && "/api/v1/wecom/conversation-view/sessions".equals(weComPath)) {
-            JsonObject body = readViewerJson(exchange, "conversationId", "contactPointId", "viewerAuthToken");
+            JsonObject body = readViewerJson(exchange, "conversationId", "contactPointId", "viewerAuthToken", "messageIds");
             String contactPointId = json(body, "contactPointId");
             String viewerAuthToken = json(body, "viewerAuthToken");
+            List<String> messageIds = jsonStringList(body, "messageIds", 15);
             if (localWeCom != null) {
                 requireReadableContactPoint(store, contactPointId);
-                writeJson(exchange, 200, localWeCom.createSession(contactPointId, viewerAuthToken));
+                writeJson(exchange, 200, localWeCom.createSession(contactPointId, viewerAuthToken, messageIds));
                 return;
             }
             try {
@@ -551,14 +626,8 @@ public class App {
                 }
                 throw denied;
             }
-            WeComViewerService.ViewerSyncContext syncContext = weComViewer.viewerSyncContext(viewerAuthToken);
-            if (chatDataSync == null) {
-                throw new WeComChatDataException("WECOM_CHATDATA_NOT_CONFIGURED", 503,
-                        "企业微信会话同步尚未配置");
-            }
-            chatDataSync.sync(syncContext);
             writeJson(exchange, 200, weComViewer.createViewerSession(
-                    contactPointId, viewerAuthToken));
+                    contactPointId, viewerAuthToken, messageIds));
             return;
         }
         if ("GET".equals(method) && weComPath.startsWith("/api/v1/wecom/conversation-view/sessions/")) {
@@ -773,6 +842,30 @@ public class App {
         return value.isJsonPrimitive() ? value.getAsString() : value.toString();
     }
 
+    private static List<String> jsonStringList(JsonObject object, String key, int maxItems) {
+        JsonElement value = object.get(key);
+        if (value == null || !value.isJsonArray()) {
+            throw new IllegalArgumentException(key + " must be a JSON array");
+        }
+        JsonArray array = value.getAsJsonArray();
+        if (array.isEmpty() || array.size() > maxItems) {
+            throw new IllegalArgumentException(key + " must contain 1 to " + maxItems + " items");
+        }
+        List<String> result = new ArrayList<>(array.size());
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (JsonElement element : array) {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+                throw new IllegalArgumentException(key + " items must be strings");
+            }
+            String item = element.getAsString().trim();
+            if (item.isBlank() || item.length() > 256 || !seen.add(item)) {
+                throw new IllegalArgumentException(key + " contains an invalid or duplicate item");
+            }
+            result.add(item);
+        }
+        return List.copyOf(result);
+    }
+
     private static int intQuery(Map<String, String> query, String name, int defaultValue) {
         String value = query.get(name);
         if (value == null || value.isBlank()) return defaultValue;
@@ -950,10 +1043,15 @@ public class App {
 	    .chip { font-size:11px; padding:2px 6px; border-radius:999px; color:#fff; }
 	    .chip.email { background:var(--email); } .chip.chatapp { background:var(--chat); } .chip.wecom { background:var(--wecom); }
 	    .thread { flex:1 1 auto; min-height:0; overflow:auto; padding:14px 16px; background:#fbfcff; }
+	    .thread.wecom-standalone-thread { padding:0; }
 	    .message-row { display:grid; grid-template-columns:42px minmax(0, 76%); align-items:start; gap:10px; margin:0 0 12px; }
 	    .message-row.outbound { grid-template-columns:minmax(0, 76%) 42px; justify-content:end; }
 	    .message-row.outbound .msg-avatar { order:2; }
 	    .message-row.outbound .msg-stack { order:1; align-items:flex-end; }
+	    .message-row.wecom-message-row { grid-template-columns:minmax(0,1fr); gap:0; }
+	    .message-row.wecom-message-row .msg-avatar { display:none; }
+	    .message-row.wecom-message-row .msg-stack { width:100%; }
+	    .message-row.wecom-message-row .msg.wecom-message, .message-row.wecom-message-row .wecom-segment-host, .message-row.wecom-message-row .wecom-segment-frame { width:100%; max-width:none; min-width:0; }
 	    .msg-stack { min-width:0; display:flex; flex-direction:column; align-items:flex-start; }
 	    .msg-avatar { width:42px; height:42px; border-radius:50%; display:grid; place-items:center; background:#eef3fb; border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:700; margin-top:0; }
 	    .avatar-icon { position:relative; width:22px; height:22px; display:block; }
@@ -1068,7 +1166,33 @@ public class App {
     .account-split-button { width:30px; height:30px; flex:0 0 auto; }
     .wecom-viewer-panel { display:grid; gap:10px; }
     .wecom-viewer-actions { display:flex; justify-content:flex-end; gap:8px; align-items:center; }
-    .wecom-viewer-container { min-height:160px; border:1px solid var(--hairline); border-radius:6px; background:#fff; overflow:auto; }
+    .wecom-viewer-status { min-height:18px; color:var(--muted); font-size:12px; }
+    .msg.wecom-message { width:fit-content; max-width:min(560px,100%); min-width:0; padding:0; border:0; background:transparent; box-shadow:none; overflow:visible; cursor:default; }
+    .wecom-segment-host { display:inline-grid; gap:4px; width:fit-content; max-width:100%; min-height:0; }
+    .wecom-segment-host.pending { display:inline-grid; }
+    .message-row:has(.wecom-segment-host.pending) { position:fixed; left:-100000px; top:0; width:min(760px,calc(100vw - 32px)); opacity:0; pointer-events:none; }
+    .wecom-contact-window { position:fixed; left:-100000px; top:0; width:min(760px,calc(100vw - 32px)); opacity:0; pointer-events:none; contain:layout style paint; }
+    .wecom-segment-frame { display:grid; box-sizing:border-box; width:min(560px,100%); min-width:240px; min-height:36px; overflow:visible; border:0; background:transparent; font-size:13px; }
+    .wecom-segment-frame iframe { width:100%; height:100%; display:block; border:0; }
+    .message-row.wecom-standalone-row { margin-bottom:0; }
+    .wecom-standalone-row .msg.wecom-message, .wecom-standalone-row .wecom-segment-host, .wecom-standalone-row .wecom-segment-frame { width:100%; max-width:none; min-width:0; }
+    .wecom-standalone-row .msg-meta-line { display:none; }
+    .wecom-segment-host.expanded { width:min(560px,100%); }
+    .wecom-segment-host.expanded > .wecom-segment-frame { display:none; }
+    .wecom-message-preview { box-sizing:border-box; display:grid; grid-template-rows:auto minmax(0,auto); gap:8px; width:min(560px,100%); padding:12px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+    .wecom-message-preview-toolbar { min-height:24px; display:flex; align-items:center; justify-content:flex-end; }
+    .wecom-message-collapse { width:24px; height:24px; padding:0; display:grid; place-items:center; border:0; background:transparent; }
+    .wecom-message-preview-content { display:grid; place-items:center; width:100%; min-width:0; min-height:0; overflow:hidden; }
+    .wecom-message-preview-content iframe { display:block; width:100%; height:100%; border:0; }
+    .msg.wecom-segment-message.active { outline:none; }
+    .wecom-segment-status { display:flex; align-items:center; gap:6px; height:32px; padding:4px 7px; color:var(--muted); font-size:11px; }
+    .wecom-segment-status.error { color:var(--danger); background:#fff8f5; }
+    .wecom-message-retry { width:22px; height:22px; padding:0; display:grid; place-items:center; border:0; background:transparent; color:var(--danger); }
+    .wecom-message-retry:hover { background:#ffede8; }
+    .wecom-message-warning { width:12px; height:12px; display:inline-grid; place-items:center; border:1px solid currentColor; border-radius:50%; font-size:9px; line-height:1; }
+    .wecom-render-spinner, .wecom-contact-spinner { width:12px; height:12px; border:2px solid #d8def0; border-top-color:var(--accent); border-radius:50%; animation:wecom-spin .8s linear infinite; display:inline-block; flex:0 0 auto; }
+    .wecom-contact-spinner { margin-left:5px; vertical-align:-2px; }
+    @keyframes wecom-spin { to { transform:rotate(360deg); } }
     .wecom-login-screen { min-height:100vh; display:grid; place-items:center; padding:24px; background:#f7f7f8; }
     .wecom-login-screen[hidden], .shell[hidden] { display:none; }
     .wecom-login-card { width:min(392px,100%); min-width:0; display:grid; justify-items:center; gap:14px; padding:28px 24px; background:#fff; border:1px solid var(--line); border-radius:12px; box-shadow:0 18px 50px rgba(32,33,36,.10); }
@@ -1152,7 +1276,7 @@ public class App {
           <div class="contact-points-line" id="threadSub">邮件和 ChatApp 按时间穿插显示</div>
         </div>
         <div class="workspace-actions">
-          <div class="sync-actions"><button id="syncEmailBtn">收取邮件</button><button id="syncChatBtn">同步 WhatsApp</button><button id="syncWeComBtn">同步企业微信会话</button></div>
+          <div class="sync-actions"><button id="syncEmailBtn">收取邮件</button><button id="syncChatBtn">同步 WhatsApp</button><button id="syncWeComBtn">立即同步企业微信</button></div>
           <div class="utility-actions"><button class="icon-button" id="refreshBtn" type="button" title="刷新" aria-label="刷新"><span class="tool-icon refresh"></span></button></div>
         </div>
       </div>
@@ -1197,7 +1321,7 @@ public class App {
   </div>
   <div class="toast" id="toast"></div>
   <script>
-    const THREAD_PAGE_SIZE = 10;
+    const THREAD_PAGE_SIZE = 15;
     const THREAD_PAGE_CACHE_LIMIT = 20;
     const THREAD_PAGE_MAX_MESSAGES = 200;
 	const LOCAL_DEV_MODE = __LOCAL_DEV_MODE__;
@@ -1209,8 +1333,39 @@ public class App {
     const WECOM_SDK_SRC = 'https://wwcdn.weixin.qq.com/node/open/js/wecom-jssdk-2.3.4.js';
     const WECOM_JWXWORK_SRC = 'https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js';
     const WECOM_LOGIN_EXPIRED_MARKERS = ['42006','42003','40029','Missing open sid'];
+    const WECOM_VIEWER_AUTO_REFRESH_MS = 60000;
+    const WECOM_VIEWER_MOUNT_RETRY_BASE_MS = 5000;
+    const WECOM_VIEWER_MOUNT_RETRY_MAX_MS = 60000;
+    const WECOM_RENDER_CONCURRENCY = 4;
+    const WECOM_VIEWPORT_COMMIT_MIN = 5;
+    const WECOM_VIEWPORT_COMMIT_MAX = 8;
+    const WECOM_ACTIVE_FRAME_LIMIT = 30;
+    const WECOM_ACTIVE_CONTACT_SEGMENT_LIMIT = 15;
+    const WECOM_RENDER_QUEUE_LIMIT = 15;
+    const WECOM_SEGMENT_MESSAGE_LIMIT = 15;
+    const WECOM_MIXED_SEGMENT_MAX = 6;
+    const WECOM_CONTACT_WINDOW_LIMIT = 3;
+    const WECOM_EXPANDED_PREVIEW_LIMIT = 15;
+    const WECOM_PREVIEW_MIN_HEIGHT = 120;
+    const WECOM_PREVIEW_DEFAULT_HEIGHT = 360;
+    const WECOM_PREVIEW_MAX_HEIGHT = 560;
     let weComSdkLoadPromise = null;
     let weComJwxworkLoadPromise = null;
+    const weComViewerLoadPromises = new Map();
+    const weComViewerMountPromises = new Map();
+    const weComViewerMountRetryState = new Map();
+    let weComTimelineViewer = null;
+	let weComRenderGeneration = 0;
+	const weComSegmentFrameRegistry = new Map();
+	const weComContactWindows = new Map();
+	let weComCommittedContactPointId = '';
+	let weComPreparingContactPointId = '';
+	const weComRenderQueue = [];
+	let weComActiveRenderJobs = 0;
+	const weComCreatingSegmentKeys = new Map();
+    const weComSegmentMessages = new Map();
+    const weComExpandedPreviews = new Map();
+    let weComExpandedPreviewSequence = 0;
 	const state = { contacts: [], templates: [], capabilities: {}, selectedPointId: '', selectedMessageId: '', selectedCallRecordId:'', selectedChannel: '', selectedMode: 'text', mediaType: 'image', emailAttachments: [], lastKey: '', contactsRenderKey:'', threadRenderKeyByContact:{}, threadPages:{}, threadPageAccessOrder:[], threadLoadSeqByContact:{}, threadTouchY:0, detailCollapsed:false, profileDirty:false, profileSavedPointId:'', profileSavedTimer:null, selectedPointByChannel:{}, contactSnapshots:{}, unreadByContact:{}, isUserScrolling:false, pendingSilentRefresh:false, wecomLoginAttempt:null, wecomAuth:null, wecomAuthExpiresAt:0, viewerReloginPromise:null, messageCenterInitialized:false, eventSource:null, refreshTimer:null, callDetail:null, callDetailGeneration:0, callDetailPollTimer:null, callDetailPollFailures:0, callAudioRenewTimer:null, callAudioRecovered:false, callAudioSessionReady:false };
     const emojiSet = [
       '😀','😃','😄','😁','😆','😂','🤣','😊','🙂','😉','😍','😘',
@@ -1354,6 +1509,10 @@ public class App {
       $('wwLoginPanel').innerHTML = '';
       $('wecomLoginScreen').hidden = true;
       $('shell').hidden = false;
+      if (!LOCAL_DEV_MODE) {
+        Promise.all([loadWeComSdk(), loadWeComJwxwork()])
+          .catch(error => console.warn('企业微信会话组件预加载失败', error));
+      }
       try {
         await enterMessageCenter();
       } catch (error) {
@@ -1379,6 +1538,18 @@ public class App {
       state.wecomAuth = null;
       state.wecomAuthExpiresAt = 0;
       state.wecomLoginAttempt = null;
+      weComTimelineViewer = null;
+      cancelWeComRenderWork();
+      clearWeComInlinePreviews();
+      weComSegmentFrameRegistry.forEach(entry => entry.instance?.destroy?.());
+      weComSegmentFrameRegistry.clear();
+      weComViewerLoadPromises.clear();
+      weComViewerMountPromises.clear();
+      weComViewerMountRetryState.clear();
+      weComContactWindows.forEach(windowState => windowState.container?.remove?.());
+      weComContactWindows.clear();
+      weComCommittedContactPointId = '';
+      weComPreparingContactPointId = '';
       if (state.eventSource) state.eventSource.close();
       state.eventSource = null;
       if (state.refreshTimer) clearInterval(state.refreshTimer);
@@ -1453,6 +1624,7 @@ public class App {
 	async function refreshInBackground(silent) {
 	  try {
 		await refreshAll(silent);
+		await refreshWeComViewerIfDue();
 	  } catch (error) {
 		if (!(await handleViewerAuthFailure(error))) toast(`刷新失败：${error.message}`);
 	  }
@@ -1497,8 +1669,10 @@ public class App {
 	          headers: { 'Content-Type': 'application/json', 'X-WeCom-Viewer-Auth': login.viewerAuthToken },
 	          body: '{}'
 	        });
-	        toast(`企业微信同步完成：${result.stored || 0} 条，跳过 ${result.skipped || 0} 条`);
-	        await refreshAll(false);
+		        toast(`企业微信同步完成：${result.stored || 0} 条，跳过 ${result.skipped || 0} 条`);
+		        await refreshAll(false);
+		        weComTimelineViewer = null;
+		        await refreshWeComViewerIfDue();
 	      } catch (error) {
 	        if (isWeComLoginExpired(error)) {
 	          await returnToWeComLogin('企业微信登录已失效，请重新扫码');
@@ -1894,8 +2068,164 @@ public class App {
       }
     }
 
+    function getOrCreateWeComContactWindow(contactPointId) {
+      pruneExpiredWeComContactWindows();
+      let windowState = weComContactWindows.get(contactPointId);
+      if (windowState) {
+        windowState.lastUsed = Date.now();
+        return windowState;
+      }
+      const container = document.createElement('div');
+      container.className = 'wecom-contact-window';
+      container.dataset.contactPointId = contactPointId;
+      document.body.appendChild(container);
+      windowState = {
+        contactPointId,
+        container,
+        viewer:null,
+        ready:false,
+        committed:false,
+        generation:0,
+        lastUsed:Date.now()
+      };
+      weComContactWindows.set(contactPointId, windowState);
+      return windowState;
+    }
+
+    function trimWeComContactWindows() {
+      while (weComContactWindows.size > WECOM_CONTACT_WINDOW_LIMIT) {
+        const candidate = Array.from(weComContactWindows.values())
+          .filter(item => item.contactPointId !== state.selectedPointId
+            && item.contactPointId !== weComCommittedContactPointId)
+          .sort((left, right) => left.lastUsed - right.lastUsed)[0];
+        if (!candidate) break;
+        Array.from(weComSegmentFrameRegistry.entries())
+          .filter(([, entry]) => entry.contactPointId === candidate.contactPointId)
+          .forEach(([key, entry]) => {
+            collapseWeComInlinePreviewForHost(entry.host);
+            entry.instance?.destroy?.();
+            weComSegmentFrameRegistry.delete(key);
+          });
+        clearWeComInlinePreviews(candidate.contactPointId);
+        weComViewerMountRetryState.delete(candidate.contactPointId);
+        candidate.container.remove();
+        weComContactWindows.delete(candidate.contactPointId);
+      }
+    }
+
+    function pruneExpiredWeComContactWindows() {
+      const now = Date.now();
+      Array.from(weComContactWindows.values()).forEach(windowState => {
+        if (!windowState.viewer?.expiresAt || now < windowState.viewer.expiresAt) return;
+        invalidateWeComContactWindow(windowState.contactPointId);
+      });
+    }
+
+    function retainRecentWeComFrames(contactPointId, limit = WECOM_VIEWPORT_COMMIT_MAX) {
+      const windowState = weComContactWindows.get(contactPointId);
+      if (!windowState) return;
+      const segmentIds = Array.from(windowState.container.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]'))
+        .map(host => host.dataset.wecomSegmentId || '')
+        .filter(Boolean);
+      const retained = new Set(segmentIds.slice(-limit));
+      Array.from(weComSegmentFrameRegistry.entries())
+        .filter(([, entry]) => entry.contactPointId === contactPointId)
+        .forEach(([key, entry]) => {
+          const segmentId = key.slice(contactPointId.length + 1);
+          if (retained.has(segmentId)) return;
+          collapseWeComInlinePreviewForHost(entry.host);
+          entry.instance?.destroy?.();
+          entry.host?.replaceChildren?.();
+          entry.host?.classList?.add('pending');
+          weComSegmentFrameRegistry.delete(key);
+        });
+      if (windowState.viewer?.detail?.messages) {
+        const retainedMessageIds = new Set(Array.from(retained)
+          .flatMap(segmentId => (weComSegmentMessages.get(segmentId) || []).map(weComMessageId))
+          .filter(Boolean));
+        windowState.viewer.detail.messages = windowState.viewer.detail.messages
+          .filter(message => retainedMessageIds.has(message.msgid));
+        windowState.viewer.loadedAt = 0;
+      }
+    }
+
+    function invalidateWeComContactWindow(contactPointId) {
+      clearWeComInlinePreviews(contactPointId);
+      weComViewerMountRetryState.delete(contactPointId);
+      Array.from(weComSegmentFrameRegistry.entries())
+        .filter(([, entry]) => entry.contactPointId === contactPointId)
+        .forEach(([key, entry]) => {
+          entry.instance?.destroy?.();
+          entry.host?.replaceChildren?.();
+          entry.host?.classList?.add?.('pending');
+          weComSegmentFrameRegistry.delete(key);
+        });
+      if (weComTimelineViewer?.contactPointId === contactPointId) {
+        weComTimelineViewer = null;
+      }
+      const windowState = weComContactWindows.get(contactPointId);
+      if (!windowState) return;
+      windowState.viewer = null;
+      windowState.ready = false;
+      if (contactPointId !== weComCommittedContactPointId) {
+        windowState.container.replaceChildren();
+        windowState.container.remove();
+        weComContactWindows.delete(contactPointId);
+      }
+    }
+
+    function weComContactWindowUsable(windowState) {
+      if (!windowState?.ready) return false;
+      return !windowState.viewer?.expiresAt || Date.now() < windowState.viewer.expiresAt;
+    }
+
+    function stashCommittedWeComContactWindow() {
+      if (!weComCommittedContactPointId) return;
+      const current = weComContactWindows.get(weComCommittedContactPointId);
+      const threadEl = $('thread');
+      if (!current || !threadEl || !threadEl.children.length) return;
+      current.container.replaceChildren(...Array.from(threadEl.children));
+      current.committed = false;
+      current.lastUsed = Date.now();
+      retainRecentWeComFrames(current.contactPointId);
+    }
+
+    function commitWeComContactWindow(contactPointId, windowState) {
+      if (!windowState || windowState.contactPointId !== contactPointId || !windowState.ready) return false;
+      const threadEl = $('thread');
+      if (!threadEl) return false;
+      if (weComCommittedContactPointId && weComCommittedContactPointId !== contactPointId) {
+        stashCommittedWeComContactWindow();
+      } else if (weComCommittedContactPointId !== contactPointId) {
+        threadEl.replaceChildren();
+      }
+      if (windowState.container.children.length) {
+        threadEl.replaceChildren(...Array.from(windowState.container.children));
+      }
+      threadEl.classList?.toggle?.('wecom-standalone-thread',
+        weComLayoutMode(selectedContact()) === 'standalone');
+      windowState.committed = true;
+      windowState.lastUsed = Date.now();
+      weComCommittedContactPointId = contactPointId;
+      if (weComPreparingContactPointId === contactPointId) weComPreparingContactPointId = '';
+      weComTimelineViewer = windowState.viewer;
+      bindThreadInteractions(threadEl);
+      setWeComTitleLoading(false);
+      if (!LOCAL_DEV_MODE && windowState.viewer) {
+        mountWeComTimelineMessages(windowState.viewer.detail, windowState.viewer.viewerAuthToken,
+          contactPointId, threadEl, windowState.generation, false)
+          .catch(error => toast(`企业微信消息后台加载失败：${error.message}`));
+      }
+      resizeWeComStandaloneFrames(threadEl);
+      requestAnimationFrame(() => threadEl.scrollTop = threadEl.scrollHeight);
+      trimWeComContactWindows();
+      return true;
+    }
+
     async function selectContact(id) {
-      if (state.selectedPointId !== id) {
+      const changed = state.selectedPointId !== id;
+      const generation = changed ? cancelWeComRenderWork() : weComRenderGeneration;
+      if (changed) {
         state.profileDirty = false;
         state.profileSavedPointId = '';
         closeProfileModal();
@@ -1907,44 +2237,286 @@ public class App {
       const contact = state.contacts.find(c => c.id === id);
       if (contact) state.selectedChannel = contact.channels.includes(state.selectedChannel) ? state.selectedChannel : contact.channels[0];
       renderContacts();
+      updateContactHeader(contact);
+      const point = wecomPoint(contact);
+      let cachedWindow = point ? weComContactWindows.get(id) : null;
+      if (cachedWindow && !weComContactWindowUsable(cachedWindow)) {
+        invalidateWeComContactWindow(id);
+        cachedWindow = null;
+      }
+      if (cachedWindow?.ready && cachedWindow.container.children.length) {
+        commitWeComContactWindow(id, cachedWindow);
+        renderComposer();
+        renderContactDetail(contact);
+        await refreshWeComViewerIfDue();
+        return;
+      }
+      if (point && changed) {
+        const windowState = getOrCreateWeComContactWindow(id);
+        weComPreparingContactPointId = id;
+        windowState.ready = false;
+        windowState.generation = generation;
+        windowState.container.replaceChildren();
+        setWeComTitleLoading(true);
+        await loadThread(id, false, { target:windowState.container, restoreViewer:false });
+        if (generation !== weComRenderGeneration || state.selectedPointId !== id) return;
+        renderComposer();
+        renderContactDetail(contact);
+        await loadWeComViewer(contact, { automatic:true, windowState, generation });
+        if (generation !== weComRenderGeneration || state.selectedPointId !== id) return;
+        if (!windowState.ready) {
+          setWeComTitleLoading(false);
+          return;
+        }
+        commitWeComContactWindow(id, windowState);
+        return;
+      }
+      if (weComCommittedContactPointId && weComCommittedContactPointId !== id) {
+        stashCommittedWeComContactWindow();
+        weComCommittedContactPointId = '';
+        weComTimelineViewer = null;
+      }
+      weComPreparingContactPointId = '';
       await loadThread(id, false);
       renderComposer();
       renderContactDetail(contact);
+      await refreshWeComViewerIfDue();
     }
 
-    function renderThreadMessages(contact, items) {
-      updateContactHeader(contact);
-      const threadEl = $('thread');
-	  threadEl.innerHTML = items.map(item => {
-		if (item.type === 'callRecord') return renderCallRecordCard(item);
-		const m = item.payload || {};
+    function timelineItemKey(item) {
+      return `${item?.type || 'message'}:${item?.sortId || item?.payload?.id || ''}`;
+    }
+
+    function timelineItemFingerprint(item) {
+      const message = item?.payload || {};
+      return [item?.occurredAt || '', message.id || '', message.direction || '',
+        message.status || '', message.statusTimestamp || '', message.title || '',
+        message.text || '', message.summary || '', message.mediaUrl || '',
+        message.state || '', message.version || 0].join('~');
+    }
+
+    function weComLayoutMode(contact) {
+      const channels = new Set([
+        ...(contact?.channels || []),
+        ...(contact?.points || []).map(point => point?.channel)
+      ].filter(Boolean));
+      return channels.size === 1 && channels.has('wecom') ? 'standalone' : 'mixed';
+    }
+
+    function balancedWeComSegmentSizes(messageCount, maxWeComMessages = WECOM_MIXED_SEGMENT_MAX) {
+      const total = Math.max(0, Number(messageCount) || 0);
+      const max = Math.max(1, Number(maxWeComMessages) || WECOM_MIXED_SEGMENT_MAX);
+      if (!total) return [];
+      const groupCount = Math.ceil(total / max);
+      const base = Math.floor(total / groupCount);
+      const largerGroups = total % groupCount;
+      return Array.from({ length:groupCount }, (_, index) =>
+        base + (index >= groupCount - largerGroups ? 1 : 0));
+    }
+
+    function standaloneWeComWindow(items, maxWeComMessages = WECOM_SEGMENT_MESSAGE_LIMIT) {
+      const limit = Math.max(1, Number(maxWeComMessages) || WECOM_SEGMENT_MESSAGE_LIMIT);
+      return (items || [])
+        .filter(item => item?.type === 'message' && item?.payload?.channel === 'wecom')
+        .slice(-limit);
+    }
+
+    function segmentTimelineItems(items, maxWeComMessages = WECOM_SEGMENT_MESSAGE_LIMIT,
+        balanced = false) {
+      const limit = Math.max(1, Number(maxWeComMessages) || WECOM_SEGMENT_MESSAGE_LIMIT);
+      const units = [];
+      let segment = [];
+      const flush = () => {
+        if (balanced) {
+          balancedWeComSegmentSizes(segment.length, limit).forEach(size =>
+            units.push({ kind:'wecom-segment', items:segment.splice(0, size) }));
+          return;
+        }
+        while (segment.length) units.push({ kind:'wecom-segment', items:segment.splice(0, limit) });
+      };
+      (items || []).forEach(item => {
+        if (item?.type === 'message' && item?.payload?.channel === 'wecom') {
+          segment.push(item);
+          if (!balanced && segment.length === limit) flush();
+          return;
+        }
+        flush();
+        units.push({ kind:'item', item });
+      });
+      flush();
+      return units;
+    }
+
+    function weComSegmentId(contactPointId, messages) {
+      const input = `${String(contactPointId || '')}|${(messages || []).map(item => {
+        const payload = item?.payload || {};
+        return String(payload.sourceId || payload.id || '').replace(/^wecom:/, '');
+      }).join('|')}`;
+      let hash = 2166136261;
+      for (let index = 0; index < input.length; index += 1) {
+        hash ^= input.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `wecom-segment-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    function reconcileThreadMessages(contact, items, target) {
+      const layoutMode = weComLayoutMode(contact);
+      const markup = threadMessagesHtml(items, contact?.id || state.selectedPointId || '', layoutMode);
+      if (!target?.querySelectorAll || !document.createElement || !document.createDocumentFragment) {
+        target.innerHTML = markup;
+        pruneDisconnectedWeComInlinePreviews();
+        pruneDisconnectedWeComSegmentFrames();
+        return [];
+      }
+      const staging = document.createElement('div');
+      staging.innerHTML = markup;
+      const rows = commitThreadRows(target, Array.from(staging.children));
+      pruneDisconnectedWeComInlinePreviews();
+      pruneDisconnectedWeComSegmentFrames();
+      return rows;
+    }
+
+    function commitThreadRows(target, rows) {
+      const existing = new Map(Array.from(target.querySelectorAll(':scope > [data-timeline-key]'))
+        .map(row => [row.dataset.timelineKey, row]));
+      const fragment = document.createDocumentFragment();
+      rows.forEach(next => {
+        const current = existing.get(next.dataset.timelineKey);
+        if (!current) {
+          fragment.appendChild(next);
+          return;
+        }
+        existing.delete(next.dataset.timelineKey);
+        const isWeCom = Boolean(current.querySelector('[data-wecom-segment-id]'));
+        if (!isWeCom && current.dataset.renderFingerprint !== next.dataset.renderFingerprint) {
+          fragment.appendChild(next);
+          return;
+        }
+        current.className = next.className;
+        current.dataset.renderFingerprint = next.dataset.renderFingerprint;
+        const currentWeComHost = current.querySelector('[data-wecom-segment-id]');
+        const nextWeComHost = next.querySelector('[data-wecom-segment-id]');
+        if (currentWeComHost && nextWeComHost) {
+          currentWeComHost.dataset.wecomLayout = nextWeComHost.dataset.wecomLayout || 'mixed';
+          const frame = currentWeComHost.querySelector('.wecom-segment-frame');
+          if (frame) {
+            const messages = weComSegmentMessages.get(currentWeComHost.dataset.wecomSegmentId || '') || [];
+            frame.style.height = `${weComSegmentFrameHeight(currentWeComHost, messages.length)}px`;
+          }
+        }
+        const currentMessage = current.querySelector('.msg[data-id]');
+        const nextMessage = next.querySelector('.msg[data-id]');
+        if (currentMessage && nextMessage) currentMessage.className = nextMessage.className;
+        const currentMeta = current.querySelector('.msg-meta-line');
+        const nextMeta = next.querySelector('.msg-meta-line');
+        if (currentMeta && nextMeta) {
+          currentMeta.replaceChildren(...Array.from(nextMeta.childNodes));
+        }
+        fragment.appendChild(current);
+      });
+      target.replaceChildren(fragment);
+      return Array.from(target.children);
+    }
+
+    function threadMessagesHtml(items, contactPointId = state.selectedPointId || '',
+        layoutMode = 'mixed') {
+      const standalone = layoutMode === 'standalone';
+      const segmentLimit = standalone ? WECOM_SEGMENT_MESSAGE_LIMIT : WECOM_MIXED_SEGMENT_MAX;
+      const renderItems = standalone ? standaloneWeComWindow(items, segmentLimit) : items;
+      return segmentTimelineItems(renderItems, segmentLimit, !standalone).map(unit => {
+        if (unit.kind === 'wecom-segment') {
+          const segmentId = weComSegmentId(contactPointId, unit.items);
+          const segmentItems = unit.items.map(item => item.payload || {});
+          weComSegmentMessages.set(segmentId, segmentItems);
+          const first = segmentItems[0] || {};
+          const timelineKey = `wecom-segment:${segmentId}`;
+          const fingerprint = unit.items.map(timelineItemFingerprint).join('|');
+          const direction = first.direction === 'outbound' ? 'outbound' : 'inbound';
+          const meta = [
+            '<span>企业微信</span>',
+            segmentItems.length > 1 ? `<span>${esc(segmentItems.length)} 条连续消息</span>` : '',
+            first.timestamp ? `<span>${esc(timeText(first.timestamp))}</span>` : ''
+          ].filter(Boolean).join('');
+          return `
+            <div class="message-row ${esc(direction)} wecom-message-row${standalone ? ' wecom-standalone-row' : ''}" data-timeline-key="${esc(timelineKey)}" data-render-fingerprint="${esc(fingerprint)}">
+              <div class="msg-avatar"><span class="avatar-icon wecom"></span></div>
+              <div class="msg-stack">
+                <article class="msg ${esc(direction)} wecom-message wecom-segment-message">
+                  <div class="wecom-segment-host pending" data-wecom-segment-id="${esc(segmentId)}" data-wecom-layout="${esc(layoutMode)}"></div>
+                </article>
+                <div class="msg-meta-line">${meta}</div>
+              </div>
+            </div>`;
+        }
+        const item = unit.item;
+        const timelineKey = timelineItemKey(item);
+        const fingerprint = timelineItemFingerprint(item);
+        if (item.type === 'callRecord') {
+          return renderCallRecordCard(item).replace(/^\s*<div /,
+            `<div data-timeline-key=\"${esc(timelineKey)}\" data-render-fingerprint=\"${esc(fingerprint)}\" `);
+        }
+        const m = item.payload || {};
+        const isWeCom = m.channel === 'wecom';
         const direction = m.direction === 'outbound' ? 'outbound' : 'inbound';
         const meta = [
           `<span>${esc(label(m.channel))}</span>`,
           m.timestamp ? `<span>${esc(timeText(m.timestamp))}</span>` : '',
-          `<span class="status-icon ${esc(statusClass(m))}" title="${esc(statusText(m))}" aria-label="${esc(statusText(m))}"></span>`,
-          hasMedia(m) ? `<button class="media-open-link" type="button" data-open-media="${esc(mediaUrl(m))}" data-file-name="${esc(m.fileName || 'attachment')}">打开附件</button>` : ''
+          `<span class=\"status-icon ${esc(statusClass(m))}\" title=\"${esc(statusText(m))}\" aria-label=\"${esc(statusText(m))}\"></span>`,
+          hasMedia(m) ? `<button class=\"media-open-link\" type=\"button\" data-open-media=\"${esc(mediaUrl(m))}\" data-file-name=\"${esc(m.fileName || 'attachment')}\">打开附件</button>` : ''
         ].filter(Boolean).join('');
         const text = bubbleText(m);
+        const body = `${m.title ? `<div class=\"msg-title\">${esc(m.title)}</div>` : ''}
+                ${text ? `<div class=\"msg-text\">${esc(text)}</div>` : ''}
+                ${mediaPreviewHtml(m)}`;
         return `
-          <div class="message-row ${esc(direction)}">
-            <div class="msg-avatar"><span class="avatar-icon ${esc(m.channel || '')}"></span></div>
-            <div class="msg-stack">
-              <article class="msg ${esc(direction)} ${hasMedia(m) ? 'has-media' : ''} ${m.id === state.selectedMessageId ? 'active' : ''}" data-id="${esc(m.id)}">
-                ${m.title ? `<div class="msg-title">${esc(m.title)}</div>` : ''}
-                ${text ? `<div class="msg-text">${esc(text)}</div>` : ''}
-                ${mediaPreviewHtml(m)}
+          <div class=\"message-row ${esc(direction)}\" data-timeline-key=\"${esc(timelineKey)}\" data-render-fingerprint=\"${esc(fingerprint)}\">
+            <div class=\"msg-avatar\"><span class=\"avatar-icon ${esc(m.channel || '')}\"></span></div>
+            <div class=\"msg-stack\">
+              <article class=\"msg ${esc(direction)} ${isWeCom ? 'wecom-message' : ''} ${hasMedia(m) ? 'has-media' : ''} ${m.id === state.selectedMessageId ? 'active' : ''}\" data-id=\"${esc(m.id)}\">
+                ${body}
               </article>
-              <div class="msg-meta-line">${meta}</div>
+              <div class=\"msg-meta-line\">${meta}</div>
             </div>
           </div>`;
-      }).join('') || '<div class="empty">暂无消息</div>';
-      document.querySelectorAll('.msg[data-id]').forEach(item => item.onclick = () => selectMessage(item.dataset.id));
-	  document.querySelectorAll('.call-card[data-call-record-id]').forEach(item => {
+      }).join('') || '<div class=\"empty\">暂无消息</div>';
+    }
+
+    function bindThreadInteractions(threadEl) {
+      threadEl.querySelectorAll('.msg[data-id]').forEach(item => item.onclick = () => selectMessage(item.dataset.id));
+	  threadEl.querySelectorAll('.call-card[data-call-record-id]').forEach(item => {
 		item.onclick = () => openCallRecordDetail(item.dataset.callRecordId);
 		item.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openCallRecordDetail(item.dataset.callRecordId); } };
 	  });
-      document.querySelectorAll('[data-open-media]').forEach(item => item.onclick = event => openAttachment(event, item.dataset.openMedia, item.dataset.fileName));
+      threadEl.querySelectorAll('[data-open-media]').forEach(item => item.onclick = event => openAttachment(event, item.dataset.openMedia, item.dataset.fileName));
+    }
+
+    function renderThreadMessages(contact, items, target = $('thread'), options = {}) {
+      if (target === $('thread')) updateContactHeader(contact);
+      const threadEl = target;
+	  threadEl.classList?.toggle?.('wecom-standalone-thread',
+	    weComLayoutMode(contact) === 'standalone');
+	  reconcileThreadMessages(contact, items, threadEl);
+      bindThreadInteractions(threadEl);
+      if (options.restoreViewer !== false && target === $('thread')) restoreWeComTimelineMessages(threadEl);
+    }
+
+    function weComMessageId(message) {
+      const sourceId = String(message?.sourceId || '').trim();
+      if (sourceId) return sourceId;
+      return String(message?.id || '').replace(/^wecom:/, '').trim();
+    }
+
+    function restoreWeComTimelineMessages(root = $('thread')) {
+      const viewer = weComTimelineViewer;
+      if (!viewer || state.selectedPointId !== viewer.contactPointId) return;
+      if (LOCAL_DEV_MODE) {
+        mountLocalWeComTimelineMessages(viewer.detail, viewer.contactPointId, root);
+        return;
+      }
+      mountWeComTimelineMessages(viewer.detail, viewer.viewerAuthToken, viewer.contactPointId,
+        root, weComRenderGeneration)
+        .catch(error => toast(`企业微信消息恢复失败：${error.message}`));
     }
 
 	function callRecordStateText(value) {
@@ -1986,8 +2558,9 @@ public class App {
 		</div>`;
 	}
 
-    async function loadThread(id, keepScroll) {
-      const threadEl = $('thread');
+    async function loadThread(id, keepScroll, options = {}) {
+      const preparingWindow = id === weComPreparingContactPointId ? weComContactWindows.get(id) : null;
+      const threadEl = options.target || preparingWindow?.container || $('thread');
       const oldBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
       const contact = state.contacts.find(c => c.id === id);
       const requestSeq = nextThreadLoadSeq(id);
@@ -2021,9 +2594,9 @@ public class App {
         return;
       }
       state.threadRenderKeyByContact[id] = key;
-      renderThreadMessages(contact, messagesForRender);
+      renderThreadMessages(contact, messagesForRender, threadEl, { restoreViewer:options.restoreViewer });
       if (keepScroll) requestAnimationFrame(() => threadEl.scrollTop = Math.max(0, threadEl.scrollHeight - threadEl.clientHeight - oldBottom));
-      else requestAnimationFrame(() => threadEl.scrollTop = threadEl.scrollHeight);
+      else if (threadEl === $('thread')) requestAnimationFrame(() => threadEl.scrollTop = threadEl.scrollHeight);
     }
 
     async function loadOlderThreadMessages() {
@@ -2044,13 +2617,31 @@ public class App {
           await loadThread(id, false);
           return;
         }
+        const contact = state.contacts.find(c => c.id === id);
         page.items = mergeThreadMessages([...(older.items || []), ...page.items]);
         page.nextCursor = older.nextCursor || null;
         limitThreadPageMessages(page);
         rememberThreadPageAccess(id);
-        const contact = state.contacts.find(c => c.id === id);
         state.threadRenderKeyByContact[id] = threadRenderKey(contact, page.items);
-        renderThreadMessages(contact, page.items);
+        const staging = document.createElement('div');
+        staging.className = 'wecom-contact-window';
+        document.body.appendChild(staging);
+        renderThreadMessages(contact, page.items, staging, { restoreViewer:false });
+        const historyWeComMessageIds = weComHistoryViewerMessageIds(contact, older.items || [], staging);
+        try {
+          if (historyWeComMessageIds.length && wecomPoint(contact)) {
+            await loadWeComViewer(contact, {
+              automatic:true,
+              messageIds:historyWeComMessageIds,
+              root:staging,
+              generation:weComRenderGeneration
+            });
+          }
+          commitThreadRows(threadEl, Array.from(staging.children));
+          bindThreadInteractions(threadEl);
+        } finally {
+          staging.remove();
+        }
         requestAnimationFrame(() => {
           threadEl.scrollTop = threadEl.scrollHeight - oldScrollHeight + oldScrollTop;
         });
@@ -2680,9 +3271,173 @@ public class App {
       return sendPointForChannel(contact, 'wecom');
     }
 
+    function currentWeComMessageIds(contactPointId, root = $('thread')) {
+      if (!contactPointId || state.selectedPointId !== contactPointId) return [];
+      const segments = Array.from(root.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]'))
+        .map(host => (weComSegmentMessages.get(host.dataset.wecomSegmentId || '') || [])
+          .map(weComMessageId)
+          .filter(Boolean)
+          .filter((id, index, all) => all.indexOf(id) === index))
+        .filter(ids => ids.length);
+      const selected = [];
+      for (let index = segments.length - 1; index >= 0; index--) {
+        const ids = segments[index];
+        if (ids.length > WECOM_SEGMENT_MESSAGE_LIMIT) {
+          return ids.slice(-WECOM_SEGMENT_MESSAGE_LIMIT);
+        }
+        if (selected.length + ids.length > WECOM_SEGMENT_MESSAGE_LIMIT) break;
+        selected.unshift(...ids);
+      }
+      return selected;
+    }
+
+    function weComMessageIdsFromTimelineItems(items) {
+      return (items || [])
+        .filter(item => item?.type === 'message' && item?.payload?.channel === 'wecom')
+        .map(item => weComMessageId(item.payload))
+        .filter(Boolean)
+        .filter((id, index, all) => all.indexOf(id) === index)
+        .slice(-15);
+    }
+
+    function weComHistoryViewerMessageIds(contact, olderItems, root) {
+      if (weComLayoutMode(contact) === 'standalone') {
+        return currentWeComMessageIds(contact?.id || '', root);
+      }
+      return weComMessageIdsFromTimelineItems(olderItems);
+    }
+
+    function mergeWeComViewer(existing, next) {
+      if (!existing || existing.contactPointId !== next.contactPointId) return next;
+      const messages = new Map((existing.detail?.messages || []).map(message => [message.msgid, message]));
+      (next.detail?.messages || []).forEach(message => {
+        messages.delete(message.msgid);
+        messages.set(message.msgid, message);
+      });
+      return {
+        ...next,
+        detail:{ ...next.detail, messages:Array.from(messages.values()).slice(-WECOM_ACTIVE_FRAME_LIMIT) },
+        expiresAt:Math.max(existing.expiresAt || 0, next.expiresAt || 0)
+      };
+    }
+
+    function weComViewerNeedsMessages(viewer, messageIds) {
+      const loaded = new Set((viewer?.detail?.messages || []).map(message => message.msgid));
+      return messageIds.some(messageId => !loaded.has(messageId));
+    }
+
+    function weComSegmentMessagesCovered(segmentId, loaded) {
+      const messages = weComSegmentMessages.get(segmentId) || [];
+      return messages.length > 0
+        && messages.every(message => loaded.has(weComMessageId(message)));
+    }
+
+    function weComViewerRenderableHosts(viewer, root) {
+      if (!viewer || !root?.querySelectorAll) return [];
+      const loaded = new Set((viewer.detail?.messages || []).map(message => message.msgid));
+      if (!loaded.size) return [];
+      return Array.from(root.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]'))
+        .filter(host => weComSegmentMessagesCovered(host.dataset.wecomSegmentId || '', loaded));
+    }
+
+    function weComViewerHasMountedSegments(viewer, root, contactPointId) {
+      if (!viewer || !root?.querySelectorAll) return false;
+      const hosts = weComViewerRenderableHosts(viewer, root);
+      if (!hosts.length) return true;
+      if (LOCAL_DEV_MODE) return hosts.every(host => !host.classList?.contains?.('pending'));
+      return hosts.every(host => {
+        const segmentId = host.dataset.wecomSegmentId || '';
+        const entry = weComSegmentFrameRegistry.get(`${contactPointId}:${segmentId}`);
+        return entry?.host === host && entry.status === 'mounted'
+          && !host.classList?.contains?.('pending')
+          && Boolean(host.querySelector?.('.wecom-segment-frame'));
+      });
+    }
+
+    function deferWeComViewerMountRetry(contactPointId) {
+      const previous = weComViewerMountRetryState.get(contactPointId);
+      const attempt = Math.min(16, Number(previous?.attempt || 0) + 1);
+      const delay = Math.min(WECOM_VIEWER_MOUNT_RETRY_MAX_MS,
+        WECOM_VIEWER_MOUNT_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1)));
+      weComViewerMountRetryState.set(contactPointId, { attempt, nextAt:Date.now() + delay });
+    }
+
+    function remountWeComViewer(viewer, root, contactPointId, generation) {
+      if (!viewer || !root) return Promise.resolve([]);
+      const existing = weComViewerMountPromises.get(contactPointId);
+      if (existing?.generation === generation) return existing.promise;
+      const task = Promise.resolve().then(async () => {
+        if (LOCAL_DEV_MODE) {
+          mountLocalWeComTimelineMessages(viewer.detail, contactPointId, root);
+        } else {
+          await mountWeComTimelineMessages(viewer.detail, viewer.viewerAuthToken,
+            contactPointId, root, generation);
+        }
+        if (generation !== weComRenderGeneration || state.selectedPointId !== contactPointId) return [];
+        if (weComViewerHasMountedSegments(viewer, root, contactPointId)) {
+          weComViewerMountRetryState.delete(contactPointId);
+        } else {
+          deferWeComViewerMountRetry(contactPointId);
+        }
+        return [];
+      }).catch(error => {
+        if (generation === weComRenderGeneration && state.selectedPointId === contactPointId) {
+          deferWeComViewerMountRetry(contactPointId);
+        }
+        throw error;
+      }).finally(() => {
+        if (weComViewerMountPromises.get(contactPointId)?.promise === task) {
+          weComViewerMountPromises.delete(contactPointId);
+        }
+      });
+      weComViewerMountPromises.set(contactPointId, { generation, promise:task });
+      return task;
+    }
+
+    function refreshWeComViewerIfDue() {
+      pruneExpiredWeComContactWindows();
+      const contact = selectedContact();
+      if (!contact || !wecomPoint(contact)) return Promise.resolve();
+      const preparingWindow = contact.id === weComPreparingContactPointId
+        ? weComContactWindows.get(contact.id) : null;
+      let viewer = preparingWindow?.viewer
+        || (weComTimelineViewer?.contactPointId === contact.id ? weComTimelineViewer : null);
+      if (viewer?.expiresAt && Date.now() >= viewer.expiresAt) {
+        invalidateWeComContactWindow(contact.id);
+        viewer = null;
+      }
+      const root = preparingWindow?.container || $('thread');
+      const messageIds = currentWeComMessageIds(contact.id, root);
+      const needsMessages = weComViewerNeedsMessages(viewer, messageIds);
+      const needsMountedSegments = !weComViewerHasMountedSegments(viewer, root, contact.id);
+      if (viewer && !needsMessages && needsMountedSegments) {
+        const retry = weComViewerMountRetryState.get(contact.id);
+        if (retry?.nextAt && Date.now() < retry.nextAt) return Promise.resolve();
+        return remountWeComViewer(viewer, root, contact.id, weComRenderGeneration);
+      }
+      if (!needsMountedSegments) weComViewerMountRetryState.delete(contact.id);
+      if (!needsMessages && !needsMountedSegments && viewer?.loadedAt
+          && Date.now() - viewer.loadedAt < WECOM_VIEWER_AUTO_REFRESH_MS) {
+        return Promise.resolve();
+      }
+      return loadWeComViewer(contact, {
+        automatic:true,
+        windowState:preparingWindow,
+        generation:weComRenderGeneration,
+        messageIds
+      });
+    }
+
+    function weComViewerRefreshText(viewer) {
+      if (!viewer?.loadedAt) return '正在等待自动刷新';
+      return `最近刷新 ${new Date(viewer.loadedAt).toLocaleTimeString()}`;
+    }
+
     function renderWeComViewerPanel(contact) {
       const point = wecomPoint(contact);
       const disabled = !point ? 'disabled' : '';
+      const viewer = weComTimelineViewer?.contactPointId === contact?.id ? weComTimelineViewer : null;
+      const loaded = Boolean(viewer);
       $('sendPanel').innerHTML = `
         <div class="wecom-viewer-panel">
           <div class="readonly-row">
@@ -2690,51 +3445,127 @@ public class App {
             <div class="readonly-value">${esc(point?.value || point?.id || '无可用账号')}</div>
           </div>
           <div class="wecom-viewer-actions">
-            <button class="primary" id="openWeComViewer" type="button" ${disabled}>打开企业微信会话</button>
+            <button class="primary" id="openWeComViewer" type="button" ${disabled}>${loaded ? '刷新企业微信显示' : '加载企业微信消息'}</button>
           </div>
-          <div class="wecom-viewer-container" id="wecomViewerContainer"><div class="empty">点击后加载企业微信会话展示组件</div></div>
+          <div class="wecom-viewer-status" id="wecomViewerStatus">${loaded ? weComViewerRefreshText(viewer) : '将自动加载企业微信消息'}</div>
         </div>`;
       const button = $('openWeComViewer');
       if (button) button.onclick = () => loadWeComViewer(contact);
     }
 
     async function loadWeComViewer(contact) {
+      const options = { ...(arguments[1] || {}) };
+      if (options.generation == null) options.generation = weComRenderGeneration;
+      if (!options.root) options.root = options.windowState?.container || $('thread');
+      if (!options.messageIds) options.messageIds = currentWeComMessageIds(contact?.id || '', options.root);
+      const key = `${contact?.id || ''}:${options.generation}:${options.messageIds.join(',')}`;
+      const existing = weComViewerLoadPromises.get(key);
+      if (existing?.generation === options.generation) return existing.promise;
+      const task = loadWeComViewerNow(contact, options);
+      weComViewerLoadPromises.set(key, { generation:options.generation, promise:task });
+      try {
+        return await task;
+      } finally {
+        if (weComViewerLoadPromises.get(key)?.promise === task) weComViewerLoadPromises.delete(key);
+      }
+    }
+
+    async function loadWeComViewerNow(contact, { automatic = false, windowState = null,
+        generation = weComRenderGeneration, root = windowState?.container || $('thread'),
+        messageIds = currentWeComMessageIds(contact?.id || '', root) } = {}) {
       const point = wecomPoint(contact);
-      if (!point) { toast('当前联系人没有企业微信账号'); return; }
-      const container = $('wecomViewerContainer');
+      if (!point) {
+        if (!automatic) toast('当前联系人没有企业微信账号');
+        return;
+      }
       const button = $('openWeComViewer');
-      if (button?.disabled) return;
+      const status = $('wecomViewerStatus');
+      if (!messageIds.length) {
+        if (status && status.isConnected) status.textContent = '暂无企业微信消息';
+        if (windowState) {
+          windowState.viewer = null;
+          windowState.ready = true;
+        }
+        return;
+      }
       if (button) button.disabled = true;
-      container.innerHTML = '<div class="empty">正在同步企业微信会话</div>';
+      if (status) status.textContent = automatic ? '正在自动刷新企业微信消息' : '正在同步企业微信会话';
       try {
         const login = currentWeComAuth();
         const created = await postJson('/api/v1/wecom/conversation-view/sessions', {
           contactPointId: point.id,
-          viewerAuthToken: login.viewerAuthToken
+          viewerAuthToken: login.viewerAuthToken,
+          messageIds
         });
         const detail = await api('/api/v1/wecom/conversation-view/sessions/' + encodeURIComponent(created.viewerSessionId), {
           headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
         });
+        if (generation !== weComRenderGeneration || state.selectedPointId !== contact.id) return;
+        const loadedAt = Date.now();
+        const expiresAt = loadedAt + Math.max(1, Number(created.expiresIn || 300)) * 1000;
+        detail.messages = (detail.messages || []).map(message => ({
+          ...message,
+          viewerSessionId:detail.viewerSessionId
+        }));
         if (LOCAL_DEV_MODE) {
-          mountLocalWeComViewer(detail);
+          const viewer = mergeWeComViewer(windowState?.viewer || weComTimelineViewer, {
+            contactPointId:contact.id, detail, viewerAuthToken:'', loadedAt, expiresAt
+          });
+          if (windowState) {
+            windowState.viewer = viewer;
+            await prepareWeComContactWindow(contact.id, viewer.detail, '', windowState, generation);
+          } else {
+            if (!automatic) resetWeComContactFrames(contact.id, root);
+            weComTimelineViewer = viewer;
+            mountLocalWeComTimelineMessages(viewer.detail, contact.id, root);
+          }
         } else {
           const currentUrl = window.location.href.split('#')[0];
           const config = await api('/api/v1/wecom/js-sdk-config?url=' + encodeURIComponent(currentUrl), {
             headers: { 'X-WeCom-Viewer-Auth': login.viewerAuthToken }
           });
           await ensureWeComViewerSdk(config);
-          await mountWeComOpenDataFrame(detail, login.viewerAuthToken);
+          if (generation !== weComRenderGeneration || state.selectedPointId !== contact.id) return;
+          const viewer = mergeWeComViewer(windowState?.viewer || weComTimelineViewer, {
+            contactPointId:contact.id,
+            detail,
+            viewerAuthToken:login.viewerAuthToken,
+            loadedAt,
+            expiresAt
+          });
+          if (windowState) {
+            windowState.viewer = viewer;
+            await prepareWeComContactWindow(contact.id, viewer.detail, login.viewerAuthToken, windowState, generation);
+          } else {
+            if (!automatic) resetWeComContactFrames(contact.id, root);
+            weComTimelineViewer = viewer;
+            await mountWeComTimelineMessages(viewer.detail, login.viewerAuthToken, contact.id, root, generation);
+          }
         }
+        if (status && status.isConnected) {
+          const count = detail.messages?.length || 0;
+          status.textContent = `${weComViewerRefreshText(windowState?.viewer || weComTimelineViewer)} · ${count} 条消息`;
+        }
+        if (button && button.isConnected) button.textContent = '刷新企业微信显示';
       } catch (err) {
         if (isWeComLoginExpired(err)
             || String(err?.message || '').includes('企业微信登录已过期')) {
           await returnToWeComLogin('企业微信登录已失效，请重新扫码');
           return;
         }
-        container.innerHTML = `<div class="empty">企业微信会话加载失败：${esc(err.message)}</div>`;
-        toast(`企业微信会话加载失败：${err.message}`);
+        if (status && status.isConnected) status.textContent = `企业微信消息加载失败：${err.message}`;
+        if (windowState && generation === weComRenderGeneration) {
+          setWeComViewerLoadFailureStatuses(windowState.container, contact.id);
+          windowState.ready = true;
+        } else if (root) {
+          setWeComViewerLoadFailureStatuses(root, contact.id);
+        }
+        if (!automatic) {
+          if (weComTimelineViewer?.contactPointId === contact.id) weComTimelineViewer = null;
+          toast(`企业微信会话加载失败：${err.message}`);
+        }
       } finally {
-        if (button) button.disabled = false;
+        if (button && button.isConnected) button.disabled = false;
       }
     }
 
@@ -2851,65 +3682,669 @@ public class App {
 		|| text.includes('viewer auth token is expired or missing');
     }
 
-    function handleWeComComponentError(error, detail, viewerAuthToken) {
+    function weComPreviewHeight(modalSize) {
+      const suggested = Number(modalSize?.height);
+      let height = Number.isFinite(suggested) && suggested > 0
+        ? suggested : WECOM_PREVIEW_DEFAULT_HEIGHT;
+      height = Math.min(WECOM_PREVIEW_MAX_HEIGHT, Math.max(WECOM_PREVIEW_MIN_HEIGHT, height));
+      if (window.matchMedia?.('(max-width: 640px)')?.matches) {
+        const viewportLimit = Math.max(WECOM_PREVIEW_MIN_HEIGHT, Math.floor(window.innerHeight * 0.6));
+        height = Math.min(height, viewportLimit);
+      }
+      return height;
+    }
+
+    function weComPreviewInViewport(entry) {
+      const rect = entry.wrapper?.getBoundingClientRect?.();
+      return Boolean(rect && rect.bottom > 0 && rect.top < window.innerHeight);
+    }
+
+    function collapseWeComInlinePreview(key) {
+      const entry = weComExpandedPreviews.get(key);
+      if (!entry) return;
+      if (entry.iframe) {
+        entry.iframe.onload = null;
+        entry.iframe.onerror = null;
+        entry.iframe.src = 'about:blank';
+      }
+      entry.wrapper?.remove?.();
+      entry.host?.classList?.remove('expanded');
+      weComExpandedPreviews.delete(key);
+    }
+
+    function clearWeComInlinePreviews(contactPointId) {
+      Array.from(weComExpandedPreviews.entries())
+        .filter(([, entry]) => !contactPointId || entry.contactPointId === contactPointId)
+        .forEach(([key]) => collapseWeComInlinePreview(key));
+    }
+
+    function collapseWeComInlinePreviewForHost(host) {
+      Array.from(weComExpandedPreviews.entries())
+        .filter(([, entry]) => entry.host === host)
+        .forEach(([key]) => collapseWeComInlinePreview(key));
+    }
+
+    function pruneDisconnectedWeComInlinePreviews() {
+      Array.from(weComExpandedPreviews.entries())
+        .filter(([, entry]) => !entry.host?.isConnected)
+        .forEach(([key]) => collapseWeComInlinePreview(key));
+    }
+
+    function pruneDisconnectedWeComSegmentFrames() {
+      Array.from(weComSegmentFrameRegistry.entries())
+        .filter(([, entry]) => !entry.host?.isConnected)
+        .forEach(([key, entry]) => {
+          collapseWeComInlinePreviewForHost(entry.host);
+          entry.instance?.destroy?.();
+          weComSegmentFrameRegistry.delete(key);
+        });
+    }
+
+    function trimWeComExpandedPreviews(contactPointId) {
+      const entries = Array.from(weComExpandedPreviews.entries())
+        .filter(([, entry]) => entry.contactPointId === contactPointId)
+        .sort((left, right) => left[1].openedAt - right[1].openedAt);
+      if (entries.length < WECOM_EXPANDED_PREVIEW_LIMIT) return;
+      const candidate = entries.find(([, entry]) => !weComPreviewInViewport(entry)) || entries[0];
+      if (candidate) collapseWeComInlinePreview(candidate[0]);
+    }
+
+    function openWeComInlinePreview(host, contactPointId, messageId, { modalUrl, modalSize } = {}) {
+      if (!host || !contactPointId || !messageId || !modalUrl) return false;
+      let previewUrl;
+      try {
+        previewUrl = new URL(modalUrl, window.location.href);
+      } catch (error) {
+        return false;
+      }
+      if (previewUrl.protocol !== 'https:') return false;
+      const key = `${contactPointId}:${messageId}`;
+      const existing = weComExpandedPreviews.get(key);
+      if (existing?.host === host) return true;
+      let wrapper = null;
+      let iframe = null;
+      try {
+        wrapper = document.createElement('div');
+        wrapper.className = 'wecom-message-preview';
+        const toolbar = document.createElement('div');
+        toolbar.className = 'wecom-message-preview-toolbar';
+        const collapse = document.createElement('button');
+        collapse.type = 'button';
+        collapse.className = 'wecom-message-collapse';
+        collapse.title = '收起企业微信消息';
+        collapse.setAttribute('aria-label', '收起企业微信消息');
+        const closeMark = document.createElement('span');
+        closeMark.className = 'close-mark';
+        collapse.appendChild(closeMark);
+        collapse.onclick = event => {
+          event.stopPropagation();
+          collapseWeComInlinePreview(key);
+        };
+        toolbar.appendChild(collapse);
+        const content = document.createElement('div');
+        content.className = 'wecom-message-preview-content';
+        content.style.height = `${weComPreviewHeight(modalSize)}px`;
+        iframe = document.createElement('iframe');
+        iframe.title = '企业微信会话详情';
+        iframe.referrerPolicy = 'no-referrer-when-downgrade';
+        iframe.hidden = true;
+        iframe.onload = () => { iframe.hidden = false; };
+        iframe.onerror = () => collapseWeComInlinePreview(key);
+        iframe.src = previewUrl.toString();
+        content.appendChild(iframe);
+        wrapper.append(toolbar, content);
+        host.appendChild(wrapper);
+        host.classList.add('expanded');
+        if (existing) collapseWeComInlinePreview(key);
+        else trimWeComExpandedPreviews(contactPointId);
+        weComExpandedPreviews.set(key, {
+          host, wrapper, iframe, contactPointId, messageId, openedAt: ++weComExpandedPreviewSequence
+        });
+        return true;
+      } catch (error) {
+        if (iframe) iframe.src = 'about:blank';
+        wrapper?.remove?.();
+        host.classList.remove('expanded');
+        if (weComExpandedPreviews.get(key)?.host === host) {
+          weComExpandedPreviews.delete(key);
+        }
+        return false;
+      }
+    }
+
+""").append("""
+
+    function setWeComViewerLoadFailureStatuses(root, contactPointId) {
+      root?.querySelectorAll?.('.wecom-segment-host[data-wecom-segment-id]').forEach(host => {
+        const segmentId = host.dataset.wecomSegmentId || '';
+        const existing = weComSegmentFrameRegistry.get(`${contactPointId}:${segmentId}`);
+        if (existing?.host === host && existing.status === 'mounted') return;
+        setWeComSegmentStatus(host, '消息加载失败', true);
+      });
+    }
+
+    function setWeComSegmentStatus(host, message, failed = false, reveal = true) {
+      collapseWeComInlinePreviewForHost(host);
+      host.replaceChildren();
+      if (reveal) host.classList.remove('pending');
+      const frame = document.createElement('div');
+      frame.className = 'wecom-segment-frame';
+      const status = document.createElement('div');
+      status.className = `wecom-segment-status${failed ? ' error' : ''}`;
+      if (failed) {
+        const warning = document.createElement('span');
+        warning.className = 'wecom-message-warning';
+        warning.textContent = '!';
+        const text = document.createElement('span');
+        text.textContent = message;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'wecom-message-retry';
+        retry.title = '重试加载';
+        retry.setAttribute('aria-label', '重试加载企业微信消息');
+        retry.textContent = '↻';
+        retry.onclick = event => {
+          event.stopPropagation();
+          retryWeComSegment(host.dataset.wecomSegmentId || '');
+        };
+        status.append(warning, text, retry);
+      } else {
+        status.textContent = message;
+      }
+      frame.appendChild(status);
+      host.appendChild(frame);
+    }
+
+    function setWeComTitleLoading(loading) {
+      const title = $('threadTitleText');
+      if (!title) return;
+      title.querySelector?.('.wecom-contact-spinner')?.remove();
+      if (!loading) return;
+      const spinner = document.createElement('span');
+      spinner.className = 'wecom-contact-spinner';
+      spinner.title = '正在准备企业微信消息';
+      spinner.setAttribute('aria-label', '正在准备企业微信消息');
+      title.appendChild(spinner);
+    }
+
+    function weComSegmentFrameHeight(host, messageCount) {
+      const naturalHeight = Math.max(36, Number(messageCount || 1) * 36);
+      if (host?.dataset?.wecomLayout !== 'standalone') return naturalHeight;
+      const viewportHeight = Number($('thread')?.clientHeight || 0);
+      return viewportHeight > 0 ? Math.max(36, viewportHeight) : Math.max(360, naturalHeight);
+    }
+
+    function resizeWeComStandaloneFrames(root = document) {
+      root?.querySelectorAll?.('.wecom-segment-host[data-wecom-layout="standalone"]').forEach(host => {
+        const frame = host.querySelector('.wecom-segment-frame');
+        if (!frame) return;
+        const messages = weComSegmentMessages.get(host.dataset.wecomSegmentId || '') || [];
+        frame.style.height = `${weComSegmentFrameHeight(host, messages.length)}px`;
+      });
+    }
+
+    function createWeComSegmentFrame(host, messageCount) {
+      host.replaceChildren();
+      const frame = document.createElement('div');
+      frame.className = 'wecom-segment-frame';
+      frame.style.height = `${weComSegmentFrameHeight(host, messageCount)}px`;
+      host.appendChild(frame);
+      return { frame };
+    }
+
+    function resetWeComContactFrames(contactPointId, root = $('thread')) {
+      clearWeComInlinePreviews(contactPointId);
+      Array.from(weComSegmentFrameRegistry.entries())
+        .filter(([, entry]) => entry.contactPointId === contactPointId)
+        .forEach(([key, entry]) => {
+          entry.instance?.destroy?.();
+          weComSegmentFrameRegistry.delete(key);
+        });
+      root?.querySelectorAll?.('.wecom-segment-host[data-wecom-segment-id]').forEach(host => {
+        host.replaceChildren();
+        host.classList.add('pending');
+      });
+    }
+
+    function cancelWeComRenderWork() {
+      weComRenderGeneration += 1;
+      weComCreatingSegmentKeys.forEach(instance => instance?.cancel?.());
+      weComCreatingSegmentKeys.clear();
+      weComRenderQueue.splice(0).forEach(entry => entry.resolve({ status:'cancelled' }));
+      return weComRenderGeneration;
+    }
+
+    function weComErrorField(error, key) {
+      try {
+        const nested = error?.detail && typeof error.detail === 'object' ? error.detail : null;
+        const value = error?.[key] ?? nested?.[key];
+        if (typeof value === 'string') return value.slice(0, 256);
+        if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+        if (typeof value === 'boolean') return String(value);
+      } catch (ignored) {
+        // SDK 错误对象可能包含循环引用或异常 getter，诊断本身不能再次抛错。
+      }
+      return '';
+    }
+
+    function weComComponentDiagnostic(error, source, segmentId, messageCount) {
+      const diagnostic = {
+        source:String(source || 'unknown').slice(0, 32),
+        segmentId:String(segmentId || '').slice(0, 128),
+        messageCount:Math.max(0, Number(messageCount) || 0)
+      };
+      ['name', 'message', 'errCode', 'errMsg', 'code', 'type', 'stage', 'status'].forEach(key => {
+        const value = weComErrorField(error, key);
+        if (value) diagnostic[key] = value;
+      });
+      return diagnostic;
+    }
+
+    function logWeComComponentError(error, source, segmentId, messageCount) {
+      const diagnostic = weComComponentDiagnostic(error, source, segmentId, messageCount);
+      globalThis.console?.warn?.('[wecom-viewer/component-error]', diagnostic);
+      return diagnostic;
+    }
+
+    function logWeComFrameStage(stage, segmentId, messageCount) {
+      globalThis.console?.info?.('[wecom-viewer/frame]', {
+        stage:String(stage || 'unknown').slice(0, 32),
+        segmentId:String(segmentId || '').slice(0, 128),
+        messageCount:Math.max(0, Number(messageCount) || 0)
+      });
+    }
+
+    function handleWeComComponentError(error, detail, viewerAuthToken, host, settle, reveal = true,
+        invalidateMounted = null, source = 'unknown', segmentId = '', messageCount = 0) {
+      logWeComComponentError(error, source, segmentId, messageCount);
       if (isWeComLoginExpired(error)) {
         returnToWeComLogin('企业微信登录已失效，请重新扫码')
           .catch(loginError => setWeComLoginStatus(loginError.message, true));
+        settle?.({ status:'expired', host });
         return;
       }
-      const container = $('wecomViewerContainer');
-      if (container) container.innerHTML = '<div class="empty">企业微信组件渲染失败</div>';
+      const settledNow = settle?.({ status:'failed', host }) !== false;
+      if (!settledNow && invalidateMounted?.() === false) return;
+      if (settledNow && host?.isConnected) setWeComSegmentStatus(host, '消息加载失败', true, reveal);
       reportWeComViewerEvent('component_error', detail.viewerSessionId, viewerAuthToken);
     }
 
-    async function mountWeComOpenDataFrame(detail, viewerAuthToken) {
-      const container = $('wecomViewerContainer');
-      if (!detail.messages || !detail.messages.length) {
-        container.innerHTML = '<div class="empty">暂无可展示的企业微信会话记录</div>';
-        return;
+    function pumpWeComRenderQueue(concurrency = WECOM_RENDER_CONCURRENCY) {
+      const limit = Math.min(WECOM_RENDER_CONCURRENCY, Math.max(1, concurrency));
+      while (weComActiveRenderJobs < limit && weComRenderQueue.length) {
+        const entry = weComRenderQueue.shift();
+        if (entry.generation !== weComRenderGeneration) {
+          entry.resolve({ status:'cancelled' });
+          continue;
+        }
+        weComActiveRenderJobs++;
+        Promise.resolve()
+          .then(entry.job)
+          .catch(error => ({ status:'failed', error }))
+          .then(entry.resolve)
+          .finally(() => {
+            weComActiveRenderJobs--;
+            pumpWeComRenderQueue();
+          });
       }
-      const factory = ww.createOpenDataFrameFactory();
-      let componentErrorReported = false;
-      factory.createOpenDataFrame({
-        el: container,
-        template: `
-          <view wx:for="{{data.msgList}}" wx:key="msgid" class="msg">
-            <ww-open-message message-id="{{item.msgid}}" secret-key="{{item.secretKey}}"
-              open-type="viewMessage" binderror="handleMessageError" />
-          </view>
-        `,
-        style: `.msg { height: 100%; overflow: auto; }`,
-        data: { msgList: detail.messages },
-        methods: {
-          handleMessageError(error) {
-            if (componentErrorReported && !isWeComLoginExpired(error)) return;
-            componentErrorReported = true;
-            handleWeComComponentError(error, detail, viewerAuthToken);
+    }
+
+    async function runWeComRenderQueue(jobs, concurrency = WECOM_RENDER_CONCURRENCY,
+        generation = weComRenderGeneration) {
+      const stale = weComRenderQueue.filter(entry => entry.generation !== weComRenderGeneration);
+      stale.forEach(entry => entry.resolve({ status:'cancelled' }));
+      for (let index = weComRenderQueue.length - 1; index >= 0; index--) {
+        if (weComRenderQueue[index].generation !== weComRenderGeneration) {
+          weComRenderQueue.splice(index, 1);
+        }
+      }
+      const tasks = jobs.map(job => new Promise(resolve => {
+        if (weComRenderQueue.length >= WECOM_RENDER_QUEUE_LIMIT) {
+          resolve({ status:'cancelled' });
+          return;
+        }
+        weComRenderQueue.push({ job, resolve, generation });
+        pumpWeComRenderQueue(concurrency);
+      }));
+      return Promise.all(tasks);
+    }
+
+    function trimWeComSegmentFrames(contactPointId, protectedIds = []) {
+      const protectedKeys = new Set(protectedIds.map(id => `${contactPointId}:${id}`));
+      while (Array.from(weComSegmentFrameRegistry.values())
+        .filter(entry => entry.contactPointId === contactPointId).length > WECOM_ACTIVE_CONTACT_SEGMENT_LIMIT) {
+        const candidate = Array.from(weComSegmentFrameRegistry.entries())
+          .filter(([key, entry]) => entry.contactPointId === contactPointId && !protectedKeys.has(key))
+          .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
+        if (!candidate) break;
+        const [key, entry] = candidate;
+        collapseWeComInlinePreviewForHost(entry.host);
+        entry.instance?.destroy?.();
+        entry.host?.replaceChildren?.();
+        entry.host?.classList?.add?.('pending');
+        weComSegmentFrameRegistry.delete(key);
+      }
+      while (weComSegmentFrameRegistry.size > WECOM_ACTIVE_FRAME_LIMIT) {
+        const candidate = Array.from(weComSegmentFrameRegistry.entries())
+          .filter(([key]) => !protectedKeys.has(key))
+          .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
+        if (!candidate) break;
+        const [key, entry] = candidate;
+        collapseWeComInlinePreviewForHost(entry.host);
+        entry.instance?.destroy?.();
+        if (entry.host?.isConnected && entry.contactPointId !== state.selectedPointId) {
+          entry.host.replaceChildren();
+          entry.host.classList.add('pending');
+        }
+        weComSegmentFrameRegistry.delete(key);
+      }
+    }
+
+    function protectedWeComSegmentKeys() {
+      const hosts = Array.from($('thread')?.querySelectorAll?.('.wecom-segment-host[data-wecom-segment-id]') || []).slice(-8);
+      return new Set(hosts.map(host => `${state.selectedPointId}:${host.dataset.wecomSegmentId || ''}`));
+    }
+
+    function reserveWeComSegmentCapacity(contactPointId, registryKey) {
+      const protectedKeys = protectedWeComSegmentKeys();
+      protectedKeys.add(registryKey);
+      const contactCreatingCount = () => Array.from(weComCreatingSegmentKeys.values())
+        .filter(entry => entry?.contactPointId === contactPointId).length;
+      while (Array.from(weComSegmentFrameRegistry.values())
+        .filter(entry => entry.contactPointId === contactPointId).length
+        + contactCreatingCount() >= WECOM_ACTIVE_CONTACT_SEGMENT_LIMIT) {
+        const candidate = Array.from(weComSegmentFrameRegistry.entries())
+          .filter(([key, entry]) => entry.contactPointId === contactPointId && !protectedKeys.has(key))
+          .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
+        if (!candidate) return false;
+        const [key, entry] = candidate;
+        collapseWeComInlinePreviewForHost(entry.host);
+        entry.instance?.destroy?.();
+        entry.host?.replaceChildren?.();
+        entry.host?.classList?.add?.('pending');
+        weComSegmentFrameRegistry.delete(key);
+      }
+      while (weComSegmentFrameRegistry.size + weComCreatingSegmentKeys.size >= WECOM_ACTIVE_FRAME_LIMIT) {
+        const candidate = Array.from(weComSegmentFrameRegistry.entries())
+          .filter(([key]) => !protectedKeys.has(key))
+          .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0];
+        if (!candidate) return false;
+        const [key, entry] = candidate;
+        collapseWeComInlinePreviewForHost(entry.host);
+        entry.instance?.destroy?.();
+        if (entry.host?.isConnected) {
+          entry.host.replaceChildren();
+          entry.host.classList.add('pending');
+        }
+        weComSegmentFrameRegistry.delete(key);
+      }
+      weComCreatingSegmentKeys.set(registryKey, { contactPointId });
+      return true;
+    }
+
+    function mountWeComSegmentFrame(host, segmentId, references, detail, viewerAuthToken, contactPointId, generation,
+        revealOnSettle = true) {
+      const registryKey = `${contactPointId}:${segmentId}`;
+      if (generation !== weComRenderGeneration) {
+        return Promise.resolve({ status:'cancelled', host });
+      }
+      let existing = weComSegmentFrameRegistry.get(registryKey);
+      if (existing?.host === host && existing.status === 'mounted'
+          && host.querySelector?.('.wecom-segment-frame')) {
+        existing.lastUsed = Date.now();
+        host.classList.remove('pending');
+        return Promise.resolve({ status:'mounted', host, reused:true });
+      }
+      if (existing?.host === host && existing.status === 'mounted') {
+        collapseWeComInlinePreviewForHost(host);
+        existing.instance?.destroy?.();
+        weComSegmentFrameRegistry.delete(registryKey);
+        existing = null;
+      }
+      if (!references?.length) {
+        setWeComSegmentStatus(host, '该消息段不在本次展示窗口', true, revealOnSettle);
+        return Promise.resolve({ status:'failed', host, error:new Error('企业微信消息段缺少展示引用') });
+      }
+      if (!reserveWeComSegmentCapacity(contactPointId, registryKey)) {
+        setWeComSegmentStatus(host, '消息加载失败', true, revealOnSettle);
+        return Promise.resolve({ status:'failed', host, error:new Error('企业微信消息组件已达到上限') });
+      }
+      host.classList.add('pending');
+      return new Promise(resolve => {
+        let settled = false;
+        let instance = null;
+        let factory;
+        let frame;
+        let activeMessageId = '';
+        let timer = setTimeout(() => {
+          if (generation !== weComRenderGeneration) {
+            settle({ status:'cancelled', host });
+            return;
           }
-        },
-        handleModal({ modalUrl, modalSize }) {
-          openWeComModal({ modalUrl, modalSize });
-          return false;
-        },
-        error(error) {
-          if (componentErrorReported && !isWeComLoginExpired(error)) return;
-          componentErrorReported = true;
-          handleWeComComponentError(error, detail, viewerAuthToken);
+          if (host?.isConnected) {
+            setWeComSegmentStatus(host, '消息加载超时', true, revealOnSettle);
+          }
+          logWeComComponentError(new Error('企业微信消息渲染超时'),
+            'frame_timeout', segmentId, references.length);
+          settle({ status:'failed', host, error:new Error('企业微信消息渲染超时') });
+        }, 15000);
+      const settle = result => {
+          if (settled) return false;
+          settled = true;
+          clearTimeout(timer);
+          weComCreatingSegmentKeys.delete(registryKey);
+          if (result.status !== 'mounted') {
+            instance?.destroy?.();
+            instance = null;
+          }
+          if (generation !== weComRenderGeneration) {
+            instance?.destroy?.();
+            resolve({ status:'cancelled', host });
+            return true;
+          }
+          if (result.status === 'mounted') {
+            collapseWeComInlinePreviewForHost(existing?.host || host);
+            if (existing?.instance && existing.instance !== instance) existing.instance.destroy?.();
+            host.classList.remove('pending');
+            weComSegmentFrameRegistry.set(registryKey, {
+              host, instance, status:'mounted', lastUsed:Date.now(), contactPointId,
+              segmentId, messageIds:references.map(item => item.msgid), activeMessageId
+            });
+          }
+          resolve(result);
+          return true;
+        };
+        const invalidateMounted = () => {
+          const mounted = weComSegmentFrameRegistry.get(registryKey);
+          if (mounted?.instance !== instance) return false;
+          collapseWeComInlinePreviewForHost(mounted.host);
+          instance?.destroy?.();
+          weComSegmentFrameRegistry.delete(registryKey);
+          if (mounted.host?.isConnected) {
+            setWeComSegmentStatus(mounted.host, '消息加载失败', true, revealOnSettle);
+          }
+          return true;
+        };
+        const handleComponentError = (error, source) => handleWeComComponentError(
+          error, detail, viewerAuthToken, host, settle, revealOnSettle, invalidateMounted,
+          source, segmentId, references.length);
+        try {
+          logWeComFrameStage('create_start', segmentId, references.length);
+          factory = ww.createOpenDataFrameFactory();
+          frame = createWeComSegmentFrame(host, references.length).frame;
+          instance = factory.createOpenDataFrame({
+            el: frame,
+            template: `
+              <view wx:for="{{data.msgList}}" wx:key="msgid"
+                class="wecom-segment-row {{item.direction}}" data-index="{{index}}"
+                bindclick="handleSegmentMessageClick">
+                <view class="wecom-segment-bubble">
+                  <ww-open-message message-id="{{item.msgid}}" secret-key="{{item.secretKey}}"
+                    open-type="viewMessage" binderror="handleSegmentMessageError" />
+                </view>
+              </view>
+            `,
+            style: `
+              .wecom-segment-row { box-sizing:border-box; display:flex; width:100%; min-height:36px; padding:3px 8px; }
+              .wecom-segment-row.inbound { justify-content:flex-start; }
+              .wecom-segment-row.outbound { justify-content:flex-end; }
+              .wecom-segment-bubble { box-sizing:border-box; display:inline-block; max-width:78%; min-height:30px; padding:6px 9px; overflow:hidden; border:1px solid #d7dde7; border-radius:6px; background:#fff; }
+              .wecom-segment-row.outbound .wecom-segment-bubble { border-color:#b7d4c6; background:#f4fbf7; }
+            `,
+            data: { msgList:references },
+            methods: {
+              handleSegmentMessageClick(event) {
+                const index = Number(event?.currentTarget?.dataset?.index);
+                if (!Number.isInteger(index) || !references[index]) return;
+                activeMessageId = references[index].msgid;
+                const entry = weComSegmentFrameRegistry.get(registryKey);
+                if (entry?.instance === instance) entry.activeMessageId = activeMessageId;
+              },
+              handleSegmentMessageError(error) {
+                if (generation !== weComRenderGeneration) {
+                  settle({ status:'cancelled', host });
+                  return;
+                }
+                handleComponentError(error, 'message_binderror');
+              }
+            },
+            handleMounted() {
+              logWeComFrameStage('mounted', segmentId, references.length);
+              settle({ status:'mounted', host });
+            },
+            handleModal({ modalUrl, modalSize }) {
+              if (!activeMessageId) return true;
+              return !openWeComInlinePreview(host, contactPointId, activeMessageId, { modalUrl, modalSize });
+            },
+            error(error) {
+              if (generation !== weComRenderGeneration) {
+                settle({ status:'cancelled', host });
+                return;
+              }
+              handleComponentError(error, 'frame_error');
+            }
+          });
+          instance.contactPointId = contactPointId;
+          weComCreatingSegmentKeys.set(registryKey, instance);
+          instance.cancel = () => settle({ status:'cancelled', host });
+        } catch (error) {
+          handleComponentError(error, 'frame_create_error');
         }
       });
     }
 
-    function mountLocalWeComViewer(detail) {
-      const container = $('wecomViewerContainer');
-      if (!detail.messages || !detail.messages.length) {
-        container.innerHTML = '<div class="empty">暂无本地企业微信样例消息</div>';
-        return;
+    function weComReferencesForSegment(segmentId, referencesById) {
+      return (weComSegmentMessages.get(segmentId) || [])
+        .map(message => {
+          const reference = referencesById.get(weComMessageId(message));
+          return reference ? {
+            ...reference,
+            direction:message?.direction === 'outbound' ? 'outbound' : 'inbound'
+          } : null;
+        })
+        .filter(Boolean);
+    }
+
+    async function prepareWeComContactWindow(contactPointId, detail, viewerAuthToken) {
+      const windowState = arguments[3] || getOrCreateWeComContactWindow(contactPointId);
+      const generation = arguments[4] ?? windowState.generation ?? weComRenderGeneration;
+      if (LOCAL_DEV_MODE) {
+        mountLocalWeComTimelineMessages(detail, contactPointId, windowState.container);
+        windowState.ready = generation === weComRenderGeneration;
+        return [];
       }
-      container.innerHTML = `<div class="local-wecom-list">${detail.messages.map(item => `
-        <div class="msg" style="padding:12px;border-bottom:1px solid var(--hairline)">
-          <div><strong>本地会话消息</strong> <span class="small">${esc(item.msgid)}</span></div>
-          <div class="small" style="margin-top:6px">secret_key：${esc(String(item.secretKey || '').slice(0, 8))}…（本地样例）</div>
-        </div>`).join('')}</div>`;
+      const results = await mountWeComTimelineMessages(detail, viewerAuthToken, contactPointId,
+        windowState.container, generation, true);
+      windowState.ready = generation === weComRenderGeneration
+        && results.every(result => result.status !== 'cancelled');
+      return results;
+    }
+
+    async function mountWeComTimelineMessages(detail, viewerAuthToken, contactPointId,
+        root = $('thread'), generation = ++weComRenderGeneration, initialOnly = false) {
+      if (generation !== weComRenderGeneration) return [];
+      const hosts = Array.from(root.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]'));
+      const references = new Map((detail.messages || []).map(item => [item.msgid, item]));
+      const renderable = hosts.filter(host =>
+        weComSegmentMessagesCovered(host.dataset.wecomSegmentId || '', references));
+      if (!renderable.length) return [];
+      renderable.forEach(host => {
+        const key = `${contactPointId}:${host.dataset.wecomSegmentId || ''}`;
+        const existing = weComSegmentFrameRegistry.get(key);
+        if (existing?.host !== host || existing.status !== 'mounted') host.classList.add('pending');
+      });
+      setWeComTitleLoading(true);
+      const initialCount = Math.min(WECOM_VIEWPORT_COMMIT_MAX, renderable.length);
+      const initialHosts = renderable.slice(renderable.length - initialCount);
+      const remainingHosts = renderable.slice(0, renderable.length - initialCount).reverse();
+      const job = (host, revealOnSettle) => () => {
+        const segmentId = host.dataset.wecomSegmentId || '';
+        return mountWeComSegmentFrame(host, segmentId,
+          weComReferencesForSegment(segmentId, references), detail, viewerAuthToken, contactPointId,
+          generation, revealOnSettle);
+      };
+      const initialResults = await runWeComRenderQueue(
+        initialHosts.map(host => job(host, false)), WECOM_RENDER_CONCURRENCY, generation);
+      if (generation !== weComRenderGeneration || state.selectedPointId !== contactPointId) return initialResults;
+      initialResults.forEach(result => result.host?.classList.remove('pending'));
+      if (root === $('thread')) setWeComTitleLoading(false);
+      if (initialOnly) return initialResults;
+      runWeComRenderQueue(remainingHosts.map(host => async () => {
+        const result = await job(host, true)();
+        if (generation === weComRenderGeneration && state.selectedPointId === contactPointId) {
+          result.host?.classList.remove('pending');
+        }
+        return result;
+      }), WECOM_RENDER_CONCURRENCY, generation).then(() => {
+        if (generation === weComRenderGeneration) {
+          trimWeComSegmentFrames(contactPointId, initialHosts.map(host => host.dataset.wecomSegmentId || ''));
+        }
+      });
+      return initialResults;
+    }
+
+    async function retryWeComSegment(segmentId) {
+      const viewer = weComTimelineViewer;
+      if (!viewer || !segmentId || viewer.contactPointId !== state.selectedPointId) return;
+      const host = Array.from(document.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]'))
+        .find(item => item.dataset.wecomSegmentId === segmentId);
+      const referencesById = new Map((viewer.detail.messages || []).map(item => [item.msgid, item]));
+      const references = weComReferencesForSegment(segmentId, referencesById);
+      if (!host || !weComSegmentMessagesCovered(segmentId, referencesById)) return;
+      const key = `${viewer.contactPointId}:${segmentId}`;
+      const stagingHost = document.createElement('div');
+      stagingHost.className = 'wecom-contact-window';
+      stagingHost.dataset.wecomSegmentId = segmentId;
+      stagingHost.dataset.wecomLayout = host.dataset.wecomLayout || 'mixed';
+      document.body.appendChild(stagingHost);
+      setWeComTitleLoading(true);
+      try {
+        const [result] = await runWeComRenderQueue([
+          () => mountWeComSegmentFrame(stagingHost, segmentId, references, viewer.detail,
+            viewer.viewerAuthToken, viewer.contactPointId, weComRenderGeneration, false)
+        ], WECOM_RENDER_CONCURRENCY, weComRenderGeneration);
+        if (result?.status === 'mounted') {
+          host.replaceChildren(...Array.from(stagingHost.childNodes));
+          host.classList.remove('pending');
+          const entry = weComSegmentFrameRegistry.get(key);
+          if (entry) entry.host = host;
+        }
+        return result;
+      } finally {
+        stagingHost.remove();
+        setWeComTitleLoading(false);
+      }
+    }
+
+    function mountLocalWeComTimelineMessages(detail, contactPointId, root = $('thread')) {
+      if (state.selectedPointId !== contactPointId) return;
+      const references = new Map((detail.messages || []).map(item => [item.msgid, item]));
+      root.querySelectorAll('.wecom-segment-host[data-wecom-segment-id]').forEach(host => {
+        const segmentId = host.dataset.wecomSegmentId || '';
+        const count = weComSegmentMessagesCovered(segmentId, references)
+          ? (weComSegmentMessages.get(segmentId) || []).length : 0;
+        setWeComSegmentStatus(host, count ? `本地企业微信样例消息 · ${count} 条` : '该消息段不在本次展示窗口');
+      });
     }
 
     function reportWeComViewerEvent(eventType, viewerSessionId, viewerAuthToken) {
@@ -3184,6 +4619,27 @@ public class App {
       }
     }
 
+    function clearWeComRendererState() {
+      cancelWeComRenderWork();
+      clearWeComInlinePreviews();
+      weComSegmentFrameRegistry.forEach(entry => entry.instance?.destroy?.());
+      weComSegmentFrameRegistry.clear();
+      weComViewerMountPromises.clear();
+      weComViewerMountRetryState.clear();
+      weComContactWindows.forEach(windowState => {
+        windowState.viewer = null;
+        windowState.container?.remove?.();
+      });
+      weComContactWindows.clear();
+      weComTimelineViewer = null;
+      weComCommittedContactPointId = '';
+      weComPreparingContactPointId = '';
+    }
+
+    function handleWeComPageHide(event) {
+      if (!event?.persisted) clearWeComRendererState();
+    }
+
     async function enableNotifications() {
       if (!('Notification' in window)) { toast('浏览器不支持系统通知'); return; }
       const result = await Notification.requestPermission();
@@ -3194,6 +4650,8 @@ public class App {
       $('wwLoginPanel').innerHTML = '<div class="empty">登录配置不可用</div>';
       setWeComLoginStatus(error.message, true);
     };
+    window.addEventListener?.('pagehide', handleWeComPageHide);
+    window.addEventListener?.('resize', () => resizeWeComStandaloneFrames(), { passive:true });
     $('wecomLoginRetry').onclick = () => initWeComLogin().catch(showWeComLoginError);
     initWeComLogin().catch(showWeComLoginError);
   </script>

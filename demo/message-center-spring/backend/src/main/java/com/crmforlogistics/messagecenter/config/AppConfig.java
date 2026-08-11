@@ -17,6 +17,8 @@ public record AppConfig(
         String chatappTo,
         String chatappChannelType,
         @DefaultValue("true") boolean chatappSyncEnabled,
+        @DefaultValue("true") boolean chatappTemplateReconcileEnabled,
+        @DefaultValue("300000") long chatappTemplateReconcileIntervalMs,
         String aliyunAccessKeyId,
         String aliyunAccessKeySecret,
         String camsRegion,
@@ -44,5 +46,19 @@ public record AppConfig(
         @DefaultValue("/usr/bin/openssl") String opensslBin,
         @DefaultValue("false") boolean emailSyncEnabled,
         @DefaultValue("INBOX") String inboxFolder,
-        @DefaultValue("Sent") String sentFolder
+        @DefaultValue("Sent") String sentFolder,
+        // WeCom
+        String wecomSuiteId,
+        String wecomSuiteSecret,
+        String wecomToken,
+        String wecomEncodingAesKey,
+        @DefaultValue("") String wecomCallbackReceiveId,
+        @DefaultValue("https://qyapi.weixin.qq.com") String wecomApiBaseUrl,
+        @DefaultValue("10") int wecomApiTimeoutSeconds,
+        @DefaultValue("300") int wecomTokenRefreshSkewSeconds,
+        @DefaultValue("false") boolean wecomSyncEnabled,
+        @DefaultValue("") String wecomLoginSuiteId,
+        @DefaultValue("") String wecomLoginSuiteSecret,
+        @DefaultValue("") String chatappWebhookSecret,
+        @DefaultValue("300") int chatappWebhookMaxSkewSeconds
 ) {}

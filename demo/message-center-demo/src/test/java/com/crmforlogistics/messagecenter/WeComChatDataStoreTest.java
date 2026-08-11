@@ -43,7 +43,9 @@ class WeComChatDataStoreTest {
         JsonObject incoming = JsonParser.parseString(lines.get(1)).getAsJsonObject();
         assertEquals("employee-1", outgoing.get("userid").getAsString());
         assertEquals("external-1", outgoing.get("external_userid").getAsString());
+        assertEquals("outbound", outgoing.get("direction").getAsString());
         assertEquals("secret-in", incoming.get("secret_key").getAsString());
+        assertEquals("inbound", incoming.get("direction").getAsString());
         assertEquals("cursor-1", store.cursor(syncKey));
         assertFalse(Files.readString(config.wecomDataFile()).contains("secret-group"));
     }

@@ -1,12 +1,16 @@
 package com.crmforlogistics.messagecenter;
 
+import com.crmforlogistics.messagecenter.config.CallRecordConfig;
+import com.crmforlogistics.messagecenter.config.FunAsrConfig;
 import com.crmforlogistics.messagecenter.service.auth.BootstrapService;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableConfigurationProperties({CallRecordConfig.class, FunAsrConfig.class})
 public class App {
     public static void main(String[] args) {
         if (args.length > 0 && "bootstrap-admin".equals(args[0])) {

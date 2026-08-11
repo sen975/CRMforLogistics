@@ -77,4 +77,4 @@ mvn -q test
 target/wecom-chatdata-zone-program-linux-amd64.tar
 ```
 
-该文件按官方示例要求由 `docker export` 生成，是企业微信后台上传的 rootfs tar，不是 `docker save` 归档。程序代码只绑定 `conversation_viewer_sync` 和 `conversation_daily_summary` 两个 ability ID；该约束保存在 JAR 内，不依赖镜像环境变量。其他 ability 调用失败关闭。后台启动命令填写 `/app/start`，启动参数留空。
+该文件按官方示例要求由 `docker export` 生成，是企业微信后台上传的 rootfs tar，不是 `docker save` 归档。程序代码只绑定 `conversation_viewer_sync` 和 `conversation_daily_summary` 两个 ability ID；该约束保存在 JAR 内，不依赖镜像环境变量。其他 ability 调用失败关闭。正常运行时后台启动命令填写 `/app/start`，启动参数留空。使用企业微信专区调试模式时，启动参数填写 `-d <debugToken> -a <accessToken>`；`/app/start` 会将参数透传给官方 Java SDK 示例。

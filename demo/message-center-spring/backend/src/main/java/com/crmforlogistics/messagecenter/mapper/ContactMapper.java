@@ -35,12 +35,14 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "    ), c.updated_at) as sort_at " +
         "  from contacts c " +
         "  where c.deleted_at is null and c.status != 'merged' " +
+        "  <if test=\"!isAdmin\">" +
         "  and (c.created_by = #{userId}::uuid " +
         "    or exists (select 1 from contact_identities ci join conversations cv on cv.contact_identity_id = ci.id " +
         "      where ci.contact_id = c.id " +
         "      and (cv.assigned_user_id = #{userId}::uuid " +
         "        or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) " +
         "        or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))))) " +
+        "  </if>" +
         "  <if test=\"search != null and search != ''\">" +
         "    and (c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark,'') ilike '%' || #{search} || '%') " +
         "  </if>" +
@@ -56,8 +58,21 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                                      @Param("userId") UUID userId,
                                      @Param("search") String search,
                                      @Param("beforeLastMessageAt") Instant beforeLastMessageAt,
-                                     @Param("beforeId") UUID beforeId);
+                                     @Param("beforeId") UUID beforeId,
+                                     @Param("isAdmin") boolean isAdmin);
 
-    @Select("select id, display_name, role_title, remark, status, merged_to_id, created_by, created_at, updated_at, deleted_at, version from contacts where id = #{id}::uuid")
-    Optional<ContactEntity> findById(@Param("id") UUID id);
+    @Select("<script>" +
+        "select id, display_name, role_title, remark, status, merged_to_id, created_by, created_at, updated_at, deleted_at, version " +
+        "from contacts where id = #{id}::uuid and deleted_at is null and status != 'merged' " +
+        "<if test=\"!isAdmin\">" +
+        "and (created_by = #{userId}::uuid or exists (select 1 from contact_identities ci join conversations cv on cv.contact_identity_id = ci.id " +
+        "where ci.contact_id = contacts.id and (cv.assigned_user_id = #{userId}::uuid " +
+        "or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) " +
+        "or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))))) " +
+        "</if>" +
+        "limit 1" +
+        "</script>")
+    Optional<ContactEntity> findAccessibleById(@Param("id") UUID id,
+                                               @Param("userId") UUID userId,
+                                               @Param("isAdmin") boolean isAdmin);
 }

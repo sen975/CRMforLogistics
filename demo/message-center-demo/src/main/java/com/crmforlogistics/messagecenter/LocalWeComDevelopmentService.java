@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -46,7 +48,7 @@ public final class LocalWeComDevelopmentService {
             throw new WeComLoginAttemptService.PendingLimitException("Local login attempt capacity exceeded");
         }
         String state = randomToken();
-        attempts.put(state, expiresAt());
+        attempts.put(state, loginAttemptExpiresAt());
         return new WeComLoginAttemptService.LoginAttemptResponse(
                 "Local", "local-development", "http://localhost:" + config.webPort() + "/", state,
                 config.wecomLoginAttemptTtlSeconds());
@@ -64,9 +66,9 @@ public final class LocalWeComDevelopmentService {
             throw new SecurityException("Local login state is expired, missing, or already used");
         }
         String token = randomToken();
-        tokens.put(token, new LocalToken(LOCAL_USER_ID, expiresAt()));
+        tokens.put(token, new LocalToken(LOCAL_USER_ID, viewerAuthExpiresAt()));
         return new WeComViewerService.LoginExchangeResponse(
-                LOCAL_USER_ID, token, config.wecomViewerSessionTtlSeconds());
+                LOCAL_USER_ID, token, config.wecomViewerAuthTtlSeconds());
     }
 
     public WeComChatDataSyncService.SyncResult sync(String viewerAuthToken) throws IOException {
@@ -77,20 +79,21 @@ public final class LocalWeComDevelopmentService {
     }
 
     public WeComViewerService.ViewerSessionResponse createSession(String contactPointId,
-                                                                    String viewerAuthToken)
+                                                                    String viewerAuthToken,
+                                                                    List<String> requestedMessageIds)
             throws IOException {
         requireToken(viewerAuthToken);
         if (contactPointId == null || !contactPointId.startsWith("wecom:")) {
             throw new IllegalArgumentException("WeCom contactPointId is required");
         }
-        List<WeComViewerService.ViewerMessage> messages = messagesFor(contactPointId);
+        List<WeComViewerService.ViewerMessage> messages = messagesFor(contactPointId, requestedMessageIds);
         if (messages.isEmpty()) {
             throw new SecurityException("Local WeCom conversation is not available");
         }
         sessions.entrySet().removeIf(entry -> entry.getValue().viewerAuthToken().equals(viewerAuthToken));
         String sessionId = randomToken();
         sessions.put(sessionId, new LocalSession(sessionId, viewerAuthToken, contactPointId,
-                expiresAt(), messages));
+                viewerSessionExpiresAt(), messages));
         return new WeComViewerService.ViewerSessionResponse(sessionId, config.wecomViewerSessionTtlSeconds());
     }
 
@@ -121,25 +124,38 @@ public final class LocalWeComDevelopmentService {
                 "jsApiList", List.of());
     }
 
-    private List<WeComViewerService.ViewerMessage> messagesFor(String contactPointId) throws IOException {
+    private List<WeComViewerService.ViewerMessage> messagesFor(String contactPointId,
+                                                                List<String> requestedMessageIds) throws IOException {
+        if (requestedMessageIds == null || requestedMessageIds.isEmpty()
+                || requestedMessageIds.size() > config.wecomViewerMaxMessages()) {
+            throw new IllegalArgumentException("Local WeCom messageIds must contain 1 to "
+                    + config.wecomViewerMaxMessages() + " items");
+        }
+        Set<String> requested = new HashSet<>();
+        for (String value : requestedMessageIds) {
+            String msgid = value == null ? "" : value.trim();
+            if (msgid.isBlank() || msgid.length() > 256 || !requested.add(msgid)) {
+                throw new IllegalArgumentException("Local WeCom messageIds contains an invalid or duplicate item");
+            }
+        }
         String external = contactPointId.substring("wecom:".length());
         Map<String, LocalMessage> byId = new LinkedHashMap<>();
         for (JsonObject row : loadSourceRows()) {
             String rowExternal = text(row, "external_userid");
+            String rowUser = text(row, "userid");
             String msgid = text(row, "msgid");
             String secret = firstNonBlank(text(row, "secret_key"), text(row, "secretKey"));
-            if (!external.equals(rowExternal) || msgid.isBlank() || secret.isBlank()) continue;
+            if (!external.equals(rowExternal) || !LOCAL_USER_ID.equals(rowUser)
+                    || !requested.contains(msgid) || secret.isBlank()) continue;
             long sendTime = number(row, "send_time");
             LocalMessage candidate = new LocalMessage(msgid, secret, sendTime);
             LocalMessage previous = byId.get(msgid);
             if (previous == null || candidate.sendTime() >= previous.sendTime()) byId.put(msgid, candidate);
         }
-        List<LocalMessage> ordered = new ArrayList<>(byId.values());
-        ordered.sort(Comparator.comparingLong(LocalMessage::sendTime).thenComparing(LocalMessage::msgid));
-        int from = Math.max(0, ordered.size() - config.wecomViewerMaxMessages());
         List<WeComViewerService.ViewerMessage> result = new ArrayList<>();
-        for (int i = from; i < ordered.size(); i++) {
-            LocalMessage item = ordered.get(i);
+        for (String msgid : requestedMessageIds) {
+            LocalMessage item = byId.get(msgid);
+            if (item == null) throw new SecurityException("Local WeCom message is not viewable");
             result.add(new WeComViewerService.ViewerMessage(item.msgid(), item.secretKey()));
         }
         return List.copyOf(result);
@@ -169,9 +185,9 @@ public final class LocalWeComDevelopmentService {
 
     private static List<JsonObject> fixtureRows() {
         return List.of(
-                JsonParser.parseString("{\"msgid\":\"local-msg-001\",\"external_userid\":\"local-contact-001\",\"userid\":\"local-wecom-user\",\"send_time\":1735689600,\"msgtype\":\"text\",\"origin\":3,\"secret_key\":\"local-secret-001\",\"text\":{\"content\":\"本地企业微信样例消息\"}}").getAsJsonObject(),
-                JsonParser.parseString("{\"msgid\":\"local-msg-002\",\"external_userid\":\"local-contact-001\",\"userid\":\"local-wecom-user\",\"send_time\":1735689660,\"msgtype\":\"text\",\"origin\":3,\"secret_key\":\"local-secret-002\",\"text\":{\"content\":\"用于验证会话展示流程\"}}").getAsJsonObject(),
-                JsonParser.parseString("{\"msgid\":\"local-msg-003\",\"external_userid\":\"local-contact-002\",\"userid\":\"local-wecom-user\",\"send_time\":1735689720,\"msgtype\":\"text\",\"origin\":3,\"secret_key\":\"local-secret-003\",\"text\":{\"content\":\"第二个本地联系人\"}}").getAsJsonObject()
+                JsonParser.parseString("{\"msgid\":\"local-msg-001\",\"external_userid\":\"local-contact-001\",\"userid\":\"local-wecom-user\",\"send_time\":1735689600,\"msgtype\":\"text\",\"direction\":\"inbound\",\"secret_key\":\"local-secret-001\",\"text\":{\"content\":\"本地外部联系人发来的样例消息\"}}").getAsJsonObject(),
+                JsonParser.parseString("{\"msgid\":\"local-msg-002\",\"external_userid\":\"local-contact-001\",\"userid\":\"local-wecom-user\",\"send_time\":1735689660,\"msgtype\":\"text\",\"direction\":\"outbound\",\"secret_key\":\"local-secret-002\",\"text\":{\"content\":\"本地员工发出的样例消息\"}}").getAsJsonObject(),
+                JsonParser.parseString("{\"msgid\":\"local-msg-003\",\"external_userid\":\"local-contact-002\",\"userid\":\"local-wecom-user\",\"send_time\":1735689720,\"msgtype\":\"text\",\"direction\":\"inbound\",\"secret_key\":\"local-secret-003\",\"text\":{\"content\":\"第二个本地联系人\"}}").getAsJsonObject()
         );
     }
 
@@ -210,7 +226,17 @@ public final class LocalWeComDevelopmentService {
         sessions.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
     }
 
-    private long expiresAt() { return clock.instant().getEpochSecond() + config.wecomViewerSessionTtlSeconds(); }
+    private long loginAttemptExpiresAt() {
+        return clock.instant().getEpochSecond() + config.wecomLoginAttemptTtlSeconds();
+    }
+
+    private long viewerAuthExpiresAt() {
+        return clock.instant().getEpochSecond() + config.wecomViewerAuthTtlSeconds();
+    }
+
+    private long viewerSessionExpiresAt() {
+        return clock.instant().getEpochSecond() + config.wecomViewerSessionTtlSeconds();
+    }
     private static String randomToken() { return UUID.randomUUID().toString().replace("-", ""); }
     private static long number(JsonObject object, String field) {
         try { return object.has(field) ? Math.max(0L, object.get(field).getAsLong()) : 0L; }

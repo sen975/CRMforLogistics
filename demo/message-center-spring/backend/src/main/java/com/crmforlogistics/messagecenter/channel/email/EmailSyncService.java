@@ -2,14 +2,17 @@ package com.crmforlogistics.messagecenter.channel.email;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.service.event.EventHub;
 import jakarta.mail.Address;
 import jakarta.mail.Folder;
 import jakarta.mail.Message;
@@ -41,16 +44,22 @@ public class EmailSyncService {
     private final ConversationMapper conversationMapper;
     private final ChannelAccountMapper channelAccountMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final ContactMapper contactMapper;
+    private final EventHub eventHub;
 
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
                             ChannelAccountMapper channelAccountMapper,
-                            ContactIdentityMapper contactIdentityMapper) {
+                            ContactIdentityMapper contactIdentityMapper,
+                            ContactMapper contactMapper,
+                            EventHub eventHub) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
         this.channelAccountMapper = channelAccountMapper;
         this.contactIdentityMapper = contactIdentityMapper;
+        this.contactMapper = contactMapper;
+        this.eventHub = eventHub;
     }
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
@@ -66,8 +75,12 @@ public class EmailSyncService {
             receiveLatestFromFolder(store, config.inboxFolder(), "in", receiveLimit(), result);
             receiveLatestFromFolder(store, config.sentFolder(), "out", receiveLimit(), result);
         }
-        return new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
+        SyncResult finalResult = new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
                 "received " + result.saved() + " new email messages");
+        if (finalResult.saved() > 0) {
+            eventHub.publish("message-new", "{}");
+        }
+        return finalResult;
     }
 
     boolean usesOpenSslImapFallback() {
@@ -151,7 +164,8 @@ public class EmailSyncService {
             entity.setSubject(subject);
             entity.setBodyText(bodyText);
             entity.setOccurredAt(sentDate);
-            entity.setCurrentStatus("received");
+            entity.setCurrentStatus("delivered");
+            entity.setCurrentStatusAt(Instant.now());
             entity.setIngestSequence(hashMessageId(messageId));
             messageMapper.insert(entity);
 
@@ -163,8 +177,8 @@ public class EmailSyncService {
     }
 
     private Long hashMessageId(String messageId) {
-        if (messageId == null || messageId.isBlank()) return (long) System.nanoTime();
-        return (long) messageId.hashCode();
+        if (messageId == null || messageId.isBlank()) return System.nanoTime() & 0x7FFFFFFFFFFFFFFFL;
+        return (long) messageId.hashCode() & 0x7FFFFFFFFFFFFFFFL;
     }
 
     private boolean isDuplicate(String messageId, String direction, String subject,
@@ -191,17 +205,45 @@ public class EmailSyncService {
                         .eq(ContactIdentityEntity::getChannelType, "email")
                         .eq(ContactIdentityEntity::getIdentityScope, "email")
                         .eq(ContactIdentityEntity::getIdentityValue, normalized));
-        if (!existing.isEmpty()) return existing.get(0);
+        if (!existing.isEmpty()) {
+            ContactIdentityEntity identity = existing.get(0);
+            if (identity.getContactId() == null) {
+                linkToNewContact(identity, email, normalized);
+            }
+            return identity;
+        }
         ContactIdentityEntity identity = new ContactIdentityEntity();
         identity.setId(UUID.randomUUID());
         identity.setChannelType("email");
         identity.setIdentityScope("email");
         identity.setIdentityValue(normalized);
+        identity.setNormalizedValue(normalized);
         identity.setDisplayName(ContactPointUtil.extractName(email, normalized));
         identity.setCreatedAt(Instant.now());
         identity.setUpdatedAt(Instant.now());
+
+        ContactEntity contact = new ContactEntity();
+        contact.setDisplayName(ContactPointUtil.extractName(email, normalized));
+        if (contact.getDisplayName() == null || contact.getDisplayName().isBlank()) {
+            contact.setDisplayName(normalized);
+        }
+        contact.setCreatedAt(Instant.now());
+        contact.setUpdatedAt(Instant.now());
+        contactMapper.insert(contact);
+        identity.setContactId(contact.getId());
         contactIdentityMapper.insert(identity);
         return identity;
+    }
+
+    private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized) {
+        ContactEntity contact = new ContactEntity();
+        String displayName = ContactPointUtil.extractName(email, normalized);
+        contact.setDisplayName(!displayName.isBlank() ? displayName : normalized);
+        contact.setCreatedAt(Instant.now());
+        contact.setUpdatedAt(Instant.now());
+        contactMapper.insert(contact);
+        identity.setContactId(contact.getId());
+        contactIdentityMapper.updateById(identity);
     }
 
     private ConversationEntity resolveOrCreateConversation(UUID identityId, UUID accountId) {

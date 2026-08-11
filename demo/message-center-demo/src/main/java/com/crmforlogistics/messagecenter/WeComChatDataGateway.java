@@ -1,5 +1,7 @@
 package com.crmforlogistics.messagecenter;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -17,10 +19,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class WeComChatDataGateway {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
+    private static final int MAX_ERRMSG_UTF8_BYTES = 4_096;
     private static final String SYNC_PROGRAM_PATH = "/cgi-bin/chatdata/sync_call_program";
+    private static final Pattern HINT_PATTERN = Pattern.compile("hint: \\[([A-Za-z0-9_-]{1,128})\\]");
+    private static final Gson DIAGNOSTIC_GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Set<String> OUTER_FIELDS = Set.of("errcode", "errmsg", "response_data");
     private static final Set<String> PAGE_FIELDS = Set.of(
             "errcode", "errmsg", "has_more", "next_cursor", "msg_list");
@@ -90,7 +97,10 @@ public final class WeComChatDataGateway {
                     requireOnlyFields(outer, OUTER_FIELDS);
                     int outerErrcode = integer(outer, "errcode");
                     if (outerErrcode != 0) {
-                        throw programError(outerErrcode, SYNC_PROGRAM_PATH, response.statusCode(), null);
+                        String errmsg = boundedErrmsg(outer, "errmsg");
+                        emitDiagnostic(outerErrcode, response.statusCode(), errmsg, SYNC_PROGRAM_PATH);
+                        throw programError(outerErrcode, SYNC_PROGRAM_PATH, response.statusCode(),
+                                extractHint(errmsg), null);
                     }
                     String responseData = text(outer, "response_data", MAX_RESPONSE_BYTES);
                     return parseProgramPage(responseData, limit, response.statusCode());
@@ -124,7 +134,10 @@ public final class WeComChatDataGateway {
             requireOnlyFields(body, PAGE_FIELDS);
             int programErrcode = integer(body, "errcode");
             if (programErrcode != 0) {
-                throw programError(programErrcode, SYNC_PROGRAM_PATH, upstreamHttpStatus, null);
+                String errmsg = boundedErrmsg(body, "errmsg");
+                emitDiagnostic(programErrcode, upstreamHttpStatus, errmsg, SYNC_PROGRAM_PATH);
+                throw programError(programErrcode, SYNC_PROGRAM_PATH, upstreamHttpStatus,
+                        extractHint(errmsg), null);
             }
             int hasMoreValue = integer(body, "has_more");
             if (hasMoreValue != 0 && hasMoreValue != 1) throw programError(null);
@@ -210,6 +223,37 @@ public final class WeComChatDataGateway {
         String value = object.get(field).getAsString();
         if (value.length() > maximum) throw programError(null);
         return value;
+    }
+
+    private String boundedErrmsg(JsonObject object, String field) {
+        if (!object.has(field) || !object.get(field).isJsonPrimitive()
+                || !object.getAsJsonPrimitive(field).isString()) {
+            return null;
+        }
+        String value = object.get(field).getAsString();
+        return value.getBytes(StandardCharsets.UTF_8).length <= MAX_ERRMSG_UTF8_BYTES ? value : null;
+    }
+
+    private static String extractHint(String errmsg) {
+        if (errmsg == null) return null;
+        Matcher matcher = HINT_PATTERN.matcher(errmsg);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private void emitDiagnostic(int errcode, int httpStatus, String errmsg, String path) {
+        if (errmsg == null) return;
+        try {
+            if (!config.wecomChatDataDiagnostics()) return;
+            JsonObject event = new JsonObject();
+            event.addProperty("event", "wecom.chatdata.upstream_diagnostic");
+            event.addProperty("path", path);
+            event.addProperty("httpStatus", httpStatus);
+            event.addProperty("errcode", errcode);
+            event.addProperty("errmsg", errmsg);
+            System.err.println(DIAGNOSTIC_GSON.toJson(event));
+        } catch (RuntimeException ignored) {
+            // Diagnostics must never replace the primary upstream error.
+        }
     }
 
     private static void requireText(String value, String field, int maximum) throws WeComChatDataException {

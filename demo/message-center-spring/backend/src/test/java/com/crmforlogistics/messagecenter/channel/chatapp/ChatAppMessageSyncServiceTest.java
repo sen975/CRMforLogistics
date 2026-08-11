@@ -17,18 +17,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ChatAppMessageSyncServiceTest {
 
     @Mock AppConfig appConfig;
-    @Mock SyncCursorMapper syncCursorMapper;
     @Mock ChannelAccountMapper channelAccountMapper;
+    @Mock ChatAppPollingProjector pollingProjector;
 
     @Test
     void shouldConstructWithDependencies() {
-        ChatAppMessageSyncService service = new ChatAppMessageSyncService(appConfig, syncCursorMapper, channelAccountMapper);
+        ChatAppMessageSyncService service = new ChatAppMessageSyncService(
+                appConfig, channelAccountMapper, pollingProjector);
         assertNotNull(service);
     }
 
     @Test
     void shouldRejectNullDependencies() {
-        assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(null, syncCursorMapper, channelAccountMapper));
-        assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(appConfig, null, channelAccountMapper));
+        assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(
+                null, channelAccountMapper, pollingProjector));
+        assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(
+                appConfig, null, pollingProjector));
     }
 }

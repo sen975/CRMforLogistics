@@ -2177,7 +2177,7 @@ components:
           maximum: 3600
     WeComViewerSessionCreateRequest:
       type: object
-      required: [contactPointId, viewerAuthToken]
+      required: [contactPointId, viewerAuthToken, messageIds]
       additionalProperties: false
       properties:
         conversationId:
@@ -2191,6 +2191,15 @@ components:
           type: string
           minLength: 16
           maxLength: 128
+        messageIds:
+          type: array
+          minItems: 1
+          maxItems: 15
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 256
     WeComConversationSyncResult:
       type: object
       required: [pages, stored, skipped]
@@ -2250,7 +2259,7 @@ components:
           maxLength: 32
         messages:
           type: array
-          maxItems: 20
+          maxItems: 15
           items:
             $ref: '#/components/schemas/WeComViewerMessage'
     WeComViewerEventRequest:

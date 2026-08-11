@@ -77,10 +77,14 @@ public class ContactGroupService {
 
         // Create new contact
         ContactEntity newContact = new ContactEntity();
+        newContact.setId(UUID.randomUUID());
         newContact.setDisplayName(name);
+        newContact.setStatus("active");
         if (userId != null) {
             newContact.setCreatedBy(userId);
         }
+        newContact.setCreatedAt(Instant.now());
+        newContact.setUpdatedAt(Instant.now());
         contactMapper.insert(newContact);
 
         // Move the single identity to the new contact

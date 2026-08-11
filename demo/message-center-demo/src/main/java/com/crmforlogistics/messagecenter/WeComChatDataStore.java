@@ -124,7 +124,8 @@ public final class WeComChatDataStore {
                     required(json, "external_userid", 128),
                     required(json, "userid", 128),
                     nonNegativeLong(json, "send_time"),
-                    required(json, "msgtype", 32));
+                    required(json, "msgtype", 32),
+                    optionalDirection(json));
             result.put(candidate.identity(), candidate);
         }
         return result;
@@ -156,8 +157,9 @@ public final class WeComChatDataStore {
         }
         if (!bounded(message.msgid(), 256) || !bounded(userId, 128) || !bounded(externalUserId, 128)
                 || message.sendTime() < 0) return null;
+        String direction = message.sender().type() == 1 ? "outbound" : "inbound";
         return new Candidate(message.msgid(), decrypted.secretKey(), externalUserId, userId,
-                message.sendTime(), Integer.toString(message.msgType()));
+                message.sendTime(), Integer.toString(message.msgType()), direction);
     }
 
     private static boolean bounded(String value, int maximum) {
@@ -183,6 +185,16 @@ public final class WeComChatDataStore {
         if (!object.has(field) || !object.get(field).isJsonPrimitive()) throw new IOException("field missing");
         String value = object.get(field).getAsString();
         if (!bounded(value, maximum)) throw new IOException("field invalid");
+        return value;
+    }
+
+    private static String optionalDirection(JsonObject object) throws IOException {
+        if (!object.has("direction") || object.get("direction").isJsonNull()) return "";
+        String value = object.get("direction").getAsString().trim().toLowerCase(java.util.Locale.ROOT);
+        if (value.isBlank()) return "";
+        if (!"inbound".equals(value) && !"outbound".equals(value)) {
+            throw new IOException("field invalid");
+        }
         return value;
     }
 
@@ -223,7 +235,7 @@ public final class WeComChatDataStore {
                                          String userId, long sendTime, String msgType) {}
 
     private record Candidate(String msgid, String secretKey, String externalUserId, String userId,
-                             long sendTime, String msgType) {
+                             long sendTime, String msgType, String direction) {
         private String identity() {
             return msgid + "\n" + userId + "\n" + externalUserId;
         }
@@ -236,6 +248,7 @@ public final class WeComChatDataStore {
             object.addProperty("userid", userId);
             object.addProperty("send_time", sendTime);
             object.addProperty("msgtype", msgType);
+            if (direction != null && !direction.isBlank()) object.addProperty("direction", direction);
             return object.toString();
         }
     }

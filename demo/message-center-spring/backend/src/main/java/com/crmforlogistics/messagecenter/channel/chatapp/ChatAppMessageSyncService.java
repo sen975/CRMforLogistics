@@ -19,26 +19,24 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class ChatAppMessageSyncService {
-
-    private static final Logger log = LoggerFactory.getLogger(ChatAppMessageSyncService.class);
-    private static final String CURSOR_TYPE = "chatapp_message";
-    private static final String SCOPE_KEY = "default";
+    private static final Logger LOG = LoggerFactory.getLogger(ChatAppMessageSyncService.class);
+    private static final int MAX_PAGES = 50;
+    private static final int PAGE_SIZE = 100;
 
     private final AppConfig config;
-    private final SyncCursorMapper syncCursorMapper;
     private final ChannelAccountMapper channelAccountMapper;
+    private final ChatAppPollingProjector pollingProjector;
 
-    public ChatAppMessageSyncService(AppConfig config, SyncCursorMapper syncCursorMapper,
-                                      ChannelAccountMapper channelAccountMapper) {
+    public ChatAppMessageSyncService(AppConfig config,
+                                     ChannelAccountMapper channelAccountMapper,
+                                     ChatAppPollingProjector pollingProjector) {
         this.config = Objects.requireNonNull(config);
-        this.syncCursorMapper = Objects.requireNonNull(syncCursorMapper);
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
+        this.pollingProjector = Objects.requireNonNull(pollingProjector);
     }
 
     public SyncResultRecord runOnce() {
@@ -46,60 +44,66 @@ public class ChatAppMessageSyncService {
         int pages = 0;
         int fetched = 0;
         int saved = 0;
-
-        UUID channelAccountId = resolveChannelAccountId();
-        if (channelAccountId == null) {
-            log.debug("No chatapp channel account found, skipping message sync");
-            return new SyncResultRecord(0, 0, 0, elapsedMs(started));
+        int skipped = 0;
+        ChannelAccountEntity account = resolveChannelAccount();
+        if (account == null) {
+            return new SyncResultRecord(0, 0, 0, 0, elapsedMs(started));
         }
 
-        Optional<ChannelSyncCursorEntity> cursorOpt = syncCursorMapper.selectCursor(
-                channelAccountId, CURSOR_TYPE, SCOPE_KEY);
-
+        long endTime = System.currentTimeMillis();
+        long startTime = endTime - TimeUnit.DAYS.toMillis(30);
         try (AsyncClient client = createClient()) {
-            for (int pageIndex = 1; pageIndex <= 50; pageIndex++) {
+            for (int pageIndex = 1; pageIndex <= MAX_PAGES; pageIndex++) {
                 ListChatappMessageRequest request = ListChatappMessageRequest.builder()
                         .custSpaceId(config.custSpaceId())
+                        .channelType("whatsapp")
+                        .businessNumber(account.getAccountIdentifier())
+                        .startTime(startTime)
+                        .endTime(endTime)
                         .page(ListChatappMessageRequest.Page.builder()
                                 .index((long) pageIndex)
-                                .size(100L)
+                                .size((long) PAGE_SIZE)
                                 .build())
                         .build();
-
                 ListChatappMessageResponse response = client.listChatappMessage(request).get();
                 ListChatappMessageResponseBody body = response.getBody();
-                if (body == null || body.getData() == null || body.getData().isEmpty()) {
-                    break;
-                }
+                if (body == null || body.getData() == null || body.getData().isEmpty()) break;
 
+                List<ListChatappMessageResponseBody.Data> rows = body.getData();
                 pages++;
-                List<ListChatappMessageResponseBody.Data> data = body.getData();
-                fetched += data.size();
-
-                // Message ingestion (CAMS data -> MessageEntity -> messages table)
-                // deferred to a follow-up task that wires the full conversation pipeline:
-                // conversationMapper.getOrCreateConversation + messageMapper.insertWithSequence
-                saved += data.size();
-
-                if (data.size() < 100) break;
+                fetched += rows.size();
+                for (ListChatappMessageResponseBody.Data row : rows) {
+                    try {
+                        if (pollingProjector.project(row, account.getId())) saved++;
+                        else skipped++;
+                    } catch (RuntimeException error) {
+                        LOG.warn("Failed to project ChatApp polling row: {}", error.getMessage());
+                        skipped++;
+                    }
+                }
+                if (rows.size() < PAGE_SIZE) break;
             }
-        } catch (Exception e) {
-            log.error("ChatApp message sync failed", e);
+        } catch (Exception error) {
+            LOG.error("ChatApp message polling failed", error);
         }
-
         long durationMs = elapsedMs(started);
-        log.info("ChatApp message sync: pages={} fetched={} saved={} durationMs={}",
-                pages, fetched, saved, durationMs);
-        return new SyncResultRecord(pages, fetched, saved, durationMs);
+        LOG.info("ChatApp message polling: pages={} fetched={} saved={} skipped={} durationMs={}",
+                pages, fetched, saved, skipped, durationMs);
+        return new SyncResultRecord(pages, fetched, saved, skipped, durationMs);
     }
 
-    private UUID resolveChannelAccountId() {
+    private ChannelAccountEntity resolveChannelAccount() {
         List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
                 new LambdaQueryWrapper<ChannelAccountEntity>()
-                        .eq(ChannelAccountEntity::getChannelType, "chatapp")
+                        .in(ChannelAccountEntity::getChannelType, List.of("chatapp", "whatsapp"))
+                        .eq(ChannelAccountEntity::getAuthStatus, "active")
                         .isNull(ChannelAccountEntity::getDeletedAt)
-                        .last("limit 1"));
-        return accounts.isEmpty() ? null : accounts.get(0).getId();
+                        .last("limit 2"));
+        if (accounts.isEmpty()) return null;
+        if (accounts.size() > 1) {
+            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_VIOLATION");
+        }
+        return accounts.get(0);
     }
 
     private AsyncClient createClient() {
@@ -107,8 +111,8 @@ public class ChatAppMessageSyncService {
                 .region(ChatAppSendService.defaulted(config.camsRegion(), "ap-southeast-1"))
                 .credentialsProvider(createCredentialsProvider())
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(ChatAppSendService.defaulted(config.camsEndpoint(),
-                                "cams.ap-southeast-1.aliyuncs.com")))
+                        .setEndpointOverride(ChatAppSendService.defaulted(
+                                config.camsEndpoint(), "cams.ap-southeast-1.aliyuncs.com")))
                 .build();
     }
 
@@ -128,5 +132,5 @@ public class ChatAppMessageSyncService {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
-    public record SyncResultRecord(int pages, int fetched, int saved, long durationMs) {}
+    public record SyncResultRecord(int pages, int fetched, int saved, int skipped, long durationMs) {}
 }

@@ -17,12 +17,14 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -135,8 +137,8 @@ public class WeComViewerService {
             enforceViewerAuthLimit();
             auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
             viewerAuthTokens.put(token, new ViewerAuth(token, userId,
-                    now + config.wecomViewerSessionTtlSeconds(), sessionOrder.incrementAndGet(), "", 0L));
-            return new LoginExchangeResponse(userId, token, config.wecomViewerSessionTtlSeconds());
+                    now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(), "", 0L));
+            return new LoginExchangeResponse(userId, token, config.wecomViewerAuthTtlSeconds());
         } catch (Exception exception) {
             recordFailure("wecom.viewer.login_exchange", "failed", userId, "", "", exception);
             throw exception;
@@ -172,9 +174,9 @@ public class WeComViewerService {
             enforceViewerAuthLimit();
             auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
             viewerAuthTokens.put(token, new ViewerAuth(token, userId,
-                    now + config.wecomViewerSessionTtlSeconds(), sessionOrder.incrementAndGet(),
+                    now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(),
                     binding.installationId(), binding.version()));
-            return new LoginExchangeResponse(userId, token, config.wecomViewerSessionTtlSeconds());
+            return new LoginExchangeResponse(userId, token, config.wecomViewerAuthTtlSeconds());
         } catch (Exception exception) {
             recordFailure("wecom.viewer.login_exchange", "failed", userId, "", "", exception);
             throw exception;
@@ -196,7 +198,8 @@ public class WeComViewerService {
         return new ViewerSyncContext(auth.wecomUserId(), resolveBoundInstallation(auth));
     }
 
-    public ViewerSessionResponse createViewerSession(String contactPointId, String viewerAuthToken) throws Exception {
+    public ViewerSessionResponse createViewerSession(String contactPointId, String viewerAuthToken,
+                                                     List<String> requestedMessageIds) throws Exception {
         String wecomUserId = "";
         String viewerSessionId = "";
         try {
@@ -210,7 +213,8 @@ public class WeComViewerService {
             enforceViewerSessionRate(wecomUserId, now);
             cleanupExpiredSessions(now);
             enforceViewerSessionLimit();
-            List<ViewerMessage> messages = readViewerMessages(contactPointId, wecomUserId);
+            List<String> messageIds = validateRequestedMessageIds(requestedMessageIds);
+            List<ViewerMessage> messages = readViewerMessages(contactPointId, wecomUserId, messageIds);
             if (messages.isEmpty()) {
                 throw new SecurityException("WeCom conversation is not viewable by this session");
             }
@@ -451,7 +455,26 @@ public class WeComViewerService {
         return response.ticket();
     }
 
-    private List<ViewerMessage> readViewerMessages(String contactPointId, String wecomUserId) throws IOException {
+    private List<String> validateRequestedMessageIds(List<String> requestedMessageIds) {
+        if (requestedMessageIds == null || requestedMessageIds.isEmpty()
+                || requestedMessageIds.size() > config.wecomViewerMaxMessages()) {
+            throw new IllegalArgumentException("WeCom viewer messageIds must contain 1 to "
+                    + config.wecomViewerMaxMessages() + " items");
+        }
+        Set<String> seen = new HashSet<>();
+        List<String> result = new ArrayList<>(requestedMessageIds.size());
+        for (String value : requestedMessageIds) {
+            String msgid = value == null ? "" : value.trim();
+            if (msgid.isBlank() || msgid.length() > 256 || !seen.add(msgid)) {
+                throw new IllegalArgumentException("WeCom viewer messageIds contains an invalid or duplicate item");
+            }
+            result.add(msgid);
+        }
+        return List.copyOf(result);
+    }
+
+    private List<ViewerMessage> readViewerMessages(String contactPointId, String wecomUserId,
+                                                    List<String> requestedMessageIds) throws IOException {
         java.nio.file.Path file = config.wecomDataFile();
         if (!java.nio.file.Files.exists(file)) {
             return List.of();
@@ -460,6 +483,7 @@ public class WeComViewerService {
             throw new IOException("WeCom viewer data file is too large");
         }
         String expectedExternal = contactPointId.substring("wecom:".length());
+        Set<String> requested = new HashSet<>(requestedMessageIds);
         Map<String, ViewerMessageCandidate> candidatesById = new LinkedHashMap<>();
         try (Stream<String> lines = java.nio.file.Files.lines(file, StandardCharsets.UTF_8)) {
             Iterator<String> iterator = lines.iterator();
@@ -471,11 +495,14 @@ public class WeComViewerService {
                 try {
                     JsonObject object = JsonParser.parseString(line).getAsJsonObject();
                     String external = JsonSupport.string(object, "external_userid");
-                    if (!expectedExternal.equals(external)
+                    if (!expectedExternal.equalsIgnoreCase(external)
                             || !wecomUserId.equals(viewerMessageOwner(object))) {
                         continue;
                     }
                     String msgid = JsonSupport.string(object, "msgid");
+                    if (!requested.contains(msgid)) {
+                        continue;
+                    }
                     String secret = firstNonBlank(JsonSupport.string(object, "secret_key"),
                             JsonSupport.string(object, "secretKey"));
                     if (msgid.isBlank() || msgid.length() > 256
@@ -493,16 +520,15 @@ public class WeComViewerService {
                 }
             }
         }
-        List<ViewerMessageCandidate> candidates = new ArrayList<>(candidatesById.values());
-        candidates.sort(Comparator.comparingLong(ViewerMessageCandidate::sendTime)
-                .thenComparing(ViewerMessageCandidate::msgid));
-        int fromIndex = Math.max(0, candidates.size() - config.wecomViewerMaxMessages());
-        List<ViewerMessage> result = new ArrayList<>(candidates.size() - fromIndex);
-        for (int index = fromIndex; index < candidates.size(); index++) {
-            ViewerMessageCandidate candidate = candidates.get(index);
+        if (candidatesById.size() != requested.size()) {
+            throw new SecurityException("WeCom conversation message is not viewable by this session");
+        }
+        List<ViewerMessage> result = new ArrayList<>(requestedMessageIds.size());
+        for (String msgid : requestedMessageIds) {
+            ViewerMessageCandidate candidate = candidatesById.get(msgid);
             result.add(new ViewerMessage(candidate.msgid(), candidate.secretKey()));
         }
-        return result;
+        return List.copyOf(result);
     }
 
     private synchronized void enforceViewerSessionRate(String wecomUserId, long now) {

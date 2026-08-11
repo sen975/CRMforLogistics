@@ -1,3 +1,5 @@
 package com.crmforlogistics.messagecenter.dto.response;
 
-public record LoginResponse(String token, String username) {}
+import java.util.List;
+
+public record LoginResponse(String token, String username, List<String> roles) {}

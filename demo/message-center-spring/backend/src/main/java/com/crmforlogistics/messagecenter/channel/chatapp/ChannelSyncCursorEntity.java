@@ -3,8 +3,6 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.baomidou.mybatisplus.annotation.Version;
-
 import java.time.Instant;
 import java.util.UUID;
 
@@ -21,7 +19,6 @@ public class ChannelSyncCursorEntity {
     private Instant cursorTimestamp;
     private Instant updatedAt;
 
-    @Version
     private Long version;
 
     public UUID getId() { return id; }

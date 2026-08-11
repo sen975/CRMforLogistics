@@ -13,7 +13,7 @@
 - 保留 SenseVoice 的中文及中英混合识别能力，为转录文本恢复标点并按标点换行。
 - 每个展示分段只使用模型或 VAD 提供的真实音频时间边界，禁止按字符数、文本长度或平均语速估算时间。
 
-同时，FunASR 将从 Mac 开发机迁移到使用 systemd 的 Linux 服务器长期运行。CPU 使用必须可配置：开发机允许低占用慢速运行，生产服务器可以增加核心数换取转录速度，并由操作系统提供硬上限。
+同时，FunASR 使用 Docker Compose 在 Mac 开发机和 Linux 服务器长期运行。CPU 使用必须可配置：开发机允许低占用慢速运行，生产服务器可以增加核心数换取转录速度，并由容器 CPU limit 提供硬上限。
 
 ## 2. 当前证据
 
@@ -32,7 +32,7 @@
 当前 FunASR 源码已经具备所需能力：
 
 - `AutoModel.inference_with_vad` 依次执行 VAD、ASR、时间戳合并和标点恢复。
-- `punc_model="ct-punc"` 可恢复中英文标点。
+- `punc_model="ct-punc-c"` 可恢复中英文标点；该 CT-Transformer 版本约 291MB，适合 CPU 常驻部署。
 - `sentence_timestamp=True` 可生成 `sentence_info`。
 - 有可对齐的模型时间戳时，句子使用对齐后的真实时间。
 - 标点对齐失败且仍有可靠 VAD 边界时，源码已有按 VAD 区间回退的测试覆盖。
@@ -60,7 +60,7 @@
 - 不切换为 Paraformer。切换会改变现有识别模型及中英混合表现，超出“只改善文本可读性”的边界。
 - 不用正则、字符数或文本长度推导句级时间。
 - 不新增数据库字段，不改变电话记录状态机，不引入新的前端业务状态。
-- 不用 Docker 承载 FunASR。开发环境直接运行 Python，生产环境使用 systemd 管理同一服务。
+- 不维护本地 Python 与 Docker 两条并行运行主线；开发和生产均以同一 Docker Compose 服务为运行真源。
 
 ## 4. Owner 与职责边界
 
@@ -68,7 +68,7 @@
 
 `/Users/z/FunASR/examples/openai_api/server.py` 是模型组合、推理参数、资源配置和外部响应的唯一 owner，负责：
 
-- 为 `sensevoice` 加载 `fsmn-vad` 与 `ct-punc`。
+- 为 `sensevoice` 加载 `fsmn-vad` 与 `ct-punc-c`。
 - 请求句级时间输出。
 - 把合法 `sentence_info` 映射成 OpenAI 兼容 `segments`。
 - 保证分段起止时间来自模型结果，不用默认 `0` 补造缺失边界。
@@ -83,6 +83,7 @@
 - `segments` 可以为空。
 - 非空分段必须通过数量、文本、顺序和真实音频时长校验。
 - 音频时长来自上传阶段持久化的 `audioDurationSeconds`，不使用 FunASR 推理耗时。
+- JDK `HttpClient` 固定使用 HTTP/1.1；当前 Uvicorn 服务不接受 h2c upgrade，默认 HTTP/2 探测会破坏 multipart 请求并返回 422。
 
 Spring 不拥有标点算法、VAD 语义或推理线程配置。
 
@@ -137,22 +138,22 @@ FUNASR_MAX_CONCURRENCY
 | 环境 | Intra-op | Inter-op | 并发 | OS 硬上限 |
 |---|---:|---:|---:|---:|
 | Mac 开发机 | 1 | 1 | 1 | 无硬保证，目标约一个核心 |
-| Linux 初始生产 | 4 | 1 | 1 | `CPUQuota=400%` |
-| Linux 高速生产 | 6-8 | 1 | 1 | `CPUQuota=600%-800%` |
+| Linux 初始生产 | 4 | 1 | 1 | `cpus=4.0` |
+| Linux 高速生产 | 6-8 | 1 | 1 | `cpus=6.0-8.0` |
 
 生产调优先增加单任务线程数，再根据真实吞吐、内存和排队长度决定是否增加并发。不得默认通过多请求并发抢满服务器。
 
-## 7. systemd 运行边界
+## 7. Docker 运行边界
 
-生产服务由 systemd 管理，不依赖 Docker。unit 通过 `EnvironmentFile` 读取资源参数，通过 `CPUQuota` 提供硬限制，并至少包含：
+开发与生产服务由 Docker Compose 管理。Compose 通过 `.env` 读取资源参数，通过 `cpus` 提供硬限制，并至少包含：
 
-- 明确的工作目录、Python 解释器和启动命令。
-- `Restart=on-failure` 与有限重启退避。
-- `CPUQuota`，数值由部署环境配置。
-- 模型缓存目录和临时目录的显式路径与权限。
-- 仅监听 Spring 可访问的私有地址，不直接暴露公网端口。
+- 固定的 FunASR 版本、健康检查与 `restart: unless-stopped`。
+- `FUNASR_INTRAOP_THREADS`、`FUNASR_INTEROP_THREADS`、`FUNASR_MAX_CONCURRENCY` 和 `FUNASR_CPU_LIMIT`。
+- named volume 持久化模型缓存，容器重建不重复下载模型。
+- 镜像安装 `ffmpeg/ffprobe`，接口从媒体读取真实时长。
+- 生产端口只绑定 Spring 可访问的私有网络或主机地址，不直接暴露公网。
 
-修改资源档位只需更新环境文件或 systemd override，执行 daemon reload 并重启服务，不修改应用源码。
+修改资源档位只需更新 `.env` 并重建或重启服务，不修改应用源码。线程档位和 `FUNASR_CPU_LIMIT` 必须配套，避免容器限额低于模型线程需求。
 
 ## 8. 错误处理
 
@@ -167,7 +168,7 @@ FUNASR_MAX_CONCURRENCY
 
 ### 9.1 FunASR 单元与协议测试
 
-- `sensevoice` 加载 `fsmn-vad` 和 `ct-punc`。
+- `sensevoice` 加载 `fsmn-vad` 和 `ct-punc-c`。
 - 推理请求开启句级时间输出。
 - 中文、中文夹英文和连续标点按标点换行，不产生空行。
 - 模型句级时间优先于 VAD 回退。
@@ -201,9 +202,9 @@ FUNASR_MAX_CONCURRENCY
 
 Mac 使用 `1/1/1` profile，验收目标为长期约一个核心；由于 macOS 没有本设计提供的进程硬配额，不声称绝对不超过 `150%`。
 
-Linux 分别使用 2、4、6 个 intra-op 线程测试，systemd `CPUQuota` 与线程档位一致。完成标准：
+Linux 分别使用 2、4、6 个 intra-op 线程测试，容器 `cpus` 与线程档位一致。完成标准：
 
-- CPU 不突破 systemd 硬上限。
+- CPU 不突破容器硬上限。
 - 增加线程数后真实转录耗时有可测量改善。
 - 所有时间戳都来自模型或 VAD，且不超过真实录音时长。
 - 中文及夹杂英文文本具备可读标点和换行。

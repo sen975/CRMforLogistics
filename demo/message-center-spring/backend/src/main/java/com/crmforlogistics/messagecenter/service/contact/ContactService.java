@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
+import com.crmforlogistics.messagecenter.dto.response.ContactIdentityResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
@@ -14,6 +15,9 @@ import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -69,11 +73,12 @@ public class ContactService {
                                                int page, int size) {
         int safeSize = clampSize(size);
         Page<ContactEntity> pageParam = new Page<>(page, safeSize);
+        boolean isAdmin = isCurrentUserAdmin();
         IPage<ContactEntity> pageResult = contactMapper.listForUser(
-                pageParam, userId, search, beforeLastMessageAt, beforeId);
+                pageParam, userId, search, beforeLastMessageAt, beforeId, isAdmin);
 
         List<ContactResponse> records = pageResult.getRecords().stream()
-                .map(this::toResponse)
+                .map(contact -> toResponse(contact, userId))
                 .toList();
 
         Page<ContactResponse> resultPage = new Page<>(page, safeSize);
@@ -92,13 +97,13 @@ public class ContactService {
      * @throws IllegalArgumentException if contact not found
      */
     public ContactResponse getById(UUID userId, UUID contactId) {
-        ContactEntity entity = contactMapper.findById(contactId)
+        ContactEntity entity = contactMapper.findAccessibleById(contactId, userId, isCurrentUserAdmin())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Contact not found: " + contactId));
-        return toResponse(entity);
+        return toResponse(entity, userId);
     }
 
-    private ContactResponse toResponse(ContactEntity entity) {
+    private ContactResponse toResponse(ContactEntity entity, UUID userId) {
         UUID contactId = entity.getId();
         List<ContactIdentityEntity> identities =
                 contactIdentityMapper.findByContactId(contactId);
@@ -120,11 +125,8 @@ public class ContactService {
         int unreadCount = 0;
 
         if (!identityIds.isEmpty()) {
-            LambdaQueryWrapper<ConversationEntity> convWrapper =
-                    new LambdaQueryWrapper<>();
-            convWrapper.in(ConversationEntity::getContactIdentityId, identityIds);
             List<ConversationEntity> conversations =
-                    conversationMapper.selectList(convWrapper);
+                    conversationMapper.listAccessibleForContact(contactId, userId);
 
             lastMessageAt = conversations.stream()
                     .map(ConversationEntity::getLastMessageAt)
@@ -163,6 +165,15 @@ public class ContactService {
             }
         }
 
+        List<ContactIdentityResponse> identityResponses = identities.stream()
+                .map(i -> new ContactIdentityResponse(
+                        i.getId(),
+                        i.getChannelType(),
+                        i.getIdentityScope(),
+                        i.getIdentityValue(),
+                        i.getDisplayName()))
+                .toList();
+
         return new ContactResponse(
                 contactId,
                 entity.getDisplayName(),
@@ -171,7 +182,26 @@ public class ContactService {
                 lastMessageAt,
                 lastText,
                 messageCount,
-                unreadCount);
+                unreadCount,
+                identityResponses);
+    }
+
+    /**
+     * Mark all messages across all of a contact's conversations as read.
+     *
+     * @param contactId the contact UUID
+     */
+    public void markAsRead(UUID userId, UUID contactId) {
+        List<ConversationEntity> conversations =
+                conversationMapper.listAccessibleForContact(contactId, userId);
+
+        List<UUID> conversationIds = conversations.stream()
+                .map(ConversationEntity::getId)
+                .toList();
+
+        if (!conversationIds.isEmpty()) {
+            messageMapper.markRead(conversationIds);
+        }
     }
 
     private static int clampSize(int size) {
@@ -179,5 +209,13 @@ public class ContactService {
             return 20;
         }
         return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private static boolean isCurrentUserAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(a -> a.equals("ROLE_ADMIN"));
     }
 }

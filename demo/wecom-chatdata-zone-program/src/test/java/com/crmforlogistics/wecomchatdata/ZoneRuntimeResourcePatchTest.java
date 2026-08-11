@@ -32,4 +32,10 @@ class ZoneRuntimeResourcePatchTest {
         assertTrue(patch.contains("business_gorup_size = 4"));
         assertTrue(patch.contains("Class.forName(\"mytype.mycom.mygroup.DataBaseUtils\")"));
     }
+
+    @Test
+    void startupScriptForwardsOfficialDebugArguments() throws Exception {
+        String start = Files.readString(Path.of("start"));
+        assertTrue(start.contains("wecom-chatdata-zone-program.jar \"$@\""));
+    }
 }

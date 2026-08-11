@@ -1,37 +1,37 @@
-# message-center Spring Boot MVC Migration — Phase 1 Implementation Plan
+# message-center Spring Boot MVC 迁移 — 第一阶段实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供 agentic worker 使用：** 必须子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 按任务逐个实现此计划。步骤使用 checkbox（`- [ ]`）语法跟踪。
 
-**Goal:** Scaffold `demo/message-center-spring/` as a Spring Boot 3.4.x MVC project with MyBatis-Plus, Spring Security, MinIO, and core contacts/messages/threads APIs, referencing `demo/message-center-demo/` for business logic.
+**目标：** 搭建 `demo/message-center-spring/` 为 Spring Boot 3.4.x MVC 项目，包含 MyBatis-Plus、Spring Security、MinIO 以及核心联系人/消息/线程 API，参考 `demo/message-center-demo/` 中的业务逻辑。
 
-**Architecture:** Spring Boot 3.4.x + MVC (Tomcat). Jackson for JSON, MyBatis-Plus with XML Mapper for data access, Spring Security for authentication, MinIO for file storage. Frontend is a React + TypeScript + Vite + Ant Design SPA, functionally identical to the current embedded page in the old `App.java`.
+**架构：** Spring Boot 3.4.x + MVC (Tomcat)。Jackson 处理 JSON，MyBatis-Plus 配合 XML Mapper 进行数据访问，Spring Security 处理认证，MinIO 处理文件存储。前端为 React + TypeScript + Vite + Ant Design SPA，功能与旧 `App.java` 中当前嵌入式页面完全一致。
 
-**Tech Stack:** Java 17, Spring Boot 3.4.x, Spring MVC, Spring Security, MyBatis-Plus, Flyway, PostgreSQL, MinIO, Jackson, React 18, TypeScript 5, Vite 5, Ant Design 5, TanStack Query, React Router 6, Axios.
+**技术栈：** Java 17、Spring Boot 3.4.x、Spring MVC、Spring Security、MyBatis-Plus、Flyway、PostgreSQL、MinIO、Jackson、React 18、TypeScript 5、Vite 5、Ant Design 5、TanStack Query、React Router 6、Axios。
 
-## Global Constraints
+## 全局约束
 
-- Java 17 minimum
+- Java 17 最低版本
 - Spring Boot 3.x
 - Spring Security
 - MyBatis-Plus + XML Mapper
-- PostgreSQL, first phase no pgvector
-- MinIO for file storage
-- Flyway for database migration
-- Docker Compose single-machine private deployment
-- Frontend UI/UX must match the old embedded page exactly
-- New code in `demo/message-center-spring/`, old code in `demo/message-center-demo/` is read-only reference
-- Jackson replaces Gson
+- PostgreSQL，第一阶段不用 pgvector
+- MinIO 用于文件存储
+- Flyway 用于数据库迁移
+- Docker Compose 单机私有化部署
+- 前端 UI/UX 必须与旧嵌入式页面完全一致
+- 新代码在 `demo/message-center-spring/`，旧代码在 `demo/message-center-demo/` 中仅作只读参考
+- Jackson 替换 Gson
 
 ---
 
-## File Structure Map
+## 文件结构图
 
 ```
 demo/message-center-spring/
 ├── backend/
 │   ├── pom.xml
 │   ├── compose.yaml
-│   ├── secrets/                           # copied from old project
+│   ├── secrets/                           # 从旧项目复制
 │   │   ├── postgres_password
 │   │   ├── minio_access_key
 │   │   └── minio_secret_key
@@ -45,7 +45,7 @@ demo/message-center-spring/
 │       │   │   ├── SecurityConfig.java
 │       │   │   ├── MinioConfig.java
 │       │   │   └── MyBatisPlusConfig.java
-│       │   ├── entity/                    # MyBatis-Plus entities
+│       │   ├── entity/                    # MyBatis-Plus 实体
 │       │   │   ├── UserEntity.java
 │       │   │   ├── SessionEntity.java
 │       │   │   ├── ContactEntity.java
@@ -54,7 +54,7 @@ demo/message-center-spring/
 │       │   │   ├── MessageEntity.java
 │       │   │   ├── ChannelAccountEntity.java
 │       │   │   └── CompanyEntity.java
-│       │   ├── mapper/                    # MyBatis-Plus mapper interfaces
+│       │   ├── mapper/                    # MyBatis-Plus mapper 接口
 │       │   │   ├── UserMapper.java
 │       │   │   ├── SessionMapper.java
 │       │   │   ├── ContactMapper.java
@@ -105,13 +105,13 @@ demo/message-center-spring/
 │       └── resources/
 │           ├── application.yml
 │           ├── application-dev.yml
-│           ├── db/migration/              # copied from old project
+│           ├── db/migration/              # 从旧项目复制
 │           │   ├── V1__identity_and_contact.sql
 │           │   ├── V2__channel_conversation_message.sql
 │           │   ├── V3__events_storage_import.sql
 │           │   ├── V4__tag_search_indexes.sql
 │           │   └── V5__wecom_daily_summary.sql
-│           └── mapper/                    # MyBatis XML mappers
+│           └── mapper/                    # MyBatis XML mapper
 │               ├── ContactMapper.xml
 │               ├── MessageMapper.xml
 │               └── ConversationMapper.xml
@@ -145,16 +145,16 @@ demo/message-center-spring/
 
 ---
 
-### Task 1: Create project directory and pom.xml
+### 任务 1: 创建项目目录和 pom.xml
 
-**Files:**
-- Create: `demo/message-center-spring/backend/pom.xml`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/App.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/pom.xml`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/App.java`
 
-**Interfaces:**
-- Produces: Spring Boot 3.4.x parent POM with all Phase 1 dependencies
+**接口：**
+- 产出: Spring Boot 3.4.x 父 POM，包含所有第一阶段依赖
 
-- [ ] **Step 1: Create directory structure**
+- [ ] **步骤 1: 创建目录结构**
 
 ```bash
 mkdir -p demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter
@@ -162,7 +162,7 @@ mkdir -p demo/message-center-spring/backend/src/main/resources
 mkdir -p demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter
 ```
 
-- [ ] **Step 2: Write pom.xml**
+- [ ] **步骤 2: 编写 pom.xml**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -231,35 +231,35 @@ mkdir -p demo/message-center-spring/backend/src/test/java/com/crmforlogistics/me
             <version>${minio.version}</version>
         </dependency>
 
-        <!-- BouncyCastle (for WeCom crypto, deferred phase) -->
+        <!-- BouncyCastle（用于企业微信加解密，后续阶段） -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.78.1</version>
         </dependency>
 
-        <!-- Mail (for email send, deferred phase) -->
+        <!-- Mail（用于邮件发送，后续阶段） -->
         <dependency>
             <groupId>com.sun.mail</groupId>
             <artifactId>jakarta.mail</artifactId>
             <version>2.0.1</version>
         </dependency>
 
-        <!-- Aliyun CAMS SDK (for chatapp, deferred phase) -->
+        <!-- 阿里云 CAMS SDK（用于 ChatApp，后续阶段） -->
         <dependency>
             <groupId>com.aliyun</groupId>
             <artifactId>alibabacloud-cams20200606</artifactId>
             <version>5.0.5</version>
         </dependency>
 
-        <!-- Argon2 password hasher -->
+        <!-- Argon2 密码哈希 -->
         <dependency>
             <groupId>de.mkammerer</groupId>
             <artifactId>argon2-jvm</artifactId>
             <version>2.11</version>
         </dependency>
 
-        <!-- Test -->
+        <!-- 测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -298,7 +298,7 @@ mkdir -p demo/message-center-spring/backend/src/test/java/com/crmforlogistics/me
 </project>
 ```
 
-- [ ] **Step 3: Write minimal App.java to verify scaffold**
+- [ ] **步骤 3: 编写最小 App.java 验证脚手架**
 
 ```java
 package com.crmforlogistics.messagecenter;
@@ -314,7 +314,7 @@ public class App {
 }
 ```
 
-- [ ] **Step 4: Write empty application.yml**
+- [ ] **步骤 4: 编写空的 application.yml**
 
 ```yaml
 spring:
@@ -324,34 +324,34 @@ spring:
     active: dev
 ```
 
-- [ ] **Step 5: Verify build compiles**
+- [ ] **步骤 5: 验证构建能编译**
 
 ```bash
 cd demo/message-center-spring/backend && mvn compile -q
 ```
 
-Expected: BUILD SUCCESS
+期望: BUILD SUCCESS
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/pom.xml demo/message-center-spring/backend/src/
-git commit -m "chore: scaffold Spring Boot 3.4.5 project with phase 1 dependencies"
+git commit -m "chore: 搭建 Spring Boot 3.4.5 项目脚手架，包含第一阶段依赖"
 ```
 
 ---
 
-### Task 2: Copy compose.yaml, secrets, and Flyway migrations
+### 任务 2: 复制 compose.yaml、secrets 和 Flyway 迁移脚本
 
-**Files:**
-- Copy: `demo/message-center-demo/compose.yaml` → `demo/message-center-spring/backend/compose.yaml`
-- Copy: `demo/message-center-demo/secrets/` → `demo/message-center-spring/backend/secrets/`
-- Copy: `demo/message-center-demo/src/main/resources/db/migration/` → `demo/message-center-spring/backend/src/main/resources/db/migration/`
+**文件：**
+- 复制: `demo/message-center-demo/compose.yaml` → `demo/message-center-spring/backend/compose.yaml`
+- 复制: `demo/message-center-demo/secrets/` → `demo/message-center-spring/backend/secrets/`
+- 复制: `demo/message-center-demo/src/main/resources/db/migration/` → `demo/message-center-spring/backend/src/main/resources/db/migration/`
 
-**Interfaces:**
-- Produces: Docker Compose services (postgres:17.5, minio, minio-init) and V1-V5 Flyway scripts
+**接口：**
+- 产出: Docker Compose 服务（postgres:17.5、minio、minio-init）和 V1-V5 Flyway 脚本
 
-- [ ] **Step 1: Copy infrastructure files**
+- [ ] **步骤 1: 复制基础设施文件**
 
 ```bash
 cp demo/message-center-demo/compose.yaml demo/message-center-spring/backend/compose.yaml
@@ -360,7 +360,7 @@ mkdir -p demo/message-center-spring/backend/src/main/resources/db/migration
 cp demo/message-center-demo/src/main/resources/db/migration/V*.sql demo/message-center-spring/backend/src/main/resources/db/migration/
 ```
 
-- [ ] **Step 2: Write application-dev.yml with datasource and flyway config**
+- [ ] **步骤 2: 编写 application-dev.yml，配置数据源和 Flyway**
 
 ```yaml
 spring:
@@ -375,31 +375,31 @@ spring:
 postgres_password: placeholder
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/compose.yaml \
         demo/message-center-spring/backend/secrets/ \
         demo/message-center-spring/backend/src/main/resources/db/ \
         demo/message-center-spring/backend/src/main/resources/application-dev.yml
-git commit -m "chore: copy compose.yaml, secrets, and flyway migrations"
+git commit -m "chore: 复制 compose.yaml、secrets 和 Flyway 迁移脚本"
 ```
 
 ---
 
-### Task 3: Config layer — AppConfig, CorsConfig, JacksonConfig, MyBatisPlusConfig
+### 任务 3: 配置层 — AppConfig、CorsConfig、JacksonConfig、MyBatisPlusConfig
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/AppConfig.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/CorsConfig.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/JacksonConfig.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/MyBatisPlusConfig.java`
-- Modify: `demo/message-center-spring/backend/src/main/resources/application.yml`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/AppConfig.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/CorsConfig.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/JacksonConfig.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/MyBatisPlusConfig.java`
+- 修改: `demo/message-center-spring/backend/src/main/resources/application.yml`
 
-**Interfaces:**
-- Produces: `AppConfig` properties record, `CorsConfig` WebMvcConfigurer bean, `JacksonConfig` ObjectMapper bean, `MyBatisPlusConfig` pagination interceptor bean
+**接口：**
+- 产出: `AppConfig` 属性 record、`CorsConfig` WebMvcConfigurer bean、`JacksonConfig` ObjectMapper bean、`MyBatisPlusConfig` 分页拦截器 bean
 
-- [ ] **Step 1: Write AppConfig.java**
+- [ ] **步骤 1: 编写 AppConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -431,7 +431,7 @@ public record AppConfig(
 ) {}
 ```
 
-- [ ] **Step 2: Write CorsConfig.java**
+- [ ] **步骤 2: 编写 CorsConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -458,7 +458,7 @@ public class CorsConfig {
 }
 ```
 
-- [ ] **Step 3: Write JacksonConfig.java**
+- [ ] **步骤 3: 编写 JacksonConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -481,7 +481,7 @@ public class JacksonConfig {
 }
 ```
 
-- [ ] **Step 4: Write MyBatisPlusConfig.java**
+- [ ] **步骤 4: 编写 MyBatisPlusConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -504,7 +504,7 @@ public class MyBatisPlusConfig {
 }
 ```
 
-- [ ] **Step 5: Update application.yml** with MyBatis-Plus settings
+- [ ] **步骤 5: 更新 application.yml** — 添加 MyBatis-Plus 设置
 
 ```yaml
 spring:
@@ -523,41 +523,41 @@ mybatis-plus:
     map-underscore-to-camel-case: true
 ```
 
-- [ ] **Step 6: Verify compile**
+- [ ] **步骤 6: 验证编译**
 
 ```bash
 cd demo/message-center-spring/backend && mvn compile -q
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **步骤 7: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/ \
         demo/message-center-spring/backend/src/main/resources/application.yml
-git commit -m "feat: add config layer with AppConfig, Cors, Jackson, and MyBatis-Plus"
+git commit -m "feat: 添加配置层，包含 AppConfig、Cors、Jackson 和 MyBatis-Plus"
 ```
 
 ---
 
-### Task 4: Entities — MyBatis-Plus entity classes
+### 任务 4: 实体类 — MyBatis-Plus 实体
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/UserEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ContactEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ContactIdentityEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ConversationEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/MessageEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ChannelAccountEntity.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/CompanyEntity.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/UserEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ContactEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ContactIdentityEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ConversationEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/MessageEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/ChannelAccountEntity.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/CompanyEntity.java`
 
-**Interfaces:**
-- Produces: Entity classes mapping to Flyway-created PostgreSQL tables, using `@TableName`, `@TableId`, and `@TableField` annotations
+**接口：**
+- 产出: 映射到 Flyway 创建的 PostgreSQL 表的实体类，使用 `@TableName`、`@TableId` 和 `@TableField` 注解
 
-Implementation guide: Each entity maps 1:1 to a DB table defined in V1-V2 Flyway scripts. Use `@TableName` for table name, `@TableId(type = IdType.ASSIGN_UUID)` for UUID PKs, and `@TableField` for columns where name differs from camelCase. Example patterns below; all entities follow the same structure.
+实现指南：每个实体与 V1-V2 Flyway 脚本中定义的数据表一一对应。使用 `@TableName` 指定表名，`@TableId(type = IdType.ASSIGN_UUID)` 用于 UUID 主键，`@TableField` 用于列名与驼峰命名不同的字段。以下为示例模式，所有实体遵循相同结构。
 
-- [ ] **Step 1: Write ContactEntity.java**
+- [ ] **步骤 1: 编写 ContactEntity.java**
 
-Reference: V1__identity_and_contact.sql `contacts` table. Map `contacts` table columns: id (UUID PK, auto gen), display_name, role_title, remark, status, merged_to_id, created_by, created_at, updated_at, deleted_at, version.
+参考: V1__identity_and_contact.sql `contacts` 表。映射 `contacts` 表列：id (UUID 主键，自动生成)、display_name、role_title、remark、status、merged_to_id、created_by、created_at、updated_at、deleted_at、version。
 
 ```java
 package com.crmforlogistics.messagecenter.entity;
@@ -581,31 +581,31 @@ public class ContactEntity {
     private Instant deletedAt;
     @Version
     private Long version;
-    // getters and setters
+    // getters 和 setters
 }
 ```
 
-- [ ] **Step 2: Write remaining entities following the same pattern**
+- [ ] **步骤 2: 按相同模式编写其余实体类**
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/entity/
-git commit -m "feat: add MyBatis-Plus entity classes for core tables"
+git commit -m "feat: 添加核心表的 MyBatis-Plus 实体类"
 ```
 
 ---
 
-### Task 5: Mappers — MyBatis-Plus mapper interfaces + XML
+### 任务 5: Mapper — MyBatis-Plus mapper 接口 + XML
 
-**Files:**
-- Create: all mapper interfaces under `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/`
-- Create: XML mapper files under `demo/message-center-spring/backend/src/main/resources/mapper/`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/` 下所有 mapper 接口
+- 创建: `demo/message-center-spring/backend/src/main/resources/mapper/` 下 XML mapper 文件
 
-**Interfaces:**
-- Produces: `extends BaseMapper<Entity>` interfaces with custom query methods for complex SQL (contact search with user permission scoping, message pagination with cursor, conversation thread queries)
+**接口：**
+- 产出: `extends BaseMapper<Entity>` 接口，包含复杂 SQL 的自定义查询方法（带用户权限范围的联系人搜索、带游标的消息分页、会话线程查询）
 
-- [ ] **Step 1: Write ContactMapper.java**
+- [ ] **步骤 1: 编写 ContactMapper.java**
 
 ```java
 package com.crmforlogistics.messagecenter.mapper;
@@ -628,36 +628,36 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
 }
 ```
 
-- [ ] **Step 2: Write ContactMapper.xml**
+- [ ] **步骤 2: 编写 ContactMapper.xml**
 
-Translate the complex SQL from `JdbcContactRepository.listForUser()` (lines 27-107) into MyBatis XML, preserving the permission-scoped subquery (user-owned contacts OR team-assigned conversations OR access grants) and the search/pagination logic. Reference the old code at `demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/JdbcContactRepository.java:27-107`.
+将 `JdbcContactRepository.listForUser()`（第 27-107 行）中的复杂 SQL 翻译为 MyBatis XML，保留权限范围子查询（用户拥有的联系人 OR 团队分配的会话 OR 访问授权）以及搜索/分页逻辑。参考旧代码：`demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/JdbcContactRepository.java:27-107`。
 
-- [ ] **Step 3: Write MessageMapper with ConversationMapper**
+- [ ] **步骤 3: 编写 MessageMapper 和 ConversationMapper**
 
-Similarly port `JdbcMessageRepository` methods: `getOrCreateConversation`, `insert` (atomic ingest sequence + idempotency), `listMessages` (cursor pagination), `findMessage`. Complex transactional logic lives in the Service layer, the Mapper provides the SQL primitives.
+类似地移植 `JdbcMessageRepository` 方法：`getOrCreateConversation`、`insert`（原子摄入序列号 + 幂等性）、`listMessages`（游标分页）、`findMessage`。复杂的事务逻辑放在 Service 层，Mapper 提供 SQL 原语。
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/ \
         demo/message-center-spring/backend/src/main/resources/mapper/
-git commit -m "feat: add MyBatis-Plus mapper interfaces and XML for contacts and messages"
+git commit -m "feat: 添加联系人和消息的 MyBatis-Plus mapper 接口及 XML"
 ```
 
 ---
 
-### Task 6: Security — Spring Security with DB-backed auth
+### 任务 6: 安全 — Spring Security 配合数据库认证
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/SecurityConfig.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/UserDetailsServiceImpl.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/SecurityUtil.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/SecurityConfig.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/UserDetailsServiceImpl.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/SecurityUtil.java`
 
-**Interfaces:**
-- Consumes: `UserMapper`, `SessionMapper`, Argon2 password hasher
-- Produces: `SecurityConfig` filter chain bean, `UserDetailsServiceImpl` (loads users from DB, validates Argon2 hash)
+**接口：**
+- 消费: `UserMapper`、`SessionMapper`、Argon2 密码哈希器
+- 产出: `SecurityConfig` 过滤器链 bean、`UserDetailsServiceImpl`（从数据库加载用户，验证 Argon2 哈希）
 
-- [ ] **Step 1: Write SecurityConfig.java**
+- [ ] **步骤 1: 编写 SecurityConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -695,11 +695,11 @@ public class SecurityConfig {
 }
 ```
 
-- [ ] **Step 2: Write UserDetailsServiceImpl.java**
+- [ ] **步骤 2: 编写 UserDetailsServiceImpl.java**
 
-Port the auth logic from `JdbcAuthRepository` and `PasswordHasher`. Load user by username from `users` table (via UserMapper), return Spring Security `UserDetails` with granted authorities from `user_roles` join.
+将 `JdbcAuthRepository` 和 `PasswordHasher` 中的认证逻辑移植过来。通过 UserMapper 从 `users` 表按用户名加载用户，返回 Spring Security `UserDetails`，包含从 `user_roles` 表 join 获取的授权信息。
 
-- [ ] **Step 3: Write SecurityUtil.java**
+- [ ] **步骤 3: 编写 SecurityUtil.java**
 
 ```java
 package com.crmforlogistics.messagecenter.infrastructure;
@@ -713,13 +713,13 @@ public final class SecurityUtil {
 
     public static UUID currentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated()) throw new SecurityException("Not authenticated");
+        if (auth == null || !auth.isAuthenticated()) throw new SecurityException("未认证");
         return UUID.fromString(auth.getName());
     }
 }
 ```
 
-- [ ] **Step 4: Write AuthController.java — login/token endpoint**
+- [ ] **步骤 4: 编写 AuthController.java — 登录/令牌接口**
 
 ```java
 package com.crmforlogistics.messagecenter.web;
@@ -754,7 +754,7 @@ public class AuthController {
                 .authenticate(new UsernamePasswordAuthenticationToken(request.username(), request.password()));
         SecurityContextHolder.getContext().setAuthentication(auth);
         String token = UUID.randomUUID().toString();
-        // insert session into user_sessions table via SessionMapper
+        // 通过 SessionMapper 插入会话到 user_sessions 表
         return new LoginResponse(token, auth.getName());
     }
 
@@ -765,48 +765,48 @@ public class AuthController {
 }
 ```
 
-- [ ] **Step 5: Verify compile**
+- [ ] **步骤 5: 验证编译**
 
 ```bash
 cd demo/message-center-spring/backend && mvn compile -q
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/SecurityConfig.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/ \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/SecurityUtil.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/AuthController.java
-git commit -m "feat: add Spring Security with Argon2 password encoder and login endpoint"
+git commit -m "feat: 添加 Spring Security 配合 Argon2 密码编码器和登录接口"
 ```
 
 ---
 
-### Task 7: Bootstrap admin service
+### 任务 7: Bootstrap 管理员服务
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/BootstrapService.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/BootstrapService.java`
 
-**Interfaces:**
-- Consumes: `UserMapper`, `PasswordEncoder`
-- Produces: `BootstrapService.bootstrapAdmin(username, password)` — idempotent admin user creation
+**接口：**
+- 消费: `UserMapper`、`PasswordEncoder`
+- 产出: `BootstrapService.bootstrapAdmin(username, password)` — 幂等的管理员用户创建
 
-- [ ] **Step 1: Write BootstrapService.java**
+- [ ] **步骤 1: 编写 BootstrapService.java**
 
-Port from `SessionService.bootstrapAdmin()` in the old codebase. Check if admin user exists; if not, insert into `users` table with Argon2-hashed password and assign `admin` role via `user_roles`. Return `BootstrapResult(created boolean, userId UUID, code String)`.
+从旧代码库中的 `SessionService.bootstrapAdmin()` 移植。检查管理员用户是否存在；如果不存在，插入到 `users` 表（使用 Argon2 哈希密码）并通过 `user_roles` 分配 `admin` 角色。返回 `BootstrapResult(created boolean, userId UUID, code String)`。
 
-- [ ] **Step 2: Add bootstrap-admin CLI command to App.java**
+- [ ] **步骤 2: 向 App.java 添加 bootstrap-admin CLI 命令**
 
 ```java
 @SpringBootApplication
 public class App {
     public static void main(String[] args) {
         if (args.length > 0 && "bootstrap-admin".equals(args[0])) {
-            // bootstrap via CommandLineRunner or direct call
+            // 通过 CommandLineRunner 或直接调用执行 bootstrap
             var ctx = SpringApplication.run(App.class, args);
             var bootstrap = ctx.getBean(BootstrapService.class);
-            // read env vars for admin user/password, bootstrap, print JSON result
+            // 读取环境变量中的管理员用户名/密码，执行 bootstrap，打印 JSON 结果
             System.exit(SpringApplication.exit(ctx));
         }
         SpringApplication.run(App.class, args);
@@ -814,27 +814,27 @@ public class App {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/auth/BootstrapService.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/App.java
-git commit -m "feat: add bootstrap-admin service for initial admin user creation"
+git commit -m "feat: 添加 bootstrap-admin 服务用于初始管理员用户创建"
 ```
 
 ---
 
-### Task 8: ContactService — contact listing and CRUD
+### 任务 8: ContactService — 联系人列表和 CRUD
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ContactService.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ContactResponse.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ContactService.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ContactResponse.java`
 
-**Interfaces:**
-- Consumes: `ContactMapper`, `ContactIdentityMapper`, `MessageMapper`
-- Produces: `ContactService.listForUser(userId, query)` returning `List<ContactResponse>`
+**接口：**
+- 消费: `ContactMapper`、`ContactIdentityMapper`、`MessageMapper`
+- 产出: `ContactService.listForUser(userId, query)` 返回 `List<ContactResponse>`
 
-- [ ] **Step 1: Write ContactResponse.java**
+- [ ] **步骤 1: 编写 ContactResponse.java**
 
 ```java
 package com.crmforlogistics.messagecenter.dto.response;
@@ -853,38 +853,38 @@ public record ContactResponse(
 ) {}
 ```
 
-- [ ] **Step 2: Write ContactService.java**
+- [ ] **步骤 2: 编写 ContactService.java**
 
-Port business logic from `UnifiedMessageStore.contacts()` and `JdbcContactRepository.listForUser()`:
-- Query contacts via ContactMapper.listForUser with user permission scoping
-- For each contact, resolve channel types from contact_identities
-- Count unread messages via conversation_read_states join
-- Enrich with lastMessageAt from the mapper's sort_at column
+移植 `UnifiedMessageStore.contacts()` 和 `JdbcContactRepository.listForUser()` 中的业务逻辑：
+- 通过 ContactMapper.listForUser 查询联系人，带用户权限范围
+- 对每个联系人，通过 contact_identities 解析渠道类型
+- 通过 conversation_read_states join 统计未读消息数
+- 通过 mapper 的 sort_at 列填充 lastMessageAt
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/
-git commit -m "feat: add ContactService with user-scoped listing and DTOs"
+git commit -m "feat: 添加 ContactService 含用户范围列表查询和 DTO"
 ```
 
 ---
 
-### Task 9: ContactController + ContactGroupController
+### 任务 9: ContactController + ContactGroupController
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ContactGroupService.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/ContactGroupRequest.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ContactGroupService.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/ContactGroupRequest.java`
 
-**Interfaces:**
-- Consumes: `ContactService`, `ContactGroupService`
-- Produces: `GET /api/contacts`, `POST /api/contact-groups/{merge,split,remark,profile}`, `GET /api/contact-groups`
+**接口：**
+- 消费: `ContactService`、`ContactGroupService`
+- 产出: `GET /api/contacts`、`POST /api/contact-groups/{merge,split,remark,profile}`、`GET /api/contact-groups`
 
-- [ ] **Step 1: Write ContactController.java**
+- [ ] **步骤 1: 编写 ContactController.java**
 
-Translate the old `App.route()` handlers for:
+翻译旧 `App.route()` 中以下路由的处理器：
 - `GET /api/contacts` → `contactService.listForUser(userId, query(params))`
 - `GET /api/contact-groups` → `contactGroupService.list()`
 - `POST /api/contact-groups/merge` → `contactGroupService.merge(request)`
@@ -892,35 +892,35 @@ Translate the old `App.route()` handlers for:
 - `POST /api/contact-groups/remark` → `contactGroupService.updateRemark(request)`
 - `POST /api/contact-groups/profile` → `contactGroupService.updateProfile(request)`
 
-Reference old routing: `demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/App.java`, route() method, contacts-related handler blocks.
+参考旧路由：`demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/App.java`，route() 方法中联系人相关的处理器代码块。
 
-- [ ] **Step 2: Write ContactGroupService.java**
+- [ ] **步骤 2: 编写 ContactGroupService.java**
 
-Port `UnifiedMessageStore.mergeContacts()`, `splitContact()`, `updateContactRemark()`, `updateContactProfile()` — each method translates the old JSONL file-based mutation into DB CRUD operations on `contacts` and `contact_identities` tables, with version-based optimistic locking.
+移植 `UnifiedMessageStore.mergeContacts()`、`splitContact()`、`updateContactRemark()`、`updateContactProfile()` — 每个方法将旧的基于 JSONL 文件的变更翻译为对 `contacts` 和 `contact_identities` 表的数据库 CRUD 操作，使用基于版本的乐观锁。
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contact/ContactGroupService.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/ContactGroupRequest.java
-git commit -m "feat: add ContactController and ContactGroupService for contact CRUD"
+git commit -m "feat: 添加 ContactController 和 ContactGroupService 用于联系人 CRUD"
 ```
 
 ---
 
-### Task 10: ThreadService + ThreadController
+### 任务 10: ThreadService + ThreadController
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/message/ThreadService.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ThreadResponse.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/message/ThreadService.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ThreadResponse.java`
 
-**Interfaces:**
-- Consumes: `ConversationMapper`, `MessageMapper`, `ContactMapper`, `ChannelAccountMapper`
-- Produces: `GET /api/threads?contactId={id}` → `ThreadResponse` (cursor-paginated message list + thread metadata)
+**接口：**
+- 消费: `ConversationMapper`、`MessageMapper`、`ContactMapper`、`ChannelAccountMapper`
+- 产出: `GET /api/threads?contactId={id}` → `ThreadResponse`（游标分页消息列表 + 线程元数据）
 
-- [ ] **Step 1: Write ThreadResponse.java**
+- [ ] **步骤 1: 编写 ThreadResponse.java**
 
 ```java
 public record ThreadResponse(
@@ -931,16 +931,16 @@ public record ThreadResponse(
 ) {}
 ```
 
-- [ ] **Step 2: Write ThreadService.java**
+- [ ] **步骤 2: 编写 ThreadService.java**
 
-Port `UnifiedMessageStore.threadPage()` cursor-pagination logic:
-- Accept userId, contactId, channelType, cursor parameters
-- Resolve contact identity and channel account for the given channelType
-- Find or create conversation via `conversations` table
-- Query messages with cursor pagination (base64-encoded timestamp+id cursor)
-- Return `ThreadResponse` with next cursor
+移植 `UnifiedMessageStore.threadPage()` 的游标分页逻辑：
+- 接受 userId、contactId、channelType、cursor 参数
+- 解析给定 channelType 的联系人身份和渠道账号
+- 通过 `conversations` 表查找或创建会话
+- 使用游标分页查询消息（base64 编码的 timestamp+id 游标）
+- 返回 `ThreadResponse` 含下一游标
 
-- [ ] **Step 3: Write ThreadController.java**
+- [ ] **步骤 3: 编写 ThreadController.java**
 
 ```java
 @RestController
@@ -959,29 +959,29 @@ public class ThreadController {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/message/ThreadService.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ThreadResponse.java
-git commit -m "feat: add ThreadService and ThreadController with cursor pagination"
+git commit -m "feat: 添加 ThreadService 和 ThreadController 含游标分页"
 ```
 
 ---
 
-### Task 11: MessageController — send, single message, and channel capabilities
+### 任务 11: MessageController — 发送、单条消息和渠道能力
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/SendMessageRequest.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/MessageResponse.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/SendMessageRequest.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/MessageResponse.java`
 
-**Interfaces:**
-- Consumes: `MessageService` (send logic), `ThreadService`
-- Produces: `GET /api/messages/{id}`, `POST /api/send/{email,chatapp}`, `GET /api/channel-capabilities`
+**接口：**
+- 消费: `MessageService`（发送逻辑）、`ThreadService`
+- 产出: `GET /api/messages/{id}`、`POST /api/send/{email,chatapp}`、`GET /api/channel-capabilities`
 
-- [ ] **Step 1: Write SendMessageRequest.java**
+- [ ] **步骤 1: 编写 SendMessageRequest.java**
 
 ```java
 public record SendMessageRequest(
@@ -994,7 +994,7 @@ public record SendMessageRequest(
 ) {}
 ```
 
-- [ ] **Step 2: Write MessageResponse.java**
+- [ ] **步骤 2: 编写 MessageResponse.java**
 
 ```java
 public record MessageResponse(
@@ -1013,42 +1013,42 @@ public record MessageResponse(
 ) {}
 ```
 
-- [ ] **Step 3: Write MessageController.java**
+- [ ] **步骤 3: 编写 MessageController.java**
 
-Translate old routes:
-- `GET /api/messages/{id}` → return single message by ID
-- `POST /api/send/email` → email send (stub for Phase 1 — return unsupported if not configured)
-- `POST /api/send/chatapp` → ChatApp send (stub for Phase 1)
-- `GET /api/channel-capabilities` → return available channels for a contact
+翻译旧路由：
+- `GET /api/messages/{id}` → 按 ID 返回单条消息
+- `POST /api/send/email` → 邮件发送（第一阶段为桩实现 — 未配置时返回不支持）
+- `POST /api/send/chatapp` → ChatApp 发送（第一阶段为桩实现）
+- `GET /api/channel-capabilities` → 返回联系人的可用渠道
 
-For Phase 1, `/api/send/*` endpoints return a placeholder response with status 501 or delegate to a stub service. Full email/ChatApp sending is deferred to a later phase.
+第一阶段 `/api/send/*` 接口返回占位响应（状态码 501）或委托给桩服务。完整的邮件/ChatApp 发送留到后续阶段。
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/request/SendMessageRequest.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/MessageResponse.java
-git commit -m "feat: add MessageController with send and channel capabilities endpoints"
+git commit -m "feat: 添加 MessageController 含发送和渠道能力接口"
 ```
 
 ---
 
-### Task 12: TemplateController
+### 任务 12: TemplateController
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/TemplateController.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/chatapp/ChatAppTemplateService.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/TemplateController.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/chatapp/ChatAppTemplateService.java`
 
-**Interfaces:**
-- Consumes: TemplateStore (port of old JSON-file TemplateStore as DB-backed in Phase 1)
-- Produces: `GET /api/templates`
+**接口：**
+- 消费: TemplateStore（将旧的 JSON 文件 TemplateStore 移植为第一阶段数据库存储）
+- 产出: `GET /api/templates`
 
-- [ ] **Step 1: Write ChatAppTemplateService.java**
+- [ ] **步骤 1: 编写 ChatAppTemplateService.java**
 
-Port `TemplateStore` from the old codebase. For Phase 1, use `message_templates` table (already defined in V2 migration). Query templates for a given channel account, return list of templates with templateCode, name, languageCode, body, placeholders.
+从旧代码库移植 `TemplateStore`。第一阶段使用 `message_templates` 表（已在 V2 迁移脚本中定义）。查询给定渠道账号的模板，返回模板列表（含 templateCode、name、languageCode、body、placeholders）。
 
-- [ ] **Step 2: Write TemplateController.java**
+- [ ] **步骤 2: 编写 TemplateController.java**
 
 ```java
 @RestController
@@ -1063,27 +1063,27 @@ public class TemplateController {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/TemplateController.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/chatapp/ChatAppTemplateService.java
-git commit -m "feat: add TemplateController and ChatAppTemplateService"
+git commit -m "feat: 添加 TemplateController 和 ChatAppTemplateService"
 ```
 
 ---
 
-### Task 13: SSE EventHub + SseController
+### 任务 13: SSE EventHub + SseController
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/event/EventHub.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/SseController.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/event/EventHub.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/SseController.java`
 
-**Interfaces:**
-- Consumes: Spring MVC `SseEmitter`
-- Produces: `GET /api/events` SSE stream, `EventHub.publish(event)` for other services to push events
+**接口：**
+- 消费: Spring MVC `SseEmitter`
+- 产出: `GET /api/events` SSE 流、`EventHub.publish(event)` 供其他服务推送事件
 
-- [ ] **Step 1: Write EventHub.java**
+- [ ] **步骤 1: 编写 EventHub.java**
 
 ```java
 package com.crmforlogistics.messagecenter.service.event;
@@ -1099,7 +1099,7 @@ public class EventHub {
     private final CopyOnWriteArrayList<SseEmitter> emitters = new CopyOnWriteArrayList<>();
 
     public SseEmitter connect() {
-        SseEmitter emitter = new SseEmitter(0L); // no timeout
+        SseEmitter emitter = new SseEmitter(0L); // 无超时
         emitters.add(emitter);
         emitter.onCompletion(() -> emitters.remove(emitter));
         emitter.onTimeout(() -> emitters.remove(emitter));
@@ -1123,7 +1123,7 @@ public class EventHub {
 }
 ```
 
-- [ ] **Step 2: Write SseController.java**
+- [ ] **步骤 2: 编写 SseController.java**
 
 ```java
 @RestController
@@ -1138,28 +1138,28 @@ public class SseController {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/event/EventHub.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/SseController.java
-git commit -m "feat: add SSE EventHub and SseController"
+git commit -m "feat: 添加 SSE EventHub 和 SseController"
 ```
 
 ---
 
-### Task 14: MinIO storage adapter + MediaController
+### 任务 14: MinIO 存储适配器 + MediaController
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/MinioConfig.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/MinioStorage.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MediaController.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/MinioConfig.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/MinioStorage.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MediaController.java`
 
-**Interfaces:**
-- Consumes: MinioClient bean
-- Produces: `GET /api/media/{id}` (serves media from MinIO with presigned URL redirect or byte streaming), `MinioStorage.store(bytes, contentType)` → `(objectKey, mediaId)`
+**接口：**
+- 消费: MinioClient bean
+- 产出: `GET /api/media/{id}`（通过预签名 URL 重定向或字节流方式从 MinIO 提供媒体文件）、`MinioStorage.store(bytes, contentType)` → `(objectKey, mediaId)`
 
-- [ ] **Step 1: Write MinioConfig.java**
+- [ ] **步骤 1: 编写 MinioConfig.java**
 
 ```java
 package com.crmforlogistics.messagecenter.config;
@@ -1190,7 +1190,7 @@ public class MinioConfig {
 }
 ```
 
-- [ ] **Step 2: Write MinioStorage.java**
+- [ ] **步骤 2: 编写 MinioStorage.java**
 
 ```java
 package com.crmforlogistics.messagecenter.infrastructure;
@@ -1218,7 +1218,7 @@ public class MinioStorage {
                 client.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
             }
         } catch (Exception e) {
-            throw new RuntimeException("MinIO bucket init failed", e);
+            throw new RuntimeException("MinIO bucket 初始化失败", e);
         }
     }
 
@@ -1237,7 +1237,7 @@ public class MinioStorage {
 }
 ```
 
-- [ ] **Step 3: Write MediaController.java**
+- [ ] **步骤 3: 编写 MediaController.java**
 
 ```java
 @RestController
@@ -1255,33 +1255,33 @@ public class MediaController {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/MinioConfig.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/infrastructure/MinioStorage.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/MediaController.java
-git commit -m "feat: add MinIO storage adapter and media serving endpoint"
+git commit -m "feat: 添加 MinIO 存储适配器和媒体服务接口"
 ```
 
 ---
 
-### Task 15: GlobalExceptionHandler
+### 任务 15: GlobalExceptionHandler
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/GlobalExceptionHandler.java`
-- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ApiError.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/GlobalExceptionHandler.java`
+- 创建: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ApiError.java`
 
-**Interfaces:**
-- Produces: Unified JSON error format `{code, message, traceId, fieldErrors}` matching old `App.writeRouteError()` format
+**接口：**
+- 产出: 统一 JSON 错误格式 `{code, message, traceId, fieldErrors}`，匹配旧 `App.writeRouteError()` 格式
 
-- [ ] **Step 1: Write ApiError.java**
+- [ ] **步骤 1: 编写 ApiError.java**
 
 ```java
 public record ApiError(String code, String message, String traceId, Map<String, String> fieldErrors) {}
 ```
 
-- [ ] **Step 2: Write GlobalExceptionHandler.java**
+- [ ] **步骤 2: 编写 GlobalExceptionHandler.java**
 
 ```java
 @RestControllerAdvice
@@ -1300,28 +1300,28 @@ public class GlobalExceptionHandler {
 }
 ```
 
-Match the old error format: `{"code":"FORBIDDEN","message":"...", "traceId":"uuid", "fieldErrors":{}}`.
+匹配旧错误格式：`{"code":"FORBIDDEN","message":"...", "traceId":"uuid", "fieldErrors":{}}`。
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/GlobalExceptionHandler.java \
         demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/dto/response/ApiError.java
-git commit -m "feat: add global exception handler with unified error format"
+git commit -m "feat: 添加统一错误格式的全局异常处理器"
 ```
 
 ---
 
-### Task 16: Integration test — verify core API flow
+### 任务 16: 集成测试 — 验证核心 API 流程
 
-**Files:**
-- Create: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/AppIntegrationTest.java`
+**文件：**
+- 创建: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/AppIntegrationTest.java`
 
-**Interfaces:**
-- Consumes: Testcontainers PostgreSQL, Spring Boot Test
-- Produces: Integration test verifying bootstrap-admin → login → list contacts → list threads flow
+**接口：**
+- 消费: Testcontainers PostgreSQL、Spring Boot Test
+- 产出: 集成测试验证 bootstrap-admin → login → list contacts → list threads 流程
 
-- [ ] **Step 1: Write AppIntegrationTest.java with Testcontainers**
+- [ ] **步骤 1: 使用 Testcontainers 编写 AppIntegrationTest.java**
 
 ```java
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -1350,78 +1350,78 @@ public class AppIntegrationTest {
 }
 ```
 
-- [ ] **Step 2: Run test**
+- [ ] **步骤 2: 运行测试**
 
 ```bash
 cd demo/message-center-spring/backend && mvn test -Dtest=AppIntegrationTest
 ```
 
-Expected: Tests pass with Testcontainers PostgreSQL.
+期望: 测试通过，使用 Testcontainers PostgreSQL。
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add demo/message-center-spring/backend/src/test/
-git commit -m "test: add integration test with Testcontainers PostgreSQL"
+git commit -m "test: 添加 Testcontainers PostgreSQL 集成测试"
 ```
 
 ---
 
-### Task 17: Frontend — analysis document
+### 任务 17: 前端 — 分析文档
 
-**Files:**
-- Create: `docs/superpowers/specs/2026-08-04-message-center-frontend-analysis.md`
+**文件：**
+- 创建: `docs/superpowers/specs/2026-08-04-message-center-frontend-analysis.md`
 
-**Interfaces:**
-- Produces: Full analysis of the current `App.java` embedded page — component tree, data flow, SSE events, API surface, interaction patterns
+**接口：**
+- 产出: 对当前 `App.java` 嵌入式页面的完整分析 — 组件树、数据流、SSE 事件、API 全景、交互模式
 
-- [ ] **Step 1: Analyze the existing HTML page**
+- [ ] **步骤 1: 分析现有 HTML 页面**
 
-Read `demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/App.java`, specifically:
-- `pageHtml(...)` method — extract full HTML/CSS/JS structure
-- All `fetch()` calls to `/api/*` endpoints — document request/response shapes
-- SSE event handling — document event types and data schemas
-- UI components: contact list, thread view, message bubbles, send form, template selector, contact group management
+阅读 `demo/message-center-demo/src/main/java/com/crmforlogistics/messagecenter/App.java`，具体关注：
+- `pageHtml(...)` 方法 — 提取完整 HTML/CSS/JS 结构
+- 所有对 `/api/*` 接口的 `fetch()` 调用 — 记录请求/响应格式
+- SSE 事件处理 — 记录事件类型和数据模式
+- UI 组件：联系人列表、消息视图、消息气泡、发送表单、模板选择器、联系人组管理
 
-- [ ] **Step 2: Write analysis document**
+- [ ] **步骤 2: 编写分析文档**
 
-Document with sections:
-1. **Page layout** — wireframe description of the single-page app
-2. **Component tree** — hierarchical breakdown of UI components
-3. **Data flow** — API calls → state → render cycle
-4. **SSE events** — event type table with payload schemas
-5. **Routes** — all `/api/*` calls with method, params, response shape
-6. **Interaction flows** — send message, merge contacts, view thread, etc.
+文档包含以下章节：
+1. **页面布局** — 单页应用的线框描述
+2. **组件树** — UI 组件的层次分解
+3. **数据流** — API 调用 → state → 渲染 循环
+4. **SSE 事件** — 事件类型表及负载模式
+5. **路由** — 所有 `/api/*` 调用（含方法、参数、响应格式）
+6. **交互流程** — 发送消息、合并联系人、查看消息面板等
 
-- [ ] **Step 3: Commit**
+- [ ] **步骤 3: 提交**
 
 ```bash
 git add docs/superpowers/specs/2026-08-04-message-center-frontend-analysis.md
-git commit -m "docs: add frontend analysis for React SPA migration"
+git commit -m "docs: 添加 React SPA 迁移前端分析文档"
 ```
 
-- [ ] **Step 4: Present to user for review**
+- [ ] **步骤 4: 提交给用户评审**
 
-Present the analysis doc to the user for approval before starting frontend implementation.
+在开始前端实现之前，将分析文档提交给用户审批。
 
 ---
 
-### Task 18: Frontend — React SPA scaffold
+### 任务 18: 前端 — React SPA 脚手架
 
-**Files:**
-- Create: `demo/message-center-spring/frontend/package.json`
-- Create: `demo/message-center-spring/frontend/vite.config.ts`
-- Create: `demo/message-center-spring/frontend/tsconfig.json`
-- Create: `demo/message-center-spring/frontend/index.html`
-- Create: `demo/message-center-spring/frontend/src/main.tsx`
-- Create: `demo/message-center-spring/frontend/src/App.tsx`
-- Create: `demo/message-center-spring/frontend/src/router.tsx`
-- Create: `demo/message-center-spring/frontend/src/api/client.ts`
+**文件：**
+- 创建: `demo/message-center-spring/frontend/package.json`
+- 创建: `demo/message-center-spring/frontend/vite.config.ts`
+- 创建: `demo/message-center-spring/frontend/tsconfig.json`
+- 创建: `demo/message-center-spring/frontend/index.html`
+- 创建: `demo/message-center-spring/frontend/src/main.tsx`
+- 创建: `demo/message-center-spring/frontend/src/App.tsx`
+- 创建: `demo/message-center-spring/frontend/src/router.tsx`
+- 创建: `demo/message-center-spring/frontend/src/api/client.ts`
 
-**Interfaces:**
-- Produces: Running Vite dev server with React, Ant Design, TanStack Query, React Router, Axios configured
+**接口：**
+- 产出: 运行中的 Vite 开发服务器，配置好 React、Ant Design、TanStack Query、React Router、Axios
 
-- [ ] **Step 1: Scaffold with Vite**
+- [ ] **步骤 1: 使用 Vite 搭建脚手架**
 
 ```bash
 cd demo/message-center-spring
@@ -1430,14 +1430,14 @@ cd frontend
 npm install
 ```
 
-- [ ] **Step 2: Add dependencies**
+- [ ] **步骤 2: 添加依赖**
 
 ```bash
 cd demo/message-center-spring/frontend
 npm install antd @ant-design/icons @tanstack/react-query react-router-dom axios
 ```
 
-- [ ] **Step 3: Configure vite.config.ts** — proxy `/api/*` to localhost:8099
+- [ ] **步骤 3: 配置 vite.config.ts** — 代理 `/api/*` 到 localhost:8099
 
 ```typescript
 export default defineConfig({
@@ -1451,7 +1451,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 4: Write api/client.ts** — Axios instance with baseURL
+- [ ] **步骤 4: 编写 api/client.ts** — Axios 实例（含 baseURL）
 
 ```typescript
 import axios from 'axios';
@@ -1472,7 +1472,7 @@ client.interceptors.response.use(
 export default client;
 ```
 
-- [ ] **Step 5: Write router.tsx** — route definitions
+- [ ] **步骤 5: 编写 router.tsx** — 路由定义
 
 ```typescript
 import { createBrowserRouter } from 'react-router-dom';
@@ -1488,105 +1488,105 @@ export const router = createBrowserRouter([
 ]);
 ```
 
-- [ ] **Step 6: Verify dev server starts**
+- [ ] **步骤 6: 验证开发服务器启动**
 
 ```bash
 cd demo/message-center-spring/frontend && npm run dev
 ```
 
-Open http://localhost:5173 — should see the Ant Design shell.
+打开 http://localhost:5173 — 应看到 Ant Design 外壳。
 
-- [ ] **Step 7: Commit**
+- [ ] **步骤 7: 提交**
 
 ```bash
 git add demo/message-center-spring/frontend/
-git commit -m "feat: scaffold React SPA with Vite, Ant Design, and TanStack Query"
+git commit -m "feat: 搭建 React SPA 脚手架，含 Vite、Ant Design 和 TanStack Query"
 ```
 
 ---
 
-### Task 19: Frontend — page implementations
+### 任务 19: 前端 — 页面实现
 
-**Files:**
-- Create: `demo/message-center-spring/frontend/src/pages/LoginPage.tsx`
-- Create: `demo/message-center-spring/frontend/src/pages/ContactsPage.tsx`
-- Create: `demo/message-center-spring/frontend/src/pages/ThreadPage.tsx`
-- Create: `demo/message-center-spring/frontend/src/pages/SendPage.tsx`
-- Create: `demo/message-center-spring/frontend/src/pages/TemplatesPage.tsx`
-- Create: `demo/message-center-spring/frontend/src/components/AppLayout.tsx`
-- Create: `demo/message-center-spring/frontend/src/components/ContactCard.tsx`
-- Create: `demo/message-center-spring/frontend/src/components/MessageBubble.tsx`
-- Create: `demo/message-center-spring/frontend/src/components/SendForm.tsx`
-- Create: `demo/message-center-spring/frontend/src/components/SseProvider.tsx`
-- Create: `demo/message-center-spring/frontend/src/hooks/useContacts.ts`
-- Create: `demo/message-center-spring/frontend/src/hooks/useMessages.ts`
-- Create: `demo/message-center-spring/frontend/src/hooks/useSse.ts`
+**文件：**
+- 创建: `demo/message-center-spring/frontend/src/pages/LoginPage.tsx`
+- 创建: `demo/message-center-spring/frontend/src/pages/ContactsPage.tsx`
+- 创建: `demo/message-center-spring/frontend/src/pages/ThreadPage.tsx`
+- 创建: `demo/message-center-spring/frontend/src/pages/SendPage.tsx`
+- 创建: `demo/message-center-spring/frontend/src/pages/TemplatesPage.tsx`
+- 创建: `demo/message-center-spring/frontend/src/components/AppLayout.tsx`
+- 创建: `demo/message-center-spring/frontend/src/components/ContactCard.tsx`
+- 创建: `demo/message-center-spring/frontend/src/components/MessageBubble.tsx`
+- 创建: `demo/message-center-spring/frontend/src/components/SendForm.tsx`
+- 创建: `demo/message-center-spring/frontend/src/components/SseProvider.tsx`
+- 创建: `demo/message-center-spring/frontend/src/hooks/useContacts.ts`
+- 创建: `demo/message-center-spring/frontend/src/hooks/useMessages.ts`
+- 创建: `demo/message-center-spring/frontend/src/hooks/useSse.ts`
 
-Implementation guide: Build each page/component to match the old embedded page UI. Use Ant Design components (Card, List, Input, Button, Select, Modal, message, notification). TanStack Query for data fetching with cache invalidation on SSE events. Each page implements the identical interaction pattern from the old page.
+实现指南：构建每个页面/组件以匹配旧嵌入式页面 UI。使用 Ant Design 组件（Card、List、Input、Button、Select、Modal、message、notification）。使用 TanStack Query 进行数据获取，在 SSE 事件时进行缓存失效。每个页面实现与旧页面完全相同的交互模式。
 
-- [ ] **Step 1: Write SseProvider.tsx** — context wrapping EventSource for `/api/events`
+- [ ] **步骤 1: 编写 SseProvider.tsx** — 包装 `/api/events` EventSource 的 context
 
-- [ ] **Step 2: Write useContacts.ts** — TanStack Query hook wrapping `GET /api/contacts` with search/merge/split mutations
+- [ ] **步骤 2: 编写 useContacts.ts** — TanStack Query hook 包装 `GET /api/contacts`，含搜索/合并/拆分 mutations
 
-- [ ] **Step 3: Write ContactsPage.tsx** — contact list with search, channel filters, merge/split modals
+- [ ] **步骤 3: 编写 ContactsPage.tsx** — 联系人列表，含搜索、渠道过滤、合并/拆分模态框
 
-- [ ] **Step 4: Write useMessages.ts** — cursor-based infinite query for thread messages
+- [ ] **步骤 4: 编写 useMessages.ts** — 基于游标的无限查询，用于消息面板消息
 
-- [ ] **Step 5: Write ThreadPage.tsx** — message timeline with cursor-based infinite scroll, send form at bottom
+- [ ] **步骤 5: 编写 ThreadPage.tsx** — 消息时间线，含基于游标的无限滚动，底部发送表单
 
-- [ ] **Step 6: Write SendPage.tsx** — multi-channel send form (email/ChatApp) with template selector
+- [ ] **步骤 6: 编写 SendPage.tsx** — 多渠道发送表单（邮件/ChatApp），含模板选择器
 
-- [ ] **Step 7: Write TemplatesPage.tsx** — template list with search
+- [ ] **步骤 7: 编写 TemplatesPage.tsx** — 模板列表，含搜索
 
-- [ ] **Step 8: Write LoginPage.tsx** — username/password form, redirects to / on success
+- [ ] **步骤 8: 编写 LoginPage.tsx** — 用户名/密码表单，成功后跳转到 /
 
-- [ ] **Step 9: Commit**
+- [ ] **步骤 9: 提交**
 
 ```bash
 git add demo/message-center-spring/frontend/src/
-git commit -m "feat: implement React pages matching original embedded UI"
+git commit -m "feat: 实现 React 页面，匹配原嵌入式 UI"
 ```
 
 ---
 
-### Task 20: End-to-end verification
+### 任务 20: 端到端验证
 
-- [ ] **Step 1: Start infrastructure**
+- [ ] **步骤 1: 启动基础设施**
 
 ```bash
 cd demo/message-center-spring/backend && docker compose up -d
 ```
 
-- [ ] **Step 2: Bootstrap admin user**
+- [ ] **步骤 2: 创建管理员用户**
 
 ```bash
 cd demo/message-center-spring/backend && mvn spring-boot:run -Dspring-boot.run.arguments="bootstrap-admin"
 ```
 
-- [ ] **Step 3: Start backend**
+- [ ] **步骤 3: 启动后端**
 
 ```bash
 cd demo/message-center-spring/backend && mvn spring-boot:run
 ```
 
-Expected: Tomcat starts on port 8099, Flyway migrates, health check returns 200.
+期望: Tomcat 在 8099 端口启动，Flyway 执行迁移，健康检查返回 200。
 
-- [ ] **Step 4: Start frontend**
+- [ ] **步骤 4: 启动前端**
 
 ```bash
 cd demo/message-center-spring/frontend && npm run dev
 ```
 
-- [ ] **Step 5: Manual test flow**
+- [ ] **步骤 5: 手动测试流程**
 
-1. Open http://localhost:5173
-2. Login with admin credentials
-3. See contacts page (empty)
-4. Verify SSE connection is established
-5. Verify error states display correctly
+1. 打开 http://localhost:5173
+2. 使用管理员凭据登录
+3. 看到联系人页面（空）
+4. 验证 SSE 连接已建立
+5. 验证错误状态正确显示
 
-- [ ] **Step 6: Commit any fixes**
+- [ ] **步骤 6: 提交所有修复**
 
 ```bash
-git commit -m "fix: end-to-end verification fixes"
+git commit -m "fix: 端到端验证修复"
 ```

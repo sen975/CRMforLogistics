@@ -30,5 +30,6 @@ public record ContactResponse(
         Instant lastMessageAt,
         String lastText,
         int messageCount,
-        int unreadCount
+        int unreadCount,
+        List<ContactIdentityResponse> identities
 ) {}

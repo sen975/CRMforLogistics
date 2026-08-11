@@ -30,7 +30,10 @@ public class MinioStorage {
     }
 
     public String store(byte[] data, String contentType) throws Exception {
-        String objectKey = UUID.randomUUID().toString();
+        return store(UUID.randomUUID().toString(), data, contentType);
+    }
+
+    public String store(String objectKey, byte[] data, String contentType) throws Exception {
         client.putObject(PutObjectArgs.builder()
                 .bucket(bucket).object(objectKey)
                 .stream(new ByteArrayInputStream(data), data.length, -1)
@@ -40,5 +43,13 @@ public class MinioStorage {
 
     public InputStream get(String objectKey) throws Exception {
         return client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build());
+    }
+
+    public void remove(String objectKey) throws Exception {
+        client.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build());
+    }
+
+    public String bucketName() {
+        return bucket;
     }
 }

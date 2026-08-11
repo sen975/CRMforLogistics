@@ -3,8 +3,6 @@ package com.crmforlogistics.messagecenter.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.baomidou.mybatisplus.annotation.Version;
-
 import java.time.Instant;
 import java.util.UUID;
 
@@ -24,7 +22,6 @@ public class ContactEntity {
     private Instant updatedAt;
     private Instant deletedAt;
 
-    @Version
     private Long version;
 
     public UUID getId() {

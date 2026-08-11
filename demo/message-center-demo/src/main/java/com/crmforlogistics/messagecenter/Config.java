@@ -250,11 +250,14 @@ public class Config {
         String raw = value("WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:" + webPort());
         return splitCsv(raw);
     }
+    public int wecomViewerAuthTtlSeconds() {
+        return boundedInt("WECOM_VIEWER_AUTH_TTL_SECONDS", 28_800, 300, 86_400);
+    }
     public int wecomViewerSessionTtlSeconds() {
         return boundedInt("WECOM_VIEWER_SESSION_TTL_SECONDS", 300, 30, 3600);
     }
     public int wecomViewerMaxMessages() {
-        return boundedInt("WECOM_VIEWER_MAX_MESSAGES", 10, 1, 20);
+        return boundedInt("WECOM_VIEWER_MAX_MESSAGES", 15, 1, 15);
     }
     public int wecomViewerSessionRateLimit() {
         return boundedInt("WECOM_VIEWER_SESSION_RATE_LIMIT", 10, 1, 60);
@@ -308,6 +311,9 @@ public class Config {
     public String wecomChatDataAbilityId() {
         return boundedOptionalText("WECOM_CHATDATA_ABILITY_ID", 128);
     }
+    public boolean wecomChatDataDiagnostics() {
+        return strictBoolean("WECOM_CHATDATA_DIAGNOSTICS", false);
+    }
     public Path wecomChatDataPrivateKeyFile() {
         String raw = value("WECOM_CHATDATA_PRIVATE_KEY_FILE", "");
         if (raw.isBlank()) return Path.of("");
@@ -338,6 +344,12 @@ public class Config {
     }
     public int wecomChatDataSyncTimeoutSeconds() {
         return boundedInt("WECOM_CHATDATA_SYNC_TIMEOUT_SECONDS", 15, 1, 15);
+    }
+    public boolean wecomChatDataAutoSyncEnabled() {
+        return strictBoolean("WECOM_CHATDATA_AUTO_SYNC_ENABLED", true);
+    }
+    public int wecomChatDataAutoSyncIntervalSeconds() {
+        return boundedInt("WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS", 60, 15, 3600);
     }
     public int wecomChatDataStoreMaxMessages() {
         return boundedInt("WECOM_CHATDATA_STORE_MAX_MESSAGES", 5000, 1, 5000);

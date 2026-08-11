@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.Optional;
+import java.util.UUID;
 
 @Mapper
 public interface UserMapper extends BaseMapper<UserEntity> {
@@ -16,4 +17,7 @@ public interface UserMapper extends BaseMapper<UserEntity> {
 
     @Select("select id, username, username_normalized, password_hash, display_name, status, last_login_at, created_at, updated_at, deleted_at from users where username_normalized = #{normalized} and deleted_at is null limit 1")
     Optional<UserEntity> findByUsernameNormalized(@Param("normalized") String normalized);
+
+    @Select("select id, username, username_normalized, password_hash, display_name, status, last_login_at, created_at, updated_at, deleted_at from users where id = #{id} and deleted_at is null limit 1")
+    Optional<UserEntity> findByIdNotDeleted(@Param("id") UUID id);
 }

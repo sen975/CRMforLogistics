@@ -49,4 +49,37 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         "from conversations where id = #{conversationId}::uuid and channel_account_id = #{channelAccountId}::uuid for update")
     ConversationEntity lockForMessage(@Param("conversationId") UUID conversationId,
                                       @Param("channelAccountId") UUID channelAccountId);
+
+    @Select("<script>" +
+        "select cv.id, cv.channel_account_id, cv.contact_identity_id, cv.status, " +
+        "cv.assigned_team_id, cv.assigned_user_id, cv.next_ingest_sequence, " +
+        "cv.last_message_id, cv.last_message_at, cv.created_at, cv.updated_at, cv.version " +
+        "from conversations cv where cv.id = #{conversationId}::uuid " +
+        "and cv.channel_account_id = #{channelAccountId}::uuid and (" +
+        "cv.assigned_user_id = #{actorUserId}::uuid " +
+        "or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id " +
+        "and tm.user_id = #{actorUserId}::uuid) " +
+        "or exists (select 1 from conversation_access_grants g " +
+        "where g.conversation_id = cv.id and g.user_id = #{actorUserId}::uuid " +
+        "and g.revoked_at is null and (g.expires_at is null or g.expires_at &gt; now())) " +
+        "or exists (select 1 from user_roles ur join roles r on r.id = ur.role_id " +
+        "where ur.user_id = #{actorUserId}::uuid and r.code = 'admin')) " +
+        "<if test=\"lockForUpdate\">for update</if>" +
+        "</script>")
+    ConversationEntity findAccessibleForMessage(@Param("conversationId") UUID conversationId,
+                                                 @Param("channelAccountId") UUID channelAccountId,
+                                                 @Param("actorUserId") UUID actorUserId,
+                                                 @Param("lockForUpdate") boolean lockForUpdate);
+
+    @Select("select cv.id, cv.channel_account_id, cv.contact_identity_id, cv.status, " +
+        "cv.assigned_team_id, cv.assigned_user_id, cv.next_ingest_sequence, cv.last_message_id, " +
+        "cv.last_message_at, cv.created_at, cv.updated_at, cv.version " +
+        "from conversations cv join contact_identities ci on ci.id = cv.contact_identity_id " +
+        "where ci.contact_id = #{contactId}::uuid and ci.deleted_at is null and " +
+        "(cv.assigned_user_id = #{userId}::uuid " +
+        "or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) " +
+        "or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())) " +
+        "or exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = #{userId}::uuid and r.code = 'admin'))")
+    java.util.List<ConversationEntity> listAccessibleForContact(@Param("contactId") UUID contactId,
+                                                                  @Param("userId") UUID userId);
 }

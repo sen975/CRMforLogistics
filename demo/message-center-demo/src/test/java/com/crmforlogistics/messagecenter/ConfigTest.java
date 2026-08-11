@@ -285,8 +285,9 @@ class ConfigTest {
                 Map.entry("WECOM_AGENT_ID", "1000247"),
                 Map.entry("WECOM_SECRET", "corp-secret"),
                 Map.entry("WECOM_ALLOWED_JSAPI_ORIGINS", "http://localhost:8099,https://crm.example.com"),
+                Map.entry("WECOM_VIEWER_AUTH_TTL_SECONDS", "28800"),
                 Map.entry("WECOM_VIEWER_SESSION_TTL_SECONDS", "300"),
-                Map.entry("WECOM_VIEWER_MAX_MESSAGES", "20"),
+                Map.entry("WECOM_VIEWER_MAX_MESSAGES", "15"),
                 Map.entry("WECOM_VIEWER_SESSION_RATE_LIMIT", "12"),
                 Map.entry("WECOM_VIEWER_AUDIT_FILE", "/tmp/wecom-viewer-audit.jsonl"),
                 Map.entry("WECOM_VIEWER_AUDIT_MAX_BYTES", "1048576"),
@@ -298,8 +299,9 @@ class ConfigTest {
         assertEquals("corp-secret", config.wecomSecret());
         assertEquals(List.of("http://localhost:8099", "https://crm.example.com"),
                 config.wecomAllowedJsapiOrigins());
+        assertEquals(28800, config.wecomViewerAuthTtlSeconds());
         assertEquals(300, config.wecomViewerSessionTtlSeconds());
-        assertEquals(20, config.wecomViewerMaxMessages());
+        assertEquals(15, config.wecomViewerMaxMessages());
         assertEquals(12, config.wecomViewerSessionRateLimit());
         assertEquals(Path.of("/tmp/wecom-viewer-audit.jsonl"), config.wecomViewerAuditFile());
         assertEquals(1048576L, config.wecomViewerAuditMaxBytes());
@@ -374,6 +376,7 @@ class ConfigTest {
 
         assertEquals("", defaults.wecomChatDataProgramId());
         assertEquals("", defaults.wecomChatDataAbilityId());
+        assertEquals(false, defaults.wecomChatDataDiagnostics());
         assertEquals(tempDir.resolve("chatdata-key.pem"), defaults.wecomChatDataPrivateKeyFile());
         assertEquals(1, defaults.wecomChatDataPublicKeyVersion());
         assertEquals(false, defaults.wecomChatDataPublicKeyAutoRegister());
@@ -477,6 +480,9 @@ class ConfigTest {
                 () -> new Config(Map.of("WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER", "yes"))
                         .wecomChatDataPublicKeyAutoRegister());
         assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("WECOM_CHATDATA_DIAGNOSTICS", "yes"))
+                        .wecomChatDataDiagnostics());
+        assertThrows(IllegalArgumentException.class,
                 () -> new Config(Map.of("WECOM_CHATDATA_SYNC_LIMIT", "201"))
                         .wecomChatDataSyncLimit());
         assertThrows(IllegalArgumentException.class,
@@ -491,6 +497,29 @@ class ConfigTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new Config(Map.of("WECOM_CHATDATA_STORE_MAX_BYTES", "8388609"))
                         .wecomChatDataStoreMaxBytes());
+    }
+
+    @Test
+    void exposesBoundedWeComChatDataAutoSyncSettings() {
+        Config defaults = new Config(Map.of());
+        assertTrue(defaults.wecomChatDataAutoSyncEnabled());
+        assertEquals(60, defaults.wecomChatDataAutoSyncIntervalSeconds());
+
+        Config custom = new Config(Map.of(
+                "WECOM_CHATDATA_AUTO_SYNC_ENABLED", "false",
+                "WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS", "120"));
+        assertFalse(custom.wecomChatDataAutoSyncEnabled());
+        assertEquals(120, custom.wecomChatDataAutoSyncIntervalSeconds());
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("WECOM_CHATDATA_AUTO_SYNC_ENABLED", "yes"))
+                        .wecomChatDataAutoSyncEnabled());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS", "14"))
+                        .wecomChatDataAutoSyncIntervalSeconds());
+        assertThrows(IllegalArgumentException.class,
+                () -> new Config(Map.of("WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS", "3601"))
+                        .wecomChatDataAutoSyncIntervalSeconds());
     }
 
     @Test
@@ -528,22 +557,27 @@ class ConfigTest {
     }
 
     @Test
-    void defaultsWeComViewerToRecentTenMessages() {
+    void defaultsWeComViewerToRecentFifteenMessages() {
         Config config = new Config(Map.of());
 
-        assertEquals(10, config.wecomViewerMaxMessages());
+        assertEquals(28800, config.wecomViewerAuthTtlSeconds());
+        assertEquals(15, config.wecomViewerMaxMessages());
         assertEquals(10, config.wecomViewerSessionRateLimit());
     }
 
     @Test
     void rejectsWeComViewerSettingsOutsideBounds() {
+        Config authTtlTooSmall = new Config(Map.of("WECOM_VIEWER_AUTH_TTL_SECONDS", "299"));
+        Config authTtlTooLarge = new Config(Map.of("WECOM_VIEWER_AUTH_TTL_SECONDS", "86401"));
         Config tooSmallTtl = new Config(Map.of("WECOM_VIEWER_SESSION_TTL_SECONDS", "29"));
         Config tooLargeTtl = new Config(Map.of("WECOM_VIEWER_SESSION_TTL_SECONDS", "3601"));
-        Config tooManyMessages = new Config(Map.of("WECOM_VIEWER_MAX_MESSAGES", "21"));
+        Config tooManyMessages = new Config(Map.of("WECOM_VIEWER_MAX_MESSAGES", "16"));
         Config tooManySessions = new Config(Map.of("WECOM_VIEWER_SESSION_RATE_LIMIT", "61"));
         Config tooSmallAudit = new Config(Map.of("WECOM_VIEWER_AUDIT_MAX_BYTES", "4095"));
         Config tooSmallSkew = new Config(Map.of("WECOM_TOKEN_REFRESH_SKEW_SECONDS", "4"));
 
+        assertThrows(IllegalArgumentException.class, authTtlTooSmall::wecomViewerAuthTtlSeconds);
+        assertThrows(IllegalArgumentException.class, authTtlTooLarge::wecomViewerAuthTtlSeconds);
         assertThrows(IllegalArgumentException.class, tooSmallTtl::wecomViewerSessionTtlSeconds);
         assertThrows(IllegalArgumentException.class, tooLargeTtl::wecomViewerSessionTtlSeconds);
         assertThrows(IllegalArgumentException.class, tooManyMessages::wecomViewerMaxMessages);

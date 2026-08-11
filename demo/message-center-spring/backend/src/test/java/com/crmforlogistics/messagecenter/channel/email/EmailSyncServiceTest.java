@@ -3,8 +3,10 @@ package com.crmforlogistics.messagecenter.channel.email;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.service.event.EventHub;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -23,11 +25,13 @@ class EmailSyncServiceTest {
     @Mock ConversationMapper conversationMapper;
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock ContactIdentityMapper contactIdentityMapper;
+    @Mock ContactMapper contactMapper;
+    @Mock EventHub eventHub;
 
     @Test
     void shouldConstructWithDependencies() {
         EmailSyncService service = new EmailSyncService(config, messageMapper,
-                conversationMapper, channelAccountMapper, contactIdentityMapper);
+                conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper, eventHub);
         assertNotNull(service);
     }
 

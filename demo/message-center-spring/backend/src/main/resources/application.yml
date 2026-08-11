@@ -3,6 +3,10 @@ spring:
     name: message-center
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 64MB
+      max-request-size: 65MB
 
 mybatis-plus:
   type-aliases-package: com.crmforlogistics.messagecenter.entity
@@ -12,3 +16,9 @@ mybatis-plus:
       id-type: auto
   configuration:
     map-underscore-to-camel-case: true
+
+app:
+  chatapp-outbox-enabled: true
+  chatapp-webhook-worker-enabled: true
+  chatapp-webhook-secret: ${CHATAPP_WEBHOOK_SECRET:}
+  chatapp-webhook-max-skew-seconds: 300

@@ -88,11 +88,14 @@ public class UnifiedMessageStoreTest {
         chatAppTemplateMessagesUseTemplateRequestType();
         chatAppTemplateRequestsOmitMessageType();
         frontendAddsWeComViewerPanelWithoutReplacingExistingInteractions();
+        new UnifiedMessageStoreTest().frontendWeComSegmentsAreStableAndBounded();
+        new UnifiedMessageStoreTest().frontendWeComInlineExpansionIsBoundedAndIndependent();
         rendersWebShellWithChineseCopyAndUnifiedSendActions();
         rendersWebShellWithPagedThreadRequestContract();
         apiThreadsRouteReturnsPagedObjectAndParsesCursorLimit();
         rendersWebShellWithOlderThreadScrollLoader();
         frontendThreadPaginationBehaviorLoadsOlderPages();
+        frontendWeComColdContactSwitchKeepsOldPanelUntilReady();
         emailMessagesKeepBodyTextOutOfTimelineBubble();
         emailSendShowsValidationAndFailureFeedback();
         mailSenderUsesSenderDomainForMessageId();
@@ -133,6 +136,125 @@ public class UnifiedMessageStoreTest {
 	void phoneCallUiBehaviorIsBoundedAndAuthenticated() throws Exception {
 		frontendPhoneCallBehaviorUsesCanonicalIdentityAndBoundedAudioRecovery();
 	}
+
+    @Test
+    void weComViewerMessagesRenderInsideUnifiedTimeline() {
+        frontendAddsWeComViewerPanelWithoutReplacingExistingInteractions();
+    }
+
+    @Test
+    void frontendWeComSegmentsAreStableAndBounded() throws Exception {
+        frontendWeComSegmentContractIsPresent();
+        Path dir = Files.createTempDirectory("message-center-wecom-segmentation-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-segmentation-probe.mjs").toURI());
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom segmentation probe timed out");
+        }
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom segmentation probe failed:\n" + output);
+        }
+    }
+
+    @Test
+    void frontendWeComSegmentFramesUseOfficialTemplateAndReuseStableHosts() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-segment-frame-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-segment-frame-probe.mjs").toURI());
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true).start();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom segment frame probe timed out");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom segment frame probe failed:\n" + output);
+        }
+    }
+
+    @Test
+    void frontendWeComSegmentLifecycleIsBoundedAndRetriesAtomically() {
+        String html = App.pageHtml();
+
+        assertContains(html, "const WECOM_ACTIVE_CONTACT_SEGMENT_LIMIT = 15;");
+        assertContains(html, "function setWeComSegmentStatus(host, message, failed = false, reveal = true)");
+        assertContains(html, "function trimWeComSegmentFrames(contactPointId, protectedIds = [])");
+        assertContains(html, "async function retryWeComSegment(segmentId)");
+        assertContains(html, "const stagingHost = document.createElement('div');");
+        assertContains(html, "stagingHost.className = 'wecom-contact-window';");
+        assertContains(html, "if (result?.status === 'mounted')");
+        assertContains(html, "entry.host = host;");
+        assertContains(html, ".wecom-segment-status { display:flex; align-items:center; gap:6px; height:32px;");
+    }
+
+    @Test
+    void frontendWeComInlineExpansionIsBoundedAndIndependent() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-inline-expansion-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-inline-expansion-probe.mjs").toURI());
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true).start();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom inline expansion probe timed out");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom inline expansion probe failed:\n" + output);
+        }
+    }
+
+    @Test
+    void weComTimelineUsesPersistedDirectionAndExternalContactPoint() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-direction-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp.jsonl");
+        Path wecomData = dir.resolve("wecom.jsonl");
+        Files.createDirectories(emailData);
+        Files.writeString(wecomData,
+                "{\"msgid\":\"wecom-out\",\"secret_key\":\"s-out\",\"external_userid\":\"external-1\",\"userid\":\"employee-1\",\"send_time\":1,\"msgtype\":\"1\",\"direction\":\"outbound\"}\n"
+                        + "{\"msgid\":\"wecom-in\",\"secret_key\":\"s-in\",\"external_userid\":\"external-1\",\"userid\":\"employee-1\",\"send_time\":2,\"msgtype\":\"1\",\"direction\":\"inbound\"}\n",
+                StandardCharsets.UTF_8);
+        UnifiedMessageStore store = new UnifiedMessageStore(testConfig(dir, emailData, chatData,
+                Map.of("WECOM_DATA_FILE", wecomData.toString())));
+
+        List<UnifiedMessage> thread = store.thread("wecom:external-1");
+
+        assertEquals(2, thread.size());
+        assertEquals("outbound", thread.get(0).direction);
+        assertEquals("inbound", thread.get(1).direction);
+    }
+
+    @Test
+    void weComTimelineKeepsLegacyDirectionFallback() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-legacy-direction-test");
+        Path emailData = dir.resolve("email");
+        Path chatData = dir.resolve("chatapp.jsonl");
+        Path wecomData = dir.resolve("wecom.jsonl");
+        Files.createDirectories(emailData);
+        Files.writeString(wecomData,
+                "{\"msgid\":\"legacy-default\",\"secret_key\":\"s-default\",\"external_userid\":\"external-1\",\"userid\":\"employee-1\",\"send_time\":1,\"msgtype\":\"1\"}\n"
+                        + "{\"msgid\":\"legacy-in\",\"secret_key\":\"s-in\",\"external_userid\":\"external-1\",\"userid\":\"employee-1\",\"send_time\":2,\"msgtype\":\"1\",\"origin\":3}\n"
+                        + "{\"msgid\":\"legacy-out\",\"secret_key\":\"s-out\",\"external_userid\":\"external-1\",\"userid\":\"employee-1\",\"send_time\":3,\"msgtype\":\"1\",\"origin\":1}\n",
+                StandardCharsets.UTF_8);
+        UnifiedMessageStore store = new UnifiedMessageStore(testConfig(dir, emailData, chatData,
+                Map.of("WECOM_DATA_FILE", wecomData.toString())));
+
+        List<UnifiedMessage> thread = store.thread("wecom:external-1");
+
+        assertEquals(3, thread.size());
+        assertEquals("inbound", thread.get(0).direction);
+        assertEquals("inbound", thread.get(1).direction);
+        assertEquals("outbound", thread.get(2).direction);
+    }
 
     private static void phoneCallUiUsesUnifiedTimelineAndAuthenticatedBoundedPlayback() {
         String html = App.pageHtml();
@@ -1323,12 +1445,12 @@ public class UnifiedMessageStoreTest {
         WeComViewerService.LoginExchangeResponse secondLogin = service.exchangeLoginCode("code-2");
 
         WeComViewerService.ViewerSessionResponse created = service.createViewerSession(
-                "wecom:ext-1", login.viewerAuthToken());
+                "wecom:ext-1", login.viewerAuthToken(), List.of("msg-1"));
         assertEquals(60, created.expiresIn());
         assertFalse(created.viewerSessionId().isBlank(), "viewer session id must be generated");
 
         assertThrows(SecurityException.class,
-                () -> service.createViewerSession("wecom:ext-2", login.viewerAuthToken()));
+                () -> service.createViewerSession("wecom:ext-2", login.viewerAuthToken(), List.of("msg-2")));
         assertThrows(SecurityException.class,
                 () -> service.viewerSession(created.viewerSessionId(), secondLogin.viewerAuthToken()));
 
@@ -1348,10 +1470,10 @@ public class UnifiedMessageStoreTest {
                 () -> service.viewerSession(created.viewerSessionId(), login.viewerAuthToken()));
 
         WeComViewerService.ViewerSessionResponse firstViewed = service.createViewerSession(
-                "wecom:ext-1", secondLogin.viewerAuthToken());
+                "wecom:ext-1", secondLogin.viewerAuthToken(), List.of("msg-1"));
         service.viewerSession(firstViewed.viewerSessionId(), secondLogin.viewerAuthToken());
         WeComViewerService.ViewerSessionResponse latestViewed = service.createViewerSession(
-                "wecom:ext-1", secondLogin.viewerAuthToken());
+                "wecom:ext-1", secondLogin.viewerAuthToken(), List.of("msg-1"));
         service.viewerSession(latestViewed.viewerSessionId(), secondLogin.viewerAuthToken());
         assertThrows(SecurityException.class,
                 () -> service.recordClientEvent("component_error", firstViewed.viewerSessionId(),
@@ -1363,7 +1485,7 @@ public class UnifiedMessageStoreTest {
                         secondLogin.viewerAuthToken()));
 
         assertThrows(WeComViewerService.RateLimitException.class,
-                () -> service.createViewerSession("wecom:ext-1", login.viewerAuthToken()));
+                () -> service.createViewerSession("wecom:ext-1", login.viewerAuthToken(), List.of("msg-1")));
 
         String audit = Files.readString(config.wecomViewerAuditFile(), StandardCharsets.UTF_8);
         assertContains(audit, "wecom.viewer.login_exchange");
@@ -1530,15 +1652,14 @@ public class UnifiedMessageStoreTest {
         missingSyncExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\","
                 + "\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
         App.routeForTests(missingSyncExchange, config, store, viewer, loginAttempts);
-        assertEquals(503, missingSyncExchange.responseCode);
-        assertContains(missingSyncExchange.responseText(), "WECOM_CHATDATA_NOT_CONFIGURED");
+        assertEquals(200, missingSyncExchange.responseCode);
         assertEquals(1, syncCalls.get());
 
         FakeHttpExchange createExchange = new FakeHttpExchange("POST", "/api/v1/wecom/conversation-view/sessions");
         createExchange.requestBodyJson("{\"contactPointId\":\"wecom:ext-1\",\"viewerAuthToken\":\"" + viewerAuthToken + "\"}");
         App.routeForTests(createExchange, config, store, viewer, loginAttempts, syncService);
         assertEquals(200, createExchange.responseCode);
-        assertEquals(2, syncCalls.get());
+        assertEquals(1, syncCalls.get());
         String sessionId = JsonParser.parseString(createExchange.responseText()).getAsJsonObject()
                 .get("viewerSessionId").getAsString();
 
@@ -2170,7 +2291,63 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "button.disabled = true;");
         assertContains(html, "正在同步企业微信会话");
         assertContains(html, "button.disabled = false;");
-        assertContains(html, "function mountWeComOpenDataFrame(detail, viewerAuthToken)");
+        assertContains(html, "data-wecom-segment-id");
+        assertContains(html, "async function mountWeComTimelineMessages(detail, viewerAuthToken, contactPointId,");
+        assertContains(html, "const WECOM_VIEWER_AUTO_REFRESH_MS = 60000;");
+        assertContains(html, "function refreshWeComViewerIfDue()");
+        assertContains(html, "renderContactDetail(contact);\n      await refreshWeComViewerIfDue();");
+        assertContains(html, "wecom-segment-frame");
+        assertContains(html, "const WECOM_RENDER_CONCURRENCY = 4;");
+        assertContains(html, "const WECOM_VIEWPORT_COMMIT_MIN = 5;");
+        assertContains(html, "const WECOM_VIEWPORT_COMMIT_MAX = 8;");
+        assertContains(html, "const WECOM_ACTIVE_FRAME_LIMIT = 30;");
+        assertContains(html, "async function runWeComRenderQueue(jobs, concurrency = WECOM_RENDER_CONCURRENCY,");
+        assertContains(html, "function retryWeComSegment(segmentId)");
+        assertContains(html, "handleMounted()");
+        assertContains(html, "messageIds");
+        assertNotContains(html, "wecom-message-toggle");
+        assertNotContains(html, "function toggleWeComMessageFrame(frame, button)");
+        assertNotContains(html, "max-height:88px");
+        assertNotContains(html, "max-height:360px");
+        assertContains(html, ".msg.wecom-message { width:fit-content;");
+        assertContains(html, ".wecom-segment-host { display:inline-grid;");
+        assertNotContains(html, ".wecom-segment-host.pending { display:none; }");
+        assertNotContains(html, ".message-row:has(.wecom-segment-host.pending) { display:none; }");
+        assertNotContains(html, "visibility:hidden; pointer-events:none; contain:layout style paint;");
+        assertContains(html, ".message-row:has(.wecom-segment-host.pending) { position:fixed;");
+        assertContains(html, ".wecom-contact-window { position:fixed; left:-100000px;");
+        assertContains(html, "opacity:0; pointer-events:none; contain:layout style paint;");
+        assertContains(html, ".wecom-segment-frame iframe { width:100%; height:100%;");
+        assertContains(html, "wx:for=\"{{data.msgList}}\"");
+        assertContains(html, "wx:key=\"msgid\"");
+        assertContains(html, "message-id=\"{{item.msgid}}\"");
+        assertContains(html, "secret-key=\"{{item.secretKey}}\"");
+        assertContains(html, "open-type=\"viewMessage\"");
+        assertContains(html, "const WECOM_EXPANDED_PREVIEW_LIMIT = 15;");
+        assertContains(html, "const weComExpandedPreviews = new Map();");
+        assertContains(html, "function weComPreviewHeight(modalSize)");
+        assertContains(html, "function openWeComInlinePreview(host, contactPointId, messageId,");
+        assertContains(html, "function collapseWeComInlinePreview(key)");
+        assertContains(html, "openWeComInlinePreview(host, contactPointId, activeMessageId,");
+        assertContains(html, "className = 'wecom-message-collapse'");
+        assertContains(html, "setAttribute('aria-label', '收起企业微信消息')");
+        assertNotContains(html, "openWeComModal({ modalUrl, modalSize });\n              return false;");
+        assertContains(html, "class=\"wecom-segment-row {{item.direction}}\"");
+        assertContains(html, "class=\"wecom-segment-bubble\"");
+        assertContains(html, ".wecom-segment-row.inbound { justify-content:flex-start; }");
+        assertContains(html, ".wecom-segment-row.outbound { justify-content:flex-end; }");
+        assertContains(html, "direction:message?.direction === 'outbound' ? 'outbound' : 'inbound'");
+        assertNotContains(html, "width:280px; height:40px;");
+        assertNotContains(html, "width:min(360px,100%)");
+        assertContains(html, "function cancelWeComRenderWork()");
+        assertContains(html, "weComRenderQueue.splice(0).forEach(entry => entry.resolve({ status:'cancelled' }));");
+        assertContains(html, "if (!automatic) resetWeComContactFrames(contact.id, root);");
+        assertNotContains(html, "windowState.ready = true;\n        commitWeComContactWindow(id, windowState);");
+        assertContains(html, "new Map((detail.messages || []).map(item => [item.msgid, item]))");
+        assertContains(html, "data: { msgList:references }");
+        assertNotContains(html, "hosts.forEach(host => {\n        let componentErrorReported = false;");
+        assertNotContains(html, "id=\"wecomViewerContainer\"");
+        assertNotContains(html, "style: `.msg { height: 100%; overflow: auto; }`");
         assertContains(html, "ww.register({");
         assertContains(html, "await ww.initOpenData();");
         assertContains(html, "ww.createOpenDataFrameFactory()");
@@ -2179,7 +2356,7 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "/api/v1/wecom/conversation-view/events");
         assertContains(html, "reportWeComViewerEvent");
         assertContains(html, "'wwapp.invokeJsApiByCallInfo'");
-        assertContains(html, "binderror=\"handleMessageError\"");
+        assertContains(html, "binderror=\"handleSegmentMessageError\"");
         assertContains(html, "handleModal({ modalUrl, modalSize })");
         assertContains(html, "X-WeCom-Viewer-Auth");
         assertNotContains(html, "企业微信 API 接入位已预留");
@@ -2198,10 +2375,34 @@ public class UnifiedMessageStoreTest {
                 "WeCom login must be the page bootstrap entry");
     }
 
+    private static void frontendWeComSegmentContractIsPresent() {
+        String html = App.pageHtml();
+
+        assertContains(html, "const WECOM_SEGMENT_MESSAGE_LIMIT = 15;");
+        assertContains(html, "const WECOM_MIXED_SEGMENT_MAX = 6;");
+        assertContains(html, "function weComLayoutMode(contact)");
+        assertContains(html, "function balancedWeComSegmentSizes(messageCount,");
+        assertContains(html, "function standaloneWeComWindow(items,");
+        assertContains(html, "function segmentTimelineItems(items,");
+        assertContains(html, "data-wecom-segment-id");
+        assertContains(html, "data-wecom-layout");
+        assertContains(html, "wecom-message-row");
+        assertContains(html, "wecom-standalone-row");
+        assertContains(html, ".message-row.wecom-message-row { grid-template-columns:minmax(0,1fr);");
+        assertContains(html, ".message-row.wecom-message-row .msg-avatar { display:none; }");
+        assertContains(html, ".message-row.wecom-message-row .msg.wecom-message, .message-row.wecom-message-row .wecom-segment-host, .message-row.wecom-message-row .wecom-segment-frame { width:100%; max-width:none;");
+        assertContains(html, "function weComSegmentFrameHeight(host, messageCount)");
+        assertContains(html, "function weComViewerHasMountedSegments(viewer, root, contactPointId)");
+        assertContains(html, "host?.dataset?.wecomLayout !== 'standalone'");
+        assertNotContains(html, "display-type=\"text\"");
+        assertNotContains(html, "ww-open-message {");
+        assertNotContains(html, "data-wecom-message-id");
+    }
+
     private static void rendersWebShellWithPagedThreadRequestContract() {
         String html = App.pageHtml();
 
-        assertContains(html, "const THREAD_PAGE_SIZE = 10;");
+        assertContains(html, "const THREAD_PAGE_SIZE = 15;");
 		assertContains(html, "const page = await viewerApi(threadPageUrl(id));");
         assertContains(html, "const items = page.items || [];");
         assertContains(html, "nextCursor: page.nextCursor || null");
@@ -2286,6 +2487,95 @@ public class UnifiedMessageStoreTest {
         assertContains(html, "renderThreadMessages(contact, page.items);");
     }
 
+    @Test
+    static void frontendWeComColdContactSwitchKeepsOldPanelUntilReady() {
+        String html = App.pageHtml();
+
+        assertContains(html, "const weComContactWindows = new Map();");
+        assertContains(html, "function prepareWeComContactWindow(contactPointId, detail, viewerAuthToken)");
+        assertContains(html, "function commitWeComContactWindow(contactPointId, windowState)");
+        assertContains(html, "weComRenderGeneration++;");
+        assertContains(html, "windowState.committed");
+        assertContains(html, "await prepareWeComContactWindow");
+        assertNotContains(html, "weComTimelineViewer = null;\n        closeProfileModal();");
+    }
+
+    @Test
+    void frontendWeComTimelineKeepsMountedHostAcrossRefreshAndHistoryInsert() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-stable-timeline-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-stable-timeline-probe.mjs").toURI());
+
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true)
+                .start();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom stable timeline probe timed out");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom stable timeline probe failed:\n" + output);
+        }
+    }
+
+    @Test
+    void frontendWeComViewerRefreshesImmediatelyForNewTimelineMessageIds() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-viewer-auto-refresh-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-viewer-auto-refresh-probe.mjs").toURI());
+
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true)
+                .start();
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom viewer auto-refresh probe timed out");
+        }
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom viewer auto-refresh probe failed:\n" + output);
+        }
+    }
+
+    @Test
+    void frontendWeComHistoryPageRequestsRenderedViewerBatchAndBoundsWindowLifetime() {
+        String html = App.pageHtml();
+
+        assertContains(html, "const historyWeComMessageIds = weComHistoryViewerMessageIds(contact, older.items || [], staging);");
+        assertContains(html, "messageIds:historyWeComMessageIds");
+        assertNotContains(html, "messageIds:olderWeComMessageIds");
+        assertContains(html, "root:staging");
+        assertContains(html, "mountWeComTimelineMessages(viewer.detail, login.viewerAuthToken");
+        assertContains(html, "const WECOM_CONTACT_WINDOW_LIMIT = 3;");
+        assertContains(html, "viewer.expiresAt");
+        assertContains(html, "invalidateWeComContactWindow");
+        assertContains(html, "retainRecentWeComFrames");
+    }
+
+    @Test
+    void frontendWeComColdContactSwitchMovesPreparedDomAtomically() throws Exception {
+        Path dir = Files.createTempDirectory("message-center-wecom-contact-window-test");
+        Path html = dir.resolve("page.html");
+        Files.writeString(html, App.pageHtml(), StandardCharsets.UTF_8);
+        Path probe = Path.of(getClass().getResource("/wecom-contact-window-probe.mjs").toURI());
+
+        Process process = new ProcessBuilder("node", probe.toString(), html.toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (!process.waitFor(10, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new AssertionError("wecom contact window probe timed out");
+        }
+        if (process.exitValue() != 0) {
+            throw new AssertionError("wecom contact window probe failed:\n" + output);
+        }
+    }
+
+    @Test
     private static void frontendThreadPaginationBehaviorLoadsOlderPages() throws Exception {
         Path dir = Files.createTempDirectory("message-center-frontend-thread-pagination-test");
         Path html = dir.resolve("page.html");
@@ -2435,7 +2725,7 @@ public class UnifiedMessageStoreTest {
 				  state.wecomAuthExpiresAt = Date.now() + 60000;
 
                   await loadThread('contact-1', false);
-				  assert.equal(requests[0], '/api/v1/contacts/contact-1/timeline?limit=10');
+				  assert.equal(requests[0], '/api/v1/contacts/contact-1/timeline?limit=15');
                   assert.equal(state.threadPages['contact-1'].items.length, 10);
 				  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.payload.id)), JSON.stringify(['m11','m12','m13','m14','m15','m16','m17','m18','m19','m20']));
                   assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-1');
@@ -2444,7 +2734,7 @@ public class UnifiedMessageStoreTest {
                   $('thread').scrollTop = 0;
                   const oldScrollHeight = $('thread').scrollHeight;
                   await loadOlderThreadMessages();
-				  assert.equal(requests[1], '/api/v1/contacts/contact-1/timeline?limit=10&cursor=cursor-older');
+				  assert.equal(requests[1], '/api/v1/contacts/contact-1/timeline?limit=15&cursor=cursor-older');
                   assert.equal(state.threadPages['contact-1'].items.length, 20);
 				  assert.equal(state.threadPages['contact-1'].items[0].payload.id, 'm1');
 				  assert.equal(state.threadPages['contact-1'].items[19].payload.id, 'm20');
@@ -2453,8 +2743,8 @@ public class UnifiedMessageStoreTest {
                   state.threadPages['contact-1'].nextCursor = 'stale-cursor';
                   $('thread').scrollTop = 0;
                   await loadOlderThreadMessages();
-				  assert.equal(requests[2], '/api/v1/contacts/contact-1/timeline?limit=10&cursor=stale-cursor');
-				  assert.equal(requests[3], '/api/v1/contacts/contact-1/timeline?limit=10');
+				  assert.equal(requests[2], '/api/v1/contacts/contact-1/timeline?limit=15&cursor=stale-cursor');
+				  assert.equal(requests[3], '/api/v1/contacts/contact-1/timeline?limit=15');
 				  assert.equal(JSON.stringify(state.threadPages['contact-1'].items.map(item => item.payload.id)), JSON.stringify(['m21','m22','m23','m24','m25','m26','m27','m28','m29','m30']));
                   assert.equal(state.threadPages['contact-1'].threadRevision, 'rev-2');
                   assert.equal(state.threadPages['contact-1'].nextCursor, 'cursor-fresh');
