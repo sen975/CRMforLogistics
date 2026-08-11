@@ -1,8 +1,10 @@
 # WhatsApp 模板完整生命周期设计
 
-**状态：** 已确认，待实施计划
+**状态：** 推荐方案已确认，待书面复核
 
 **日期：** 2026-08-10
+
+**本次更新：** 2026-08-11，补齐媒体上传持久幂等与可查询状态合同
 
 ## 1. 目标
 
@@ -20,6 +22,8 @@
 - 支持 BODY、变量示例、文本或媒体 Header、Footer、快速回复、URL 和电话按钮。
 - 不支持 Carousel、Flow、限时优惠、商品或营销活动编排。
 - 媒体 Header 由管理员上传文件；后端使用 CAMS 上传授权写入 CAMS 指定 OSS，不要求用户准备公网 URL。
+- 媒体上传是 provider 写操作，必须使用持久化 `clientRequestId` 保证同一请求 ID 最多发起一次复合上传尝试；不承诺跨本地数据库与 CAMS/OSS 的 exactly-once。
+- 手动 `sync` 只触发只读 List/Detail 对账，不接受 `clientRequestId`，也不创建 provider 写操作记录。
 - 号码注册、多号码切换、群组、群发和账号迁移不进入本轮。
 
 ## 3. 官方 API 真源
@@ -59,6 +63,8 @@ WhatsAppTemplateController
               -> DeleteChatappTemplate
               -> GetChatappUploadAuthorization + OSS PUT
 ```
+
+媒体上传仍属于 `whatsapp-template` 业务 owner，但从已经较大的 `WhatsAppTemplateApplicationService` 中拆为聚焦的 `WhatsAppTemplateMediaUploadService`。它通过短事务协作者原子预留请求、落最终状态；CAMS 授权和 OSS PUT 必须发生在数据库事务之外。Controller、前端和 gateway 均不得自行解释幂等状态。
 
 现有 `ChatAppTemplateSyncService` 收敛为定时触发 adapter，不再拥有审核状态解释、删除判断或数据库 upsert 语义。现有 `ChatAppTemplateService` 收敛为销售发送选择器 adapter，读取同一个模板 owner。
 
@@ -104,7 +110,19 @@ reviewStatus == APPROVED
 
 `SUBMISSION_UNKNOWN` 禁止自动重复提交同一 provider 写操作。后台只能通过官方 List/Detail API 对账；确认结果后转为 `SUCCEEDED` 或 `FAILED`。
 
-### 5.4 删除
+### 5.4 媒体上传状态
+
+- `PROCESSING`：请求指纹已持久化，当前进程可能正在调用 CAMS/OSS。
+- `UPLOADED`：provider 明确返回成功，object key 和 URL 已持久化。
+- `FAILED`：provider 明确拒绝或在调用前发生可确定失败；同一请求 ID 不重试。
+- `SUBMISSION_UNKNOWN`：调用超时、连接中断、进程失联或无法确认 provider 是否接收；禁止自动重放。
+- `ATTACHED`：模板创建或修改明确成功，并已引用该素材。
+- `ATTACHMENT_UNKNOWN`：模板写操作结果未知，无法确认素材是否已被引用。
+- `ORPHANED`：模板写操作明确失败或对账确认未引用该素材。
+
+`PROCESSING` 不是永久状态。读取上传状态时，若 `started_at` 已超过 90 秒且仍未完成，后端以条件更新将其收敛为 `SUBMISSION_UNKNOWN`。这个转换不调用 provider，也不能据此断言 provider 未执行。
+
+### 5.5 删除
 
 上游明确删除成功后，本地写 `deleted_at`，保留模板快照、操作记录、审计和历史消息正文。销售选择器完全隐藏已删除版本；管理员默认列表隐藏，可通过“已删除”筛选查看。
 
@@ -140,13 +158,17 @@ reviewStatus == APPROVED
 
 唯一约束为 `channel_account_id + idempotency_key`。同一个管理员请求重复到达时返回原操作，不再次调用 CAMS。
 
-新增 `template_media_assets`：
+`V9__whatsapp_template_lifecycle.sql` 已执行后保持不可变。新增 `V10__whatsapp_template_media_idempotency.sql` 扩展 `template_media_assets`：
 
 - `id`、`channel_account_id`。
-- `provider_object_key`、`provider_url`。
+- `client_request_id`：账号内唯一，长度 1 至 255。
+- `provider_object_key`、`provider_url`：`PROCESSING`、`FAILED`、`SUBMISSION_UNKNOWN` 时允许为空。
 - `media_format`、`content_type`、`size_bytes`、`sha256`。
-- `asset_status`：`UPLOADED`、`ATTACHED`、`ATTACHMENT_UNKNOWN`、`ORPHANED`。
-- `created_by_user_id`、`created_at`、`attached_at`。
+- `asset_status`：`PROCESSING`、`UPLOADED`、`FAILED`、`SUBMISSION_UNKNOWN`、`ATTACHED`、`ATTACHMENT_UNKNOWN`、`ORPHANED`。
+- `error_code`、`error_message`、`trace_id`。
+- `created_by_user_id`、`started_at`、`created_at`、`updated_at`、`attached_at`。
+
+唯一索引为 `channel_account_id + client_request_id`。V9 旧记录按 `legacy:` 加素材 UUID 回填稳定请求 ID，`started_at` 回填 `created_at`，`updated_at` 回填 `COALESCE(attached_at, created_at)`，完成回填后再设置非空并替换状态 CHECK；原始文件名不作为持久幂等所需字段，本轮不新增。
 
 临时 OSS AccessKey、Secret 和 SecurityToken 不进入数据库、日志、错误响应或审计。
 
@@ -175,12 +197,17 @@ PUT    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/se
 DELETE /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}?language=en_US
 POST   /api/v1/channel-accounts/{accountId}/whatsapp/templates/sync
 POST   /api/v1/channel-accounts/{accountId}/whatsapp/template-media
+GET    /api/v1/channel-accounts/{accountId}/whatsapp/template-media/uploads/{clientRequestId}
 GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/operations?language=en_US
 ```
 
 列表接口支持 `page`、`size`、`search`、`status`、`category`、`language`、`allowSend` 和 `deleted`。`size` 最大 100。
 
-所有写请求必须带 `clientRequestId`，长度 1 至 255，用作本地幂等键。
+所有会触发 provider 写入的请求必须带 `clientRequestId`，长度 1 至 255，用作本地持久幂等键。`templates/sync` 是只读对账触发，明确排除。
+
+媒体上传通过 multipart 字段提交 `format`、`file`、`clientRequestId`。状态查询以账号和请求 ID 定位记录，不接受素材 ID 替代请求 ID。查询响应包含内部素材 ID、请求 ID、状态、格式、内容类型、大小、SHA-256、可用时的 provider URL，以及结构化错误 code/message/traceId；不返回 provider 临时凭据。
+
+上传 POST 在新请求完成为 `UPLOADED` 时返回 `201`；相同指纹的既有成功或后续附件状态返回 `200`；并发重复仍为 `PROCESSING` 或结果未知时返回 `202` 和当前状态；明确失败在落库后按原错误 code/status 返回非 2xx；请求 ID 重用为不同指纹时返回 `409 IDEMPOTENCY_KEY_REUSED`。状态查询对任一已持久状态返回 `200`，不存在时返回 `404`。
 
 ### 7.3 模板命令
 
@@ -214,11 +241,25 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 
 ### 9.1 媒体上传
 
-1. Controller 校验管理员、账号、文件非空、媒体格式和项目上传上界。
-2. Gateway 调用 `GetChatappUploadAuthorization`。
-3. 后端使用短期凭据上传到官方指定 bucket 和目录。
-4. 本地保存 `template_media_assets=UPLOADED`，只向前端返回内部素材 ID、类型、大小和预览信息。
-5. 创建或修改明确成功后转 `ATTACHED`；明确失败后转 `ORPHANED`；提交结果未知时转 `ATTACHMENT_UNKNOWN`。
+1. Controller 校验管理员、账号、`clientRequestId`、文件非空、媒体格式和声明大小。
+2. Service 有界读取文件并再次校验 5/16/64 MiB 分类上限，计算 SHA-256。`contentType` 先 trim、转小写并移除分号后的参数，再按媒体格式 allowlist 校验；幂等请求指纹固定为 `mediaFormat + contentType + sizeBytes + sha256`。
+3. 短事务使用 PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` 原子插入 `PROCESSING` 占位并提交；禁止先查后插。
+4. 若账号和请求 ID 已存在，则比较完整指纹：不同则返回 `IDEMPOTENCY_KEY_REUSED`；相同则返回原状态，不调用 CAMS/OSS。
+5. 只有成功创建占位的调用方可在无数据库事务状态下执行一次复合上传尝试；该尝试中的 `GetChatappUploadAuthorization` 与 OSS PUT 分别至多调用一次。
+6. provider 明确成功后，用短事务条件更新为 `UPLOADED`；明确失败更新为 `FAILED`；超时、连接中断或无法判断是否提交则更新为 `SUBMISSION_UNKNOWN`。
+7. 若进程在 provider 调用前后崩溃，记录可能暂留 `PROCESSING`；状态查询在 90 秒后将其保守收敛为 `SUBMISSION_UNKNOWN`，绝不自动重放。
+8. 创建或修改明确成功后转 `ATTACHED`；明确失败后转 `ORPHANED`；模板提交结果未知时转 `ATTACHMENT_UNKNOWN`。
+
+重复请求合同：
+
+- 同一请求 ID、同一指纹、`UPLOADED`：返回原素材，不调用 provider。
+- 同一请求 ID、同一指纹、`PROCESSING`：返回处理中，不调用 provider。
+- 同一请求 ID、同一指纹、`FAILED`：返回原失败；新尝试必须显式使用新请求 ID。
+- 同一请求 ID、同一指纹、`SUBMISSION_UNKNOWN`：返回未知；禁止自动换 ID 或自动重传。
+- 同一请求 ID、同一指纹、`ATTACHED`、`ATTACHMENT_UNKNOWN` 或 `ORPHANED`：返回原素材当前状态，不调用 provider；需要重新上传时必须由用户显式创建新请求 ID。
+- 同一请求 ID、不同指纹：返回 `IDEMPOTENCY_KEY_REUSED`。
+
+该合同只保证同一账号、同一 `clientRequestId` 在本系统中最多发起一次复合上传尝试。数据库提交与外部 provider 之间不存在分布式事务，因此响应丢失、进程崩溃或 provider 未提供可按请求 ID 查询的能力时，只能暴露 `SUBMISSION_UNKNOWN`，不能宣称 exactly-once。
 
 ### 9.2 创建
 
@@ -263,6 +304,9 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 - 列展示模板名称、代码、语言、类别、审核状态、拒绝原因摘要、发送状态、最后同步时间。
 - 新建和编辑使用结构化表单，不提供原始 JSON 编辑器。
 - 媒体 Header 使用文件选择和上传进度；上传完成后显示预览和替换操作。
+- 用户选择文件时生成一次稳定 `clientRequestId`；同一次 POST 和后续状态查询始终复用该 ID。
+- POST 响应丢失、网络异常或返回处理中时，每 2 秒查询一次，最多 45 次。`UPLOADED` 恢复内部素材 ID；`FAILED` 或 `SUBMISSION_UNKNOWN` 立即停止。
+- 轮询耗尽后保留请求 ID并展示“仍在处理”，不自动生成新 ID 重传。只有用户明确选择重新上传或选择新文件时，才创建新的请求 ID。
 - 详情抽屉展示完整组件、示例、原始审核状态、拒绝原因、质量、TTL 和操作记录。
 - 行操作使用编辑、暂停/恢复和删除；删除必须二次确认。
 - 页面提供手动同步按钮以及成功、部分失败、完整失败状态。
@@ -280,6 +324,9 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 - `TEMPLATE_OPERATION_UNKNOWN`
 - `TEMPLATE_MEDIA_INVALID`
 - `TEMPLATE_MEDIA_UPLOAD_FAILED`
+- `TEMPLATE_MEDIA_UPLOAD_IN_PROGRESS`
+- `TEMPLATE_MEDIA_SUBMISSION_UNKNOWN`
+- `IDEMPOTENCY_KEY_REUSED`
 - `CHANNEL_ACCOUNT_NOT_READY`
 - `PROVIDER_AUTH_FAILED`
 - `PROVIDER_PERMISSION_DENIED`
@@ -293,6 +340,9 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 
 - CAMS 和 OSS 连接超时 15 秒、读取超时 60 秒，单次调用总时长上限 75 秒。
 - 文件在读取前检查声明大小，流式读取时再次执行 5/16/64 MiB 的分类硬上界；HTTP multipart 请求总上限沿用项目 65 MiB。
+- 单次上传最多在内存中持有一个已通过分类上界校验的文件副本，provider 调用返回后释放；禁止把文件内容写入数据库、普通日志或审计。
+- 媒体请求预留和最终状态各使用独立短事务；外部 CAMS/OSS 调用期间 `TransactionSynchronizationManager.isActualTransactionActive()` 必须为 false。
+- 同一账号和请求 ID 依赖数据库唯一索引仲裁并发；禁止 JVM 内存 Map、前端 UUID 去重或进程内锁充当幂等真源。
 - 同一账号的模板写操作按稳定模板键串行化。
 - 操作对账最多 10 次，退避上限 3 小时，总观察窗口 24 小时；超过上界保持可查询失败，不无限轮询。
 - 创建、修改和删除的未知结果不自动重放。
@@ -305,13 +355,14 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 
 - Gateway 单测逐项验证七个官方 API 的请求字段、响应和错误映射。
 - Application service 测试覆盖权限、幂等、状态机、参数校验、未知提交和素材归属。
+- 媒体上传 service 测试覆盖并发同 key 只调用一次 gateway、相同 key 不同指纹冲突、每个持久状态的重复返回、provider 调用无活动事务，以及失联 `PROCESSING` 收敛为 `SUBMISSION_UNKNOWN`。
 - 同步测试覆盖 `pass/fail/auditing/unaudit/unknown`、拒绝原因、完整删除判断和分页失败保留快照。
-- PostgreSQL 17.5 Testcontainers 从空库执行 Flyway，并验证组件 JSON、操作幂等、软删除、乐观锁和发送选择条件。
+- PostgreSQL 17.5 Testcontainers 从空库执行 Flyway，并验证组件 JSON、操作幂等、媒体请求唯一索引、V9 旧素材回填、可空 provider 字段、软删除、乐观锁和发送选择条件。
 - 现有消息发送测试证明未批准、暂停和删除模板均不能进入 outbox。
 
 ### 13.2 前端
 
-- 单元测试覆盖列表筛选、创建表单、组件校验、文件上传、编辑、启停、删除和结构化错误。
+- 单元测试覆盖列表筛选、创建表单、组件校验、稳定上传请求 ID、有界状态查询、响应丢失恢复、未知状态禁止自动重传、编辑、启停、删除和结构化错误。
 - 浏览器验收覆盖管理员完整操作、销售只见可发送模板、桌面和移动视口、加载态、空态和失败态。
 - 页面不泄漏 CAMS SDK 字段、AccessKey、Secret、SecurityToken 或 `custSpaceId`。
 
