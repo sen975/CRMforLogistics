@@ -15,7 +15,7 @@ import java.util.Optional;
 @Mapper
 public interface TemplateMapper extends BaseMapper<TemplateEntity> {
 
-    @Select("select id, channel_account_id, provider_template_id, language_code, name, body, status, "
+    @Select("select id, channel_account_id, provider_template_id, language_code, name, remark, body, status, "
             + "category, template_type, components_jsonb, examples_jsonb, message_send_ttl_seconds, allow_send, "
             + "provider_audit_status, rejection_reason, quality_score, provider_updated_at, metadata_jsonb, "
             + "last_synced_at, created_at, updated_at, deleted_at, version "
@@ -27,7 +27,7 @@ public interface TemplateMapper extends BaseMapper<TemplateEntity> {
             + "order by updated_at desc")
     List<TemplateEntity> findSendableForChannelAccount(@Param("channelAccountId") UUID channelAccountId);
 
-    @Select("select id, channel_account_id, provider_template_id, language_code, name, body, status, "
+    @Select("select id, channel_account_id, provider_template_id, language_code, name, remark, body, status, "
             + "category, template_type, components_jsonb, examples_jsonb, message_send_ttl_seconds, allow_send, "
             + "provider_audit_status, rejection_reason, quality_score, provider_updated_at, metadata_jsonb, "
             + "last_synced_at, created_at, updated_at, deleted_at, version "
@@ -43,7 +43,7 @@ public interface TemplateMapper extends BaseMapper<TemplateEntity> {
                                          @Param("providerTemplateId") String providerTemplateId,
                                          @Param("languageCode") String languageCode);
 
-    @Select("select id, channel_account_id, provider_template_id, language_code, name, body, status, "
+    @Select("select id, channel_account_id, provider_template_id, language_code, name, remark, body, status, "
             + "category, template_type, components_jsonb, examples_jsonb, message_send_ttl_seconds, allow_send, "
             + "provider_audit_status, rejection_reason, quality_score, provider_updated_at, metadata_jsonb, "
             + "last_synced_at, created_at, updated_at, deleted_at, version "
