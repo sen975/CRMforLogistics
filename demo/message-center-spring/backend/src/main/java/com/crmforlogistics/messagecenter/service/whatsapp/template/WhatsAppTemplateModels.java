@@ -24,6 +24,11 @@ public final class WhatsAppTemplateModels {
         CREATE, MODIFY, SET_SEND_PERMISSION, DELETE, RECONCILE
     }
 
+    public enum MediaAssetStatus {
+        PROCESSING, UPLOADED, FAILED, SUBMISSION_UNKNOWN,
+        ATTACHED, ATTACHMENT_UNKNOWN, ORPHANED
+    }
+
     public enum HeaderFormat {
         TEXT, IMAGE, VIDEO, DOCUMENT
     }

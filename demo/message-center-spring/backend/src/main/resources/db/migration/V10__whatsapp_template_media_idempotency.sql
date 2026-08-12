@@ -19,6 +19,10 @@ ALTER TABLE template_media_assets ALTER COLUMN started_at SET DEFAULT now();
 ALTER TABLE template_media_assets ALTER COLUMN updated_at SET NOT NULL;
 ALTER TABLE template_media_assets ALTER COLUMN updated_at SET DEFAULT now();
 
+ALTER TABLE audit_logs DROP CONSTRAINT ck_audit_logs_result;
+ALTER TABLE audit_logs ADD CONSTRAINT ck_audit_logs_result CHECK
+    (result IN ('success', 'denied', 'failed', 'unknown'));
+
 ALTER TABLE template_media_assets DROP CONSTRAINT ck_template_asset_status;
 ALTER TABLE template_media_assets ADD CONSTRAINT ck_template_asset_status CHECK
     (asset_status IN ('PROCESSING','UPLOADED','FAILED','SUBMISSION_UNKNOWN',

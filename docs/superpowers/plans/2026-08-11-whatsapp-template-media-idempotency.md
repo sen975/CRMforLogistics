@@ -221,6 +221,7 @@ git commit -m "feat: persist whatsapp media upload requests"
 - Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadStore.java`
 - Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadService.java`
 - Modify: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateModels.java`
+- Modify: `demo/message-center-spring/backend/src/main/resources/db/migration/V10__whatsapp_template_media_idempotency.sql`
 - Create: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadServiceTest.java`
 - Create: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadIntegrationTest.java`
 
@@ -507,7 +508,7 @@ public class WhatsAppTemplateMediaUploadStore {
 }
 ```
 
-每次 `markUploaded`、`markFailed`、`markUnknown` 或失联收敛更新，都在同一个 `REQUIRES_NEW` 事务内追加一条 `audit_logs`：action 为 `WHATSAPP_TEMPLATE_MEDIA_UPLOAD`，resource type 为 `TEMPLATE_MEDIA_ASSET`，actor 和 trace 来自素材记录，`afterSummaryJsonb` 由 `ObjectMapper.writeValueAsString(Map.of("status", assetStatus, "format", mediaFormat))` 生成。result 使用 `SUCCEEDED`、`FAILED` 或 `SUBMISSION_UNKNOWN`；不得包含文件字节、provider 凭据或 provider 原始载荷。
+每次 `markUploaded`、`markFailed`、`markUnknown` 或失联收敛更新，都在同一个 `REQUIRES_NEW` 事务内追加一条 `audit_logs`：action 为 `WHATSAPP_TEMPLATE_MEDIA_UPLOAD`，resource type 为 `TEMPLATE_MEDIA_ASSET`，actor 和 trace 来自素材记录，`afterSummaryJsonb` 由 `ObjectMapper.writeValueAsString(Map.of("status", assetStatus, "format", mediaFormat))` 生成。用户确认后的统一审计合同只使用小写通用结果：`UPLOADED -> success`、`FAILED -> failed`、`SUBMISSION_UNKNOWN -> unknown`；精确领域状态继续由素材记录和 JSON 摘要持有。V10 将 `ck_audit_logs_result` 从 `success/denied/failed` 扩展为 `success/denied/failed/unknown`，不允许大写重复值。审计不得包含文件字节、provider 凭据或 provider 原始载荷。
 
 仅当 `Reservation.created()` 为 true 时，service 才调用 `gateway.upload(UUID,HeaderFormat,byte[],String,String)`。比较 `mediaFormat`、规范化 `contentType`、`sizeBytes` 和通过 `MessageDigest.isEqual` 比较的 `sha256`；不一致时抛出 `409 IDEMPOTENCY_KEY_REUSED`。既有 `FAILED` 根据持久化稳定 code 重建确定性的 `WhatsAppTemplateException`；`PROCESSING`、`SUBMISSION_UNKNOWN` 以及所有成功/附件状态直接返回持久化 view，不重放。
 
@@ -563,6 +564,7 @@ private UploadResult upload(String clientRequestId) {
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadStore.java
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadService.java
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateModels.java
+git add demo/message-center-spring/backend/src/main/resources/db/migration/V10__whatsapp_template_media_idempotency.sql
 git add demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadServiceTest.java
 git add demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateMediaUploadIntegrationTest.java
 git commit -m "feat: make whatsapp media uploads idempotent"
@@ -576,6 +578,8 @@ git commit -m "feat: make whatsapp media uploads idempotent"
 - Modify: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/SecurityConfig.java`
 - Modify: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/whatsapp/template/WhatsAppTemplateApplicationServiceTest.java`
 - Modify: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateControllerTest.java`
+
+Task 3 删除被替代上传路径时，必须把 `WhatsAppTemplateApplicationService` 中其余模板操作审计统一映射到通用小写结果 `success/denied/failed/unknown`；领域操作状态继续保留在 `template_operations.operation_status` 和审计摘要中，禁止向 `audit_logs.result` 写 `SUCCEEDED`、`FAILED` 或 `SUBMISSION_UNKNOWN`。
 
 **Interfaces:**
 - Consumes：Task 2 的 `WhatsAppTemplateMediaUploadService.UploadResult` 和 `MediaAssetView`。

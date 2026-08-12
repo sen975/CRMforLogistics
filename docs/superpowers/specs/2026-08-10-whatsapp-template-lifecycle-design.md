@@ -172,7 +172,7 @@ reviewStatus == APPROVED
 
 临时 OSS AccessKey、Secret 和 SecurityToken 不进入数据库、日志、错误响应或审计。
 
-现有 `audit_logs` 记录模板创建、修改、启停、删除、审核状态变化和操作失败。审计摘要不保存临时密钥和完整 provider 原始载荷。
+现有 `audit_logs` 记录模板创建、修改、启停、删除、审核状态变化和操作失败。`audit_logs.result` 是跨领域通用结果，只允许 `success`、`denied`、`failed`、`unknown`；领域状态继续由 owner 表及 `after_summary_jsonb` 持有。媒体上传映射固定为 `UPLOADED -> success`、`FAILED -> failed`、`SUBMISSION_UNKNOWN -> unknown`，不得同时引入大写重复值，也不得把未知结果降格为失败。V10 只扩展 V3 的结果约束以加入 `unknown`，不新增列、不修改 V3/V9 或历史数据。审计摘要不保存临时密钥和完整 provider 原始载荷。
 
 ## 7. HTTP 合同与权限
 
@@ -249,6 +249,7 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 6. provider 明确成功后，用短事务条件更新为 `UPLOADED`；明确失败更新为 `FAILED`；超时、连接中断或无法判断是否提交则更新为 `SUBMISSION_UNKNOWN`。
 7. 若进程在 provider 调用前后崩溃，记录可能暂留 `PROCESSING`；状态查询在 90 秒后将其保守收敛为 `SUBMISSION_UNKNOWN`，绝不自动重放。
 8. 创建或修改明确成功后转 `ATTACHED`；明确失败后转 `ORPHANED`；模板提交结果未知时转 `ATTACHMENT_UNKNOWN`。
+9. 每个上传终态转换与审计在同一个短事务中提交；通用审计结果使用 `success/failed/unknown`，精确媒体状态保留在 `template_media_assets.asset_status` 与审计摘要中。
 
 重复请求合同：
 
@@ -356,6 +357,7 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 - Gateway 单测逐项验证七个官方 API 的请求字段、响应和错误映射。
 - Application service 测试覆盖权限、幂等、状态机、参数校验、未知提交和素材归属。
 - 媒体上传 service 测试覆盖并发同 key 只调用一次 gateway、相同 key 不同指纹冲突、每个持久状态的重复返回、provider 调用无活动事务，以及失联 `PROCESSING` 收敛为 `SUBMISSION_UNKNOWN`。
+- PostgreSQL 集成测试覆盖通用审计结果映射、旧 `denied` 兼容、`unknown` 可持久化，以及大写领域状态不能写入 `audit_logs.result`。
 - 同步测试覆盖 `pass/fail/auditing/unaudit/unknown`、拒绝原因、完整删除判断和分页失败保留快照。
 - PostgreSQL 17.5 Testcontainers 从空库执行 Flyway，并验证组件 JSON、操作幂等、媒体请求唯一索引、V9 旧素材回填、可空 provider 字段、软删除、乐观锁和发送选择条件。
 - 现有消息发送测试证明未批准、暂停和删除模板均不能进入 outbox。
