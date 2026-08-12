@@ -83,6 +83,7 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
     }
 
     @Autowired private WhatsAppTemplateMediaUploadService mediaUploadService;
+    @Autowired private WhatsAppTemplateMediaUploadStore mediaUploadStore;
     @Autowired private WhatsAppTemplateGateway gateway;
     @Autowired private JdbcTemplate jdbc;
 
@@ -135,14 +136,15 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from template_media_assets "
                 + "where channel_account_id = ? and client_request_id = 'same-request'", Integer.class, accountId))
                 .isEqualTo(1);
-        assertThat(jdbc.queryForObject("select count(*) from audit_logs where resource_type = "
-                + "'TEMPLATE_MEDIA_ASSET' and action = 'WHATSAPP_TEMPLATE_MEDIA_UPLOAD'", Integer.class))
+        UUID assetId = jdbc.queryForObject("select id from template_media_assets "
+                + "where channel_account_id = ? and client_request_id = 'same-request'", UUID.class, accountId);
+        assertThat(jdbc.queryForObject("select count(*) from audit_logs where resource_id = ? "
+                + "and action = 'WHATSAPP_TEMPLATE_MEDIA_UPLOAD'", Integer.class, assetId))
                 .isEqualTo(1);
-        assertThat(jdbc.queryForObject("select result from audit_logs where resource_type = "
-                + "'TEMPLATE_MEDIA_ASSET' order by occurred_at desc limit 1", String.class))
+        assertThat(jdbc.queryForObject("select result from audit_logs where resource_id = ?", String.class, assetId))
                 .isEqualTo("success");
-        assertThat(jdbc.queryForObject("select after_summary_jsonb::text from audit_logs "
-                + "where resource_type = 'TEMPLATE_MEDIA_ASSET' order by occurred_at desc limit 1", String.class))
+        assertThat(jdbc.queryForObject("select after_summary_jsonb::text from audit_logs where resource_id = ?",
+                String.class, assetId))
                 .contains("\"status\": \"UPLOADED\"").contains("\"format\": \"IMAGE\"");
     }
 
@@ -180,6 +182,44 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void markUploadedRejectsNonProcessingAssetWithoutAudit() {
+        UUID assetId = insertTerminalAsset("terminal-uploaded", "FAILED");
+        UploadedMedia uploaded = new UploadedMedia("templates/a.png", "https://provider.invalid/a.png",
+                HeaderFormat.IMAGE, "image/png", 1, ONE_BYTE_SHA256);
+
+        assertThatThrownBy(() -> mediaUploadStore.markUploaded(assetId, uploaded, Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(mediaAuditCount(assetId)).isZero();
+    }
+
+    @Test
+    void markFailedRejectsNonProcessingAssetWithoutAudit() {
+        UUID assetId = insertTerminalAsset("terminal-failed", "SUBMISSION_UNKNOWN");
+        WhatsAppTemplateException failure = new WhatsAppTemplateException(
+                "PROVIDER_PERMISSION_DENIED", org.springframework.http.HttpStatus.FORBIDDEN,
+                "denied", java.util.Map.of(), null, false);
+
+        assertThatThrownBy(() -> mediaUploadStore.markFailed(assetId, failure, Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(mediaAuditCount(assetId)).isZero();
+    }
+
+    @Test
+    void markUnknownRejectsNonProcessingAssetWithoutAudit() {
+        UUID assetId = insertTerminalAsset("terminal-unknown", "FAILED");
+        WhatsAppTemplateException timeout = new WhatsAppTemplateException(
+                "TEMPLATE_PROVIDER_TIMEOUT", org.springframework.http.HttpStatus.GATEWAY_TIMEOUT,
+                "timeout", java.util.Map.of(), null, true);
+
+        assertThatThrownBy(() -> mediaUploadStore.markUnknown(assetId, timeout, Instant.now()))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(mediaAuditCount(assetId)).isZero();
+    }
+
     private UploadResult upload(String clientRequestId) {
         return mediaUploadService.upload(accountId, HeaderFormat.IMAGE,
                 new ByteArrayInputStream(new byte[]{1}), 1, "a.png", "image/png",
@@ -192,5 +232,20 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
                         + "after_summary_jsonb, result, trace_id) values (?, ?, 'TEST_AUDIT_RESULT', "
                         + "'TEMPLATE_MEDIA_ASSET', ?, '{}'::jsonb, '{}'::jsonb, ?, 'trace-audit-result')",
                 UUID.randomUUID(), actorUserId, UUID.randomUUID(), result);
+    }
+
+    private UUID insertTerminalAsset(String requestId, String status) {
+        UUID assetId = UUID.randomUUID();
+        jdbc.update("insert into template_media_assets "
+                        + "(id, channel_account_id, client_request_id, media_format, content_type, size_bytes, sha256, "
+                        + "asset_status, created_by_user_id, trace_id, started_at, created_at, updated_at) "
+                        + "values (?, ?, ?, 'IMAGE', 'image/png', 1, ?, ?, ?, 'trace-terminal', now(), now(), now())",
+                assetId, accountId, requestId, ONE_BYTE_SHA256, status, actorUserId);
+        return assetId;
+    }
+
+    private int mediaAuditCount(UUID assetId) {
+        return jdbc.queryForObject("select count(*) from audit_logs where resource_id = ? "
+                + "and action = 'WHATSAPP_TEMPLATE_MEDIA_UPLOAD'", Integer.class, assetId);
     }
 }

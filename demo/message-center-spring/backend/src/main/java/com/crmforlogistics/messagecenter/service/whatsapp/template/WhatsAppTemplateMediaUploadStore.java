@@ -44,7 +44,9 @@ public class WhatsAppTemplateMediaUploadStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public TemplateMediaAssetEntity markUploaded(UUID id, UploadedMedia uploaded, Instant now) {
-        mediaMapper.markUploaded(id, uploaded.objectKey(), uploaded.url(), now);
+        if (mediaMapper.markUploaded(id, uploaded.objectKey(), uploaded.url(), now) != 1) {
+            throw new IllegalStateException("Media upload is no longer PROCESSING");
+        }
         TemplateMediaAssetEntity asset = required(id);
         audit(asset, "success", now);
         return asset;
@@ -52,7 +54,9 @@ public class WhatsAppTemplateMediaUploadStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public TemplateMediaAssetEntity markFailed(UUID id, WhatsAppTemplateException error, Instant now) {
-        mediaMapper.markFailed(id, error.code(), error.getMessage(), now);
+        if (mediaMapper.markFailed(id, error.code(), error.getMessage(), now) != 1) {
+            throw new IllegalStateException("Media upload is no longer PROCESSING");
+        }
         TemplateMediaAssetEntity asset = required(id);
         audit(asset, "failed", now);
         return asset;
@@ -60,7 +64,9 @@ public class WhatsAppTemplateMediaUploadStore {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public TemplateMediaAssetEntity markUnknown(UUID id, WhatsAppTemplateException error, Instant now) {
-        mediaMapper.markUnknown(id, "TEMPLATE_MEDIA_SUBMISSION_UNKNOWN", error.getMessage(), now);
+        if (mediaMapper.markUnknown(id, "TEMPLATE_MEDIA_SUBMISSION_UNKNOWN", error.getMessage(), now) != 1) {
+            throw new IllegalStateException("Media upload is no longer PROCESSING");
+        }
         TemplateMediaAssetEntity asset = required(id);
         audit(asset, "unknown", now);
         return asset;
