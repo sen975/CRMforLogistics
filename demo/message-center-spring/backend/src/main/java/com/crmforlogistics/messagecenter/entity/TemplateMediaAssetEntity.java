@@ -20,6 +20,12 @@ public class TemplateMediaAssetEntity {
     private String sha256;
     private String assetStatus;
     private UUID createdByUserId;
+    private String clientRequestId;
+    private String errorCode;
+    private String errorMessage;
+    private String traceId;
+    private Instant startedAt;
+    private Instant updatedAt;
     private Instant createdAt;
     private Instant attachedAt;
 
@@ -43,6 +49,18 @@ public class TemplateMediaAssetEntity {
     public void setAssetStatus(String assetStatus) { this.assetStatus = assetStatus; }
     public UUID getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(UUID createdByUserId) { this.createdByUserId = createdByUserId; }
+    public String getClientRequestId() { return clientRequestId; }
+    public void setClientRequestId(String clientRequestId) { this.clientRequestId = clientRequestId; }
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public String getTraceId() { return traceId; }
+    public void setTraceId(String traceId) { this.traceId = traceId; }
+    public Instant getStartedAt() { return startedAt; }
+    public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getAttachedAt() { return attachedAt; }
