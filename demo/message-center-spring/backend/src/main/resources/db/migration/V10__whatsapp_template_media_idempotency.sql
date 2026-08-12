@@ -28,7 +28,7 @@ ALTER TABLE template_media_assets ADD CONSTRAINT ck_template_asset_status CHECK
     (asset_status IN ('PROCESSING','UPLOADED','FAILED','SUBMISSION_UNKNOWN',
                       'ATTACHED','ATTACHMENT_UNKNOWN','ORPHANED'));
 ALTER TABLE template_media_assets ADD CONSTRAINT ck_template_media_request_id CHECK
-    (char_length(client_request_id) BETWEEN 1 AND 255);
+    (client_request_id ~ '^[A-Za-z0-9._~:-]{1,255}$');
 ALTER TABLE template_media_assets ADD CONSTRAINT ck_template_media_provider_result CHECK
     (asset_status IN ('PROCESSING','FAILED','SUBMISSION_UNKNOWN')
      OR (provider_object_key IS NOT NULL AND provider_url IS NOT NULL));

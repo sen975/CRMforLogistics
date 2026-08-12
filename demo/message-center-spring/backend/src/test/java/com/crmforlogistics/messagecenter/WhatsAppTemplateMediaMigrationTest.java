@@ -55,10 +55,20 @@ class WhatsAppTemplateMediaMigrationTest {
         assertThat(row.get("client_request_id")).isEqualTo("legacy:" + assetId);
         assertThat(row.get("started_at")).isNotNull();
         assertThat(row.get("updated_at")).isNotNull();
+        jdbc.update("insert into " + schema + ".template_media_assets "
+                + "(id, channel_account_id, client_request_id, media_format, content_type, size_bytes, sha256, "
+                + "asset_status, started_at, created_at, updated_at) values (?, ?, ?, 'IMAGE', 'image/png', 4, ?, "
+                + "'PROCESSING', now(), now(), now())", UUID.randomUUID(), accountId,
+                "safe._~:-123", "1".repeat(64));
+        jdbc.update("insert into " + schema + ".template_media_assets "
+                + "(id, channel_account_id, client_request_id, media_format, content_type, size_bytes, sha256, "
+                + "asset_status, started_at, created_at, updated_at) values (?, ?, ?, 'IMAGE', 'image/png', 4, ?, "
+                + "'PROCESSING', now(), now(), now())", UUID.randomUUID(), accountId,
+                "legacy:" + UUID.randomUUID(), "2".repeat(64));
         assertThatThrownBy(() -> jdbc.update("insert into " + schema + ".template_media_assets "
                 + "(id, channel_account_id, client_request_id, media_format, content_type, size_bytes, sha256, "
                 + "asset_status, started_at, created_at, updated_at) values (?, ?, ?, 'IMAGE', 'image/png', 4, ?, "
                 + "'PROCESSING', now(), now(), now())", UUID.randomUUID(), accountId,
-                "legacy:" + assetId, "1".repeat(64))).isInstanceOf(DataIntegrityViolationException.class);
+                "order/123", "3".repeat(64))).isInstanceOf(DataIntegrityViolationException.class);
     }
 }

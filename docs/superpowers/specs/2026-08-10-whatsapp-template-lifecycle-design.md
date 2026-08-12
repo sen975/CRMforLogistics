@@ -161,7 +161,7 @@ reviewStatus == APPROVED
 `V9__whatsapp_template_lifecycle.sql` 已执行后保持不可变。新增 `V10__whatsapp_template_media_idempotency.sql` 扩展 `template_media_assets`：
 
 - `id`、`channel_account_id`。
-- `client_request_id`：账号内唯一，长度 1 至 255。
+- `client_request_id`：媒体请求在账号内唯一，必须匹配 `[A-Za-z0-9._~:-]{1,255}` 路径段安全合同。
 - `provider_object_key`、`provider_url`：`PROCESSING`、`FAILED`、`SUBMISSION_UNKNOWN` 时允许为空。
 - `media_format`、`content_type`、`size_bytes`、`sha256`。
 - `asset_status`：`PROCESSING`、`UPLOADED`、`FAILED`、`SUBMISSION_UNKNOWN`、`ATTACHED`、`ATTACHMENT_UNKNOWN`、`ORPHANED`。
@@ -203,7 +203,7 @@ GET    /api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/op
 
 列表接口支持 `page`、`size`、`search`、`status`、`category`、`language`、`allowSend` 和 `deleted`。`size` 最大 100。
 
-所有会触发 provider 写入的请求必须带 `clientRequestId`，长度 1 至 255，用作本地持久幂等键。`templates/sync` 是只读对账触发，明确排除。
+所有会触发 provider 写入的请求必须带 `clientRequestId`，用作本地持久幂等键；媒体上传的值必须匹配 `[A-Za-z0-9._~:-]{1,255}` 路径段安全合同。`templates/sync` 是只读对账触发，明确排除。
 
 媒体上传通过 multipart 字段提交 `format`、`file`、`clientRequestId`。状态查询以账号和请求 ID 定位记录，不接受素材 ID 替代请求 ID。查询响应包含内部素材 ID、请求 ID、状态、格式、内容类型、大小、SHA-256、可用时的 provider URL，以及结构化错误 code/message/traceId；不返回 provider 临时凭据。
 

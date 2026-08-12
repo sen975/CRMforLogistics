@@ -21,6 +21,7 @@ import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.UUID;
 
 @Service
@@ -29,6 +30,7 @@ public class WhatsAppTemplateMediaUploadService {
     private static final long VIDEO_MAX_BYTES = 16L * 1024 * 1024;
     private static final long DOCUMENT_MAX_BYTES = 64L * 1024 * 1024;
     private static final long PROCESSING_TIMEOUT_SECONDS = 90;
+    private static final Pattern REQUEST_ID_PATTERN = Pattern.compile("[A-Za-z0-9._~:-]{1,255}");
 
     private final WhatsAppTemplateApplicationService templateApplicationService;
     private final WhatsAppTemplateMediaUploadStore store;
@@ -134,12 +136,11 @@ public class WhatsAppTemplateMediaUploadService {
     }
 
     private static String requireRequestId(String value) {
-        String requestId = value == null ? "" : value.trim();
-        if (requestId.isEmpty() || requestId.length() > 255) {
+        if (value == null || !REQUEST_ID_PATTERN.matcher(value).matches()) {
             throw WhatsAppTemplateException.validation(
-                    Map.of("clientRequestId", "must contain 1 to 255 characters"));
+                    Map.of("clientRequestId", "must match [A-Za-z0-9._~:-]{1,255}"));
         }
-        return requestId;
+        return value;
     }
 
     private static WhatsAppTemplateException storedFailure(String code, String message) {

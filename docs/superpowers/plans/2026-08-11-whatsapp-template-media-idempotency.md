@@ -338,7 +338,7 @@ UploadResult upload(
 MediaAssetView find(UUID accountId, String clientRequestId);
 ```
 
-content type 依次执行 trim、转小写和移除 `;` 后参数。预留前校验 `clientRequestId` 长度 1..255、声明大小大于零、流式读取大小和 MIME allowlist，再计算 SHA-256。复用现有 `WhatsAppTemplateApplicationService.validateAccount(accountId)` 作为模块账号就绪状态 owner，不复制规则。
+content type 依次执行 trim、转小写和移除 `;` 后参数。预留前校验媒体 `clientRequestId` 必须匹配 `[A-Za-z0-9._~:-]{1,255}` 路径段安全合同、声明大小大于零、流式读取大小和 MIME allowlist，再计算 SHA-256。复用现有 `WhatsAppTemplateApplicationService.validateAccount(accountId)` 作为模块账号就绪状态 owner，不复制规则。
 
 两个公开方法都使用 `@Transactional(propagation = Propagation.NOT_SUPPORTED)`，编排实现如下：
 

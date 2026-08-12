@@ -132,7 +132,7 @@ class WhatsAppTemplateMediaUploadServiceTest {
                         HeaderFormat.IMAGE, "image/png", 1, ONE_BYTE_SHA256));
         when(store.markUploaded(any(), any(), eq(NOW))).thenReturn(uploaded);
 
-        UploadResult result = upload(" request-new ", " Image/PNG ; charset=UTF-8");
+        UploadResult result = upload("request-new", " Image/PNG ; charset=UTF-8");
 
         assertThat(result.created()).isTrue();
         assertThat(result.asset().assetStatus()).isEqualTo(MediaAssetStatus.UPLOADED);
@@ -159,6 +159,30 @@ class WhatsAppTemplateMediaUploadServiceTest {
     }
 
     @Test
+    void unsafeRequestIdsFailBeforeReservation() {
+        for (String requestId : new String[]{"order/123", "request?id=1", "abc def"}) {
+            assertThatThrownBy(() -> upload(requestId, "image/png"))
+                    .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
+                        assertThat(error.code()).isEqualTo("TEMPLATE_VALIDATION_FAILED");
+                        assertThat(error.fieldErrors()).containsEntry("clientRequestId",
+                                "must match [A-Za-z0-9._~:-]{1,255}");
+                    });
+        }
+        verifyNoInteractions(store, gateway);
+    }
+
+    @Test
+    void pathSafeRequestIdsAreAccepted() {
+        when(store.reserve(any())).thenAnswer(invocation ->
+                new Reservation(invocation.getArgument(0), false));
+
+        assertThat(upload("legacy:123e4567-e89b-12d3-a456-426614174000", "image/png").created())
+                .isFalse();
+        assertThat(upload("550e8400-e29b-41d4-a716-446655440000", "image/png").created())
+                .isFalse();
+    }
+
+    @Test
     void findExpiresStaleProcessingWithoutCallingGateway() {
         TemplateMediaAssetEntity processing = asset("request-stale", "PROCESSING", ONE_BYTE_SHA256);
         processing.setStartedAt(NOW.minusSeconds(90));
@@ -166,7 +190,7 @@ class WhatsAppTemplateMediaUploadServiceTest {
         when(store.find(ACCOUNT_ID, "request-stale")).thenReturn(processing);
         when(store.expireIfStale(processing.getId(), NOW.minusSeconds(90), NOW)).thenReturn(unknown);
 
-        assertThat(service.find(ACCOUNT_ID, " request-stale ").assetStatus())
+        assertThat(service.find(ACCOUNT_ID, "request-stale").assetStatus())
                 .isEqualTo(MediaAssetStatus.SUBMISSION_UNKNOWN);
         verify(store).expireIfStale(processing.getId(), NOW.minusSeconds(90), NOW);
         verifyNoInteractions(gateway);

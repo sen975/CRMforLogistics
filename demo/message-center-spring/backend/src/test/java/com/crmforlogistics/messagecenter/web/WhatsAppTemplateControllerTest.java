@@ -223,6 +223,32 @@ class WhatsAppTemplateControllerTest {
 
     @Test
     @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void uploadPropagatesThePersistedTraceToResponse() throws Exception {
+        String requestId = "upload-trace";
+        when(mediaUploadService.upload(eq(ACCOUNT_ID), eq(HeaderFormat.IMAGE), any(), eq(4L),
+                eq("header.png"), eq("image/png"), eq(requestId), eq(ADMIN_ID), any()))
+                .thenAnswer(invocation -> {
+                    String traceId = invocation.getArgument(8);
+                    return new UploadResult(uploadedView(requestId, MediaAssetStatus.UPLOADED, traceId), true);
+                });
+
+        MvcResult result = mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3, 4}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", requestId))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String responseTrace = objectMapper.readTree(result.getResponse().getContentAsString())
+                .get("traceId").asText();
+        var traceCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(mediaUploadService).upload(eq(ACCOUNT_ID), eq(HeaderFormat.IMAGE), any(), eq(4L),
+                eq("header.png"), eq("image/png"), eq(requestId), eq(ADMIN_ID), traceCaptor.capture());
+        assertEquals(traceCaptor.getValue(), responseTrace);
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
     void processingUploadReturnsAcceptedAndCanBeQueried() throws Exception {
         MediaAssetView processing = uploadedView("upload-2", MediaAssetStatus.PROCESSING);
         when(mediaUploadService.upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
@@ -478,9 +504,13 @@ class WhatsAppTemplateControllerTest {
     }
 
     private static MediaAssetView uploadedView(String requestId, MediaAssetStatus status) {
+        return uploadedView(requestId, status, "trace-1");
+    }
+
+    private static MediaAssetView uploadedView(String requestId, MediaAssetStatus status, String traceId) {
         return new MediaAssetView(UUID.randomUUID(), requestId, HeaderFormat.IMAGE, "image/png", 4,
                 "0".repeat(64), status == MediaAssetStatus.PROCESSING ? null
                         : "https://provider.invalid/header.png",
-                status, null, null, "trace-1");
+                status, null, null, traceId);
     }
 }
