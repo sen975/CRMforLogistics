@@ -6,11 +6,16 @@ import com.crmforlogistics.messagecenter.dto.request.TemplateUpdateRequest;
 import com.crmforlogistics.messagecenter.dto.response.TemplateAdminResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateOperationResponse;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,11 +41,14 @@ public class WhatsAppTemplateController {
 
     private final WhatsAppTemplateApplicationService templateService;
     private final WhatsAppTemplateReconciliationService reconciliationService;
+    private final WhatsAppTemplateMediaUploadService mediaUploadService;
 
     public WhatsAppTemplateController(WhatsAppTemplateApplicationService templateService,
-                                      WhatsAppTemplateReconciliationService reconciliationService) {
+                                      WhatsAppTemplateReconciliationService reconciliationService,
+                                      WhatsAppTemplateMediaUploadService mediaUploadService) {
         this.templateService = templateService;
         this.reconciliationService = reconciliationService;
+        this.mediaUploadService = mediaUploadService;
     }
 
     @GetMapping("/templates")
@@ -121,19 +129,31 @@ public class WhatsAppTemplateController {
     }
 
     @PostMapping("/template-media")
-    @ResponseStatus(HttpStatus.CREATED)
-    public WhatsAppTemplateApplicationService.MediaAssetView uploadMedia(
+    public ResponseEntity<MediaAssetView> uploadMedia(
             @PathVariable UUID accountId,
             @RequestParam HeaderFormat format,
+            @RequestParam String clientRequestId,
             @RequestParam("file") MultipartFile file,
             Authentication authentication,
             HttpServletRequest servletRequest) throws IOException {
-        traceId(servletRequest);
+        String traceId = traceId(servletRequest);
         String fileName = file.getOriginalFilename() == null ? "upload" : file.getOriginalFilename();
         try (InputStream input = file.getInputStream()) {
-            return templateService.uploadMedia(accountId, format, input, file.getSize(), fileName,
-                    file.getContentType(), actorUserId(authentication));
+            UploadResult result = mediaUploadService.upload(accountId, format, input, file.getSize(), fileName,
+                    file.getContentType(), clientRequestId, actorUserId(authentication), traceId);
+            HttpStatus status = result.created() && result.asset().assetStatus() == MediaAssetStatus.UPLOADED
+                    ? HttpStatus.CREATED
+                    : result.asset().assetStatus() == MediaAssetStatus.PROCESSING
+                        || result.asset().assetStatus() == MediaAssetStatus.SUBMISSION_UNKNOWN
+                            ? HttpStatus.ACCEPTED : HttpStatus.OK;
+            return ResponseEntity.status(status).body(result.asset());
         }
+    }
+
+    @GetMapping("/template-media/uploads/{clientRequestId}")
+    public MediaAssetView findMediaUpload(@PathVariable UUID accountId,
+                                          @PathVariable String clientRequestId) {
+        return mediaUploadService.find(accountId, clientRequestId);
     }
 
     @GetMapping("/templates/{templateCode}/operations")

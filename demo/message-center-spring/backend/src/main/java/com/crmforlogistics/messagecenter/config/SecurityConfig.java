@@ -54,7 +54,10 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/call-records/*/audio").permitAll()
                 .requestMatchers("/api/channel-accounts/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/channel-accounts/*/whatsapp/templates/**").hasRole("ADMIN")
-                .requestMatchers("/api/v1/channel-accounts/*/whatsapp/template-media").hasRole("ADMIN")
+                .requestMatchers(
+                        "/api/v1/channel-accounts/*/whatsapp/template-media",
+                        "/api/v1/channel-accounts/*/whatsapp/template-media/**")
+                    .hasRole("ADMIN")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()
             );

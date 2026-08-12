@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
+import com.crmforlogistics.messagecenter.entity.AuditLogEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
@@ -19,7 +20,6 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateSnapshot;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.UploadedMedia;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,48 +74,6 @@ class WhatsAppTemplateApplicationServiceTest {
     }
 
     @Test
-    void uploadsAllowedMediaAndPersistsOnlyStableMetadata() {
-        byte[] bytes = "image".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        when(gateway.upload(ACCOUNT_ID, HeaderFormat.IMAGE, bytes, "proof.png", "image/png"))
-                .thenReturn(new UploadedMedia("templates/proof.png", "https://oss.example/proof.png",
-                        HeaderFormat.IMAGE, "image/png", bytes.length,
-                        "6105d6cc76af4003d70c83bd2f46a703f0aaef8a6630e3c8f92a1ccaaae64de7"));
-
-        var result = service.uploadMedia(ACCOUNT_ID, HeaderFormat.IMAGE, bytes, "proof.png", "image/png", ACTOR_ID);
-
-        ArgumentCaptor<TemplateMediaAssetEntity> inserted = ArgumentCaptor.forClass(TemplateMediaAssetEntity.class);
-        verify(mediaMapper).insert(inserted.capture());
-        assertThat(inserted.getValue().getAssetStatus()).isEqualTo("UPLOADED");
-        assertThat(inserted.getValue().getSha256())
-                .isEqualTo("6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d");
-        assertThat(inserted.getValue().getProviderObjectKey()).isEqualTo("templates/proof.png");
-        assertThat(inserted.getValue().getProviderUrl()).isEqualTo("https://oss.example/proof.png");
-        assertThat(java.util.Arrays.stream(TemplateMediaAssetEntity.class.getDeclaredFields())
-                .map(java.lang.reflect.Field::getName))
-                .noneMatch(name -> name.toLowerCase().contains("accesskey")
-                        || name.toLowerCase().contains("securitytoken")
-                        || name.toLowerCase().contains("secret"));
-        assertThat(result.assetStatus()).isEqualTo("UPLOADED");
-    }
-
-    @Test
-    void enforcesMediaCapsAndMimeAllowlist() {
-        assertThatThrownBy(() -> service.uploadMedia(ACCOUNT_ID, HeaderFormat.IMAGE,
-                new byte[5 * 1024 * 1024 + 1], "a.png", "image/png", ACTOR_ID))
-                .isInstanceOf(WhatsAppTemplateException.class);
-        assertThatThrownBy(() -> service.uploadMedia(ACCOUNT_ID, HeaderFormat.VIDEO,
-                new byte[16 * 1024 * 1024 + 1], "a.mp4", "video/mp4", ACTOR_ID))
-                .isInstanceOf(WhatsAppTemplateException.class);
-        assertThatThrownBy(() -> service.uploadMedia(ACCOUNT_ID, HeaderFormat.DOCUMENT,
-                new byte[64 * 1024 * 1024 + 1], "a.pdf", "application/pdf", ACTOR_ID))
-                .isInstanceOf(WhatsAppTemplateException.class);
-        assertThatThrownBy(() -> service.uploadMedia(ACCOUNT_ID, HeaderFormat.IMAGE,
-                new byte[]{1}, "a.gif", "image/gif", ACTOR_ID))
-                .isInstanceOf(WhatsAppTemplateException.class);
-        verify(gateway, never()).upload(any(), any(), any(), any(), any());
-    }
-
-    @Test
     void createIsIdempotentAndCallsProviderOnce() {
         TemplateOperationEntity existing = operation("client-create", "SUCCEEDED", "tpl-1");
         when(operationMapper.findByIdempotency(ACCOUNT_ID, "client-create"))
@@ -131,6 +89,7 @@ class WhatsAppTemplateApplicationServiceTest {
         verify(gateway, times(1)).create(eq(ACCOUNT_ID), any());
         assertThat(first.templateCode()).isEqualTo("tpl-1");
         assertThat(second.operationId()).isEqualTo(existing.getId());
+        assertThat(capturedAudit().getResult()).isEqualTo("success");
     }
 
     @Test
@@ -152,7 +111,7 @@ class WhatsAppTemplateApplicationServiceTest {
         verify(mediaMapper).updateById(updated.capture());
         assertThat(updated.getValue().getAssetStatus()).isEqualTo("ATTACHMENT_UNKNOWN");
         verify(gateway, times(1)).create(eq(ACCOUNT_ID), any());
-        verify(auditLogMapper).insert(any());
+        assertThat(capturedAudit().getResult()).isEqualTo("unknown");
     }
 
     @Test
@@ -170,7 +129,7 @@ class WhatsAppTemplateApplicationServiceTest {
 
         verify(operationMapper).markFailed(any(), eq("req-r"), eq("TEMPLATE_PROVIDER_REJECTED"), any(), eq(NOW));
         verify(mediaMapper).markOrphaned(assetId);
-        verify(auditLogMapper).insert(any());
+        assertThat(capturedAudit().getResult()).isEqualTo("failed");
     }
 
     @Test
@@ -276,5 +235,11 @@ class WhatsAppTemplateApplicationServiceTest {
 
     private static WhatsAppTemplateException provider(String code, boolean retryable, String requestId) {
         return new WhatsAppTemplateException(code, HttpStatus.BAD_GATEWAY, code, Map.of(), requestId, retryable);
+    }
+
+    private AuditLogEntity capturedAudit() {
+        ArgumentCaptor<AuditLogEntity> audit = ArgumentCaptor.forClass(AuditLogEntity.class);
+        verify(auditLogMapper).insert(audit.capture());
+        return audit.getValue();
     }
 }

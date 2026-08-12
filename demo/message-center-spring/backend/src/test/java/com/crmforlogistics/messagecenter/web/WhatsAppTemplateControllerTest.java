@@ -20,15 +20,21 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateGateway;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ComponentType;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.OperationStatus;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.OperationType;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.context.annotation.Import;
@@ -40,8 +46,6 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.io.InputStream;
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -63,21 +67,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @WebMvcTest({WhatsAppTemplateController.class, TemplateController.class})
 @Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class})
 class WhatsAppTemplateControllerTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final String ADMIN_ID_TEXT = "00000000-0000-0000-0000-000000000002";
     private static final UUID ADMIN_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final UUID TEMPLATE_ID = UUID.fromString("00000000-0000-0000-0000-000000000003");
     private static final UUID OPERATION_ID = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final Instant NOW = Instant.parse("2026-08-11T08:00:00Z");
+    private static final String BASE = "/api/v1/channel-accounts/" + ACCOUNT_ID + "/whatsapp";
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper objectMapper;
     @MockitoBean WhatsAppTemplateApplicationService templateService;
     @MockitoBean WhatsAppTemplateReconciliationService reconciliationService;
+    @MockitoBean WhatsAppTemplateMediaUploadService mediaUploadService;
     @MockitoBean ChatAppTemplateService salesTemplateService;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -99,7 +105,8 @@ class WhatsAppTemplateControllerTest {
         verify(templateService, never()).modify(any(), any(), any(), any(), any(), any());
         verify(templateService, never()).setSendPermission(any(), any(), any(), anyBoolean(), any(), any(), any());
         verify(templateService, never()).delete(any(), any(), any(), any(), any(), any());
-        verify(templateService, never()).uploadMedia(any(), any(), any(), anyLong(), any(), any(), any());
+        verify(mediaUploadService, never()).upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any());
+        verify(mediaUploadService, never()).find(any(), any());
         verify(reconciliationService, never()).syncAccount(any());
     }
 
@@ -122,7 +129,7 @@ class WhatsAppTemplateControllerTest {
     }
 
     @Test
-    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
     void adminCanInvokeEveryManagementWritePath() throws Exception {
         OperationView operation = new OperationView(OPERATION_ID, OperationType.CREATE,
                 OperationStatus.SUCCEEDED, "delivery_update", "req-1", null);
@@ -133,10 +140,9 @@ class WhatsAppTemplateControllerTest {
                 eq(false), eq("permission-1"), eq(ADMIN_ID), any())).thenReturn(operation);
         when(templateService.delete(eq(ACCOUNT_ID), eq("delivery_update"), eq("en_US"),
                 eq("delete-1"), eq(ADMIN_ID), any())).thenReturn(operation);
-        when(templateService.uploadMedia(eq(ACCOUNT_ID), any(), any(), anyLong(), any(), any(), eq(ADMIN_ID)))
-                .thenReturn(new WhatsAppTemplateApplicationService.MediaAssetView(
-                        TEMPLATE_ID, com.crmforlogistics.messagecenter.service.whatsapp.template
-                        .WhatsAppTemplateModels.HeaderFormat.IMAGE, "image/png", 3, "abc", null, "UPLOADED"));
+        when(mediaUploadService.upload(eq(ACCOUNT_ID), eq(HeaderFormat.IMAGE), any(), eq(3L),
+                eq("header.png"), eq("image/png"), eq("upload-management"), eq(ADMIN_ID), any()))
+                .thenReturn(new UploadResult(uploadedView("upload-management", MediaAssetStatus.UPLOADED), true));
         when(reconciliationService.syncAccount(ACCOUNT_ID))
                 .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 1, 1, true));
 
@@ -199,21 +205,121 @@ class WhatsAppTemplateControllerTest {
     }
 
     @Test
-    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
-    void uploadsMultipartTemplateMedia() throws Exception {
-        when(templateService.uploadMedia(eq(ACCOUNT_ID), any(), any(), eq(3L), eq("header.png"),
-                eq("image/png"), eq(ADMIN_ID)))
-                .thenReturn(new WhatsAppTemplateApplicationService.MediaAssetView(
-                        TEMPLATE_ID, com.crmforlogistics.messagecenter.service.whatsapp.template
-                        .WhatsAppTemplateModels.HeaderFormat.IMAGE, "image/png", 3, "abc", null, "UPLOADED"));
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void uploadRequiresRequestIdAndReturnsCreatedForNewSuccess() throws Exception {
+        MediaAssetView asset = uploadedView("upload-1", MediaAssetStatus.UPLOADED);
+        when(mediaUploadService.upload(eq(ACCOUNT_ID), eq(HeaderFormat.IMAGE), any(), eq(4L),
+                eq("header.png"), eq("image/png"), eq("upload-1"), eq(ADMIN_ID), any()))
+                .thenReturn(new UploadResult(asset, true));
 
-        mvc.perform(multipart("/api/v1/channel-accounts/{accountId}/whatsapp/template-media", ACCOUNT_ID)
-                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3}))
-                        .param("format", "IMAGE"))
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3, 4}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-1"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").value(TEMPLATE_ID.toString()))
-                .andExpect(jsonPath("$.format").value("IMAGE"))
+                .andExpect(jsonPath("$.clientRequestId").value("upload-1"))
                 .andExpect(jsonPath("$.assetStatus").value("UPLOADED"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void processingUploadReturnsAcceptedAndCanBeQueried() throws Exception {
+        MediaAssetView processing = uploadedView("upload-2", MediaAssetStatus.PROCESSING);
+        when(mediaUploadService.upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(new UploadResult(processing, false));
+        when(mediaUploadService.find(ACCOUNT_ID, "upload-2")).thenReturn(processing);
+
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-2"))
+                .andExpect(status().isAccepted());
+        mvc.perform(get(BASE + "/template-media/uploads/upload-2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assetStatus").value("PROCESSING"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void replayedUploadedMediaReturnsOk() throws Exception {
+        MediaAssetView uploaded = uploadedView("upload-replay", MediaAssetStatus.UPLOADED);
+        when(mediaUploadService.upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(new UploadResult(uploaded, false));
+
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-replay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assetStatus").value("UPLOADED"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void submissionUnknownUploadReturnsAccepted() throws Exception {
+        MediaAssetView unknown = uploadedView("upload-unknown", MediaAssetStatus.SUBMISSION_UNKNOWN);
+        when(mediaUploadService.upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(new UploadResult(unknown, true));
+
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-unknown"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.assetStatus").value("SUBMISSION_UNKNOWN"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void missingUploadRequestIdReturnsBadRequest() throws Exception {
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1}))
+                        .param("format", "IMAGE"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+
+        verify(mediaUploadService, never()).upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void missingUploadCanBeQueriedAsStableNotFound() throws Exception {
+        when(mediaUploadService.find(ACCOUNT_ID, "missing"))
+                .thenThrow(new WhatsAppTemplateException("TEMPLATE_MEDIA_NOT_FOUND", HttpStatus.NOT_FOUND,
+                        "Media upload was not found", Map.of(), null, false));
+
+        mvc.perform(get(BASE + "/template-media/uploads/missing"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TEMPLATE_MEDIA_NOT_FOUND"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void reusedRequestIdWithDifferentFingerprintReturnsConflict() throws Exception {
+        when(mediaUploadService.upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any()))
+                .thenThrow(new WhatsAppTemplateException("IDEMPOTENCY_KEY_REUSED", HttpStatus.CONFLICT,
+                        "clientRequestId is already bound to different media", Map.of(), null, false));
+
+        mvc.perform(multipart(BASE + "/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1}))
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-conflict"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void syncRemainsReadOnlyWithoutClientRequestId() throws Exception {
+        when(reconciliationService.syncAccount(ACCOUNT_ID))
+                .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 1, 1, true));
+
+        mvc.perform(post(BASE + "/templates/sync"))
+                .andExpect(status().isOk());
+
+        verify(templateService).validateAccount(ACCOUNT_ID);
+        verify(reconciliationService).syncAccount(ACCOUNT_ID);
+        verify(mediaUploadService, never()).upload(any(), any(), any(), anyLong(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -305,81 +411,6 @@ class WhatsAppTemplateControllerTest {
                 .andExpect(jsonPath("$.fieldErrors.allowSend").value("is required"));
     }
 
-    @Test
-    void uploadOwnerRejectsOversizedDeclarationBeforeReading() {
-        ChannelAccountMapper accountMapper = activeAccountMapper();
-        WhatsAppTemplateGateway gateway = mock(WhatsAppTemplateGateway.class);
-        WhatsAppTemplateApplicationService owner = owner(accountMapper, gateway);
-        int[] reads = {0};
-        InputStream input = new InputStream() {
-            @Override
-            public int read() {
-                reads[0]++;
-                return -1;
-            }
-        };
-
-        assertThrows(WhatsAppTemplateException.class, () -> owner.uploadMedia(ACCOUNT_ID,
-                com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat.IMAGE,
-                input, 5L * 1024 * 1024 + 1, "header.png", "image/png", ADMIN_ID));
-
-        assertEquals(0, reads[0]);
-        verify(gateway, never()).upload(any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void uploadOwnerStopsWhenStreamCrossesFormatLimit() {
-        ChannelAccountMapper accountMapper = activeAccountMapper();
-        WhatsAppTemplateGateway gateway = mock(WhatsAppTemplateGateway.class);
-        WhatsAppTemplateApplicationService owner = owner(accountMapper, gateway);
-        InputStream input = zeroStream(5L * 1024 * 1024 + 1);
-
-        assertThrows(WhatsAppTemplateException.class, () -> owner.uploadMedia(ACCOUNT_ID,
-                com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat.IMAGE,
-                input, 1, "header.png", "image/png", ADMIN_ID));
-
-        verify(gateway, never()).upload(any(), any(), any(), any(), any());
-    }
-
-    private static ChannelAccountMapper activeAccountMapper() {
-        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
-        ChannelAccountEntity account = new ChannelAccountEntity();
-        account.setId(ACCOUNT_ID);
-        account.setChannelType("whatsapp");
-        account.setAuthStatus("active");
-        when(mapper.selectById(ACCOUNT_ID)).thenReturn(account);
-        return mapper;
-    }
-
-    private static WhatsAppTemplateApplicationService owner(ChannelAccountMapper accountMapper,
-                                                             WhatsAppTemplateGateway gateway) {
-        return new WhatsAppTemplateApplicationService(accountMapper, mock(TemplateOperationMapper.class),
-                mock(TemplateMediaAssetMapper.class), mock(TemplateMapper.class), mock(AuditLogMapper.class),
-                gateway, mock(WhatsAppTemplateValidator.class), new ObjectMapper(), Clock.systemUTC());
-    }
-
-    private static InputStream zeroStream(long size) {
-        return new InputStream() {
-            private long remaining = size;
-
-            @Override
-            public int read() {
-                if (remaining == 0) return -1;
-                remaining--;
-                return 0;
-            }
-
-            @Override
-            public int read(byte[] bytes, int offset, int length) throws IOException {
-                if (remaining == 0) return -1;
-                int count = (int) Math.min(length, remaining);
-                java.util.Arrays.fill(bytes, offset, offset + count, (byte) 0);
-                remaining -= count;
-                return count;
-            }
-        };
-    }
-
     private static List<RequestBuilder> managementRequests() {
         List<RequestBuilder> requests = new java.util.ArrayList<>();
         requests.addAll(managementReadRequests());
@@ -393,7 +424,8 @@ class WhatsAppTemplateControllerTest {
                 get("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}",
                         ACCOUNT_ID, "delivery_update").param("language", "en_US"),
                 get("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/operations",
-                        ACCOUNT_ID, "delivery_update").param("language", "en_US"));
+                        ACCOUNT_ID, "delivery_update").param("language", "en_US"),
+                get(BASE + "/template-media/uploads/upload-security"));
     }
 
     private static List<RequestBuilder> managementWriteRequests() {
@@ -416,7 +448,8 @@ class WhatsAppTemplateControllerTest {
                 post("/api/v1/channel-accounts/{accountId}/whatsapp/templates/sync", ACCOUNT_ID),
                 multipart("/api/v1/channel-accounts/{accountId}/whatsapp/template-media", ACCOUNT_ID)
                         .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3}))
-                        .param("format", "IMAGE"));
+                        .param("format", "IMAGE")
+                        .param("clientRequestId", "upload-management"));
     }
 
     private static RequestBuilder createRequest() {
@@ -442,5 +475,12 @@ class WhatsAppTemplateControllerTest {
                 "REJECTED", "fail", "BODY_NOT_ALLOWED", false,
                 List.of(new TemplateComponent(ComponentType.BODY, null, "Hello {{customer}}", null, List.of())),
                 Map.of("customer", List.of("Ada")), null, "GREEN", NOW, NOW, null);
+    }
+
+    private static MediaAssetView uploadedView(String requestId, MediaAssetStatus status) {
+        return new MediaAssetView(UUID.randomUUID(), requestId, HeaderFormat.IMAGE, "image/png", 4,
+                "0".repeat(64), status == MediaAssetStatus.PROCESSING ? null
+                        : "https://provider.invalid/header.png",
+                status, null, null, "trace-1");
     }
 }

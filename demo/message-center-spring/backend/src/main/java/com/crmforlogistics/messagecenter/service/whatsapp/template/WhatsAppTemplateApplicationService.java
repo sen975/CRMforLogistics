@@ -23,7 +23,6 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateSnapshot;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.UploadedMedia;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,16 +30,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.MessageDigest;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,10 +43,6 @@ import java.util.UUID;
 
 @Service
 public class WhatsAppTemplateApplicationService {
-    private static final long IMAGE_MAX_BYTES = 5L * 1024 * 1024;
-    private static final long VIDEO_MAX_BYTES = 16L * 1024 * 1024;
-    private static final long DOCUMENT_MAX_BYTES = 64L * 1024 * 1024;
-
     private final ChannelAccountMapper accountMapper;
     private final TemplateOperationMapper operationMapper;
     private final TemplateMediaAssetMapper mediaMapper;
@@ -85,39 +74,6 @@ public class WhatsAppTemplateApplicationService {
         this.clock = Objects.requireNonNull(clock);
     }
 
-    MediaAssetView uploadMedia(UUID accountId, HeaderFormat format, byte[] bytes,
-                               String fileName, String contentType, UUID actorUserId) {
-        byte[] source = bytes == null ? new byte[0] : bytes;
-        return uploadMedia(accountId, format, new ByteArrayInputStream(source), source.length,
-                fileName, contentType, actorUserId);
-    }
-
-    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
-    public MediaAssetView uploadMedia(UUID accountId, HeaderFormat format, InputStream input,
-                                      long declaredSize, String fileName, String contentType, UUID actorUserId) {
-        requireAccount(accountId);
-        long maxBytes = validateMediaDeclaration(format, declaredSize, contentType);
-        byte[] bytes = readBounded(input, maxBytes);
-        UploadedMedia uploaded = gateway.upload(accountId, format, bytes, fileName, contentType);
-
-        TemplateMediaAssetEntity asset = new TemplateMediaAssetEntity();
-        asset.setId(UUID.randomUUID());
-        asset.setChannelAccountId(accountId);
-        asset.setProviderObjectKey(uploaded.objectKey());
-        asset.setProviderUrl(uploaded.url());
-        asset.setMediaFormat(format.name());
-        asset.setContentType(contentType);
-        asset.setSizeBytes((long) bytes.length);
-        asset.setSha256(sha256(bytes));
-        asset.setAssetStatus("UPLOADED");
-        asset.setCreatedByUserId(actorUserId);
-        asset.setCreatedAt(now());
-        mediaMapper.insert(asset);
-        audit("WHATSAPP_TEMPLATE_MEDIA_UPLOAD", "TEMPLATE_MEDIA_ASSET", asset.getId(), actorUserId,
-                "{}", json(Map.of("status", "UPLOADED", "format", format.name())), "SUCCEEDED", null);
-        return mediaView(asset);
-    }
-
     @Transactional(noRollbackFor = WhatsAppTemplateException.class)
     public OperationView create(UUID accountId, TemplateCommand command, UUID actorUserId, String traceId) {
         requireAccount(accountId);
@@ -137,11 +93,11 @@ public class WhatsAppTemplateApplicationService {
             persistSnapshot(snapshot);
             attach(prepared.asset());
             succeed(operation, result.templateCode(), result.providerRequestId());
-            auditOperation(operation, actorUserId, traceId, "SUCCEEDED");
+            auditOperation(operation, actorUserId, traceId);
             return operationView(operation);
         } catch (WhatsAppTemplateException e) {
             failOperation(operation, prepared.asset(), e);
-            auditOperation(operation, actorUserId, traceId, operation.getOperationStatus());
+            auditOperation(operation, actorUserId, traceId);
             throw e;
         }
     }
@@ -168,11 +124,11 @@ public class WhatsAppTemplateApplicationService {
             attach(prepared.asset());
             succeed(operation, result.templateCode(), result.providerRequestId());
             audit("WHATSAPP_TEMPLATE_MODIFY", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
-                    json(templateSummary(current)), json(snapshot), "SUCCEEDED", traceId);
+                    json(templateSummary(current)), json(snapshot), auditResult(OperationStatus.SUCCEEDED), traceId);
             return operationView(operation);
         } catch (WhatsAppTemplateException e) {
             failOperation(operation, prepared.asset(), e);
-            auditOperation(operation, actorUserId, traceId, operation.getOperationStatus());
+            auditOperation(operation, actorUserId, traceId);
             throw e;
         }
     }
@@ -203,11 +159,11 @@ public class WhatsAppTemplateApplicationService {
             succeed(operation, templateCode, result.providerRequestId());
             audit("WHATSAPP_TEMPLATE_SEND_PERMISSION", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
                     json(Map.of("allowSend", previousAllowSend)), json(Map.of("allowSend", allowSend)),
-                    "SUCCEEDED", traceId);
+                    auditResult(OperationStatus.SUCCEEDED), traceId);
             return operationView(operation);
         } catch (WhatsAppTemplateException e) {
             failOperation(operation, null, e);
-            auditOperation(operation, actorUserId, traceId, operation.getOperationStatus());
+            auditOperation(operation, actorUserId, traceId);
             throw e;
         }
     }
@@ -236,11 +192,11 @@ public class WhatsAppTemplateApplicationService {
             templateMapper.updateById(current);
             succeed(operation, templateCode, result.providerRequestId());
             audit("WHATSAPP_TEMPLATE_DELETE", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
-                    "{}", json(Map.of("deleted", true)), "SUCCEEDED", traceId);
+                    "{}", json(Map.of("deleted", true)), auditResult(OperationStatus.SUCCEEDED), traceId);
             return operationView(operation);
         } catch (WhatsAppTemplateException e) {
             failOperation(operation, null, e);
-            auditOperation(operation, actorUserId, traceId, operation.getOperationStatus());
+            auditOperation(operation, actorUserId, traceId);
             throw e;
         }
     }
@@ -344,60 +300,6 @@ public class WhatsAppTemplateApplicationService {
         if (language == null || language.isBlank()) {
             throw validation("language", "is required");
         }
-    }
-
-    private long validateMediaDeclaration(HeaderFormat format, long declaredSize, String contentType) {
-        if (declaredSize == 0) {
-            throw validation("file", "is required");
-        }
-        String mime = normalized(contentType);
-        long max;
-        boolean allowed;
-        if (format == HeaderFormat.IMAGE) {
-            max = IMAGE_MAX_BYTES;
-            allowed = "image/jpeg".equals(mime) || "image/png".equals(mime);
-        } else if (format == HeaderFormat.VIDEO) {
-            max = VIDEO_MAX_BYTES;
-            allowed = "video/mp4".equals(mime);
-        } else if (format == HeaderFormat.DOCUMENT) {
-            max = DOCUMENT_MAX_BYTES;
-            allowed = "application/pdf".equals(mime);
-        } else {
-            throw validation("format", "must be IMAGE, VIDEO or DOCUMENT");
-        }
-        if (!allowed) {
-            throw validation("contentType", "is not allowed for " + format);
-        }
-        if (declaredSize > max) {
-            throw validation("file", "exceeds the maximum size for " + format);
-        }
-        return max;
-    }
-
-    private static byte[] readBounded(InputStream input, long maxBytes) {
-        if (input == null) {
-            throw validation("file", "is required");
-        }
-        ByteArrayOutputStream output = new ByteArrayOutputStream(8192);
-        byte[] buffer = new byte[8192];
-        long total = 0;
-        try {
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                total += read;
-                if (total > maxBytes) {
-                    throw validation("file", "exceeds the maximum size for the selected format");
-                }
-                output.write(buffer, 0, read);
-            }
-        } catch (IOException error) {
-            throw new WhatsAppTemplateException("TEMPLATE_MEDIA_INVALID", HttpStatus.BAD_REQUEST,
-                    "Unable to read uploaded media", Map.of("file", "could not be read"), null, false);
-        }
-        if (total == 0) {
-            throw validation("file", "is required");
-        }
-        return output.toByteArray();
     }
 
     private PreparedCommand prepareMedia(UUID accountId, TemplateCommand command) {
@@ -569,9 +471,10 @@ public class WhatsAppTemplateApplicationService {
         }
     }
 
-    private void auditOperation(TemplateOperationEntity operation, UUID actorUserId, String traceId, String result) {
+    private void auditOperation(TemplateOperationEntity operation, UUID actorUserId, String traceId) {
         audit("WHATSAPP_TEMPLATE_" + operation.getOperationType(), "TEMPLATE_OPERATION", operation.getId(),
-                actorUserId, "{}", json(operationView(operation)), result, traceId);
+                actorUserId, "{}", json(operationView(operation)),
+                auditResult(OperationStatus.valueOf(operation.getOperationStatus())), traceId);
     }
 
     private void audit(String action, String resourceType, UUID resourceId, UUID actorUserId,
@@ -636,11 +539,6 @@ public class WhatsAppTemplateApplicationService {
                 operation.getCompletedAt());
     }
 
-    private static MediaAssetView mediaView(TemplateMediaAssetEntity asset) {
-        return new MediaAssetView(asset.getId(), HeaderFormat.valueOf(asset.getMediaFormat()), asset.getContentType(),
-                asset.getSizeBytes(), asset.getSha256(), asset.getProviderUrl(), asset.getAssetStatus());
-    }
-
     private static Map<String, Object> templateSummary(TemplateEntity entity) {
         return Map.of("templateCode", entity.getProviderTemplateId(), "language", entity.getLanguageCode(),
                 "status", entity.getStatus() == null ? "" : entity.getStatus(),
@@ -663,12 +561,12 @@ public class WhatsAppTemplateApplicationService {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
-    private static String sha256(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable", e);
-        }
+    private static String auditResult(OperationStatus status) {
+        return switch (status) {
+            case SUCCEEDED -> "success";
+            case FAILED -> "failed";
+            case SUBMISSION_UNKNOWN, PROCESSING -> "unknown";
+        };
     }
 
     private static WhatsAppTemplateException validation(String field, String message) {
@@ -682,10 +580,6 @@ public class WhatsAppTemplateApplicationService {
     private static WhatsAppTemplateException providerRejected(String code, String requestId) {
         return new WhatsAppTemplateException(code, HttpStatus.BAD_GATEWAY,
                 "Provider did not confirm the operation", Map.of(), requestId, false);
-    }
-
-    public record MediaAssetView(UUID id, HeaderFormat format, String contentType, long sizeBytes, String sha256,
-                                 String providerUrl, String assetStatus) {
     }
 
     public record OperationView(UUID operationId, OperationType operationType, OperationStatus operationStatus,
