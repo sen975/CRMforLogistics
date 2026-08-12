@@ -59,6 +59,7 @@ test('maps every management API to the approved channel-account scope', () => {
   assert.match(functionSource('deleteAdminTemplate'), /client\.delete<TemplateOperation>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/\$\{templateCode\}`, \{[\s\S]*?params: \{ language, clientRequestId \}/);
   assert.match(functionSource('syncAdminTemplates'), /client\.post<TemplateSyncResult>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/sync`\)/);
   assert.match(functionSource('uploadTemplateMedia'), /client\.post<TemplateMediaAsset>\(`\$\{whatsappManagementBase\(accountId\)\}\/template-media`, formData\)/);
+  assert.match(functionSource('fetchTemplateMediaUpload'), /client\.get<TemplateMediaAsset>\([\s\S]*?\/template-media\/uploads\/\$\{encoded\}`/);
   assert.match(functionSource('fetchTemplateOperations'), /client\.get<TemplateOperation\[\]>\([\s\S]*?\/templates\/\$\{templateCode\}\/operations`[\s\S]*?\{ params: \{ language \} \}/);
 });
 
@@ -70,6 +71,8 @@ test('uploads template media as FormData without overriding the browser multipar
   assert.match(upload, /new FormData\(\)/);
   assert.match(upload, /formData\.append\('format',\s*format\)/);
   assert.match(upload, /formData\.append\('file',\s*file\)/);
+  assert.match(upload, /formData\.append\('clientRequestId',\s*clientRequestId\)/);
+  assert.match(upload, /clientRequestId:\s*string/);
   assert.doesNotMatch(upload, /Content-Type|multipart\/form-data/);
 });
 

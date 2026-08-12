@@ -352,11 +352,28 @@ export async function uploadTemplateMedia(
   accountId: string,
   format: TemplateMediaFormat,
   file: File,
+  clientRequestId: string,
+  signal?: AbortSignal,
 ): Promise<TemplateMediaAsset> {
   const formData = new FormData();
   formData.append('format', format);
   formData.append('file', file);
-  const res = await client.post<TemplateMediaAsset>(`${whatsappManagementBase(accountId)}/template-media`, formData);
+  formData.append('clientRequestId', clientRequestId);
+  const res = signal
+    ? await client.post<TemplateMediaAsset>(`${whatsappManagementBase(accountId)}/template-media`, formData, { signal })
+    : await client.post<TemplateMediaAsset>(`${whatsappManagementBase(accountId)}/template-media`, formData);
+  return res.data;
+}
+
+export async function fetchTemplateMediaUpload(
+  accountId: string,
+  clientRequestId: string,
+  signal?: AbortSignal,
+): Promise<TemplateMediaAsset> {
+  const encoded = encodeURIComponent(clientRequestId);
+  const res = signal
+    ? await client.get<TemplateMediaAsset>(`${whatsappManagementBase(accountId)}/template-media/uploads/${encoded}`, { signal })
+    : await client.get<TemplateMediaAsset>(`${whatsappManagementBase(accountId)}/template-media/uploads/${encoded}`);
   return res.data;
 }
 

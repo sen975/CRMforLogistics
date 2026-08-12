@@ -217,6 +217,9 @@ export interface PhoneRecordPage {
 export type TemplateComponentType = 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
 export type TemplateHeaderFormat = 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
 export type TemplateMediaFormat = 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+export type TemplateMediaAssetStatus =
+  | 'PROCESSING' | 'UPLOADED' | 'FAILED' | 'SUBMISSION_UNKNOWN'
+  | 'ATTACHED' | 'ATTACHMENT_UNKNOWN' | 'ORPHANED';
 export type TemplateButtonType = 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER';
 export type TemplateCategory = 'UTILITY' | 'MARKETING';
 
@@ -271,12 +274,16 @@ export interface TemplateOperation {
 
 export interface TemplateMediaAsset {
   id: string;
+  clientRequestId: string;
   format: TemplateMediaFormat;
   contentType: string;
   sizeBytes: number;
   sha256: string;
-  providerUrl: string;
-  assetStatus: 'UPLOADED' | 'ATTACHED' | 'ATTACHMENT_UNKNOWN' | 'ORPHANED';
+  providerUrl: string | null;
+  assetStatus: TemplateMediaAssetStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  traceId: string | null;
 }
 
 export interface TemplateListPage {
