@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -29,6 +30,13 @@ import java.util.zip.GZIPInputStream;
 /** 只读审计文件目录快照；扫描不会创建、删除或恢复任何文件。 */
 final class AuditFileCatalog {
     private static final long GZIP_WORKING_BUFFER_BYTES = 64L * 1024L;
+    private static final int STABLE_SCAN_ATTEMPTS = 3;
+    private static final CurrentScanObserver NOOP_SCAN_OBSERVER = (path, attempt) -> { };
+
+    @FunctionalInterface
+    interface CurrentScanObserver {
+        void afterValidation(Path path, int attempt) throws IOException;
+    }
 
     enum Kind { CURRENT, ARCHIVE, ROTATING, TEMPORARY, UNKNOWN }
 
@@ -66,8 +74,15 @@ final class AuditFileCatalog {
 
     static AuditFileSnapshot scanStable(AuditFileSettings settings, Clock clock)
             throws AuditStorageException {
+        return scanStable(settings, clock, NOOP_SCAN_OBSERVER);
+    }
+
+    static AuditFileSnapshot scanStable(AuditFileSettings settings, Clock clock,
+                                        CurrentScanObserver scanObserver)
+            throws AuditStorageException {
         Objects.requireNonNull(settings, "settings");
         Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(scanObserver, "scanObserver");
         Path current = settings.file();
         Path parent = current.getParent();
         String fileName = current.getFileName().toString();
@@ -84,12 +99,12 @@ final class AuditFileCatalog {
         List<AuditFileEntry> unknown = new ArrayList<>();
         Set<String> issues = new TreeSet<>();
         try {
-            if (Files.exists(current)) {
-                long bytes = Files.size(current);
-                String issue = validateCurrent(current, bytes, settings.fileMaxBytes());
+            AuditFileEntry currentEntry = scanCurrentStable(
+                    current, settings.fileMaxBytes(), scanObserver);
+            if (currentEntry != null) {
+                String issue = currentEntry.issueCode();
                 if (issue != null) issues.add(issue);
-                currentEntries.add(new AuditFileEntry(
-                        current, Kind.CURRENT, null, 0, bytes, issue));
+                currentEntries.add(currentEntry);
             }
             if (Files.exists(parent)) {
                 try (var paths = Files.list(parent)) {
@@ -163,6 +178,31 @@ final class AuditFileCatalog {
                                    Path path, long bytes, String issue) {
         issues.add(issue);
         unknown.add(new AuditFileEntry(path, Kind.UNKNOWN, null, 0, bytes, issue));
+    }
+
+    private static AuditFileEntry scanCurrentStable(Path current, long maxBytes,
+                                                    CurrentScanObserver scanObserver)
+            throws IOException {
+        BasicFileAttributes last = null;
+        for (int attempt = 0; attempt < STABLE_SCAN_ATTEMPTS; attempt++) {
+            if (!Files.exists(current)) return null;
+            BasicFileAttributes before = Files.readAttributes(
+                    current, BasicFileAttributes.class);
+            String issue = validateCurrent(current, before.size(), maxBytes);
+            scanObserver.afterValidation(current, attempt);
+            if (!Files.exists(current)) continue;
+            BasicFileAttributes after = Files.readAttributes(
+                    current, BasicFileAttributes.class);
+            last = after;
+            if (before.size() == after.size()
+                    && before.lastModifiedTime().equals(after.lastModifiedTime())) {
+                return new AuditFileEntry(
+                        current, Kind.CURRENT, null, 0, after.size(), issue);
+            }
+        }
+        if (last == null) return null;
+        return new AuditFileEntry(
+                current, Kind.CURRENT, null, 0, last.size(), "AUDIT_SCAN_BUSY");
     }
 
     private static LocalDate parseDate(String value) {

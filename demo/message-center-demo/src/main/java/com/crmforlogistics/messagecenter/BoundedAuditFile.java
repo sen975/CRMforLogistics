@@ -324,6 +324,8 @@ final class BoundedAuditFile implements AutoCloseable {
                             atomicMove(entry.path(), archive);
                             Files.delete(rotating);
                         }
+                    } catch (AuditStorageException exception) {
+                        throw exception;
                     } catch (IOException exception) {
                         throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
                     }
@@ -338,6 +340,13 @@ final class BoundedAuditFile implements AutoCloseable {
                             .replace(".rotating", ".gz.tmp"));
                     try {
                         if (!Files.exists(archive)) {
+                            AuditFileCatalog.AuditFileSnapshot currentSnapshot =
+                                    AuditFileCatalog.scanStable(
+                                            fingerprint.settings, fingerprint.clock);
+                            long peak = Math.addExact(entry.bytes(),
+                                    AuditFileCatalog.gzipWorkingBufferBytes());
+                            requireRecoveryBudget(currentSnapshot, peak);
+                            requireFreeDisk(0L, peak);
                             validateCurrent(entry.path(), Files.size(entry.path()),
                                     fingerprint.settings.streamMaxBytes(), fingerprint.stream);
                             gzip(entry.path(), temporary);
@@ -347,10 +356,33 @@ final class BoundedAuditFile implements AutoCloseable {
                             atomicMove(temporary, archive);
                             Files.deleteIfExists(entry.path());
                         }
+                    } catch (AuditStorageException exception) {
+                        throw exception;
                     } catch (IOException exception) {
                         throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
                     }
                 }
+            }
+            if (dataChannel == null) {
+                try {
+                    dataChannel = openDataChannel(fingerprint.settings.file());
+                } catch (IOException exception) {
+                    throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
+                }
+            }
+        }
+
+        private void requireRecoveryBudget(
+                AuditFileCatalog.AuditFileSnapshot snapshot, long recoveryPeak)
+                throws AuditStorageException {
+            long projected;
+            try {
+                projected = Math.addExact(snapshot.totalBytes(), recoveryPeak);
+            } catch (ArithmeticException exception) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, exception);
+            }
+            if (projected > fingerprint.settings.streamMaxBytes()) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, null);
             }
         }
 

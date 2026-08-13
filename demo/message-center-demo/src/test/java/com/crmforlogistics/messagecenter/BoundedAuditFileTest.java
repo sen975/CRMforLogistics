@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -196,6 +197,40 @@ class BoundedAuditFileTest {
     }
 
     @Test
+    void scansStableCurrentOnceWithoutReportingBusy() throws Exception {
+        AuditFileSettings settings = settings(4_096, 32_768);
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), line(1, "stable"));
+        int[] completedAttempts = {0};
+
+        AuditFileCatalog.AuditFileSnapshot snapshot = AuditFileCatalog.scanStable(
+                settings, fixed("2026-08-13T01:00:00Z"),
+                (path, attempt) -> completedAttempts[0]++);
+
+        assertEquals(1, completedAttempts[0]);
+        assertTrue(snapshot.issueCodes().isEmpty());
+        assertEquals(1, snapshot.current().size());
+        assertEquals(Files.size(settings.file()), snapshot.current().get(0).bytes());
+    }
+
+    @Test
+    void reportsBusyInsteadOfCorruptionWhenCurrentChangesDuringEveryAttempt() throws Exception {
+        AuditFileSettings settings = settings(4_096, 32_768);
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), line(1, "initial"));
+
+        AuditFileCatalog.AuditFileSnapshot snapshot = AuditFileCatalog.scanStable(
+                settings, fixed("2026-08-13T01:00:00Z"),
+                (path, attempt) -> Files.write(path, line(attempt + 2, "concurrent"),
+                        StandardOpenOption.APPEND));
+
+        assertEquals(Set.of("AUDIT_SCAN_BUSY"), snapshot.issueCodes());
+        assertEquals("AUDIT_SCAN_BUSY", snapshot.current().get(0).issueCode());
+        assertFalse(snapshot.issueCodes().contains("AUDIT_CURRENT_CORRUPTED"));
+        assertEquals(4, Files.readAllLines(settings.file()).size());
+    }
+
+    @Test
     void deletesOnlyValidArchivesOlderThanRetentionWindow() throws Exception {
         AuditFileSettings settings = new AuditFileSettings(tempDir.resolve("audit.jsonl"),
                 7, 4_096L, 32_768L, 4_096L, Duration.ofMinutes(5));
@@ -307,6 +342,52 @@ class BoundedAuditFileTest {
 
         assertTrue(Files.exists(rotating));
         assertTrue(Files.exists(temporary));
+        assertFalse(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz")));
+    }
+
+    @Test
+    void reopensCurrentChannelAfterRecoveringRotatingArtifactOnSameHandle() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        Path rotating = tempDir.resolve("audit.2026-08-13.001.jsonl.rotating");
+        Files.write(rotating, line(1, "recover"));
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            closeSharedDataChannel(file);
+            file.append(line(2, "after-recovery"), BoundedAuditFile.Durability.REQUIRED);
+        }
+
+        assertTrue(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz")));
+        assertEquals(2, JsonParser.parseString(Files.readString(settings.file()))
+                .getAsJsonObject().get("id").getAsInt());
+    }
+
+    @Test
+    void refusesRotatingRecoveryWhenTemporaryPeakWouldExceedBudget() throws Exception {
+        AuditFileSettings settings = settings(4_096, 65_536);
+        Path rotating = tempDir.resolve("audit.2026-08-13.001.jsonl.rotating");
+        Files.write(rotating, line(1, "recover"));
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            assertCode("AUDIT_STREAM_BUDGET_EXCEEDED",
+                    file::prepareForAuthorizationRecovery);
+        }
+
+        assertTrue(Files.exists(rotating));
+        assertFalse(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz")));
+        assertFalse(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz.tmp")));
+    }
+
+    @Test
+    void refusesRotatingRecoveryWhenDiskFloorWouldBeCrossed() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        Path rotating = tempDir.resolve("audit.2026-08-13.001.jsonl.rotating");
+        Files.write(rotating, line(1, "recover"));
+        try (BoundedAuditFile file = BoundedAuditFile.acquire("viewer", settings,
+                fixed("2026-08-13T01:00:00Z"),
+                directory -> settings.minFreeDiskBytes())) {
+            assertCode("AUDIT_DISK_SPACE_LOW", file::prepareForAuthorizationRecovery);
+        }
+
+        assertTrue(Files.exists(rotating));
         assertFalse(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz")));
     }
 
@@ -585,6 +666,17 @@ class BoundedAuditFileTest {
                 .start();
         assertTrue(process.waitFor(20, TimeUnit.SECONDS));
         return process.exitValue();
+    }
+
+    private static void closeSharedDataChannel(BoundedAuditFile file) throws Exception {
+        var handleField = BoundedAuditFile.class.getDeclaredField("handle");
+        handleField.setAccessible(true);
+        Object handle = handleField.get(file);
+        var channelField = handle.getClass().getDeclaredField("dataChannel");
+        channelField.setAccessible(true);
+        var channel = (java.nio.channels.FileChannel) channelField.get(handle);
+        channel.close();
+        channelField.set(handle, null);
     }
 
     @FunctionalInterface
