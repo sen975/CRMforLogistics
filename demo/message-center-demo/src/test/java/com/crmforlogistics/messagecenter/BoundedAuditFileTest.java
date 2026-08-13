@@ -37,7 +37,7 @@ class BoundedAuditFileTest {
 
     @Test
     void rotatesBeforeOverflowAndKeepsWholeLines() throws Exception {
-        AuditFileSettings settings = settings(4_096, 32_768);
+        AuditFileSettings settings = settings(4_096, 131_072);
         try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
             for (int index = 0; index < 40; index++) {
                 file.append(line(index, "x".repeat(160)), BoundedAuditFile.Durability.REQUIRED);
@@ -59,7 +59,7 @@ class BoundedAuditFileTest {
 
     @Test
     void rotatesByFirstLineUtcDate() throws Exception {
-        AuditFileSettings settings = settings(4_096, 32_768);
+        AuditFileSettings settings = settings(4_096, 131_072);
         MutableClock clock = new MutableClock(Instant.parse("2026-08-13T23:59:59Z"));
         try (BoundedAuditFile file = open(settings, clock)) {
             file.append(lineAt(1, "2026-08-13T23:59:59Z", "before"),
@@ -77,7 +77,7 @@ class BoundedAuditFileTest {
 
     @Test
     void validatesWholeUtf8JsonObjectWithUtcOccurredAt() throws Exception {
-        AuditFileSettings settings = settings(4_096, 32_768);
+        AuditFileSettings settings = settings(4_096, 131_072);
         try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
             assertCode("AUDIT_CURRENT_CORRUPTED", () -> file.append(
                     "{}".getBytes(StandardCharsets.UTF_8), BoundedAuditFile.Durability.REQUIRED));
@@ -101,7 +101,7 @@ class BoundedAuditFileTest {
 
     @Test
     void rejectsOneLineLargerThanCurrentFileLimit() throws Exception {
-        AuditFileSettings settings = settings(4_096, 32_768);
+        AuditFileSettings settings = settings(4_096, 131_072);
         byte[] oversized = line(1, "x".repeat(4_096));
         try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
             assertCode("AUDIT_EVENT_TOO_LARGE", () ->
@@ -171,8 +171,196 @@ class BoundedAuditFileTest {
     }
 
     @Test
-    void skipsExistingArchiveWithoutOverwritingIt() throws Exception {
+    void scansCurrentArchivesRecoveryAndUnknownFilesWithoutMutation() throws Exception {
         AuditFileSettings settings = settings(4_096, 32_768);
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), line(1, "current"));
+        writeArchive("2026-08-12", 1, line(2, "archive"));
+        Path rotating = tempDir.resolve("audit.2026-08-13.002.jsonl.rotating");
+        Files.write(rotating, line(3, "rotating"));
+        Path temporary = tempDir.resolve("audit.2026-08-13.003.jsonl.gz.tmp");
+        Files.write(temporary, new byte[]{1, 2, 3});
+        Path unknown = tempDir.resolve("audit.notes");
+        Files.writeString(unknown, "unknown", StandardCharsets.UTF_8);
+
+        AuditFileCatalog.AuditFileSnapshot snapshot =
+                AuditFileCatalog.scanStable(settings, fixed("2026-08-13T01:00:00Z"));
+
+        assertEquals(1, snapshot.current().size());
+        assertEquals(1, snapshot.archives().size());
+        assertEquals(2, snapshot.recovery().size());
+        assertEquals(1, snapshot.unknown().size());
+        assertEquals("unknown", Files.readString(unknown));
+        assertTrue(Files.exists(rotating));
+        assertTrue(Files.exists(temporary));
+    }
+
+    @Test
+    void deletesOnlyValidArchivesOlderThanRetentionWindow() throws Exception {
+        AuditFileSettings settings = new AuditFileSettings(tempDir.resolve("audit.jsonl"),
+                7, 4_096L, 32_768L, 4_096L, Duration.ofMinutes(5));
+        writeArchive("2026-08-06", 1, line(1, "old-valid"));
+        writeArchive("2026-08-07", 1, line(2, "boundary"));
+        Path corrupt = tempDir.resolve("audit.2026-08-05.001.jsonl.gz");
+        Files.writeString(corrupt, "not-gzip", StandardCharsets.UTF_8);
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T12:00:00Z"))) {
+            file.enableRetentionCleanup();
+            file.append(line(3, "new"), BoundedAuditFile.Durability.REQUIRED);
+        }
+        assertFalse(Files.exists(tempDir.resolve("audit.2026-08-06.001.jsonl.gz")));
+        assertTrue(Files.exists(tempDir.resolve("audit.2026-08-07.001.jsonl.gz")));
+        assertTrue(Files.exists(corrupt));
+    }
+
+    @Test
+    void keepsExpiredGzipWhoseJsonlContentIsCorrupted() throws Exception {
+        AuditFileSettings settings = new AuditFileSettings(tempDir.resolve("audit.jsonl"),
+                7, 4_096L, 131_072L, 4_096L, Duration.ofMinutes(5));
+        Path corrupt = tempDir.resolve("audit.2026-08-05.001.jsonl.gz");
+        writeGzip(corrupt, "not-json\n".getBytes(StandardCharsets.UTF_8));
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T12:00:00Z"))) {
+            file.enableRetentionCleanup();
+            file.append(line(1, "new"), BoundedAuditFile.Durability.REQUIRED);
+        }
+
+        assertTrue(Files.exists(corrupt));
+        AuditFileCatalog.AuditFileSnapshot snapshot =
+                AuditFileCatalog.scanStable(settings, fixed("2026-08-13T12:00:00Z"));
+        assertEquals("AUDIT_ARCHIVE_CORRUPTED",
+                snapshot.archives().get(0).issueCode());
+    }
+
+    @Test
+    void classifiesInvalidArchiveDateAndSequenceAsUnknownAndCountsTheirBytes() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        Path invalidDate = tempDir.resolve("audit.2026-13-40.001.jsonl.gz");
+        Path invalidSequence = tempDir.resolve("audit.2026-08-12.000.jsonl.gz");
+        Files.writeString(invalidDate, "date", StandardCharsets.UTF_8);
+        Files.writeString(invalidSequence, "sequence", StandardCharsets.UTF_8);
+
+        AuditFileCatalog.AuditFileSnapshot snapshot =
+                AuditFileCatalog.scanStable(settings, fixed("2026-08-13T12:00:00Z"));
+
+        assertEquals(2, snapshot.unknown().size());
+        assertTrue(snapshot.archives().isEmpty());
+        assertEquals(Files.size(invalidDate) + Files.size(invalidSequence),
+                snapshot.totalBytes());
+    }
+
+    @Test
+    void refusesWriteWhenStreamBudgetWouldBeExceeded() throws Exception {
+        AuditFileSettings settings = settings(4_096, 8_192);
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), line(1, "x".repeat(3_900)));
+        Files.writeString(tempDir.resolve("audit.unknown"), "u".repeat(3_900),
+                StandardCharsets.UTF_8);
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            assertCode("AUDIT_STREAM_BUDGET_EXCEEDED", () -> file.append(
+                    line(2, "x".repeat(500)), BoundedAuditFile.Durability.REQUIRED));
+        }
+    }
+
+    @Test
+    void refusesWriteWhenDiskFloorIsBelowConfiguredMinimum() throws Exception {
+        AuditFileSettings settings = settings(4_096, 32_768);
+        try (BoundedAuditFile file = BoundedAuditFile.acquire("viewer", settings,
+                fixed("2026-08-13T01:00:00Z"),
+                directory -> settings.minFreeDiskBytes() - 1)) {
+            assertCode("AUDIT_DISK_SPACE_LOW", () -> file.append(
+                    line(1, "disk"), BoundedAuditFile.Durability.REQUIRED));
+        }
+    }
+
+    @Test
+    void recoversOnlyMatchingTemporaryArchivePairedWithRotatingSource() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        byte[] source = line(1, "recover");
+        Path rotating = tempDir.resolve("audit.2026-08-13.001.jsonl.rotating");
+        Path temporary = tempDir.resolve("audit.2026-08-13.001.jsonl.gz.tmp");
+        Files.write(rotating, source);
+        writeGzip(temporary, source);
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            file.prepareForAuthorizationRecovery();
+        }
+
+        Path archive = tempDir.resolve("audit.2026-08-13.001.jsonl.gz");
+        assertTrue(Files.exists(archive));
+        assertFalse(Files.exists(rotating));
+        assertFalse(Files.exists(temporary));
+        assertEquals(List.of(new String(source, StandardCharsets.UTF_8).stripTrailing()),
+                gzipLines(archive));
+    }
+
+    @Test
+    void keepsMismatchedTemporaryArchiveAndRotatingSource() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        Path rotating = tempDir.resolve("audit.2026-08-13.001.jsonl.rotating");
+        Path temporary = tempDir.resolve("audit.2026-08-13.001.jsonl.gz.tmp");
+        Files.write(rotating, line(1, "source"));
+        writeGzip(temporary, line(2, "different"));
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            assertCode("AUDIT_ROTATION_FAILED", file::prepareForAuthorizationRecovery);
+        }
+
+        assertTrue(Files.exists(rotating));
+        assertTrue(Files.exists(temporary));
+        assertFalse(Files.exists(tempDir.resolve("audit.2026-08-13.001.jsonl.gz")));
+    }
+
+    @Test
+    void countsGzipTemporaryPeakBeforeRotation() throws Exception {
+        AuditFileSettings settings = settings(4_096, 65_536);
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), line(1, "x".repeat(3_900)));
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            assertCode("AUDIT_STREAM_BUDGET_EXCEEDED", () -> file.append(
+                    line(2, "x".repeat(200)), BoundedAuditFile.Durability.REQUIRED));
+        }
+
+        assertTrue(Files.exists(settings.file()));
+        assertTrue(archives("2026-08-13").isEmpty());
+    }
+
+    @Test
+    void boundsGzipDecompressionByStreamBudget() throws Exception {
+        AuditFileSettings settings = settings(4_096, 8_192);
+        Path archive = tempDir.resolve("audit.2026-08-12.001.jsonl.gz");
+        writeGzip(archive, "x".repeat(8_193).getBytes(StandardCharsets.UTF_8));
+
+        AuditFileCatalog.AuditFileSnapshot snapshot =
+                AuditFileCatalog.scanStable(settings, fixed("2026-08-13T01:00:00Z"));
+
+        assertEquals("AUDIT_ARCHIVE_TOO_LARGE",
+                snapshot.archives().get(0).issueCode());
+        assertTrue(Files.exists(archive));
+    }
+
+    @Test
+    void rotatesOversizedLegacyCurrentAsOneArchiveBeforeFirstWrite() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
+        byte[] legacy = line(1, "x".repeat(4_096));
+        Files.createDirectories(settings.file().getParent());
+        Files.write(settings.file(), legacy);
+
+        try (BoundedAuditFile file = open(settings, fixed("2026-08-13T01:00:00Z"))) {
+            file.rotateLegacyCurrentBeforeFirstWrite();
+            file.append(line(2, "new"), BoundedAuditFile.Durability.REQUIRED);
+        }
+
+        assertEquals(1, archives("2026-08-13").size());
+        assertEquals(List.of(new String(legacy, StandardCharsets.UTF_8).stripTrailing()),
+                gzipLines(archives("2026-08-13").get(0)));
+        assertEquals(2, JsonParser.parseString(Files.readString(settings.file()))
+                .getAsJsonObject().get("id").getAsInt());
+    }
+
+    @Test
+    void skipsExistingArchiveWithoutOverwritingIt() throws Exception {
+        AuditFileSettings settings = settings(4_096, 131_072);
         Files.createDirectories(settings.file().getParent());
         Files.writeString(settings.file(), new String(line(1, "x".repeat(3_900)),
                 StandardCharsets.UTF_8));
@@ -191,7 +379,7 @@ class BoundedAuditFileTest {
 
     @Test
     void continuesArchiveSequenceBeyondNineHundredNinetyNine() throws Exception {
-        AuditFileSettings settings = settings(4_096, 32_768);
+        AuditFileSettings settings = settings(4_096, 131_072);
         Files.createDirectories(settings.file().getParent());
         Files.write(settings.file(), line(1, "x".repeat(3_900)));
         for (int sequence = 1; sequence <= 999; sequence++) {
@@ -369,6 +557,18 @@ class BoundedAuditFileTest {
              BufferedReader reader = new BufferedReader(new InputStreamReader(
                      input, StandardCharsets.UTF_8))) {
             return reader.lines().toList();
+        }
+    }
+
+    private void writeArchive(String date, int sequence, byte[] content) throws IOException {
+        Path archive = tempDir.resolve("audit." + date + "."
+                + String.format("%03d", sequence) + ".jsonl.gz");
+        writeGzip(archive, content);
+    }
+
+    private static void writeGzip(Path path, byte[] content) throws IOException {
+        try (var output = new java.util.zip.GZIPOutputStream(Files.newOutputStream(path))) {
+            output.write(content);
         }
     }
 

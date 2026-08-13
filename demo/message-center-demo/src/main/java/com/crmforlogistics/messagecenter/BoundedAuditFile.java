@@ -97,14 +97,19 @@ final class BoundedAuditFile implements AutoCloseable {
         return registryKey;
     }
 
-    synchronized void prepareForAuthorizationRecovery() {
-        ensureOpenUnchecked();
+    synchronized void prepareForAuthorizationRecovery() throws AuditStorageException {
+        ensureOpen();
         handle.prepareForAuthorizationRecovery();
     }
 
     synchronized void enableRetentionCleanup() {
         ensureOpenUnchecked();
         handle.enableRetentionCleanup();
+    }
+
+    synchronized void rotateLegacyCurrentBeforeFirstWrite() throws AuditStorageException {
+        ensureOpen();
+        handle.rotateLegacyCurrentBeforeFirstWrite();
     }
 
     synchronized StartupState startupState() {
@@ -217,14 +222,26 @@ final class BoundedAuditFile implements AutoCloseable {
             operationLock.lock();
             try {
                 Path path = fingerprint.settings.file();
+                recoverKnownArtifacts();
+                if (startupState == StartupState.RETENTION_CLEANUP_ENABLED) {
+                    deleteExpiredValidArchives();
+                }
+                AuditFileCatalog.AuditFileSnapshot snapshot =
+                        AuditFileCatalog.scanStable(fingerprint.settings, fingerprint.clock);
                 long currentSize = dataChannel.size();
                 LocalDate currentDate = validateCurrent(path, currentSize,
                         fingerprint.settings.fileMaxBytes(), fingerprint.stream);
                 LocalDate utcToday = LocalDate.ofInstant(fingerprint.clock.instant(), ZoneOffset.UTC);
-                if (currentSize > 0
+                boolean rotationRequired = currentSize > 0
                         && (currentSize + jsonLine.length > maxBytes
-                        || !currentDate.equals(utcToday))) {
-                    rotate(currentDate);
+                        || !currentDate.equals(utcToday));
+                long rotationPeak = rotationRequired
+                        ? Math.addExact(currentSize, AuditFileCatalog.gzipWorkingBufferBytes())
+                        : 0L;
+                requireBudget(snapshot, jsonLine.length, rotationPeak);
+                requireFreeDisk(jsonLine.length, rotationPeak);
+                if (rotationRequired) {
+                    rotate(currentDate, fingerprint.settings.fileMaxBytes());
                     currentSize = 0L;
                 }
                 writeWholeLine(jsonLine, currentSize, durability);
@@ -234,6 +251,168 @@ final class BoundedAuditFile implements AutoCloseable {
                 throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
             } finally {
                 operationLock.unlock();
+            }
+        }
+
+        private void requireBudget(AuditFileCatalog.AuditFileSnapshot snapshot, long incoming,
+                                   long rotationPeak)
+                throws AuditStorageException {
+            if (snapshot.current().stream().anyMatch(entry ->
+                    "AUDIT_CURRENT_CORRUPTED".equals(entry.issueCode()))) {
+                throw failure("AUDIT_CURRENT_CORRUPTED", fingerprint.stream, null);
+            }
+            long projected;
+            try {
+                projected = Math.addExact(
+                        Math.addExact(snapshot.totalBytes(), incoming), rotationPeak);
+            } catch (ArithmeticException exception) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, exception);
+            }
+            if (projected > fingerprint.settings.streamMaxBytes()) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, null);
+            }
+        }
+
+        private void requireFreeDisk(long incoming, long rotationPeak)
+                throws AuditStorageException {
+            try {
+                long usable = fingerprint.diskSpaceProbe.usableBytes(
+                        fingerprint.settings.file().getParent());
+                long required = Math.addExact(incoming, rotationPeak);
+                if (usable < fingerprint.settings.minFreeDiskBytes()
+                        || usable - fingerprint.settings.minFreeDiskBytes() < required) {
+                    throw failure("AUDIT_DISK_SPACE_LOW", fingerprint.stream, null);
+                }
+            } catch (AuditStorageException exception) {
+                throw exception;
+            } catch (IOException | ArithmeticException exception) {
+                throw failure("AUDIT_DISK_SPACE_LOW", fingerprint.stream, exception);
+            }
+        }
+
+        private void deleteExpiredValidArchives() throws AuditStorageException {
+            AuditFileCatalog.AuditFileSnapshot snapshot =
+                    AuditFileCatalog.scanStable(fingerprint.settings, fingerprint.clock);
+            LocalDate cutoff = LocalDate.ofInstant(fingerprint.clock.instant(), ZoneOffset.UTC)
+                    .minusDays(fingerprint.settings.retentionDays() - 1L);
+            for (AuditFileCatalog.AuditFileEntry entry : snapshot.archives()) {
+                if (entry.utcDate() != null && entry.utcDate().isBefore(cutoff)
+                        && entry.issueCode() == null) {
+                    try {
+                        Files.deleteIfExists(entry.path());
+                    } catch (IOException exception) {
+                        throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
+                    }
+                }
+            }
+        }
+
+        private void recoverKnownArtifacts() throws AuditStorageException {
+            AuditFileCatalog.AuditFileSnapshot snapshot =
+                    AuditFileCatalog.scanStable(fingerprint.settings, fingerprint.clock);
+            for (AuditFileCatalog.AuditFileEntry entry : snapshot.recovery()) {
+                if (entry.kind() == AuditFileCatalog.Kind.TEMPORARY
+                        && entry.issueCode().equals("AUDIT_RECOVERY_PENDING")) {
+                    Path archive = entry.path().resolveSibling(entry.path().getFileName().toString()
+                            .replace(".gz.tmp", ".gz"));
+                    Path rotating = entry.path().resolveSibling(entry.path().getFileName().toString()
+                            .replace(".gz.tmp", ".rotating"));
+                    try {
+                        if (Files.exists(rotating) && !Files.exists(archive)) {
+                            verifyGzip(rotating, entry.path(),
+                                    fingerprint.settings.streamMaxBytes());
+                            atomicMove(entry.path(), archive);
+                            Files.delete(rotating);
+                        }
+                    } catch (IOException exception) {
+                        throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
+                    }
+                }
+            }
+            for (AuditFileCatalog.AuditFileEntry entry : snapshot.recovery()) {
+                if (entry.kind() == AuditFileCatalog.Kind.ROTATING) {
+                    if (!Files.exists(entry.path())) continue;
+                    Path archive = entry.path().resolveSibling(entry.path().getFileName().toString()
+                            .replace(".rotating", ".gz"));
+                    Path temporary = entry.path().resolveSibling(entry.path().getFileName().toString()
+                            .replace(".rotating", ".gz.tmp"));
+                    try {
+                        if (!Files.exists(archive)) {
+                            validateCurrent(entry.path(), Files.size(entry.path()),
+                                    fingerprint.settings.streamMaxBytes(), fingerprint.stream);
+                            gzip(entry.path(), temporary);
+                            forceFile(temporary);
+                            verifyGzip(entry.path(), temporary,
+                                    fingerprint.settings.streamMaxBytes());
+                            atomicMove(temporary, archive);
+                            Files.deleteIfExists(entry.path());
+                        }
+                    } catch (IOException exception) {
+                        throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
+                    }
+                }
+            }
+        }
+
+        private void rotateLegacyCurrentBeforeFirstWrite() throws AuditStorageException {
+            operationLock.lock();
+            try {
+                if (dataChannel.size() == 0) return;
+                recoverKnownArtifacts();
+                AuditFileCatalog.AuditFileSnapshot snapshot =
+                        AuditFileCatalog.scanStable(fingerprint.settings, fingerprint.clock);
+                long currentSize = dataChannel.size();
+                long peak = Math.addExact(
+                        currentSize, AuditFileCatalog.gzipWorkingBufferBytes());
+                requireLegacyRotationBudget(snapshot, peak);
+                requireFreeDisk(0L, peak);
+                LocalDate date = validateCurrentAllowOversized(
+                        fingerprint.settings.file(), currentSize, fingerprint.stream);
+                rotate(date, currentSize);
+            } catch (IOException | ArithmeticException exception) {
+                throw failure("AUDIT_ROTATION_FAILED", fingerprint.stream, exception);
+            } finally {
+                operationLock.unlock();
+            }
+        }
+
+        private void requireLegacyRotationBudget(
+                AuditFileCatalog.AuditFileSnapshot snapshot, long rotationPeak)
+                throws AuditStorageException {
+            long projected;
+            try {
+                projected = Math.addExact(snapshot.totalBytes(), rotationPeak);
+            } catch (ArithmeticException exception) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, exception);
+            }
+            if (projected > fingerprint.settings.streamMaxBytes()) {
+                throw failure("AUDIT_STREAM_BUDGET_EXCEEDED", fingerprint.stream, null);
+            }
+        }
+
+        private LocalDate validateCurrentAllowOversized(Path path, long expectedSize,
+                                                        String stream)
+                throws AuditStorageException {
+            if (expectedSize > Integer.MAX_VALUE) {
+                throw failure("AUDIT_CURRENT_CORRUPTED", stream, null);
+            }
+            try {
+                byte[] content = readBounded(path, expectedSize);
+                if (content.length == 0 || content[content.length - 1] != '\n') {
+                    throw failure("AUDIT_CURRENT_CORRUPTED", stream, null);
+                }
+                LocalDate firstDate = null;
+                int start = 0;
+                for (int index = 0; index < content.length; index++) {
+                    if (content[index] != '\n') continue;
+                    ParsedLine parsed = validateLine(
+                            Arrays.copyOfRange(content, start, index + 1), stream);
+                    if (firstDate == null) firstDate = parsed.date;
+                    start = index + 1;
+                }
+                return firstDate;
+            } catch (IOException exception) {
+                throw failure("AUDIT_CURRENT_CORRUPTED", stream, exception);
             }
         }
 
@@ -257,7 +436,8 @@ final class BoundedAuditFile implements AutoCloseable {
             }
         }
 
-        private void rotate(LocalDate currentDate) throws AuditStorageException {
+        private void rotate(LocalDate currentDate, long verificationMaxBytes)
+                throws AuditStorageException {
             Path current = fingerprint.settings.file();
             RotationPaths paths = nextRotationPaths(current, currentDate, fingerprint.stream);
             try {
@@ -268,7 +448,7 @@ final class BoundedAuditFile implements AutoCloseable {
                 gzip(paths.rotating, paths.temporary);
                 forceFile(paths.temporary);
                 verifyGzip(paths.rotating, paths.temporary,
-                        fingerprint.settings.fileMaxBytes());
+                        verificationMaxBytes);
                 atomicMove(paths.temporary, paths.archive);
                 Files.delete(paths.rotating);
                 dataChannel = openDataChannel(current);
@@ -284,13 +464,14 @@ final class BoundedAuditFile implements AutoCloseable {
             }
         }
 
-        private void prepareForAuthorizationRecovery() {
+        private void prepareForAuthorizationRecovery() throws AuditStorageException {
             operationLock.lock();
             try {
                 if (startupState != StartupState.STARTUP_CHECKS_PENDING) {
                     throw new IllegalStateException(
                             "authorization recovery can only be prepared once before cleanup");
                 }
+                recoverKnownArtifacts();
                 startupState = StartupState.AUTHORIZATION_RECOVERY_PREPARED;
             } finally {
                 operationLock.unlock();
