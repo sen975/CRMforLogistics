@@ -41,7 +41,7 @@ public class WeComViewerService {
     private final NonceSource nonceSource;
     private final WeComHttpGateway gateway;
     private final WeComAuthorizationStore authorizationStore;
-    private final WeComViewerAuditTrail auditTrail;
+    private final ViewerAuditSink auditTrail;
     private final ConcurrentMap<String, CachedTicket> tickets = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerAuth> viewerAuthTokens = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerSession> viewerSessions = new ConcurrentHashMap<>();
@@ -49,50 +49,29 @@ public class WeComViewerService {
     private final ConcurrentMap<String, SessionRateWindow> viewerSessionRates = new ConcurrentHashMap<>();
     private final AtomicLong sessionOrder = new AtomicLong();
 
-    public WeComViewerService(Config config) {
-        this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                new JdkWeComHttpGateway(config), null);
-    }
-
-    public WeComViewerService(Config config, WeComAuthorizationStore authorizationStore) {
-        this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                new JdkWeComHttpGateway(config), authorizationStore);
-    }
-
-    public WeComViewerService(Config config, WeComAuthorizationStore authorizationStore,
-                              WeComAccessTokenService accessTokens) {
-        this(config, authorizationStore, accessTokens, null);
-    }
-
     public WeComViewerService(Config config, WeComAuthorizationStore authorizationStore,
                               WeComAccessTokenService accessTokens,
-                              WeComAuthorizationGateway authorizationGateway) {
+                              WeComAuthorizationGateway authorizationGateway,
+                              ViewerAuditSink audit) {
         this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                new JdkWeComHttpGateway(config, accessTokens, authorizationGateway), authorizationStore);
-    }
-
-    private WeComViewerService(Config config, Clock clock, NonceSource nonceSource, WeComHttpGateway gateway) {
-        this(config, clock, nonceSource, gateway, null);
+                new JdkWeComHttpGateway(config, accessTokens, authorizationGateway), authorizationStore, audit);
     }
 
     private WeComViewerService(Config config, Clock clock, NonceSource nonceSource,
-                               WeComHttpGateway gateway, WeComAuthorizationStore authorizationStore) {
+                               WeComHttpGateway gateway, WeComAuthorizationStore authorizationStore,
+                               ViewerAuditSink audit) {
         this.config = config;
         this.clock = clock;
         this.nonceSource = nonceSource;
         this.gateway = gateway;
         this.authorizationStore = authorizationStore;
-        this.auditTrail = new WeComViewerAuditTrail(config, clock);
+        this.auditTrail = Objects.requireNonNull(audit, "audit");
     }
 
     static WeComViewerService forTests(Config config, Clock clock, NonceSource nonceSource,
-                                       WeComHttpGateway gateway) {
-        return new WeComViewerService(config, clock, nonceSource, gateway);
-    }
-
-    static WeComViewerService forTests(Config config, Clock clock, NonceSource nonceSource,
-                                       WeComHttpGateway gateway, WeComAuthorizationStore authorizationStore) {
-        return new WeComViewerService(config, clock, nonceSource, gateway, authorizationStore);
+                                       WeComHttpGateway gateway, WeComAuthorizationStore authorizationStore,
+                                       ViewerAuditSink audit) {
+        return new WeComViewerService(config, clock, nonceSource, gateway, authorizationStore, audit);
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl) throws Exception {

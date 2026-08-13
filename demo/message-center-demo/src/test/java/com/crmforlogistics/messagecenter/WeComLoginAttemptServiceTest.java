@@ -12,6 +12,8 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.Base64;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 
@@ -21,6 +23,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WeComLoginAttemptServiceTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
     @TempDir
     Path tempDir;
 
@@ -34,8 +45,9 @@ class WeComLoginAttemptServiceTest {
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "cccccccccccccccccccccccccccccccc");
+        RecordingViewerAudit audit = new RecordingViewerAudit();
         WeComLoginAttemptService service = WeComLoginAttemptService.forTests(
-                config, store, clock, states::remove);
+                config, store, clock, states::remove, audit);
 
         WeComLoginAttemptService.LoginAttemptResponse first = service.createAttempt();
         assertEquals("ServiceApp", first.loginType());
@@ -56,13 +68,13 @@ class WeComLoginAttemptServiceTest {
         clock.advanceSeconds(30);
         assertThrows(SecurityException.class, () -> service.consume(expiring.state()));
 
-        String audit = Files.readString(config.wecomViewerAuditFile(), StandardCharsets.UTF_8);
-        assertTrue(audit.contains("wecom.viewer.login_attempt_create"));
-        assertTrue(audit.contains("wecom.viewer.login_attempt_consume"));
-        assertTrue(audit.contains("rate_limited"));
-        assertFalse(audit.contains(first.state()));
-        assertFalse(audit.contains(expiring.state()));
-        assertFalse(audit.contains("permanent-code"));
+        String recorded = String.join("\n", audit.events);
+        assertTrue(recorded.contains("wecom.viewer.login_attempt_create"));
+        assertTrue(recorded.contains("wecom.viewer.login_attempt_consume"));
+        assertTrue(recorded.contains("rate_limited"));
+        assertFalse(recorded.contains(first.state()));
+        assertFalse(recorded.contains(expiring.state()));
+        assertFalse(recorded.contains("permanent-code"));
     }
 
     @Test
@@ -73,7 +85,7 @@ class WeComLoginAttemptServiceTest {
         store.upsertActive("dk-test-suite", "ww-test-corp", "1000247", "permanent-code-1");
         WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, store, clock, states(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")::remove);
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")::remove, NO_OP_AUDIT);
 
         WeComLoginAttemptService.LoginAttemptResponse changed = service.createAttempt();
         store.upsertActive("dk-test-suite", "ww-test-corp", "1000248", "permanent-code-2");
@@ -104,7 +116,7 @@ class WeComLoginAttemptServiceTest {
         store.upsertActive("dk-test-suite", "ww-authorized-corp", "2000001", "permanent-code");
 
         WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, store, clock,
-                () -> "dddddddddddddddddddddddddddddddd");
+                () -> "dddddddddddddddddddddddddddddddd", NO_OP_AUDIT);
 
         WeComLoginAttemptService.LoginAttemptResponse attempt = service.createAttempt();
         assertEquals("ServiceApp", attempt.loginType());
@@ -130,7 +142,7 @@ class WeComLoginAttemptServiceTest {
 
         WeComAuthorizationException error = assertThrows(WeComAuthorizationException.class,
                 () -> WeComLoginAttemptService.forTests(config, store, clock,
-                        () -> "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").createAttempt());
+                        () -> "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", NO_OP_AUDIT).createAttempt());
         assertEquals("WECOM_LOGIN_SUITE_INCOMPLETE", error.code());
         assertEquals(400, error.httpStatus());
     }
@@ -147,17 +159,17 @@ class WeComLoginAttemptServiceTest {
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-missing.jsonl").toString()));
         WeComAuthorizationStore store = store(clock);
         WeComLoginAttemptService missingSelectionService = WeComLoginAttemptService.forTests(
-                missingSelection, store, clock, () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                missingSelection, store, clock, () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NO_OP_AUDIT);
         assertEquals("WECOM_LOGIN_INSTALLATION_NOT_SELECTED",
                 assertThrows(WeComAuthorizationException.class,
                         missingSelectionService::createAttempt).code());
 
-        WeComLoginAttemptService noStoreService = new WeComLoginAttemptService(config("2"));
+        WeComLoginAttemptService noStoreService = new WeComLoginAttemptService(config("2"), null, NO_OP_AUDIT);
         assertEquals("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE",
                 assertThrows(WeComAuthorizationException.class, noStoreService::createAttempt).code());
 
         WeComLoginAttemptService missingInstallationService = WeComLoginAttemptService.forTests(
-                config("2"), store, clock, () -> "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+                config("2"), store, clock, () -> "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", NO_OP_AUDIT);
         assertEquals("WECOM_INSTALLATION_NOT_FOUND",
                 assertThrows(WeComAuthorizationException.class,
                         missingInstallationService::createAttempt).code());
@@ -188,6 +200,23 @@ class WeComLoginAttemptServiceTest {
         Queue<String> states = new ArrayDeque<>();
         java.util.Collections.addAll(states, values);
         return states;
+    }
+
+    private static final class RecordingViewerAudit implements ViewerAuditSink {
+        private final List<String> events = new ArrayList<>();
+
+        @Override public void record(String action, String result, String userId,
+                                     String contactPointId, String sessionId) {
+            events.add(String.join("|", action, result, userId, contactPointId, sessionId));
+        }
+
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) {
+            record(action, result, userId, contactPointId, sessionId);
+        }
     }
 
     private static final class MutableClock extends Clock {

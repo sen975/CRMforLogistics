@@ -12,12 +12,23 @@ import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WeComViewerServiceTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
+
     @TempDir
     Path tempDir;
 
@@ -30,7 +41,8 @@ class WeComViewerServiceTest {
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit.jsonl").toString()
         ));
         WeComViewerService service = WeComViewerService.forTests(config, clock,
-                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "zhangsan"));
+                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "zhangsan"),
+                null, NO_OP_AUDIT);
         String token = service.exchangeLoginCode("code").viewerAuthToken();
 
         assertEquals("zhangsan", service.requireViewerActor(token));
@@ -52,7 +64,8 @@ class WeComViewerServiceTest {
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit.jsonl").toString()
         ));
         WeComViewerService service = WeComViewerService.forTests(config, Clock.systemUTC(),
-                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"));
+                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"),
+                null, NO_OP_AUDIT);
         WeComViewerService.LoginExchangeResponse login = service.exchangeLoginCode("code");
 
         WeComViewerService.ViewerSessionResponse created = service.createViewerSession(
@@ -80,7 +93,8 @@ class WeComViewerServiceTest {
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("case-audit.jsonl").toString()
         ));
         WeComViewerService service = WeComViewerService.forTests(config, Clock.systemUTC(),
-                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"));
+                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"),
+                null, NO_OP_AUDIT);
         WeComViewerService.LoginExchangeResponse login = service.exchangeLoginCode("code");
 
         WeComViewerService.ViewerSessionResponse created = service.createViewerSession(
@@ -104,7 +118,8 @@ class WeComViewerServiceTest {
                 "WECOM_DATA_FILE", messages.toString(),
                 "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("batch-audit.jsonl").toString()));
         WeComViewerService service = WeComViewerService.forTests(config, Clock.systemUTC(),
-                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"));
+                () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"),
+                null, NO_OP_AUDIT);
         String token = service.exchangeLoginCode("code").viewerAuthToken();
 
         var created = service.createViewerSession("wecom:ext-1", token, List.of("m2"));
@@ -142,7 +157,7 @@ class WeComViewerServiceTest {
             }
         };
         WeComViewerService service = WeComViewerService.forTests(config, Clock.fixed(now, ZoneOffset.UTC),
-                () -> "nonce", gateway, store);
+                () -> "nonce", gateway, store, NO_OP_AUDIT);
         WeComLoginAttemptService.InstallationBinding binding = new WeComLoginAttemptService.InstallationBinding(
                 installation.installationId(), installation.version(), installation.suiteId(),
                 installation.authCorpId(), installation.agentId());
@@ -169,7 +184,7 @@ class WeComViewerServiceTest {
                 "dk-suite", "ww-authorized-corp", "2000001", "permanent-code");
         WeComViewerService.JdkWeComHttpGateway gateway = new WeComViewerService.JdkWeComHttpGateway(config);
         WeComViewerService service = WeComViewerService.forTests(config, Clock.fixed(now, ZoneOffset.UTC),
-                () -> "nonce", gateway, store);
+                () -> "nonce", gateway, store, NO_OP_AUDIT);
         WeComLoginAttemptService.InstallationBinding binding = new WeComLoginAttemptService.InstallationBinding(
                 installation.installationId(), installation.version(), installation.suiteId(),
                 installation.authCorpId(), installation.agentId());
@@ -204,8 +219,9 @@ class WeComViewerServiceTest {
                         "/cgi-bin/service/get_suite_token", null);
             }
         };
+        RecordingViewerAudit audit = new RecordingViewerAudit();
         WeComViewerService service = WeComViewerService.forTests(config, Clock.fixed(now, ZoneOffset.UTC),
-                () -> "nonce", gateway, store);
+                () -> "nonce", gateway, store, audit);
         WeComLoginAttemptService.InstallationBinding binding = new WeComLoginAttemptService.InstallationBinding(
                 installation.installationId(), installation.version(), installation.suiteId(),
                 installation.authCorpId(), installation.agentId());
@@ -213,9 +229,9 @@ class WeComViewerServiceTest {
         assertThrows(WeComAuthorizationException.class,
                 () -> service.exchangeLoginCode("one-time-code", binding));
 
-        String audit = Files.readString(auditFile);
-        assertTrue(audit.contains("\"action\":\"wecom.viewer.login_exchange\""));
-        assertTrue(audit.contains("\"result\":\"failed\""));
+        assertEquals("wecom.viewer.login_exchange", audit.action);
+        assertEquals("failed", audit.result);
+        assertEquals("WECOM_UPSTREAM_UNAVAILABLE", audit.errorCode);
     }
 
     private static final class MutableClock extends Clock {
@@ -239,6 +255,27 @@ class WeComViewerServiceTest {
 
         @Override public Instant instant() {
             return instant;
+        }
+    }
+
+    private static final class RecordingViewerAudit implements ViewerAuditSink {
+        private String action;
+        private String result;
+        private String errorCode;
+
+        @Override public void record(String action, String result, String userId,
+                                     String contactPointId, String sessionId) {
+            this.action = action;
+            this.result = result;
+        }
+
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) {
+            record(action, result, userId, contactPointId, sessionId);
+            this.errorCode = errorCode;
         }
     }
 }

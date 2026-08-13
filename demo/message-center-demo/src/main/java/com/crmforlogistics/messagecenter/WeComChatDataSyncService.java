@@ -18,7 +18,8 @@ public final class WeComChatDataSyncService {
     private final Map<String, RateWindow> userRates = new ConcurrentHashMap<>();
     private volatile WeComChatDataCrypto crypto;
 
-    public WeComChatDataSyncService(Config config, WeComChatDataGateway gateway) {
+    public WeComChatDataSyncService(Config config, WeComChatDataGateway gateway,
+                                    ViewerAuditSink viewerAudit) {
         this.config = config;
         this.gateway = gateway::sync;
         this.decryptor = this::decrypt;
@@ -34,17 +35,16 @@ public final class WeComChatDataSyncService {
                 return chatDataStore.publishPage(key, nextCursor, messages);
             }
         };
-        WeComViewerAuditTrail auditTrail = new WeComViewerAuditTrail(config, java.time.Clock.systemUTC());
         this.audit = new AuditSink() {
             @Override
             public void record(String action, String result, String userId) throws Exception {
-                auditTrail.record(action, result, userId, "", "");
+                viewerAudit.record(action, result, userId, "", "");
             }
 
             @Override
             public void recordFailure(String action, String result, String userId,
                                       WeComChatDataException failure) throws Exception {
-                auditTrail.recordDiagnostic(action, result, userId, "", "",
+                viewerAudit.recordDiagnostic(action, result, userId, "", "",
                         failure.code(), failure.upstreamErrcode(), failure.upstreamPath(),
                         failure.upstreamHttpStatus(), failure.upstreamHint());
             }

@@ -50,6 +50,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 public class UnifiedMessageStoreTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
     public static void main(String[] args) throws Exception {
         mergesEmailAndChatAppContactPointsIntoOneTimeline();
         storesContactGroupProfileWithoutLosingMergedPoints();
@@ -1390,7 +1399,8 @@ public class UnifiedMessageStoreTest {
                 config,
                 Clock.fixed(Instant.ofEpochSecond(1414587457), ZoneOffset.UTC),
                 () -> "Wm3WZYTPz0wzccnW",
-                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                null, NO_OP_AUDIT);
 
         assertEquals("c97d4ff7bc7e97cd2e0222f9c69ee8bf2fcc3bfe",
                 WeComViewerService.makeSignature("sM4AOVdWfPE4DxkXGEs8VMP",
@@ -1437,7 +1447,8 @@ public class UnifiedMessageStoreTest {
                 config,
                 Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
                 () -> "nonce",
-                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                null, NO_OP_AUDIT);
 
         WeComViewerService.LoginExchangeResponse login = service.exchangeLoginCode("code-1");
         assertEquals("user-1", login.wecomUserId());
@@ -1499,7 +1510,8 @@ public class UnifiedMessageStoreTest {
                 config,
                 Clock.fixed(Instant.ofEpochSecond(2000), ZoneOffset.UTC),
                 () -> "nonce",
-                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                null, NO_OP_AUDIT);
         assertThrows(SecurityException.class,
                 () -> empty.viewerSession(created.viewerSessionId(), login.viewerAuthToken()));
     }
@@ -1517,7 +1529,8 @@ public class UnifiedMessageStoreTest {
                 config,
                 Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
                 () -> "nonce",
-                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                null, NO_OP_AUDIT);
 
         assertThrows(IOException.class, () -> service.exchangeLoginCode("code-1"));
         assertEquals(0, service.activeViewerAuthTokenCount());
@@ -1564,10 +1577,10 @@ public class UnifiedMessageStoreTest {
                 Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
                 () -> "nonce",
                 new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
-                authorizationStore);
+                authorizationStore, NO_OP_AUDIT);
         WeComLoginAttemptService loginAttempts = WeComLoginAttemptService.forTests(config, authorizationStore,
                 Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
-                () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+                () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NO_OP_AUDIT);
 
         FakeHttpExchange configExchange = new FakeHttpExchange(
                 "GET", "/api/v1/wecom/js-sdk-config?url=http%3A%2F%2Flocalhost%3A8099%2F");
@@ -1729,7 +1742,8 @@ public class UnifiedMessageStoreTest {
                 config,
                 Clock.fixed(Instant.ofEpochSecond(1000), ZoneOffset.UTC),
                 () -> "nonce",
-                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"));
+                new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "user-1"),
+                null, NO_OP_AUDIT);
         for (String route : List.of(
                 "/webhook/wecom",
                 "/api/wecom/sync_msg", "/api/v1/wecom/sync_msg",

@@ -32,6 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WeComAuthorizationCallbackRouteTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
     private static final String SUITE = "dk-suite";
     private static final String TOKEN = "callback-token";
     private static final Instant NOW = Instant.parse("2026-07-28T00:00:00Z");
@@ -47,7 +56,7 @@ class WeComAuthorizationCallbackRouteTest {
         WeComAuthorizationStore installations = installationStore();
         WeComViewerService viewer = WeComViewerService.forTests(config, Clock.fixed(NOW, ZoneOffset.UTC),
                 () -> "viewer-nonce", new WeComViewerService.StaticGateway("corp-ticket",
-                        "agent-ticket", "user-1"), installations);
+                        "agent-ticket", "user-1"), installations, NO_OP_AUDIT);
         WeComCallbackCodec codec = new WeComCallbackCodec(SUITE, TOKEN, encodingKey(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         RecordingGateway gateway = new RecordingGateway();

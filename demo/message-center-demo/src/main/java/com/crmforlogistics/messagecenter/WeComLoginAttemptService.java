@@ -11,32 +11,28 @@ public final class WeComLoginAttemptService {
     private final Config config;
     private final Clock clock;
     private final NonceSource nonceSource;
-    private final WeComViewerAuditTrail auditTrail;
+    private final ViewerAuditSink auditTrail;
     private final WeComAuthorizationStore authorizationStore;
     private final Map<String, Attempt> attempts = new LinkedHashMap<>();
 
-    public WeComLoginAttemptService(Config config, WeComAuthorizationStore authorizationStore) {
+    public WeComLoginAttemptService(Config config, WeComAuthorizationStore authorizationStore,
+                                    ViewerAuditSink audit) {
         this(config, authorizationStore, Clock.systemUTC(),
-                () -> UUID.randomUUID().toString().replace("-", ""));
-    }
-
-    /** Compatibility constructor for callers that only need the route object; requests fail closed without a store. */
-    public WeComLoginAttemptService(Config config) {
-        this(config, null, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""));
+                () -> UUID.randomUUID().toString().replace("-", ""), audit);
     }
 
     private WeComLoginAttemptService(Config config, WeComAuthorizationStore authorizationStore,
-                                     Clock clock, NonceSource nonceSource) {
+                                     Clock clock, NonceSource nonceSource, ViewerAuditSink audit) {
         this.config = config;
         this.authorizationStore = authorizationStore;
         this.clock = clock;
         this.nonceSource = nonceSource;
-        this.auditTrail = new WeComViewerAuditTrail(config, clock);
+        this.auditTrail = java.util.Objects.requireNonNull(audit, "audit");
     }
 
     static WeComLoginAttemptService forTests(Config config, WeComAuthorizationStore authorizationStore,
-                                              Clock clock, NonceSource nonceSource) {
-        return new WeComLoginAttemptService(config, authorizationStore, clock, nonceSource);
+                                              Clock clock, NonceSource nonceSource, ViewerAuditSink audit) {
+        return new WeComLoginAttemptService(config, authorizationStore, clock, nonceSource, audit);
     }
 
     public synchronized LoginAttemptResponse createAttempt() throws Exception {

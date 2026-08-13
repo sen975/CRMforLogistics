@@ -191,6 +191,16 @@ public class App {
     }
 
     private static void startWeb(Config config) throws Exception {
+        AuditRuntime auditRuntime = AuditRuntime.openViewer(config);
+        try {
+            startWebWithAudit(config, auditRuntime);
+        } catch (Exception startupFailure) {
+            closeAuditRuntime(auditRuntime, startupFailure);
+            throw startupFailure;
+        }
+    }
+
+    private static void startWebWithAudit(Config config, AuditRuntime auditRuntime) throws Exception {
         UnifiedMessageStore store = new UnifiedMessageStore(config);
         LocalWeComDevelopmentService localWeCom = config.localDevMode()
                 ? new LocalWeComDevelopmentService(config) : null;
@@ -230,12 +240,13 @@ public class App {
             authorizationService = new WeComAuthorizationService(config, authorizationStore,
                     authorizationGateway, publicKeyRegistrar);
         }
+        ViewerAuditSink viewerAudit = auditRuntime.viewerTrail();
         WeComViewerService weComViewer = accessTokens == null
-                ? new WeComViewerService(config, authorizationStore)
-                : new WeComViewerService(config, authorizationStore, accessTokens, authorizationGateway);
-        WeComLoginAttemptService weComLoginAttempts = new WeComLoginAttemptService(config, authorizationStore);
+                ? new WeComViewerService(config, authorizationStore, null, null, viewerAudit)
+                : new WeComViewerService(config, authorizationStore, accessTokens, authorizationGateway, viewerAudit);
+        WeComLoginAttemptService weComLoginAttempts = new WeComLoginAttemptService(config, authorizationStore, viewerAudit);
         WeComChatDataSyncService chatDataSync = accessTokens == null ? null
-                : new WeComChatDataSyncService(config, new WeComChatDataGateway(config, accessTokens));
+                : new WeComChatDataSyncService(config, new WeComChatDataGateway(config, accessTokens), viewerAudit);
         WeComChatDataSyncRuntime weComChatDataRuntime =
                 WeComChatDataSyncRuntime.open(config, authorizationStore, chatDataSync);
         WeComDailySummaryRuntime dailySummary = WeComDailySummaryRuntime.open(
@@ -268,6 +279,7 @@ public class App {
             dailySummary.close();
             weComChatDataRuntime.close();
             events.close();
+            closeAuditRuntime(auditRuntime, startupFailure);
             throw startupFailure;
         }
         server.createContext("/", exchange -> {
@@ -299,6 +311,7 @@ public class App {
             dailySummary.close();
             weComChatDataRuntime.close();
             events.close();
+            closeAuditRuntime(auditRuntime, startupFailure);
             throw startupFailure;
         }
         WeComDailySummaryRuntime finalDailySummary = dailySummary;
@@ -313,6 +326,7 @@ public class App {
             server.stop(0);
             if (finalAuthorizationService != null) finalAuthorizationService.close();
             finalPublicKeyRegistrar.close();
+            try { auditRuntime.close(); } catch (AuditStorageException ignored) { }
         }, "message-center-shutdown"));
         System.out.println("Message center demo started: http://localhost:" + config.webPort());
         System.out.println("ChatApp webhook endpoint: http://localhost:" + config.webPort() + "/webhook/chatapp");
@@ -327,6 +341,14 @@ public class App {
             runtime.close();
         } catch (CallRecordException exception) {
             System.err.println("call_record_shutdown_failed code=" + exception.code());
+        }
+    }
+
+    private static void closeAuditRuntime(AuditRuntime runtime, Exception startupFailure) {
+        try {
+            runtime.close();
+        } catch (AuditStorageException closeFailure) {
+            startupFailure.addSuppressed(closeFailure);
         }
     }
 

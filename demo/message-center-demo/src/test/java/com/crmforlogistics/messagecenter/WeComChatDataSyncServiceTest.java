@@ -23,6 +23,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WeComChatDataSyncServiceTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
     @TempDir
     Path tempDir;
 
@@ -153,7 +162,7 @@ class WeComChatDataSyncServiceTest {
         WeComViewerService viewer = WeComViewerService.forTests(config,
                 Clock.fixed(Instant.parse("2026-07-29T00:00:00Z"), ZoneOffset.UTC),
                 () -> "nonce", new WeComViewerService.StaticGateway("corp-ticket", "agent-ticket", "employee-1"),
-                authorizationStore);
+                authorizationStore, NO_OP_AUDIT);
         WeComViewerService.LoginExchangeResponse login = viewer.exchangeLoginCode("code",
                 new WeComLoginAttemptService.InstallationBinding(installation.installationId(),
                         installation.version(), installation.suiteId(), installation.authCorpId(),
