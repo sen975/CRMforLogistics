@@ -21,8 +21,9 @@ final class WeComViewerAuditTrail {
     private final Clock clock;
 
     WeComViewerAuditTrail(Config config, Clock clock) {
-        this.file = config.wecomViewerAuditFile();
-        this.maxBytes = config.wecomViewerAuditMaxBytes();
+        AuditFileSettings settings = config.viewerAuditSettings();
+        this.file = settings.file();
+        this.maxBytes = settings.fileMaxBytes();
         this.clock = clock;
     }
 

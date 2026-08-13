@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -290,7 +291,6 @@ class ConfigTest {
                 Map.entry("WECOM_VIEWER_MAX_MESSAGES", "15"),
                 Map.entry("WECOM_VIEWER_SESSION_RATE_LIMIT", "12"),
                 Map.entry("WECOM_VIEWER_AUDIT_FILE", "/tmp/wecom-viewer-audit.jsonl"),
-                Map.entry("WECOM_VIEWER_AUDIT_MAX_BYTES", "1048576"),
                 Map.entry("WECOM_TOKEN_REFRESH_SKEW_SECONDS", "300")
         ));
 
@@ -304,7 +304,7 @@ class ConfigTest {
         assertEquals(15, config.wecomViewerMaxMessages());
         assertEquals(12, config.wecomViewerSessionRateLimit());
         assertEquals(Path.of("/tmp/wecom-viewer-audit.jsonl"), config.wecomViewerAuditFile());
-        assertEquals(1048576L, config.wecomViewerAuditMaxBytes());
+        assertEquals(1_048_576L, config.viewerAuditSettings().fileMaxBytes());
         assertEquals(300, config.wecomTokenRefreshSkewSeconds());
     }
 
@@ -345,7 +345,7 @@ class ConfigTest {
                 config.wecomAuthorizationInstallationsFile());
         assertEquals(tempDir.resolve("wecom-authorization-audit.jsonl"),
                 config.wecomAuthorizationAuditFile());
-        assertEquals(1_048_576L, config.wecomAuthorizationAuditMaxBytes());
+        assertEquals(1_048_576L, config.authorizationAuditSettings().fileMaxBytes());
         assertEquals(64, config.wecomAuthorizationQueueCapacity());
 
         assertEquals("dk-suite", new Config(Map.of("WECOM_SUITE_ID", "dk-suite"))
@@ -573,7 +573,6 @@ class ConfigTest {
         Config tooLargeTtl = new Config(Map.of("WECOM_VIEWER_SESSION_TTL_SECONDS", "3601"));
         Config tooManyMessages = new Config(Map.of("WECOM_VIEWER_MAX_MESSAGES", "16"));
         Config tooManySessions = new Config(Map.of("WECOM_VIEWER_SESSION_RATE_LIMIT", "61"));
-        Config tooSmallAudit = new Config(Map.of("WECOM_VIEWER_AUDIT_MAX_BYTES", "4095"));
         Config tooSmallSkew = new Config(Map.of("WECOM_TOKEN_REFRESH_SKEW_SECONDS", "4"));
 
         assertThrows(IllegalArgumentException.class, authTtlTooSmall::wecomViewerAuthTtlSeconds);
@@ -582,8 +581,46 @@ class ConfigTest {
         assertThrows(IllegalArgumentException.class, tooLargeTtl::wecomViewerSessionTtlSeconds);
         assertThrows(IllegalArgumentException.class, tooManyMessages::wecomViewerMaxMessages);
         assertThrows(IllegalArgumentException.class, tooManySessions::wecomViewerSessionRateLimit);
-        assertThrows(IllegalArgumentException.class, tooSmallAudit::wecomViewerAuditMaxBytes);
         assertThrows(IllegalArgumentException.class, tooSmallSkew::wecomTokenRefreshSkewSeconds);
+    }
+
+    @Test
+    void exposesSharedAuditSettingsAndRejectsInvalidRelationships() {
+        Config defaults = new Config(Map.of("DATA_DIR", tempDir.toString()));
+        AuditFileSettings viewer = defaults.viewerAuditSettings();
+        AuditFileSettings authorization = defaults.authorizationAuditSettings();
+
+        assertEquals(tempDir.resolve("wecom-viewer-audit.jsonl").toAbsolutePath().normalize(), viewer.file());
+        assertEquals(tempDir.resolve("wecom-authorization-audit.jsonl").toAbsolutePath().normalize(),
+                authorization.file());
+        assertEquals(7, viewer.retentionDays());
+        assertEquals(1_048_576L, viewer.fileMaxBytes());
+        assertEquals(8_388_608L, viewer.streamMaxBytes());
+        assertEquals(67_108_864L, viewer.minFreeDiskBytes());
+        assertEquals(Duration.ofSeconds(3_600), viewer.warningInterval());
+
+        assertThrows(IllegalArgumentException.class, () -> new Config(Map.of(
+                "AUDIT_FILE_MAX_BYTES", "1048576",
+                "AUDIT_STREAM_MAX_BYTES", "1048575")).viewerAuditSettings());
+        assertThrows(IllegalArgumentException.class, () -> new Config(Map.of(
+                "AUDIT_FILE_MAX_BYTES", "1048576",
+                "AUDIT_MIN_FREE_DISK_BYTES", "1048575")).viewerAuditSettings());
+        assertThrows(IllegalArgumentException.class, () -> new Config(Map.of(
+                "WECOM_VIEWER_AUDIT_FILE", "same.jsonl",
+                "WECOM_AUTHORIZATION_AUDIT_FILE", "same.jsonl")).validateAuditConfiguration());
+        assertThrows(IllegalArgumentException.class, () -> new Config(Map.of(
+                "WECOM_VIEWER_AUDIT_FILE", "viewer.log")).viewerAuditSettings());
+    }
+
+    @Test
+    void rejectsLegacyAuditKeysEvenWhenEnvFileValueIsBlank() throws Exception {
+        Path env = tempDir.resolve("legacy.env");
+        Files.writeString(env, "WECOM_VIEWER_AUDIT_MAX_BYTES=\n");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> Config.load(env));
+        assertTrue(error.getMessage().contains("WECOM_VIEWER_AUDIT_MAX_BYTES"));
+
+        assertThrows(IllegalArgumentException.class, () -> new Config(Map.of(
+                "WECOM_AUTHORIZATION_AUDIT_MAX_BYTES", "1048576")));
     }
 
     @Test

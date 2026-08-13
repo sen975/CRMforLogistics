@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,7 +13,8 @@ public class Config {
     private final Map<String, String> values;
 
     public Config(Map<String, String> values) {
-        this.values = values;
+        this.values = new HashMap<>(values);
+        rejectLegacyAuditKeys();
     }
 
     public static Config load(Path envPath) throws IOException {
@@ -32,7 +34,9 @@ public class Config {
                 loaded.put(key, value);
             }
         });
-        return new Config(loaded);
+        Config config = new Config(loaded);
+        config.validateAuditConfiguration();
+        return config;
     }
 
     static Config forTests(Path dataDir, Path emailDataDir, Path chatappDataFile, Path templateFile) {
@@ -231,8 +235,8 @@ public class Config {
         return Path.of(value("WECOM_AUTHORIZATION_AUDIT_FILE",
                 dataDir().resolve("wecom-authorization-audit.jsonl").toString()));
     }
-    public long wecomAuthorizationAuditMaxBytes() {
-        return boundedLong("WECOM_AUTHORIZATION_AUDIT_MAX_BYTES", 1_048_576L, 4_096L, 20_971_520L);
+    public AuditFileSettings authorizationAuditSettings() {
+        return auditSettings(wecomAuthorizationAuditFile());
     }
     public String wecomLoginAuthCorpId() { return value("WECOM_LOGIN_AUTH_CORP_ID", ""); }
     public String wecomLoginSuiteId() { return value("WECOM_LOGIN_SUITE_ID", ""); }
@@ -265,8 +269,15 @@ public class Config {
     public Path wecomViewerAuditFile() {
         return Path.of(value("WECOM_VIEWER_AUDIT_FILE", dataDir().resolve("wecom-viewer-audit.jsonl").toString()));
     }
-    public long wecomViewerAuditMaxBytes() {
-        return boundedLong("WECOM_VIEWER_AUDIT_MAX_BYTES", 1_048_576L, 4_096L, 20_971_520L);
+    public AuditFileSettings viewerAuditSettings() {
+        return auditSettings(wecomViewerAuditFile());
+    }
+    public void validateAuditConfiguration() {
+        AuditFileSettings viewer = viewerAuditSettings();
+        AuditFileSettings authorization = authorizationAuditSettings();
+        if (viewer.file().equals(authorization.file())) {
+            throw new IllegalArgumentException("viewer and authorization audit files must differ");
+        }
     }
     public int wecomTokenRefreshSkewSeconds() {
         return boundedInt("WECOM_TOKEN_REFRESH_SKEW_SECONDS", 300, 5, 1800);
@@ -406,6 +417,24 @@ public class Config {
     private Path dataFile(String key, String defaultFileName) {
         Path path = Path.of(value(key, defaultFileName));
         return path.isAbsolute() ? path : dataDir().resolve(path).normalize();
+    }
+
+    private AuditFileSettings auditSettings(Path file) {
+        return new AuditFileSettings(file,
+                boundedInt("AUDIT_RETENTION_DAYS", 7, 1, 365),
+                boundedLong("AUDIT_FILE_MAX_BYTES", 1_048_576L, 4_096L, 20_971_520L),
+                boundedLong("AUDIT_STREAM_MAX_BYTES", 8_388_608L, 4_096L, 1_073_741_824L),
+                boundedLong("AUDIT_MIN_FREE_DISK_BYTES", 67_108_864L, 4_096L, 1_099_511_627_776L),
+                Duration.ofSeconds(boundedInt("AUDIT_WARNING_INTERVAL_SECONDS", 3_600, 60, 86_400)));
+    }
+
+    private void rejectLegacyAuditKeys() {
+        if (values.containsKey("WECOM_VIEWER_AUDIT_MAX_BYTES")) {
+            throw new IllegalArgumentException("WECOM_VIEWER_AUDIT_MAX_BYTES is no longer supported");
+        }
+        if (values.containsKey("WECOM_AUTHORIZATION_AUDIT_MAX_BYTES")) {
+            throw new IllegalArgumentException("WECOM_AUTHORIZATION_AUDIT_MAX_BYTES is no longer supported");
+        }
     }
 
     private int boundedInt(String key, int fallback, int minimum, int maximum) {

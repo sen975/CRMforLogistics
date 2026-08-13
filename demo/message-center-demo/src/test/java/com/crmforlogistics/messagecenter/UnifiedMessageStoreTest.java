@@ -1511,7 +1511,7 @@ public class UnifiedMessageStoreTest {
         Config config = new Config(Map.of(
                 "DATA_DIR", dir.toString(),
                 "WECOM_VIEWER_AUDIT_FILE", auditFile.toString(),
-                "WECOM_VIEWER_AUDIT_MAX_BYTES", "4096"
+                "AUDIT_FILE_MAX_BYTES", "4096"
         ));
         WeComViewerService service = WeComViewerService.forTests(
                 config,

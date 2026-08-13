@@ -19,7 +19,7 @@ final class WeComAuthorizationAuditTrail {
     private final Clock clock;
 
     WeComAuthorizationAuditTrail(Config config) {
-        this(config.wecomAuthorizationAuditFile(), config.wecomAuthorizationAuditMaxBytes(), Clock.systemUTC());
+        this(config.authorizationAuditSettings().file(), config.authorizationAuditSettings().fileMaxBytes(), Clock.systemUTC());
     }
 
     WeComAuthorizationAuditTrail(Path file, long maxBytes, Clock clock) {
