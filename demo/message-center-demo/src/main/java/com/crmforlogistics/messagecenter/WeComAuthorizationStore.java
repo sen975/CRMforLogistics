@@ -139,7 +139,9 @@ public final class WeComAuthorizationStore {
             Instant authorizedAt = existing == null ? now : existing.authorizedAt();
             Instant lastSuiteTicketAt = existing == null ? null : existing.lastSuiteTicketAt();
             Installation updated = new Installation(installationId, suiteId, authCorpId, agentId, encrypted,
-                    AuthStatus.ACTIVE, authorizedAt, now, lastSuiteTicketAt, version);
+                    AuthStatus.ACTIVE, authorizedAt, now, lastSuiteTicketAt, version,
+                    existing == null ? null : existing.lastAuthorizationEventId(),
+                    existing == null ? null : existing.lastAuthorizationEventAt());
             List<Installation> next = replace(snapshot, updated);
             writeSnapshot(next);
             return updated;
@@ -160,7 +162,8 @@ public final class WeComAuthorizationStore {
                             "未找到企业微信授权安装记录"));
             Installation updated = new Installation(current.installationId(), current.suiteId(), current.authCorpId(),
                     current.agentId(), current.permanentCodeEncrypted(), status, current.authorizedAt(),
-                    clock.instant(), current.lastSuiteTicketAt(), Math.addExact(current.version(), 1));
+                    clock.instant(), current.lastSuiteTicketAt(), Math.addExact(current.version(), 1),
+                    current.lastAuthorizationEventId(), current.lastAuthorizationEventAt());
             writeSnapshot(replace(snapshot, updated));
             return updated;
         }
@@ -180,9 +183,97 @@ public final class WeComAuthorizationStore {
                             "未找到企业微信授权安装记录"));
             Installation updated = new Installation(current.installationId(), current.suiteId(), current.authCorpId(),
                     current.agentId(), current.permanentCodeEncrypted(), current.authStatus(), current.authorizedAt(),
-                    clock.instant(), receivedAt, Math.addExact(current.version(), 1));
+                    clock.instant(), receivedAt, Math.addExact(current.version(), 1),
+                    current.lastAuthorizationEventId(), current.lastAuthorizationEventAt());
             writeSnapshot(replace(snapshot, updated));
             return updated;
+        }
+    }
+
+    public MutationResult upsertActiveForEvent(String suiteId, String authCorpId,
+                                               String agentId, String permanentCode,
+                                               String eventId, Instant eventAt)
+            throws WeComAuthorizationException {
+        validateKey(suiteId, authCorpId);
+        requireText(agentId, "agentId", MAX_AGENT_ID);
+        requireText(permanentCode, "permanentCode", 512);
+        validateEvent(eventId, eventAt);
+        synchronized (lock) {
+            List<Installation> snapshot = readSnapshot();
+            Installation existing = findIn(snapshot, suiteId, authCorpId);
+            MutationResult replay = replayOrRejectStale(existing, eventId, eventAt);
+            if (replay != null) return replay;
+            final String encrypted;
+            try {
+                encrypted = cipher.encrypt(Map.of("permanentCode", permanentCode));
+            } catch (CredentialCipher.CredentialEncryptionException | RuntimeException exception) {
+                throw error("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 500,
+                        "企业微信授权凭据不可用", exception);
+            }
+            Instant now = clock.instant();
+            Installation updated = new Installation(
+                    existing == null ? UUID.randomUUID().toString().replace("-", "")
+                            : existing.installationId(),
+                    suiteId, authCorpId, agentId, encrypted, AuthStatus.ACTIVE,
+                    existing == null ? now : existing.authorizedAt(), now,
+                    existing == null ? null : existing.lastSuiteTicketAt(),
+                    existing == null ? 1 : Math.addExact(existing.version(), 1),
+                    eventId, eventAt);
+            writeSnapshot(replace(snapshot, updated));
+            return new MutationResult(updated, true);
+        }
+    }
+
+    public MutationResult updateStatusForEvent(String suiteId, String authCorpId,
+                                               AuthStatus status, String eventId,
+                                               Instant eventAt)
+            throws WeComAuthorizationException {
+        validateKey(suiteId, authCorpId);
+        if (status == null) throw new IllegalArgumentException("status is required");
+        validateEvent(eventId, eventAt);
+        synchronized (lock) {
+            List<Installation> snapshot = readSnapshot();
+            Installation current = findIn(snapshot, suiteId, authCorpId);
+            if (current == null) {
+                throw error("WECOM_INSTALLATION_NOT_FOUND", 403,
+                        "未找到企业微信授权安装记录");
+            }
+            MutationResult replay = replayOrRejectStale(current, eventId, eventAt);
+            if (replay != null) return replay;
+            Installation updated = new Installation(current.installationId(), current.suiteId(),
+                    current.authCorpId(), current.agentId(), current.permanentCodeEncrypted(),
+                    status, current.authorizedAt(), clock.instant(), current.lastSuiteTicketAt(),
+                    Math.addExact(current.version(), 1), eventId, eventAt);
+            writeSnapshot(replace(snapshot, updated));
+            return new MutationResult(updated, true);
+        }
+    }
+
+    private static Installation findIn(List<Installation> snapshot,
+                                       String suiteId, String authCorpId) {
+        return snapshot.stream().filter(item -> item.suiteId().equals(suiteId)
+                        && item.authCorpId().equals(authCorpId))
+                .findFirst().orElse(null);
+    }
+
+    private static MutationResult replayOrRejectStale(Installation current,
+                                                      String eventId, Instant eventAt)
+            throws WeComAuthorizationException {
+        if (current == null || current.lastAuthorizationEventId() == null) return null;
+        if (current.lastAuthorizationEventId().equals(eventId)) {
+            return new MutationResult(current, false);
+        }
+        if (eventAt.isBefore(current.lastAuthorizationEventAt())) {
+            throw error("WECOM_AUTHORIZATION_EVENT_STALE", 409,
+                    "企业微信授权事件早于当前安装状态");
+        }
+        return null;
+    }
+
+    private static void validateEvent(String eventId, Instant eventAt) {
+        requireText(eventId, "eventId", 128);
+        if (!eventId.matches("sha256:[0-9a-f]{64}") || eventAt == null) {
+            throw new IllegalArgumentException("authorization event marker is invalid");
         }
     }
 
@@ -303,6 +394,12 @@ public final class WeComAuthorizationStore {
                     || item.version() < 1) {
                 throw new IllegalArgumentException("installation fields are incomplete");
             }
+            if ((item.lastAuthorizationEventId() == null) != (item.lastAuthorizationEventAt() == null)) {
+                throw new IllegalArgumentException("authorization event marker is incomplete");
+            }
+            if (item.lastAuthorizationEventId() != null) {
+                validateEvent(item.lastAuthorizationEventId(), item.lastAuthorizationEventAt());
+            }
             CredentialCipher.requireEnvelope(item.permanentCodeEncrypted());
         } catch (RuntimeException exception) {
             throw error("WECOM_INSTALLATION_STORE_CORRUPTED", 500, "企业微信授权安装存储不可用", exception);
@@ -327,7 +424,19 @@ public final class WeComAuthorizationStore {
 
     public record Installation(String installationId, String suiteId, String authCorpId, String agentId,
                                String permanentCodeEncrypted, AuthStatus authStatus, Instant authorizedAt,
-                               Instant updatedAt, Instant lastSuiteTicketAt, long version) {}
+                               Instant updatedAt, Instant lastSuiteTicketAt, long version,
+                               String lastAuthorizationEventId, Instant lastAuthorizationEventAt) {
+        public Installation(String installationId, String suiteId, String authCorpId,
+                            String agentId, String permanentCodeEncrypted,
+                            AuthStatus authStatus, Instant authorizedAt, Instant updatedAt,
+                            Instant lastSuiteTicketAt, long version) {
+            this(installationId, suiteId, authCorpId, agentId, permanentCodeEncrypted,
+                    authStatus, authorizedAt, updatedAt, lastSuiteTicketAt, version,
+                    null, null);
+        }
+    }
+
+    public record MutationResult(Installation installation, boolean applied) {}
 
     public record ResolvedInstallation(Installation installation, String permanentCode) {}
 }
