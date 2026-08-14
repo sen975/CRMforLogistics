@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.channel.wecom;
 
 import com.crmforlogistics.messagecenter.mapper.WeComInstallationMapper;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationAuditTrail;
+import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialProtector;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
@@ -16,15 +17,18 @@ public class WeComInstallationService {
     private final WeComInstallationMapper mapper;
     private final WeComAuthorizationGateway gateway;
     private final WeComAuthorizationAuditTrail auditTrail;
+    private final WeComCredentialProtector credentialProtector;
     private final Map<String, Instant> latestCancellation = new ConcurrentHashMap<>();
     private final Object installationMutationLock = new Object();
 
     public WeComInstallationService(WeComInstallationMapper mapper,
                                      WeComAuthorizationGateway gateway,
-                                     WeComAuthorizationAuditTrail auditTrail) {
+                                     WeComAuthorizationAuditTrail auditTrail,
+                                     WeComCredentialProtector credentialProtector) {
         this.mapper = mapper;
         this.gateway = gateway;
         this.auditTrail = auditTrail;
+        this.credentialProtector = credentialProtector;
     }
 
     public void handleCallback(WeComCallbackCodec.DecodedCallback callback)
@@ -63,7 +67,7 @@ public class WeComInstallationService {
                     var existing = findActive(callback.suiteId(), callback.authCorpId());
                     if (existing != null) {
                         var info = gateway.getAuthInfo(callback.authCorpId(),
-                                existing.getPermanentCode());
+                                credentialProtector.revealPermanentCode(existing.getPermanentCode()));
                         synchronized (installationMutationLock) {
                             if (cancelledAtOrAfter(callback.suiteId(), callback.authCorpId(),
                                     callback.timestamp())) {
@@ -71,7 +75,8 @@ public class WeComInstallationService {
                             }
                             for (var agent : info.agents()) {
                                 upsert(callback.suiteId(), callback.authCorpId(),
-                                        agent.agentId(), existing.getPermanentCode());
+                                        agent.agentId(), credentialProtector.revealPermanentCode(
+                                                existing.getPermanentCode()));
                             }
                         }
                     }
@@ -162,7 +167,7 @@ public class WeComInstallationService {
             throws WeComException {
         var installation = resolveActive(suiteId, authCorpId);
         var token = gateway.getCorpToken(authCorpId,
-                installation.getPermanentCode());
+                credentialProtector.revealPermanentCode(installation.getPermanentCode()));
         return token.accessToken();
     }
 
@@ -176,7 +181,7 @@ public class WeComInstallationService {
         String installationId = entity.getId() == null ? "" : entity.getId().toString();
         long version = entity.getVersion() == null || entity.getVersion() < 1 ? 1 : entity.getVersion();
         return new ResolvedInstallation(installationId, entity.getSuiteId(), entity.getAuthCorpId(),
-                entity.getAgentId(), entity.getPermanentCode(), version);
+                entity.getAgentId(), credentialProtector.revealPermanentCode(entity.getPermanentCode()), version);
     }
 
     private WeComInstallationEntity findActive(String suiteId, String authCorpId) {
@@ -187,7 +192,7 @@ public class WeComInstallationService {
         var existing = findActive(suiteId, authCorpId);
         if (existing != null) {
             existing.setAgentId(agentId);
-            existing.setPermanentCode(permanentCode);
+            existing.setPermanentCode(credentialProtector.protectPermanentCode(permanentCode));
             existing.setAuthStatus("ACTIVE");
             existing.setAuthorizedAt(Instant.now());
             existing.setUpdatedAt(Instant.now());
@@ -197,7 +202,7 @@ public class WeComInstallationService {
             entity.setSuiteId(suiteId);
             entity.setAuthCorpId(authCorpId);
             entity.setAgentId(agentId);
-            entity.setPermanentCode(permanentCode);
+            entity.setPermanentCode(credentialProtector.protectPermanentCode(permanentCode));
             entity.setAuthStatus("ACTIVE");
             entity.setAuthorizedAt(Instant.now());
             mapper.insert(entity);

@@ -87,16 +87,9 @@ public final class CredentialCipher {
         byte[] ciphertext = null;
         byte[] plaintext = null;
         try {
-            JsonNode envelope = MAPPER.readTree(encryptedConfig);
-            if (!ALGORITHM.equals(envelope.path("algorithm").asText())
-                    || envelope.path("keyVersion").asInt() != KEY_VERSION) {
-                throw new IllegalArgumentException("Unsupported credential envelope");
-            }
-            nonce = Base64.getDecoder().decode(envelope.path("nonce").asText());
-            ciphertext = Base64.getDecoder().decode(envelope.path("ciphertext").asText());
-            if (nonce.length != NONCE_BYTES || ciphertext.length < TAG_BITS / Byte.SIZE) {
-                throw new IllegalArgumentException("Invalid envelope dimensions");
-            }
+            JsonNode envelope = requireEnvelope(encryptedConfig);
+            nonce = Base64.getDecoder().decode(envelope.get("nonce").textValue());
+            ciphertext = Base64.getDecoder().decode(envelope.get("ciphertext").textValue());
             Cipher cipher = Cipher.getInstance(CIPHER_TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, masterKey, new GCMParameterSpec(TAG_BITS, nonce));
             cipher.updateAAD(AAD);
@@ -113,6 +106,39 @@ public final class CredentialCipher {
             if (nonce != null) Arrays.fill(nonce, (byte) 0);
             if (ciphertext != null) Arrays.fill(ciphertext, (byte) 0);
             if (plaintext != null) Arrays.fill(plaintext, (byte) 0);
+        }
+    }
+
+    /**
+     * Validates the complete AES-256-GCM envelope without decrypting its payload.
+     */
+    public JsonNode requireEnvelope(String encryptedConfig) {
+        try {
+            JsonNode envelope = MAPPER.readTree(encryptedConfig);
+            if (envelope == null || !envelope.isObject() || envelope.size() != 4
+                    || !envelope.has("algorithm") || !envelope.has("keyVersion")
+                    || !envelope.has("nonce") || !envelope.has("ciphertext")
+                    || !envelope.get("algorithm").isTextual()
+                    || !envelope.get("keyVersion").canConvertToInt()
+                    || !envelope.get("nonce").isTextual()
+                    || !envelope.get("ciphertext").isTextual()
+                    || !ALGORITHM.equals(envelope.get("algorithm").textValue())
+                    || envelope.get("keyVersion").intValue() != KEY_VERSION) {
+                throw new IllegalArgumentException("Invalid credential envelope");
+            }
+            byte[] nonce = Base64.getDecoder().decode(envelope.get("nonce").textValue());
+            byte[] ciphertext = Base64.getDecoder().decode(envelope.get("ciphertext").textValue());
+            try {
+                if (nonce.length != NONCE_BYTES || ciphertext.length < TAG_BITS / Byte.SIZE) {
+                    throw new IllegalArgumentException("Invalid credential envelope");
+                }
+            } finally {
+                Arrays.fill(nonce, (byte) 0);
+                Arrays.fill(ciphertext, (byte) 0);
+            }
+            return envelope;
+        } catch (java.io.IOException | RuntimeException exception) {
+            throw new IllegalArgumentException("Invalid credential envelope", exception);
         }
     }
 

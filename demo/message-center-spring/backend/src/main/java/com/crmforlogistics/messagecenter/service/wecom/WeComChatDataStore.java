@@ -20,11 +20,14 @@ import java.util.List;
 public class WeComChatDataStore {
     private final WeComChatDataMessageMapper messageMapper;
     private final WeComChatDataCursorMapper cursorMapper;
+    private final WeComCredentialProtector credentialProtector;
 
     public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
-                              WeComChatDataCursorMapper cursorMapper) {
+                              WeComChatDataCursorMapper cursorMapper,
+                              WeComCredentialProtector credentialProtector) {
         this.messageMapper = messageMapper;
         this.cursorMapper = cursorMapper;
+        this.credentialProtector = credentialProtector;
     }
 
     public String cursor(SyncKey key) throws WeComChatDataException {
@@ -56,7 +59,7 @@ public class WeComChatDataStore {
                 }
                 WeComChatDataMessageEntity entity = new WeComChatDataMessageEntity();
                 entity.setMsgid(candidate.msgid());
-                entity.setSecretKey(candidate.secretKey());
+                entity.setSecretKey(credentialProtector.protectSecretKey(candidate.secretKey()));
                 entity.setExternalUserid(candidate.externalUserId());
                 entity.setUserid(candidate.userId());
                 entity.setSendTime(candidate.sendTime());
@@ -87,7 +90,8 @@ public class WeComChatDataStore {
             long to = toExclusive.getEpochSecond();
             List<StoredMessageReference> result = new ArrayList<>();
             for (WeComChatDataMessageEntity entity : messageMapper.findBySendTimeRange(from, to)) {
-                result.add(new StoredMessageReference(entity.getMsgid(), entity.getSecretKey(),
+                result.add(new StoredMessageReference(entity.getMsgid(),
+                        credentialProtector.revealSecretKey(entity.getSecretKey()),
                         entity.getExternalUserid(), entity.getUserid(), entity.getSendTime(),
                         entity.getMsgtype()));
             }
