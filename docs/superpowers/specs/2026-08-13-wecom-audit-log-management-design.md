@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-13
 
-**状态：** 已实施，Task 8 验收完成，待全量验收
+**状态：** 已实施，全量验收完成
 
 **适用运行面：** `demo/message-center-demo`
 
@@ -410,3 +410,13 @@ AuditTrail 继续使用字段白名单，不接受任意 Map 透传。错误只�
 - 配置与文档门禁：README/config 的旧键搜索无命中；五个 `AUDIT_*` 键及 Java/PowerShell `audit-status` 搜索均有命中。
 - brief 给出的 `README.md config.example.env src/main src/test` 旧键全仓搜索仍命中既有 `Config` 旧键拒绝逻辑和回归断言；该逻辑属于批准合同且不在 Task 8 允许修改范围，未删除。
 - `git diff --check` 针对 tracked 配置、README 和规格退出 0；新增回归测试的 `git diff --no-index --check` 没有 whitespace 诊断（因文件存在差异按 no-index 语义返回 1）；本轮未执行 stage/commit。
+
+## Task 9 全量验收证据
+
+- 审计专项命令覆盖 10 个测试类，共 `128` 项测试，`0` failures、`0` errors；其中 `BoundedAuditFileTest` 的 `32` 项测试包含跨进程 writer 锁、轮转、gzip、恢复、预算和磁盘阈值合同。
+- `mvn -q test` 在默认沙箱首次因本地 HTTP 测试服务器无法 bind 产生 `52` 个 `SocketException: Operation not permitted`；允许本地端口后原命令重跑为 `435` 项测试全部通过，`0` failures、`0` errors。
+- 首次 `mvn -q verify` 发现 `WeComAuthorizationServiceTest` 在 Store 版本更新后、异步公钥注册触发前立即断言的竞态。失败用例可单独稳定复现；测试改为等待其实际断言的注册副作用后，单用例连续运行 `20` 次无失败，授权 service 测试 `16/16` 通过。随后 `mvn -q verify` 通过，Surefire `435/435`，Failsafe 完成 `24` 项集成测试且 `0` failures、`0` errors。
+- `mvn -q -DskipTests package` 通过，生成 `demo/message-center-demo/target/message-center-demo-0.1.0.jar`，大小约 `898 KiB`；用 ZIP 目录验证 `App`、`AuditStatusReporter` 和 `BoundedAuditFile` class 已进入 JAR。
+- 隔离临时目录 CLI 实测：空审计目录返回 `healthy`/exit `0`；写入超过 60 秒的合法开放授权 attempt 返回 `degraded`/exit `2` 和 `AUDIT_OPEN_ATTEMPT_STALE`；仅设置旧 max-bytes 键返回 `failed`/exit `3` 和 `AUDIT_CONFIGURATION_INVALID`。三种场景 stderr 均为空，0/2 场景执行前后审计文件列表、大小和 mtime 不变。
+- `AuditSensitiveFieldRegressionTest` 扫描 current JSONL、gzip 解压内容、viewer warning、授权 final 写失败 stderr 和 status stdout，`1/1` 通过；README/config 的两个旧键零命中。
+- 任务范围 `git diff --check` 通过；嵌套仓仅 `target/phone-call-transcription-runtime`，未暂存、未提交。Docker/Testcontainers 在 verify 中可用，没有未运行的外部依赖门禁。

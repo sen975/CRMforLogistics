@@ -1164,3 +1164,14 @@ Expected: 本任务文件无 whitespace error；无关 dirty 文件仍原样存�
 - 旧配置启动失败，新配置、README 和 PowerShell 命令一致。
 - Maven 专项、完整 test、verify、package 和敏感字段门禁均有当轮证据。
 - 只提交本任务文件，现有 Spring/ChatApp/WhatsApp/FunASR 等无关 dirty 修改未被纳入。
+
+## Task 9 验收记录（2026-08-14）
+
+- 审计专项：10 个测试类，`128` tests，`0` failures、`0` errors。
+- 完整测试：默认沙箱因禁止本地 HTTP bind 出现 `52` 个环境错误；在允许本地端口的同一工作树重跑 `mvn -q test`，`435/435` 通过。
+- Verify：首次暴露授权异步注册断言竞态；单用例修复前稳定失败，修复后连续 `20` 次通过，授权 service 测试 `16/16` 通过。最终 `mvn -q verify` 通过，Surefire `435/435`，Failsafe `24/24`。
+- Package：`mvn -q -DskipTests package` 通过，生成 `target/message-center-demo-0.1.0.jar`（约 `898 KiB`），核心审计 class 已验证进入 JAR。
+- CLI：隔离目录实测 `healthy=0`、`degraded=2`、`failed=3`；旧配置稳定返回 `AUDIT_CONFIGURATION_INVALID`，stale open attempt 返回 `AUDIT_OPEN_ATTEMPT_STALE`，stderr 为空且只读场景未修改审计文件。
+- 安全与存储：敏感字段总门禁 `1/1` 通过；跨进程锁、gzip、保留期、预算、磁盘阈值和恢复由 `BoundedAuditFileTest` `32/32` 覆盖。
+- Git：任务范围 whitespace 检查通过；嵌套仓 `target/phone-call-transcription-runtime` 未进入暂存或提交；用户原有 Spring/ChatApp/WhatsApp/FunASR 等脏改动保持原样。
+- 外部依赖：Docker/Testcontainers 的 `24` 项集成门禁实际运行通过，无未闭合外部依赖验收。

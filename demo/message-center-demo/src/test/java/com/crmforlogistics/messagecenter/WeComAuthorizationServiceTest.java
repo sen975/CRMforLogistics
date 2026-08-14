@@ -274,6 +274,7 @@ class WeComAuthorizationServiceTest {
             assertEquals("permanent-reset-code",
                     store.resolveActive("dk-suite", "ww-corp").permanentCode());
             assertEquals("permanent-reset-code", gateway.lastAuthInfoPermanentCode);
+            waitUntil(() -> registrationRequests.get() == 1);
             assertEquals(1, registrationRequests.get());
         }
     }
