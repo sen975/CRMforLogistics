@@ -17,6 +17,8 @@ public class WeComInstallationEntity {
     private String permanentCode;
     private String authStatus;
     private Instant authorizedAt;
+    private String lastAuthorizationEventId;
+    private Instant lastAuthorizationEventAt;
     private Instant lastSuiteTicketAt;
     private Instant createdAt;
     private Instant updatedAt;
@@ -43,6 +45,16 @@ public class WeComInstallationEntity {
 
     public Instant getAuthorizedAt() { return authorizedAt; }
     public void setAuthorizedAt(Instant authorizedAt) { this.authorizedAt = authorizedAt; }
+
+    public String getLastAuthorizationEventId() { return lastAuthorizationEventId; }
+    public void setLastAuthorizationEventId(String lastAuthorizationEventId) {
+        this.lastAuthorizationEventId = lastAuthorizationEventId;
+    }
+
+    public Instant getLastAuthorizationEventAt() { return lastAuthorizationEventAt; }
+    public void setLastAuthorizationEventAt(Instant lastAuthorizationEventAt) {
+        this.lastAuthorizationEventAt = lastAuthorizationEventAt;
+    }
 
     public Instant getLastSuiteTicketAt() { return lastSuiteTicketAt; }
     public void setLastSuiteTicketAt(Instant lastSuiteTicketAt) { this.lastSuiteTicketAt = lastSuiteTicketAt; }

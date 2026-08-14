@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Mapper
@@ -15,6 +16,9 @@ public interface RoleMapper extends BaseMapper<RoleEntity> {
 
     @Select("SELECT r.* FROM roles r JOIN user_roles ur ON r.id = ur.role_id WHERE ur.user_id = #{userId}")
     List<RoleEntity> findByUserId(@Param("userId") UUID userId);
+
+    @Select("SELECT * FROM roles WHERE code = #{code}")
+    Optional<RoleEntity> findByCode(@Param("code") String code);
 
     @Insert("INSERT INTO user_roles (user_id, role_id) VALUES (#{userId}, #{roleId})")
     int insertUserRole(@Param("userId") UUID userId, @Param("roleId") UUID roleId);
