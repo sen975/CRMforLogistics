@@ -1,17 +1,24 @@
 package com.crmforlogistics.messagecenter;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,6 +32,175 @@ class WeComAuthorizationServiceTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void neverMutatesStoreWhenAcceptedOrPendingCannotPersist() throws Exception {
+        WeComCallbackCodec.DecodedCallback create =
+                callback("create_auth", "ww-corp", "auth-code", "");
+
+        WeComAuthorizationStore acceptedStore = store(tempDir.resolve("accepted-installations.jsonl"));
+        RecordingAppender acceptedAppender = new RecordingAppender();
+        acceptedAppender.failResultOnce("accepted");
+        try (WeComAuthorizationService service = service(
+                acceptedStore, new FakeGateway(), acceptedAppender, 2)) {
+            assertFalse(service.handle(create).success());
+            assertTrue(acceptedStore.find("dk-suite", "ww-corp").isEmpty());
+            assertEquals(0, service.pendingCount());
+        }
+
+        WeComAuthorizationStore pendingStore = store(tempDir.resolve("pending-installations.jsonl"));
+        RecordingAppender pendingAppender = new RecordingAppender();
+        pendingAppender.failResultOnce("pending");
+        try (WeComAuthorizationService service = service(
+                pendingStore, new FakeGateway(), pendingAppender, 2)) {
+            assertTrue(service.handle(create).success());
+            waitUntil(() -> service.pendingCount() == 0);
+            assertTrue(pendingStore.find("dk-suite", "ww-corp").isEmpty());
+            assertTrue(pendingAppender.hasResult("failed"));
+        }
+    }
+
+    @Test
+    void closesFinalWriteFailureFromStoreMarkerOnRestart() throws Exception {
+        Path auditFile = tempDir.resolve("restart-audit.jsonl");
+        Config config = config(2, auditFile);
+        WeComAuthorizationStore store = store();
+        FileAppender firstAppender = new FileAppender(auditFile);
+        firstAppender.failResultOnce("succeeded");
+        WeComAuthorizationAuditTrail firstAudit = openAudit(config, firstAppender);
+
+        try (WeComAuthorizationService service = service(
+                config, store, new FakeGateway(), firstAudit)) {
+            assertTrue(service.handle(callback("create_auth", "ww-corp", "auth-code", "")).success());
+            waitUntil(() -> store.find("dk-suite", "ww-corp").isPresent());
+            waitUntil(() -> service.pendingCount() == 0);
+            assertTrue(firstAudit.index().openAttempts().stream()
+                    .anyMatch(open -> open.phase() == AuthorizationAuditIndex.Phase.PENDING));
+        }
+
+        FileAppender recoveredAppender = new FileAppender(auditFile);
+        WeComAuthorizationAuditTrail recoveredAudit = openAudit(config, recoveredAppender);
+        try (WeComAuthorizationService ignored = service(
+                config, store, new FakeGateway(), recoveredAudit)) {
+            assertTrue(recoveredAudit.index().openAttempts().isEmpty());
+            assertTrue(Files.readString(auditFile).contains("\"result\":\"succeeded\""));
+        }
+    }
+
+    @Test
+    void startupClosesAcceptedAndSuiteTicketPendingAsInterrupted() throws Exception {
+        Path acceptedFile = tempDir.resolve("accepted-recovery.jsonl");
+        Config acceptedConfig = config(2, acceptedFile);
+        FileAppender acceptedAppender = new FileAppender(acceptedFile);
+        WeComAuthorizationAuditTrail acceptedAudit = openAudit(acceptedConfig, acceptedAppender);
+        acceptedAudit.begin(callback("create_auth", "ww-corp", "auth-code", ""));
+        WeComAuthorizationAuditTrail acceptedReloaded = openAudit(
+                acceptedConfig, new FileAppender(acceptedFile));
+        try (WeComAuthorizationService ignored = service(
+                acceptedConfig, store(tempDir.resolve("accepted-recovery-store.jsonl")),
+                new FakeGateway(), acceptedReloaded)) {
+            assertTrue(acceptedReloaded.index().openAttempts().isEmpty());
+            assertTrue(Files.readString(acceptedFile)
+                    .contains("WECOM_AUTHORIZATION_PROCESS_INTERRUPTED"));
+        }
+
+        Path ticketFile = tempDir.resolve("ticket-recovery.jsonl");
+        Config ticketConfig = config(2, ticketFile);
+        FileAppender ticketAppender = new FileAppender(ticketFile);
+        WeComAuthorizationAuditTrail ticketAudit = openAudit(ticketConfig, ticketAppender);
+        WeComAuthorizationAuditTrail.AuthorizationAuditAttempt ticketAttempt = ticketAudit
+                .begin(callback("suite_ticket", "", "", "ticket-1")).attempt();
+        ticketAudit.pending(ticketAttempt, "", WeComAuthorizationStore.AuthStatus.ACTIVE, 0);
+        WeComAuthorizationAuditTrail ticketReloaded = openAudit(
+                ticketConfig, new FileAppender(ticketFile));
+        FakeGateway restartedGateway = new FakeGateway();
+        try (WeComAuthorizationService ignored = service(
+                ticketConfig, store(tempDir.resolve("ticket-recovery-store.jsonl")),
+                restartedGateway, ticketReloaded)) {
+            assertTrue(ticketReloaded.index().openAttempts().isEmpty());
+            assertEquals("", restartedGateway.suiteTicket);
+            assertTrue(Files.readString(ticketFile)
+                    .contains("WECOM_AUTHORIZATION_PROCESS_INTERRUPTED"));
+        }
+    }
+
+    @Test
+    void pendingStoreConflictKeepsGateClosedToDifferentEvents() throws Exception {
+        Path auditFile = tempDir.resolve("conflict-audit.jsonl");
+        Config config = config(2, auditFile);
+        FileAppender appender = new FileAppender(auditFile);
+        WeComAuthorizationAuditTrail audit = openAudit(config, appender);
+        WeComCallbackCodec.DecodedCallback pendingCallback =
+                callback("change_auth", "ww-corp", "", "");
+        WeComAuthorizationAuditTrail.AuthorizationAuditAttempt attempt =
+                audit.begin(pendingCallback).attempt();
+        audit.pending(attempt, "ww-corp", WeComAuthorizationStore.AuthStatus.ACTIVE, 1);
+
+        WeComAuthorizationStore store = store();
+        store.upsertActiveForEvent("dk-suite", "ww-corp", "1000002", "permanent-code",
+                "sha256:" + "1".repeat(64), NOW.minusSeconds(1));
+        try (WeComAuthorizationService service = service(config, store, new FakeGateway(),
+                openAudit(config, new FileAppender(auditFile)))) {
+            assertFalse(service.handle(new WeComCallbackCodec.DecodedCallback(
+                    "dk-suite", "cancel_auth", "ww-corp", "", "", "", NOW.plusSeconds(1))).success());
+            assertEquals(WeComAuthorizationStore.AuthStatus.ACTIVE,
+                    store.find("dk-suite", "ww-corp").orElseThrow().authStatus());
+        }
+    }
+
+    @Test
+    void replayUsesPersistedSuccessWithoutIncrementingStoreVersion() throws Exception {
+        RecordingAppender appender = new RecordingAppender();
+        WeComAuthorizationStore store = store();
+        FakeGateway gateway = new FakeGateway();
+        WeComCallbackCodec.DecodedCallback create =
+                callback("create_auth", "ww-corp", "auth-code", "");
+        try (WeComAuthorizationService service = service(store, gateway, appender, 2)) {
+            assertTrue(service.handle(create).success());
+            waitUntil(() -> store.find("dk-suite", "ww-corp").isPresent());
+            waitUntil(() -> service.pendingCount() == 0);
+            long version = store.find("dk-suite", "ww-corp").orElseThrow().version();
+            assertTrue(service.handle(create).success());
+            Thread.sleep(50);
+            assertEquals(version, store.find("dk-suite", "ww-corp").orElseThrow().version());
+            assertEquals(1, gateway.permanentCodeCalls.get());
+        }
+    }
+
+    @Test
+    void queueFullClosesAcceptedAttemptWithFailed() throws Exception {
+        RecordingAppender appender = new RecordingAppender();
+        FakeGateway gateway = new FakeGateway();
+        gateway.blockFirstCall = true;
+        try (WeComAuthorizationService service = service(store(), gateway, appender, 1)) {
+            assertTrue(service.handle(callback("create_auth", "ww-one", "code-one", "")).success());
+            assertTrue(gateway.firstCallEntered.await(1, TimeUnit.SECONDS));
+            assertTrue(service.handle(callback("create_auth", "ww-two", "code-two", "")).success());
+            assertFalse(service.handle(callback("create_auth", "ww-three", "code-three", "")).success());
+            assertTrue(appender.contains("\"errorCode\":\"WECOM_AUTHORIZATION_QUEUE_FULL\""));
+            gateway.releaseFirstCall.countDown();
+        } finally {
+            gateway.releaseFirstCall.countDown();
+        }
+    }
+
+    @Test
+    void oneTimeAuthCodeFailureBeforePendingDoesNotPersistCredential() throws Exception {
+        RecordingAppender appender = new RecordingAppender();
+        appender.failResultOnce("pending");
+        WeComAuthorizationStore store = store();
+        FakeGateway gateway = new FakeGateway();
+        try (WeComAuthorizationService service = service(store, gateway, appender, 2)) {
+            assertTrue(service.handle(callback(
+                    "create_auth", "ww-corp", "one-time-auth-code", "")).success());
+            waitUntil(() -> service.pendingCount() == 0);
+            assertEquals(1, gateway.permanentCodeCalls.get());
+            assertTrue(store.find("dk-suite", "ww-corp").isEmpty());
+            assertTrue(appender.hasResult("failed"));
+            assertFalse(appender.joined().contains("one-time-auth-code"));
+            assertFalse(appender.joined().contains("permanent-one-time-auth-code"));
+        }
+    }
 
     @Test
     void handlesTicketCreateChangeReplayAndCancellation() throws Exception {
@@ -161,21 +337,20 @@ class WeComAuthorizationServiceTest {
     @Test
     void recordsSanitizedUpstreamFailureForPermanentCodeReset() throws Exception {
         WeComAuthorizationStore store = store();
-        store.upsertActive("dk-suite", "ww-corp", "1000002", "old-permanent-code");
+        WeComAuthorizationStore.Installation original =
+                store.upsertActive("dk-suite", "ww-corp", "1000002", "old-permanent-code");
         FakeGateway gateway = new FakeGateway();
         gateway.failAuthInfoWithUpstreamDetails = true;
-        Path auditFile = tempDir.resolve("authorization-audit.jsonl");
-        WeComAuthorizationAuditTrail audit = new WeComAuthorizationAuditTrail(
-                auditFile, 4_096L, Clock.fixed(NOW, ZoneOffset.UTC));
-        try (WeComAuthorizationService service = new WeComAuthorizationService(
-                config(2), store, gateway, () -> {}, audit)) {
+        RecordingAppender appender = new RecordingAppender();
+        try (WeComAuthorizationService service = service(store, gateway, appender, 2)) {
             assertTrue(service.handle(callback("reset_permanent_code", "", "sensitive-auth-code", "")).success());
-            waitUntil(() -> store.find("dk-suite", "ww-corp").orElseThrow().authStatus()
-                    == WeComAuthorizationStore.AuthStatus.FAILED);
-            waitUntil(() -> Files.exists(auditFile)
-                    && Files.readString(auditFile).contains("\"result\":\"failed\""));
+            waitUntil(() -> service.pendingCount() == 0);
 
-            String entries = Files.readString(auditFile);
+            WeComAuthorizationStore.Installation after =
+                    store.find("dk-suite", "ww-corp").orElseThrow();
+            assertEquals(original.version(), after.version());
+            assertEquals(WeComAuthorizationStore.AuthStatus.ACTIVE, after.authStatus());
+            String entries = appender.joined();
             assertTrue(entries.contains("\"action\":\"wecom.authorization.reset_permanent_code\""));
             assertTrue(entries.contains("\"authCorpId\":\"ww-corp\""));
             assertTrue(entries.contains("\"errorCode\":\"WECOM_UPSTREAM_UNAVAILABLE\""));
@@ -211,14 +386,16 @@ class WeComAuthorizationServiceTest {
     @Test
     void failedChangeCanRecoverButCancellationCannotBeOverwritten() throws Exception {
         WeComAuthorizationStore store = store();
-        store.upsertActive("dk-suite", "ww-corp", "1000002", "permanent-code");
+        WeComAuthorizationStore.Installation original =
+                store.upsertActive("dk-suite", "ww-corp", "1000002", "permanent-code");
         FakeGateway gateway = new FakeGateway();
         gateway.failAuthInfoOnce = true;
         WeComCallbackCodec.DecodedCallback change = callback("change_auth", "ww-corp", "", "");
         try (WeComAuthorizationService service = new WeComAuthorizationService(config(2), store, gateway)) {
             assertTrue(service.handle(change).success());
-            waitUntil(() -> store.find("dk-suite", "ww-corp").orElseThrow().authStatus()
-                    == WeComAuthorizationStore.AuthStatus.FAILED);
+            waitUntil(() -> service.pendingCount() == 0);
+            assertEquals(original.version(),
+                    store.find("dk-suite", "ww-corp").orElseThrow().version());
             gateway.agentId = "1000003";
             assertTrue(service.handle(change).success());
             waitUntil(() -> {
@@ -246,19 +423,48 @@ class WeComAuthorizationServiceTest {
     }
 
     private Config config(int capacity) {
+        return config(capacity, tempDir.resolve("authorization-audit.jsonl"));
+    }
+
+    private Config config(int capacity, Path auditFile) {
         return new Config(Map.of(
                 "WECOM_SUITE_ID", "dk-suite",
                 "WECOM_AUTHORIZATION_QUEUE_CAPACITY", Integer.toString(capacity),
-                "WECOM_AUTHORIZATION_AUDIT_FILE", tempDir.resolve("authorization-audit.jsonl").toString()));
+                "WECOM_AUTHORIZATION_AUDIT_FILE", auditFile.toString()));
     }
 
     private WeComAuthorizationStore store() {
+        return store(tempDir.resolve("installations.jsonl"));
+    }
+
+    private WeComAuthorizationStore store(Path file) {
         byte[] key = new byte[32];
         byte[] seed = "wecom-authorization-service".getBytes(StandardCharsets.UTF_8);
         System.arraycopy(seed, 0, key, 0, seed.length);
-        return WeComAuthorizationStore.forTests(tempDir.resolve("installations.jsonl"),
+        return WeComAuthorizationStore.forTests(file,
                 CredentialCipher.fromBase64Key(Base64.getEncoder().encodeToString(key)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    private WeComAuthorizationService service(WeComAuthorizationStore store, FakeGateway gateway,
+                                              RecordingAppender appender, int capacity)
+            throws Exception {
+        Config config = config(capacity);
+        return service(config, store, gateway,
+                WeComAuthorizationAuditTrail.forTests(Clock.fixed(NOW, ZoneOffset.UTC), appender));
+    }
+
+    private WeComAuthorizationService service(Config config, WeComAuthorizationStore store,
+                                              FakeGateway gateway,
+                                              WeComAuthorizationAuditTrail auditTrail) {
+        return new WeComAuthorizationService(config, store, gateway, () -> {}, auditTrail);
+    }
+
+    private WeComAuthorizationAuditTrail openAudit(Config config,
+                                                   WeComAuthorizationAuditTrail.RequiredLineAppender appender)
+            throws AuditStorageException {
+        return WeComAuthorizationAuditTrail.open(config.authorizationAuditSettings(),
+                Clock.fixed(NOW, ZoneOffset.UTC), appender);
     }
 
     private static WeComCallbackCodec.DecodedCallback callback(String type, String corpId,
@@ -276,6 +482,60 @@ class WeComAuthorizationServiceTest {
 
     private interface CheckedCondition {
         boolean matches() throws Exception;
+    }
+
+    private static class RecordingAppender implements WeComAuthorizationAuditTrail.RequiredLineAppender {
+        private final List<String> lines = new ArrayList<>();
+        private final Set<String> failOnce = new HashSet<>();
+
+        synchronized void failResultOnce(String result) {
+            failOnce.add(result);
+        }
+
+        @Override
+        public synchronized void append(String line) throws AuditStorageException {
+            String result = JsonParser.parseString(line).getAsJsonObject()
+                    .get("result").getAsString();
+            if (failOnce.remove(result)) {
+                throw new AuditStorageException("AUDIT_ROTATION_FAILED",
+                        "wecom-authorization", null);
+            }
+            lines.add(line);
+        }
+
+        synchronized boolean hasResult(String result) {
+            return lines.stream().map(JsonParser::parseString)
+                    .map(element -> element.getAsJsonObject().get("result").getAsString())
+                    .anyMatch(result::equals);
+        }
+
+        synchronized boolean contains(String fragment) {
+            return joined().contains(fragment);
+        }
+
+        synchronized String joined() {
+            return String.join("", lines);
+        }
+    }
+
+    private static final class FileAppender extends RecordingAppender {
+        private final Path file;
+
+        private FileAppender(Path file) {
+            this.file = file;
+        }
+
+        @Override
+        public synchronized void append(String line) throws AuditStorageException {
+            super.append(line);
+            try {
+                Files.writeString(file, line, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (IOException exception) {
+                throw new AuditStorageException("AUDIT_ROTATION_FAILED",
+                        "wecom-authorization", exception);
+            }
+        }
     }
 
     private static final class FakeGateway implements WeComAuthorizationClient {

@@ -13,10 +13,61 @@ final class AuditRuntime implements AutoCloseable {
 
     private final BoundedAuditFile viewerWriter;
     private final WeComViewerAuditTrail viewerTrail;
+    private final BoundedAuditFile authorizationWriter;
+    private final WeComAuthorizationAuditTrail authorizationTrail;
 
-    private AuditRuntime(BoundedAuditFile viewerWriter, WeComViewerAuditTrail viewerTrail) {
+    private AuditRuntime(BoundedAuditFile viewerWriter, WeComViewerAuditTrail viewerTrail,
+                         BoundedAuditFile authorizationWriter,
+                         WeComAuthorizationAuditTrail authorizationTrail) {
         this.viewerWriter = viewerWriter;
         this.viewerTrail = viewerTrail;
+        this.authorizationWriter = authorizationWriter;
+        this.authorizationTrail = authorizationTrail;
+    }
+
+    static AuditRuntime open(Config config) throws AuditStorageException {
+        return open(config, Clock.systemUTC(), AuditDiskSpaceProbe.system(),
+                line -> System.err.println(line));
+    }
+
+    static AuditRuntime open(Config config, Clock clock,
+                             AuditDiskSpaceProbe diskSpaceProbe,
+                             Consumer<String> warningSink) throws AuditStorageException {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(diskSpaceProbe, "diskSpaceProbe");
+        Objects.requireNonNull(warningSink, "warningSink");
+        config.validateAuditConfiguration();
+        AuditRuntime viewer = openViewer(config, clock, diskSpaceProbe, warningSink);
+        BoundedAuditFile authorizationWriter = null;
+        try {
+            AuditFileSettings settings = config.authorizationAuditSettings();
+            authorizationWriter = BoundedAuditFile.acquire(
+                    "wecom-authorization", settings, clock, diskSpaceProbe);
+            authorizationWriter.prepareForAuthorizationRecovery();
+            BoundedAuditFile finalWriter = authorizationWriter;
+            WeComAuthorizationAuditTrail authorizationTrail =
+                    WeComAuthorizationAuditTrail.open(settings, clock,
+                            line -> finalWriter.append(
+                                    line.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                    BoundedAuditFile.Durability.REQUIRED));
+            return new AuditRuntime(viewer.viewerWriter, viewer.viewerTrail,
+                    authorizationWriter, authorizationTrail);
+        } catch (AuditStorageException | RuntimeException failure) {
+            if (authorizationWriter != null) {
+                try {
+                    authorizationWriter.close();
+                } catch (AuditStorageException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+            }
+            try {
+                viewer.close();
+            } catch (AuditStorageException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
     }
 
     static AuditRuntime openViewer(Config config) throws AuditStorageException {
@@ -55,7 +106,8 @@ final class AuditRuntime implements AutoCloseable {
             writer.enableRetentionCleanup();
             AuditWarningReporter warnings = new AuditWarningReporter(
                     clock, settings.warningInterval(), warningSink);
-            return new AuditRuntime(writer, new WeComViewerAuditTrail(clock, writer::append, warnings));
+            return new AuditRuntime(writer,
+                    new WeComViewerAuditTrail(clock, writer::append, warnings), null, null);
         } catch (AuditStorageException | RuntimeException failure) {
             try {
                 writer.close();
@@ -70,12 +122,40 @@ final class AuditRuntime implements AutoCloseable {
         return viewerTrail;
     }
 
+    WeComAuthorizationAuditTrail authorizationTrail() {
+        if (authorizationTrail == null) {
+            throw new IllegalStateException("authorization audit trail is unavailable");
+        }
+        return authorizationTrail;
+    }
+
+    void enableAuthorizationRetentionCleanup() {
+        if (authorizationWriter == null) {
+            throw new IllegalStateException("authorization audit writer is unavailable");
+        }
+        authorizationWriter.enableRetentionCleanup();
+    }
+
     BoundedAuditFile.StartupState viewerStartupState() {
         return viewerWriter.startupState();
     }
 
     @Override
     public void close() throws AuditStorageException {
-        viewerWriter.close();
+        AuditStorageException failure = null;
+        if (authorizationWriter != null) {
+            try {
+                authorizationWriter.close();
+            } catch (AuditStorageException closeFailure) {
+                failure = closeFailure;
+            }
+        }
+        try {
+            viewerWriter.close();
+        } catch (AuditStorageException closeFailure) {
+            if (failure == null) failure = closeFailure;
+            else failure.addSuppressed(closeFailure);
+        }
+        if (failure != null) throw failure;
     }
 }

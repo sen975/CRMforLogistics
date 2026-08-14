@@ -191,7 +191,7 @@ public class App {
     }
 
     private static void startWeb(Config config) throws Exception {
-        AuditRuntime auditRuntime = AuditRuntime.openViewer(config);
+        AuditRuntime auditRuntime = AuditRuntime.open(config);
         try {
             startWebWithAudit(config, auditRuntime);
         } catch (Exception startupFailure) {
@@ -223,7 +223,6 @@ public class App {
         if (Files.exists(config.credentialMasterKeyFile())) {
             authorizationStore = new WeComAuthorizationStore(config);
         }
-        WeComAuthorizationService authorizationService = null;
         WeComAuthorizationGateway authorizationGateway = null;
         WeComCallbackCodec callbackCodec = null;
         if (!config.wecomSuiteId().isBlank()) {
@@ -236,10 +235,6 @@ public class App {
                 ? null : new WeComAccessTokenService(config, authorizationGateway);
         WeComChatDataPublicKeyRegistrar publicKeyRegistrar = WeComChatDataPublicKeyRegistrar.open(
                 config, authorizationStore, accessTokens);
-        if (authorizationGateway != null) {
-            authorizationService = new WeComAuthorizationService(config, authorizationStore,
-                    authorizationGateway, publicKeyRegistrar);
-        }
         ViewerAuditSink viewerAudit = auditRuntime.viewerTrail();
         WeComViewerService weComViewer = accessTokens == null
                 ? new WeComViewerService(config, authorizationStore, null, null, viewerAudit)
@@ -263,18 +258,25 @@ public class App {
                     audioSessions, localWeCom == null ? weComViewer::requireViewerActor : localWeCom::requireViewerActor,
                     phoneRepository, store);
         }
+        ChatAppTemplateSyncRuntime templateRuntime = ChatAppTemplateSyncRuntime.open(
+                config, templateSynchronizer, events::publishTemplatesChanged);
+        WeComAuthorizationService authorizationService = null;
+        if (authorizationGateway != null) {
+            authorizationService = new WeComAuthorizationService(config, authorizationStore,
+                    authorizationGateway, publicKeyRegistrar, auditRuntime.authorizationTrail(),
+                    auditRuntime::enableAuthorizationRetentionCleanup);
+        }
         WeComAuthorizationService finalAuthorizationService = authorizationService;
         WeComChatDataPublicKeyRegistrar finalPublicKeyRegistrar = publicKeyRegistrar;
         WeComCallbackCodec finalCallbackCodec = callbackCodec;
         WeComChatDataSyncService finalChatDataSync = chatDataSync;
         LocalWeComDevelopmentService finalLocalWeCom = localWeCom;
-        ChatAppTemplateSyncRuntime templateRuntime = ChatAppTemplateSyncRuntime.open(
-                config, templateSynchronizer, events::publishTemplatesChanged);
         CallRecordHttpAdapter finalCallRecordHttp = callRecordHttp;
         HttpServer server;
         try {
             server = HttpServer.create(new InetSocketAddress(config.webBindAddress(), config.webPort()), 0);
         } catch (Exception startupFailure) {
+            if (finalAuthorizationService != null) finalAuthorizationService.close();
             closeCallRuntime(callRuntime);
             dailySummary.close();
             weComChatDataRuntime.close();
@@ -282,29 +284,31 @@ public class App {
             closeAuditRuntime(auditRuntime, startupFailure);
             throw startupFailure;
         }
-        server.createContext("/", exchange -> {
-            try {
-                if (finalCallRecordHttp != null && finalCallRecordHttp.handle(exchange)) return;
-                if (finalCallRecordHttp == null && isCallRecordPath(exchange)) {
-                    CallRecordException failure = callRuntime.startupFailure();
-                    writeCallRuntimeError(exchange, failure);
-                    return;
-                }
-                route(exchange, config, store, mailSender, chatAppSender, emailSyncService,
-                        messageSynchronizer, weComReceiver, weComViewer, weComLoginAttempts,
-                        finalChatDataSync, finalLocalWeCom, finalCallbackCodec, finalAuthorizationService, events);
-            } catch (Exception ex) {
-                writeRouteError(exchange, ex);
-            }
-        });
-        server.setExecutor(Executors.newCachedThreadPool());
         try {
+            server.createContext("/", exchange -> {
+                try {
+                    if (finalCallRecordHttp != null && finalCallRecordHttp.handle(exchange)) return;
+                    if (finalCallRecordHttp == null && isCallRecordPath(exchange)) {
+                        CallRecordException failure = callRuntime.startupFailure();
+                        writeCallRuntimeError(exchange, failure);
+                        return;
+                    }
+                    route(exchange, config, store, mailSender, chatAppSender, emailSyncService,
+                            messageSynchronizer, weComReceiver, weComViewer, weComLoginAttempts,
+                            finalChatDataSync, finalLocalWeCom, finalCallbackCodec,
+                            finalAuthorizationService, events);
+                } catch (Exception ex) {
+                    writeRouteError(exchange, ex);
+                }
+            });
+            server.setExecutor(Executors.newCachedThreadPool());
             server.start();
             templateRuntime.start();
             messageRuntime.start();
             weComChatDataRuntime.start();
         } catch (Exception startupFailure) {
             server.stop(0);
+            if (finalAuthorizationService != null) finalAuthorizationService.close();
             closeCallRuntime(callRuntime);
             messageRuntime.close();
             templateRuntime.close();
