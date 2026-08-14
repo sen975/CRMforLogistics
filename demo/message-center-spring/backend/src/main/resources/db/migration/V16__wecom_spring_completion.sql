@@ -36,7 +36,7 @@ ALTER TABLE wecom_authorization_audit
         CHECK (result IN ('accepted', 'pending', 'succeeded', 'failed')),
     ADD CONSTRAINT ck_wecom_auth_audit_attempt
         CHECK ((event_id IS NULL AND attempt IS NULL)
-            OR (event_id IS NOT NULL AND attempt >= 1));
+            OR (event_id IS NOT NULL AND attempt IS NOT NULL AND attempt >= 1));
 
 CREATE UNIQUE INDEX ux_wecom_auth_audit_phase
     ON wecom_authorization_audit(event_id, attempt, result)
