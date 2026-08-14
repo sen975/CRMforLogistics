@@ -44,58 +44,99 @@ import java.util.concurrent.TimeUnit;
 
 public class App {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
+    private static final Gson AUDIT_GSON = new GsonBuilder().disableHtmlEscaping()
+            .serializeNulls().setPrettyPrinting().create();
     private static final Gson SSE_GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final int WECOM_VIEWER_REQUEST_MAX_BYTES = 4096;
 
     public static void main(String[] args) throws Exception {
-        Config config = Config.load(java.nio.file.Path.of(".env"));
+        int exitCode = run(args, Path.of(".env"), System.out, System.err);
         String command = args.length == 0 ? "web" : args[0];
+        if ("audit-status".equalsIgnoreCase(command) && exitCode != 0) {
+            System.exit(exitCode);
+        }
+    }
+
+    static int run(String[] args, Path envPath, java.io.PrintStream stdout,
+                   java.io.PrintStream stderr) throws Exception {
+        String command = args.length == 0 ? "web" : args[0];
+        if ("audit-status".equalsIgnoreCase(command)) {
+            Config config;
+            try {
+                config = Config.load(envPath);
+            } catch (Exception configurationFailure) {
+                return printAuditFailure(stdout, "AUDIT_CONFIGURATION_INVALID");
+            }
+            return run(args, config, stdout, stderr);
+        }
+        return run(args, Config.load(envPath), stdout, stderr);
+    }
+
+    static int run(String[] args, Config config, java.io.PrintStream stdout,
+                   java.io.PrintStream stderr) throws Exception {
+        String command = args.length == 0 ? "web" : args[0];
+        if ("audit-status".equalsIgnoreCase(command)) {
+            if (args.length != 1) return printAuditFailure(stdout, "AUDIT_STATUS_ARGUMENT_INVALID");
+            AuditStatusReporter.Report report = AuditStatusReporter.from(
+                    config, Clock.systemUTC(), AuditDiskSpaceProbe.system()).report();
+            stdout.println(AUDIT_GSON.toJson(report));
+            return report.exitCode();
+        }
         if ("web".equalsIgnoreCase(command)) {
             startWeb(config);
-            return;
+            return 0;
         }
         if ("bootstrap-admin".equalsIgnoreCase(command)) {
             BootstrapResult result = bootstrapAdmin(config);
-            System.out.println(GSON.toJson(Map.of(
+            stdout.println(GSON.toJson(Map.of(
                     "created", result.created(),
                     "userId", result.userId() == null ? "" : result.userId().toString(),
                     "code", result.code())));
-            return;
+            return 0;
         }
         if ("contacts".equalsIgnoreCase(command)) {
-            System.out.println(GSON.toJson(new UnifiedMessageStore(config).contacts()));
-            return;
+            stdout.println(GSON.toJson(new UnifiedMessageStore(config).contacts()));
+            return 0;
         }
         if ("receive".equalsIgnoreCase(command)) {
-            System.out.println(GSON.toJson(new EmailSyncService(config).receiveLatest()));
-            return;
+            stdout.println(GSON.toJson(new EmailSyncService(config).receiveLatest()));
+            return 0;
         }
         if ("sync".equalsIgnoreCase(command)) {
             ChatAppTemplateSynchronizer templates = ChatAppTemplateSynchronizer.create(config);
             ChatAppHistorySyncService syncService = new ChatAppHistorySyncService(config, templates);
             try (ChatAppMessageSynchronizer synchronizer =
                          ChatAppMessageSynchronizer.create(config, syncService)) {
-                System.out.println(GSON.toJson(synchronizer.sync().result()));
+                stdout.println(GSON.toJson(synchronizer.sync().result()));
             }
-            return;
+            return 0;
         }
         if ("sync-templates".equalsIgnoreCase(command)) {
-            System.out.println(GSON.toJson(new ChatAppHistorySyncService(config).syncTemplates()));
-            return;
+            stdout.println(GSON.toJson(new ChatAppHistorySyncService(config).syncTemplates()));
+            return 0;
         }
         if ("wecom-access-token".equalsIgnoreCase(command)) {
             String authCorpId = requiredOption(args, "--auth-corp-id");
-            System.out.println(fetchWeComAccessToken(config, authCorpId));
-            return;
+            stdout.println(fetchWeComAccessToken(config, authCorpId));
+            return 0;
         }
         if ("wecom-debug-access-token".equalsIgnoreCase(command)) {
             if (args.length != 1) {
                 throw new IllegalArgumentException("Usage: wecom-debug-access-token");
             }
-            System.out.println(fetchDebugWeComAccessToken(config));
-            return;
+            stdout.println(fetchDebugWeComAccessToken(config));
+            return 0;
         }
-        System.out.println("Usage: ./message-center-demo.ps1 web|bootstrap-admin|contacts|receive|sync|sync-templates|wecom-access-token --auth-corp-id <企业ID>|wecom-debug-access-token");
+        stdout.println("Usage: ./message-center-demo.ps1 web|bootstrap-admin|contacts|receive|sync|sync-templates|wecom-access-token --auth-corp-id <企业ID>|wecom-debug-access-token|audit-status");
+        return 0;
+    }
+
+    private static int printAuditFailure(java.io.PrintStream stdout, String code) {
+        AuditStatusReporter.Report report = new AuditStatusReporter.Report(
+                "failed", Clock.systemUTC().instant().toString(), List.of(),
+                List.of(new AuditStatusReporter.Issue("failed", "audit", code)));
+        stdout.println(AUDIT_GSON.toJson(report));
+        return report.exitCode();
     }
 
     static String fetchWeComAccessToken(Config config, String authCorpId) throws Exception {

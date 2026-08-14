@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("web", "contacts", "receive", "sync", "sync-templates", "wecom-access-token", "wecom-debug-access-token", "test", "compile")]
+    [ValidateSet("web", "contacts", "receive", "sync", "sync-templates", "wecom-access-token", "wecom-debug-access-token", "audit-status", "test", "compile")]
     [string]$Command = "web",
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Arguments = @()
