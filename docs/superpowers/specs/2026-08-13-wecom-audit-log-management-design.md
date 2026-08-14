@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-13
 
-**状态：** 用户已确认，实施计划已编写
+**状态：** 已实施，Task 8 验收完成，待全量验收
 
 **适用运行面：** `demo/message-center-demo`
 
@@ -402,3 +402,11 @@ AuditTrail 继续使用字段白名单，不接受任意 Map 透传。错误只�
 - `audit-status` 可在 web 服务运行时只读执行，输出不泄露审计正文。
 - 旧配置被明确拒绝，文档与实际配置合同一致。
 - 仅本设计范围内文件进入提交，工作区其他未提交修改保持原样。
+
+## Task 8 实施证据
+
+- RED：首次运行 `cd demo/message-center-demo && mvn -q -Dtest=AuditSensitiveFieldRegressionTest test` 以缺少 `produceAndCollectAllAuditSurfaces()` helper 编译失败，退出码 1。
+- GREEN：补齐真实 viewer/authorization/current/gzip/warning/status/stdout/stderr 采集后，运行同一命令通过；独立审查后又加入授权最终审计写入失败时 `WeComAuthorizationService` 的独立 stderr 路径，异常携带敏感 fixture 而输出只保留稳定错误码。非静默运行结果为 `Tests run: 1, Failures: 0, Errors: 0`，`BUILD SUCCESS`。
+- 配置与文档门禁：README/config 的旧键搜索无命中；五个 `AUDIT_*` 键及 Java/PowerShell `audit-status` 搜索均有命中。
+- brief 给出的 `README.md config.example.env src/main src/test` 旧键全仓搜索仍命中既有 `Config` 旧键拒绝逻辑和回归断言；该逻辑属于批准合同且不在 Task 8 允许修改范围，未删除。
+- `git diff --check` 针对 tracked 配置、README 和规格退出 0；新增回归测试的 `git diff --no-index --check` 没有 whitespace 诊断（因文件存在差异按 no-index 语义返回 1）；本轮未执行 stage/commit。

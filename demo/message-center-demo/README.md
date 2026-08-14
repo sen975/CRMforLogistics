@@ -292,7 +292,12 @@ WECOM_ENCODING_AES_KEY=授权回调配置的EncodingAESKey
 WECOM_CALLBACK_RECEIVE_ID=指令回调解密后的receiveId；与SuiteID一致时可留空
 WECOM_AUTHORIZATION_INSTALLATIONS_FILE=data/wecom-authorization-installations.jsonl
 WECOM_AUTHORIZATION_AUDIT_FILE=data/wecom-authorization-audit.jsonl
-WECOM_AUTHORIZATION_AUDIT_MAX_BYTES=1048576
+# 企业微信本地审计：当前文件 1 MiB，历史 gzip 保留最近 7 个 UTC 自然日
+AUDIT_RETENTION_DAYS=7
+AUDIT_FILE_MAX_BYTES=1048576
+AUDIT_STREAM_MAX_BYTES=8388608
+AUDIT_MIN_FREE_DISK_BYTES=67108864
+AUDIT_WARNING_INTERVAL_SECONDS=3600
 WECOM_LOGIN_AUTH_CORP_ID=登录首屏唯一对应的授权企业CorpID
 # 服务商“登录授权”的 SuiteID 和 SuiteSecret，两项必须同时填写
 WECOM_LOGIN_SUITE_ID=登录授权SuiteID
@@ -303,6 +308,53 @@ WECOM_LOGIN_REDIRECT_URI=http://localhost:8099/
 WECOM_LOGIN_ATTEMPT_TTL_SECONDS=300
 WECOM_LOGIN_MAX_PENDING=256
 ```
+
+#### 企业微信本地审计运维
+
+两条审计流都保留当前 `.jsonl` 文件；轮转后按 UTC 日期和当天序号生成
+`wecom-viewer-audit.2026-08-13.001.jsonl.gz` 这类归档，序号不会覆盖已有文件。
+保留当前日期及之前 6 个 UTC 日期，共 7 个自然日。当前文件上限为 1 MiB，
+每条流的当前、gzip 归档、恢复文件和未知文件总预算为 8 MiB；可用磁盘低于
+64 MiB 时，授权 required 写入会失败，viewer best-effort 写入继续业务并以限频
+结构化告警降级。viewer 的打开、登录、刷新和组件诊断不能因为审计写失败而改变
+原本的业务结果；授权安装、撤销和凭据变化必须先写入 `accepted`/`pending`，再
+修改安装状态并写入 `succeeded` 或 `failed`，启动和回调入口会执行可恢复对账。
+
+只读检查命令只接受 `audit-status`，stdout 输出一个 JSON 对象，stderr 不输出堆栈：
+
+```bash
+java -cp "message-center.jar:lib/*" \
+  com.crmforlogistics.messagecenter.App audit-status
+```
+
+Windows PowerShell 使用分号分隔 classpath：
+
+```powershell
+java -cp "message-center.jar;lib/*" `
+  com.crmforlogistics.messagecenter.App audit-status
+$LASTEXITCODE
+```
+
+退出码 `0` 表示 `healthy`，`2` 表示仍可运行但需要处理的 `degraded`，例如超过
+60 秒的授权开放尝试；`3` 表示 `failed`，包括配置、磁盘、预算、当前文件损坏或
+无法证明状态的授权协议冲突等阻断问题。
+
+当前文件可以直接观察，JSONL 归档先解压再查看：
+
+```bash
+tail -f data/wecom-viewer-audit.jsonl
+jq -c '.' data/wecom-authorization-audit.jsonl | tail
+gzip -cd data/wecom-viewer-audit.2026-08-13.001.jsonl.gz | jq -c '.'
+```
+
+不要手动截断当前 `.jsonl`，也不要删除 7 日保留窗口内的 gzip 证据。发现当前文件、
+gzip 或恢复临时文件损坏时，先停止相关写入并把现场受控复制到隔离目录，再通过
+`audit-status` 记录状态，最后由人工将损坏文件移出审计目录；系统不会为腾空间
+自动删除保留期内证据，也不会拼接或改写损坏内容。旧的两个按流设置的审计大小键
+已删除，环境中只要仍存在任一旧键，启动会明确失败；部署前删除旧键并添加上面的
+五个 `AUDIT_*` 键。一次性 `AuthCode` 在兑换成功、写入 `pending` 前发生进程崩溃时，
+本地可证明安装状态尚未修改，但该 code 可能已经被企业微信消费；恢复依赖企业微信
+重新投递可用回调或重新发起授权，不把 code 写入磁盘重放。
 
 8107 会把已验签的 Suite 回调写入本地授权审计 JSONL。审计只包含 `InfoType`、SuiteID、授权企业、处理结果和脱敏的企业微信错误字段，不包含 AuthCode、permanent_code、ticket、签名或密文。可用下面的命令查看最近事件：
 
@@ -381,7 +433,6 @@ WECOM_VIEWER_SESSION_TTL_SECONDS=300
 WECOM_VIEWER_MAX_MESSAGES=15
 WECOM_VIEWER_SESSION_RATE_LIMIT=10
 WECOM_VIEWER_AUDIT_FILE=data/wecom-viewer-audit.jsonl
-WECOM_VIEWER_AUDIT_MAX_BYTES=1048576
 WECOM_TOKEN_REFRESH_SKEW_SECONDS=300
 ```
 
@@ -456,7 +507,14 @@ DATABASE_PASSWORD_FILE=/www/wwwroot/message-center/secrets/postgres_password
 
 段内消息正文、方向和高度由企业微信官方组件负责，父页面不强制字体、字符截断或固定气泡高度；企业微信段也不使用统一消息选中态的大面积蓝色轮廓。点击官方消息后，合法 HTTPS 详情 iframe 在该段原位置展开，不再打开全局预览弹窗。多条消息可以同时展开，同一联系人最多保留 15 个详情 iframe；达到上限时优先收起最早展开且已离开视口的详情。详情内容高度采用企业微信返回的建议值，桌面限制为 120～560px，移动端还会限制为视口高度的 60%，卡片四周保留内边距且不产生横向滚动。刷新失败、组件错误、联系人窗口失效、组件淘汰、登录过期、消息离开时间线或页面真正卸载时会释放对应详情 iframe；进入浏览器前进/后退缓存时保留当前展开状态。
 
-本地 demo 的 viewer 打开、拒绝、限流、签名和组件错误写入有上限的 `WECOM_VIEWER_AUDIT_FILE`，不记录 `viewerAuthToken`、ticket 或 `secretKey`。会话同步失败时只追加安全诊断字段 `errorCode`、`upstreamErrcode`、`upstreamPath` 和 `upstreamHttpStatus`，不记录 access token、Secret、私钥、请求正文、响应正文或消息内容。文件达到 `WECOM_VIEWER_AUDIT_MAX_BYTES` 后 viewer 操作失败关闭，避免静默丢审计或无界增长。组件错误只接受与同一短时 token 最近成功读取的 viewer session，并通过原子消费阻断并发或顺序重放；事件请求拒绝合同之外的字段。该文件只是本地 demo audit adapter；生产模块化运行面应把同一结构化事件交给现有 `AuditService`，这不构成本地 viewer 的数据库依赖。
+本地 demo 的 viewer 打开、拒绝、限流、签名和组件错误写入有界的
+`WECOM_VIEWER_AUDIT_FILE`，按上述 1 MiB/7 日/8 MiB 规则轮转和压缩；不记录
+`viewerAuthToken`、ticket 或 `secretKey`。会话同步失败时只追加安全诊断字段
+`errorCode`、`upstreamErrcode`、`upstreamPath` 和 `upstreamHttpStatus`，不记录
+access token、Secret、私钥、请求正文、响应正文或消息内容。组件错误只接受与同一
+短时 token 最近成功读取的 viewer session，并通过原子消费阻断并发或顺序重放；
+事件请求拒绝合同之外的字段。该文件只是本地 demo audit adapter；生产模块化运行面
+应把同一结构化事件交给现有 `AuditService`，这不构成本地 viewer 的数据库依赖。
 
 ## Webhook
 
