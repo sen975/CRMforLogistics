@@ -75,6 +75,7 @@ Spring 版已经包含授权回调、文本发送、chatdata、viewer、公钥�
 - `suite_id varchar(128)`、`auth_corp_id varchar(128)`、`wecom_user_id varchar(128)`。
 - `(suite_id, auth_corp_id, wecom_user_id)` 唯一。
 - `bound_at`、`last_login_at`、`created_at`、`updated_at`。
+- `provisioning_source` 只允许 `AUTO_CREATED` 或 `BOUND_EXISTING`，用于判断解除绑定后是否还存在可用登录方式；禁止根据用户名格式推断。
 - `version bigint`，每次变更递增。
 
 绑定是一对一合同。重复交换同一登录 attempt 必须幂等；不同用户尝试占用已有企业微信身份返回 `WECOM_IDENTITY_ALREADY_BOUND`。已有用户已经绑定其他身份时返回 `WECOM_USER_ALREADY_BOUND`，不得静默改绑。
@@ -95,7 +96,7 @@ Spring 版已经包含授权回调、文本发送、chatdata、viewer、公钥�
 
 已认证用户调用 `POST /api/account/wecom-binding/attempts` 创建 `purpose=BIND` attempt。exchange 必须携带当前 CRM token，服务端把 state 绑定到当前 `user_id`；请求体不得传入目标用户 ID。绑定成功后返回绑定摘要，不替换当前 CRM session。
 
-账号设置提供绑定状态、发起扫码和解除绑定入口。解除绑定要求当前 CRM session，且只删除当前用户的绑定；解除后密码登录仍可用，企业微信登录不可用。自动创建且没有可用密码登录方式的用户不得直接解除唯一绑定，必须先建立其他登录方式；本轮没有密码设置功能，因此这类账号的解除操作返回 `WECOM_LAST_LOGIN_METHOD`。
+账号设置提供绑定状态、发起扫码和解除绑定入口。解除绑定要求当前 CRM session，且只删除当前用户的绑定；解除后密码登录仍可用，企业微信登录不可用。自动创建且没有可用密码登录方式的用户不得直接解除唯一绑定，必须先建立其他登录方式；本轮没有密码设置功能，因此 `provisioning_source=AUTO_CREATED` 的绑定解除操作返回 `WECOM_LAST_LOGIN_METHOD`。
 
 ## 6. HTTP 与安全边界
 
@@ -232,7 +233,7 @@ npm test
 npm run build
 
 cd ../../..
-rg -n 'wecom-suite-secret: [^$]|wecom-token: [^$]|wecom-encoding-aes-key: [^$]' \
+rg -n 'wecom-(suite-secret|login-suite-secret|secret|token|encoding-aes-key): [^$]' \
   demo/message-center-spring/backend/src/main/resources
 git diff --check
 ```
