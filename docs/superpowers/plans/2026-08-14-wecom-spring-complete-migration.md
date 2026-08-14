@@ -23,6 +23,224 @@
 
 ---
 
+### Task 0: 纳管可编译的 Spring 企业微信基线
+
+**Files:**
+- Modify with WeCom-only index hunk: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/AppConfig.java`
+- Modify: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComAuthorizationGateway.java`
+- Modify: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComInstallationService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/ResolvedInstallation.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/RestWeComViewerHttpGateway.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataCursorEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataException.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataGateway.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataMessageEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataPublicKeyGateway.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComDailySummaryEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComDailySummaryJobEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComPublicKeyRegistrationEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComSummaryException.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComViewerAuditEntity.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComViewerHttpGateway.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComChatDataCursorMapper.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComChatDataMessageMapper.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComDailySummaryMapper.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComPublicKeyRegistrationMapper.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComViewerAuditMapper.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/LocalWeComDevelopmentService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/MyBatisWeComDailySummaryRepository.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/ViewerAuditSink.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/ViewerSyncContext.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComAccessTokenService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComAuthorizationAuditTrail.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataCrypto.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataPublicKeyRegistrar.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataPublicKeyRegistrationStore.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataStore.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataSyncRuntime.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComChatDataSyncService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComDailySummaryBatcher.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComDailySummaryRepository.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComDailySummaryScheduler.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComDailySummaryService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComLoginAttemptService.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComSummaryGateway.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComViewerAuditTrail.java`
+- Create: `demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom/WeComViewerService.java`
+- Test: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComAccessTokenServiceTest.java`
+- Test: `demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComLoginAttemptServiceTest.java`
+
+**Interfaces:**
+- Consumes: current working-tree Spring WeCom implementation and tracked Task 1 schema/entity/mapper contracts.
+- Produces: a Git-tracked, clean-checkout-compilable baseline for Tasks 2-11; no new public API or product behavior.
+
+- [ ] **Step 1: Prove the clean Head is missing the baseline**
+
+Create a temporary directory from `git archive HEAD`, copy only the two existing WeCom tests into it, and run:
+
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+baseline_red_dir="$(mktemp -d /tmp/wecom-baseline-red.XXXXXX)"
+git archive HEAD | tar -x -C "${baseline_red_dir}"
+
+for relative_path in \
+  demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComAccessTokenServiceTest.java \
+  demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComLoginAttemptServiceTest.java
+do
+  mkdir -p "${baseline_red_dir}/$(dirname "${relative_path}")"
+  cp "${repo_root}/${relative_path}" "${baseline_red_dir}/${relative_path}"
+done
+
+cd "${baseline_red_dir}/demo/message-center-spring/backend"
+mvn -q -Dtest=WeComAccessTokenServiceTest,WeComLoginAttemptServiceTest test
+```
+
+Expected: RED during test compilation because `WeComAccessTokenService`, `WeComLoginAttemptService`, `ResolvedInstallation` and their current baseline dependencies are absent from clean Head. Record the exact missing-type output in the Task 0 report.
+
+- [ ] **Step 2: Build the exact baseline candidate without changing behavior**
+
+Create a new clean candidate, copy the listed current working-tree WeCom files, and keep the shared config synthetic:
+
+```bash
+cd "${repo_root}"
+baseline_candidate_dir="$(mktemp -d /tmp/wecom-baseline-candidate.XXXXXX)"
+git archive HEAD | tar -x -C "${baseline_candidate_dir}"
+
+for relative_path in \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/ResolvedInstallation.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/RestWeComViewerHttpGateway.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataCursorEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataException.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataGateway.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataMessageEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComChatDataPublicKeyGateway.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComDailySummaryEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComDailySummaryJobEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComPublicKeyRegistrationEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComSummaryException.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComViewerAuditEntity.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComViewerHttpGateway.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComChatDataCursorMapper.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComChatDataMessageMapper.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComDailySummaryMapper.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComPublicKeyRegistrationMapper.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/mapper/WeComViewerAuditMapper.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComAuthorizationGateway.java \
+  demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComInstallationService.java \
+  demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComAccessTokenServiceTest.java \
+  demo/message-center-spring/backend/src/test/java/com/crmforlogistics/messagecenter/service/wecom/WeComLoginAttemptServiceTest.java
+do
+  mkdir -p "${baseline_candidate_dir}/$(dirname "${relative_path}")"
+  cp "${repo_root}/${relative_path}" "${baseline_candidate_dir}/${relative_path}"
+done
+
+find demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/wecom \
+  -type f -name '*.java' -print | while read -r relative_path
+do
+  mkdir -p "${baseline_candidate_dir}/$(dirname "${relative_path}")"
+  cp "${repo_root}/${relative_path}" "${baseline_candidate_dir}/${relative_path}"
+done
+```
+
+For `${baseline_candidate_dir}/demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/AppConfig.java`, start from the archived tracked version and insert exactly these fields after `wecomLoginSuiteSecret`; do not copy the whole dirty worktree file:
+
+```java
+@DefaultValue("") String wecomCorpId,
+@DefaultValue("") String wecomAgentId,
+@DefaultValue("") String wecomSecret,
+@DefaultValue("") String wecomLoginAuthCorpId,
+@DefaultValue("http://localhost:8099/") String wecomLoginRedirectUri,
+@DefaultValue("300") int wecomLoginAttemptTtlSeconds,
+@DefaultValue("256") int wecomLoginMaxPending,
+@DefaultValue("") String wecomAllowedJsapiOrigins,
+@DefaultValue("28800") int wecomViewerAuthTtlSeconds,
+@DefaultValue("300") int wecomViewerSessionTtlSeconds,
+@DefaultValue("15") int wecomViewerMaxMessages,
+@DefaultValue("10") int wecomViewerSessionRateLimit,
+@DefaultValue("64") int wecomAuthorizationQueueCapacity,
+@DefaultValue("") String wecomChatDataProgramId,
+@DefaultValue("") String wecomChatDataAbilityId,
+@DefaultValue("false") boolean wecomChatDataDiagnostics,
+@DefaultValue("") String wecomChatDataPrivateKeyFile,
+@DefaultValue("1") int wecomChatDataPublicKeyVersion,
+@DefaultValue("false") boolean wecomChatDataPublicKeyAutoRegister,
+@DefaultValue("200") int wecomChatDataSyncLimit,
+@DefaultValue("5") int wecomChatDataSyncMaxPages,
+@DefaultValue("15") int wecomChatDataSyncTimeoutSeconds,
+@DefaultValue("true") boolean wecomChatDataAutoSyncEnabled,
+@DefaultValue("60") int wecomChatDataAutoSyncIntervalSeconds,
+@DefaultValue("5000") int wecomChatDataStoreMaxMessages,
+@DefaultValue("8388608") long wecomChatDataStoreMaxBytes,
+@DefaultValue("false") boolean wecomDailySummaryEnabled,
+@DefaultValue("conversation_daily_summary") String wecomDailySummaryAbilityId,
+@DefaultValue("0") int wecomDailySummaryHour,
+@DefaultValue("5") int wecomDailySummaryMinute,
+@DefaultValue("32") int wecomDailySummaryMaxBatches,
+@DefaultValue("20") int wecomDailySummaryMaxTransientAttempts,
+@DefaultValue("900") int wecomDailySummaryMaxBackoffSeconds,
+@DefaultValue("30") int wecomDailySummaryPollInitialSeconds,
+@DefaultValue("24") int wecomDailySummaryMaxWaitHours,
+@DefaultValue("fixture") String localWeComDataSource,
+@DefaultValue("local-wecom-source.jsonl") String localWeComDataFile,
+```
+
+Do not copy or stage:
+
+```text
+demo/message-center-spring/backend/src/main/resources/application-dev.yml
+demo/message-center-spring/backend/src/main/resources/application.yml
+demo/message-center-spring/backend/pom.xml
+demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/config/SecurityConfig.java
+demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/web/GlobalExceptionHandler.java
+```
+
+The candidate must not contain real corp IDs, suite secrets, callback tokens, AES keys, access tokens, private-key paths or production domains.
+
+- [ ] **Step 3: Verify the temporary clean candidate**
+
+Run:
+
+```bash
+cd "${baseline_candidate_dir}/demo/message-center-spring/backend"
+mvn -q -Dtest=WeComAccessTokenServiceTest,WeComLoginAttemptServiceTest test
+mvn -q -DskipTests compile
+```
+
+Expected: both commands exit `0`. The known local JVM class-sharing line may be recorded as an environment warning, but no Maven compilation warning or application warning is accepted.
+
+- [ ] **Step 4: Stage the exact baseline and verify the Git index**
+
+Stage every listed new WeCom source/test file and the two listed modified WeCom classes. Stage only the WeCom portion of `AppConfig.java`; preserve all unrelated working-tree hunks unstaged. Never use `git add .`.
+
+Create an index-only candidate using:
+
+```bash
+candidate_dir="$(mktemp -d /tmp/wecom-index-candidate.XXXXXX)"
+git checkout-index -a --prefix="${candidate_dir}/"
+cd "${candidate_dir}/demo/message-center-spring/backend"
+mvn -q -Dtest=WeComAccessTokenServiceTest,WeComLoginAttemptServiceTest test
+mvn -q -DskipTests compile
+```
+
+Expected: both commands exit `0`. Then verify:
+
+```bash
+git diff --cached --check
+git diff --cached --name-only
+```
+
+Expected: no whitespace errors; the staged list is exactly the files declared by Task 0. `application-dev.yml`, `application.yml`, `pom.xml`, `SecurityConfig.java`, `GlobalExceptionHandler.java` and unrelated `AppConfig` hunks are absent.
+
+- [ ] **Step 5: Commit Task 0**
+
+```bash
+git commit -m "chore: track spring wecom baseline"
+```
+
+The Task 0 report must state that this commit establishes source/build traceability only. Authorization reliability, credential encryption, login/binding, chatdata projection, runtime bounds and UI remain pending in Tasks 2-11.
+
+---
+
 ### Task 1: 固化数据库身份、授权与迁移合同
 
 **Files:**

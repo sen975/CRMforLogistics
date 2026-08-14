@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-14
 
-**状态：** 已确认，待实施
+**状态：** 实施中（Task 1 已完成，Task 0 前置基线纳管待执行）
 
 **适用范围：** `demo/message-center-spring`
 
@@ -38,6 +38,20 @@ Spring 版已经包含授权回调、文本发送、chatdata、viewer、公钥�
 - 本轮不解析、复制或持久化企业微信消息原文。
 - 本轮不支持一个 Spring 用户绑定多个企业微信身份，也不支持一个企业微信身份绑定多个 Spring 用户。
 - 本轮不引入 Redis、消息队列中间件或第二个企业微信服务进程。
+
+### 2.3 Git 基线纳管边界
+
+当前 Spring 企业微信实现有一批源码只存在于脏工作区，后续任务直接引用这些类型。若不先纳入 Git，Maven 会借助未跟踪文件在本机通过，但同一提交在干净检出中无法编译。正式功能迁移前必须先建立一个可追溯、可从索引重建的 Spring 企业微信基线。
+
+基线纳管遵循以下合同：
+
+- 只纳入现有 `channel/wecom`、`service/wecom`、`mapper/WeCom*` 企业微信源码及两个现有回归测试，不借机重构或补功能。
+- 共享 `AppConfig` 只纳入企业微信字段；邮件附件、ChatApp、WhatsApp 和其他用户 WIP hunk 保持未暂存。
+- `WeComAuthorizationGateway` 和 `WeComInstallationService` 以当前企业微信工作区实现作为后续重构起点；纳管不代表其授权同步、审计失败处理或 token 语义已通过最终验收。
+- 不纳入 `application-dev.yml` 中的任何真实 corp ID、suite secret、回调 token、AES key、私钥路径或域名样例。敏感配置清理由后续配置任务完成，真实值必须轮换。
+- 现有每日摘要后端类可以作为配置默认关闭的企业微信基线纳入，但本轮仍不增加摘要查询 API 或 UI。
+- 提交前必须从 Git 索引构造临时干净目录，运行两个现有企业微信专项测试和 `mvn -q -DskipTests compile`。仅在临时目录成功时才允许提交。
+- Task 0 只证明“基线源码被追踪且干净检出可编译”，不证明授权、viewer、chatdata、公钥、摘要或安全边界已完成；这些行为仍由后续任务逐项 TDD 和独立审查。
 
 ## 3. 方案选择
 
