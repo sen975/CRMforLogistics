@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
+import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,7 @@ class WeComControllerTest {
     @MockitoBean WeComCallbackCodec codec;
     @MockitoBean WeComInstallationService installationService;
     @MockitoBean WeComSendService sendService;
+    @MockitoBean WeComStartupGate startupGate;
 
     @Test
     void shouldHandleCallback() throws Exception {

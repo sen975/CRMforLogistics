@@ -3,9 +3,11 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +16,8 @@ public final class WeComCredentialMigrationService {
     private static final int BATCH_SIZE = 200;
     private static final String MARKER = "wecom-credentials-v1";
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Set<String> ENVELOPE_FIELDS = Set.of(
+            "algorithm", "keyVersion", "nonce", "ciphertext");
 
     private final WeComCredentialMigrationMapper mapper;
     private final WeComCredentialProtector protector;
@@ -69,7 +73,7 @@ public final class WeComCredentialMigrationService {
         if (row == null || row.id() == null || row.value() == null || row.value().isBlank()
                 || row.value().length() > 512) throw failed();
         if (protector.isEnvelope(row.value())) return;
-        if (!isNonJsonPlaintext(row.value())) throw failed();
+        if (!isNonEnvelopePlaintext(row.value())) throw failed();
         String encrypted = installation ? protector.protectPermanentCode(row.value())
                 : protector.protectSecretKey(row.value());
         int changed = installation
@@ -78,12 +82,17 @@ public final class WeComCredentialMigrationService {
         if (changed != 1) throw failed();
     }
 
-    private static boolean isNonJsonPlaintext(String value) {
+    private static boolean isNonEnvelopePlaintext(String value) {
         String trimmed = value.trim();
-        try {
-            var parsed = MAPPER.readTree(trimmed);
-            return parsed == null || !parsed.isContainerNode();
-        } catch (JsonProcessingException exception) {
+        try (var parser = MAPPER.getFactory().createParser(trimmed)) {
+            while (parser.nextToken() != null) {
+                if (parser.currentToken() == JsonToken.FIELD_NAME
+                        && ENVELOPE_FIELDS.contains(parser.currentName())) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (IOException exception) {
             return !(trimmed.startsWith("{") || trimmed.startsWith("["));
         }
     }

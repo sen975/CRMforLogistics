@@ -20,6 +20,8 @@ import static org.mockito.Mockito.when;
 class WeComCredentialMigrationServiceTest {
     private static final UUID INSTALLATION_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID MESSAGE_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final UUID JSON_OBJECT_ID = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    private static final UUID JSON_ARRAY_ID = UUID.fromString("00000000-0000-0000-0000-000000000004");
 
     private WeComCredentialMigrationMapper mapper;
     private WeComCredentialProtector protector;
@@ -96,8 +98,36 @@ class WeComCredentialMigrationServiceTest {
     }
 
     @Test
-    void failsForJsonObjectThatIsNotAValidEnvelope() {
-        String invalidEnvelope = "{\"version\":1}";
+    void migratesJsonWithoutEnvelopeFieldsAsOpaquePlaintext() {
+        String emptyObject = "{}";
+        String ordinaryObject = "{\"version\":1}";
+        String emptyArray = "[]";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(
+                        new WeComCredentialRow(INSTALLATION_ID, emptyObject),
+                        new WeComCredentialRow(JSON_OBJECT_ID, ordinaryObject),
+                        new WeComCredentialRow(JSON_ARRAY_ID, emptyArray)));
+        when(mapper.nextInstallations(JSON_ARRAY_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.protectPermanentCode(emptyObject)).thenReturn("encrypted-empty-object");
+        when(protector.protectPermanentCode(ordinaryObject)).thenReturn("encrypted-object");
+        when(protector.protectPermanentCode(emptyArray)).thenReturn("encrypted-array");
+        when(mapper.replaceInstallation(INSTALLATION_ID, emptyObject, "encrypted-empty-object")).thenReturn(1);
+        when(mapper.replaceInstallation(JSON_OBJECT_ID, ordinaryObject, "encrypted-object")).thenReturn(1);
+        when(mapper.replaceInstallation(JSON_ARRAY_ID, emptyArray, "encrypted-array")).thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(emptyObject);
+        verify(protector).protectPermanentCode(ordinaryObject);
+        verify(protector).protectPermanentCode(emptyArray);
+        verify(mapper).nextInstallations(JSON_ARRAY_ID, 200);
+    }
+
+    @Test
+    void failsForJsonObjectWithEnvelopeFieldThatIsNotAValidEnvelope() {
+        String invalidEnvelope = "{\"algorithm\":\"invalid\"}";
         when(mapper.nextInstallations(null, 200))
                 .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, invalidEnvelope)));
         when(protector.isEnvelope(invalidEnvelope)).thenReturn(false);

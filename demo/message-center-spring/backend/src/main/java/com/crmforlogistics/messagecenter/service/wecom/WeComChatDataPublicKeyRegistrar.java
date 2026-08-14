@@ -19,24 +19,28 @@ public class WeComChatDataPublicKeyRegistrar {
     private final WeComAccessTokenService accessTokens;
     private final WeComChatDataPublicKeyRegistrationStore registrationStore;
     private final WeComChatDataPublicKeyGateway gateway;
+    private final WeComStartupGate startupGate;
     private volatile WeComChatDataCrypto.PublicKeyMaterial cachedMaterial;
 
     public WeComChatDataPublicKeyRegistrar(AppConfig config,
                                            WeComInstallationService installationService,
                                            WeComAccessTokenService accessTokens,
                                            WeComChatDataPublicKeyRegistrationStore registrationStore,
-                                           WeComChatDataPublicKeyGateway gateway) {
+                                           WeComChatDataPublicKeyGateway gateway,
+                                           WeComStartupGate startupGate) {
         this.config = config;
         this.installationService = installationService;
         this.accessTokens = accessTokens;
         this.registrationStore = registrationStore;
         this.gateway = gateway;
+        this.startupGate = startupGate;
     }
 
     @Scheduled(fixedDelayString = "${app.wecom-chatdata-auto-sync-interval-seconds:60}000",
             initialDelay = 5000)
     public void registerIfNeeded() {
         try {
+            startupGate.requireOpen();
             ResolvedInstallation installation = installationService.resolveInstallation(
                     config.wecomSuiteId(), config.wecomLoginAuthCorpId());
             WeComChatDataCrypto.PublicKeyMaterial material = material();

@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComCallbackCodec;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataPublicKeyGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComController;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComSendService;
@@ -50,5 +51,20 @@ class WeComStartupGateEntryTest {
                 new WeComStartupGate()).tick();
 
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void preventsPublicKeyRegistrationBeforeMigrationCompletes() {
+        AppConfig config = mock(AppConfig.class);
+        WeComInstallationService installationService = mock(WeComInstallationService.class);
+        WeComAccessTokenService accessTokens = mock(WeComAccessTokenService.class);
+        WeComChatDataPublicKeyRegistrationStore registrationStore =
+                mock(WeComChatDataPublicKeyRegistrationStore.class);
+        WeComChatDataPublicKeyGateway gateway = mock(WeComChatDataPublicKeyGateway.class);
+
+        new WeComChatDataPublicKeyRegistrar(config, installationService, accessTokens,
+                registrationStore, gateway, new WeComStartupGate()).registerIfNeeded();
+
+        verifyNoInteractions(config, installationService, accessTokens, registrationStore, gateway);
     }
 }
