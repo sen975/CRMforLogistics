@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
+import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,13 +19,16 @@ public class WeComController {
     private final WeComCallbackCodec codec;
     private final WeComInstallationService installationService;
     private final WeComSendService sendService;
+    private final WeComStartupGate startupGate;
 
     public WeComController(WeComCallbackCodec codec,
                             WeComInstallationService installationService,
-                            WeComSendService sendService) {
+                            WeComSendService sendService,
+                            WeComStartupGate startupGate) {
         this.codec = codec;
         this.installationService = installationService;
         this.sendService = sendService;
+        this.startupGate = startupGate;
     }
 
     @PostMapping("/callback")
@@ -34,6 +38,7 @@ public class WeComController {
             @RequestParam("nonce") String nonce,
             @RequestBody String body) {
         try {
+            startupGate.requireOpen();
             var decoded = codec.decode(msgSignature, timestamp, nonce, body);
             installationService.handleCallback(decoded);
             return ResponseEntity.ok("success");
@@ -50,6 +55,7 @@ public class WeComController {
             @RequestParam("nonce") String nonce,
             @RequestParam("echostr") String echostr) {
         try {
+            startupGate.requireOpen();
             String decrypted = codec.verifyAndDecryptEcho(
                     msgSignature, timestamp, nonce, echostr);
             return ResponseEntity.ok(decrypted);

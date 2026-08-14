@@ -44,6 +44,8 @@ public class WeComViewerService {
     private final WeComInstallationService installationService;
     private final ViewerAuditSink auditTrail;
     private final WeComChatDataMessageMapper messageMapper;
+    private final WeComCredentialProtector credentialProtector;
+    private final WeComStartupGate startupGate;
     private final ConcurrentMap<String, CachedTicket> tickets = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerAuth> viewerAuthTokens = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerSession> viewerSessions = new ConcurrentHashMap<>();
@@ -54,14 +56,18 @@ public class WeComViewerService {
     @Autowired
     public WeComViewerService(AppConfig config, WeComInstallationService installationService,
                               WeComViewerHttpGateway gateway, ViewerAuditSink audit,
-                              WeComChatDataMessageMapper messageMapper) {
+                              WeComChatDataMessageMapper messageMapper,
+                              WeComCredentialProtector credentialProtector,
+                              WeComStartupGate startupGate) {
         this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                gateway, installationService, audit, messageMapper);
+                gateway, installationService, audit, messageMapper, credentialProtector, startupGate);
     }
 
     private WeComViewerService(AppConfig config, Clock clock, NonceSource nonceSource,
                                WeComViewerHttpGateway gateway, WeComInstallationService installationService,
-                               ViewerAuditSink audit, WeComChatDataMessageMapper messageMapper) {
+                               ViewerAuditSink audit, WeComChatDataMessageMapper messageMapper,
+                               WeComCredentialProtector credentialProtector,
+                               WeComStartupGate startupGate) {
         this.config = config;
         this.clock = clock;
         this.nonceSource = nonceSource;
@@ -69,19 +75,24 @@ public class WeComViewerService {
         this.installationService = installationService;
         this.auditTrail = Objects.requireNonNull(audit, "audit");
         this.messageMapper = messageMapper;
+        this.credentialProtector = credentialProtector;
+        this.startupGate = startupGate;
     }
 
     static WeComViewerService forTests(AppConfig config, Clock clock, NonceSource nonceSource,
                                        WeComViewerHttpGateway gateway,
                                        WeComInstallationService installationService,
                                        ViewerAuditSink audit,
-                                       WeComChatDataMessageMapper messageMapper) {
+                                       WeComChatDataMessageMapper messageMapper,
+                                       WeComCredentialProtector credentialProtector,
+                                       WeComStartupGate startupGate) {
         return new WeComViewerService(config, clock, nonceSource, gateway,
-                installationService, audit, messageMapper);
+                installationService, audit, messageMapper, credentialProtector, startupGate);
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl) {
         try {
+            startupGate.requireOpen();
             requireBounded(config.wecomCorpId(), "WeCom corp id", 64);
             requireBounded(config.wecomAgentId(), "WeCom agent id", 32);
             String url = canonicalAllowedUrl(rawUrl);
@@ -99,6 +110,7 @@ public class WeComViewerService {
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl, String viewerAuthToken) {
+        startupGate.requireOpen();
         ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, clock.instant().getEpochSecond());
         ResolvedInstallation installation = requireBoundInstallation(auth);
         String url = canonicalAllowedUrl(rawUrl);
@@ -113,6 +125,7 @@ public class WeComViewerService {
     public LoginExchangeResponse exchangeLoginCode(String code) {
         String userId = "";
         try {
+            startupGate.requireOpen();
             requireBounded(code, "WeCom login code", 512);
             userId = gateway.exchangeLoginCode(code);
             requireBounded(userId, "WeCom user id", 128);
@@ -134,6 +147,7 @@ public class WeComViewerService {
                                                    WeComLoginAttemptService.InstallationBinding binding) {
         String userId = "";
         try {
+            startupGate.requireOpen();
             if (binding == null) {
                 throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
                         "企业微信授权安装存储不可用");
@@ -174,10 +188,12 @@ public class WeComViewerService {
 
     /** Resolves a live viewer token to the actor used by downstream services. */
     public String requireViewerActor(String viewerAuthToken) {
+        startupGate.requireOpen();
         return resolveViewerAuthRecord(viewerAuthToken, clock.instant().getEpochSecond()).wecomUserId();
     }
 
     public ViewerSyncContext viewerSyncContext(String viewerAuthToken) {
+        startupGate.requireOpen();
         ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, clock.instant().getEpochSecond());
         return new ViewerSyncContext(auth.wecomUserId(), resolveBoundInstallation(auth));
     }
@@ -187,6 +203,7 @@ public class WeComViewerService {
         String wecomUserId = "";
         String viewerSessionId = "";
         try {
+            startupGate.requireOpen();
             requireBounded(contactPointId, "WeCom contactPointId", 256);
             if (!contactPointId.startsWith("wecom:")) {
                 throw new IllegalArgumentException("WeCom contactPointId is required");
@@ -223,6 +240,7 @@ public class WeComViewerService {
         String wecomUserId = "";
         ViewerSession session = null;
         try {
+            startupGate.requireOpen();
             long now = clock.instant().getEpochSecond();
             requireBounded(viewerSessionId, "WeCom viewer session id", 64);
             ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, now);
@@ -263,6 +281,7 @@ public class WeComViewerService {
     }
 
     public void recordClientEvent(String eventType, String viewerSessionId, String viewerAuthToken) {
+        startupGate.requireOpen();
         if (!"component_error".equals(eventType)) {
             throw new IllegalArgumentException("WeCom viewer event type is invalid");
         }
@@ -292,6 +311,7 @@ public class WeComViewerService {
     }
 
     public void recordAccessDenied(String contactPointId, String viewerAuthToken) {
+        startupGate.requireOpen();
         String wecomUserId = "";
         try {
             wecomUserId = resolveViewerAuth(viewerAuthToken, clock.instant().getEpochSecond());
@@ -459,7 +479,7 @@ public class WeComViewerService {
             if (!wecomUserId.equals(entity.getUserid())) continue;
             String msgid = entity.getMsgid();
             if (!requested.contains(msgid)) continue;
-            String secret = entity.getSecretKey();
+            String secret = credentialProtector.revealSecretKey(entity.getSecretKey());
             if (msgid == null || msgid.isBlank() || msgid.length() > 256
                     || secret == null || secret.isBlank() || secret.length() > 1024) {
                 continue;

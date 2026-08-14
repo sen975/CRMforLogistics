@@ -19,18 +19,22 @@ public class WeComChatDataSyncRuntime {
     private final AppConfig config;
     private final WeComInstallationService installationService;
     private final WeComChatDataSyncService syncService;
+    private final WeComStartupGate startupGate;
 
     public WeComChatDataSyncRuntime(AppConfig config, WeComInstallationService installationService,
-                                    WeComChatDataSyncService syncService) {
+                                    WeComChatDataSyncService syncService,
+                                    WeComStartupGate startupGate) {
         this.config = config;
         this.installationService = installationService;
         this.syncService = syncService;
+        this.startupGate = startupGate;
     }
 
     @Scheduled(fixedDelayString = "${app.wecom-chatdata-auto-sync-interval-seconds:60}000",
             initialDelay = 1000)
     public void runOnce() {
         try {
+            startupGate.requireOpen();
             if (!isConfigured()) {
                 log.warn("WeCom chatdata auto-sync skipped: not configured");
                 return;

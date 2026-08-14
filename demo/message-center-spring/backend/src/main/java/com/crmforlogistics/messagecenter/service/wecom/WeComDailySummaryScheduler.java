@@ -22,17 +22,21 @@ public class WeComDailySummaryScheduler {
     private final AppConfig config;
     private final WeComDailySummaryService service;
     private final Clock clock;
+    private final WeComStartupGate startupGate;
     private LocalDate lastDailyRun;
 
     @Autowired
-    public WeComDailySummaryScheduler(AppConfig config, WeComDailySummaryService service) {
-        this(config, service, Clock.systemUTC());
+    public WeComDailySummaryScheduler(AppConfig config, WeComDailySummaryService service,
+                                      WeComStartupGate startupGate) {
+        this(config, service, Clock.systemUTC(), startupGate);
     }
 
-    WeComDailySummaryScheduler(AppConfig config, WeComDailySummaryService service, Clock clock) {
+    WeComDailySummaryScheduler(AppConfig config, WeComDailySummaryService service, Clock clock,
+                               WeComStartupGate startupGate) {
         this.config = config;
         this.service = service;
         this.clock = clock;
+        this.startupGate = startupGate;
     }
 
     @Scheduled(fixedDelayString = "60000", initialDelay = 1000)
@@ -43,6 +47,7 @@ public class WeComDailySummaryScheduler {
         LocalTime scheduled = LocalTime.of(
                 config.wecomDailySummaryHour(), config.wecomDailySummaryMinute());
         try {
+            startupGate.requireOpen();
             if (!local.toLocalTime().isBefore(scheduled) && !today.equals(lastDailyRun)) {
                 service.run(now);
                 lastDailyRun = today;

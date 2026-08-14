@@ -38,24 +38,28 @@ public class LocalWeComDevelopmentService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final WeComChatDataMessageMapper messageMapper;
+    private final WeComCredentialProtector credentialProtector;
     private final Map<String, Long> attempts = new ConcurrentHashMap<>();
     private final Map<String, LocalToken> tokens = new ConcurrentHashMap<>();
     private final Map<String, LocalSession> sessions = new ConcurrentHashMap<>();
 
     @Autowired
     public LocalWeComDevelopmentService(AppConfig config, ObjectMapper objectMapper,
-                                        WeComChatDataMessageMapper messageMapper) {
-        this(config, objectMapper, messageMapper, Clock.systemUTC());
+                                        WeComChatDataMessageMapper messageMapper,
+                                        WeComCredentialProtector credentialProtector) {
+        this(config, objectMapper, messageMapper, credentialProtector, Clock.systemUTC());
     }
 
     LocalWeComDevelopmentService(AppConfig config, ObjectMapper objectMapper,
-                                 WeComChatDataMessageMapper messageMapper, Clock clock) {
+                                 WeComChatDataMessageMapper messageMapper,
+                                 WeComCredentialProtector credentialProtector, Clock clock) {
         if (!config.localDevMode()) {
             throw new IllegalArgumentException("Local WeCom development mode is disabled");
         }
         this.config = config;
         this.objectMapper = objectMapper;
         this.messageMapper = messageMapper;
+        this.credentialProtector = credentialProtector;
         this.clock = clock;
         seedTargetIfNeeded();
     }
@@ -236,7 +240,8 @@ public class LocalWeComDevelopmentService {
         for (JsonNode row : rows) {
             WeComChatDataMessageEntity entity = new WeComChatDataMessageEntity();
             entity.setMsgid(text(row, "msgid"));
-            entity.setSecretKey(firstNonBlank(text(row, "secret_key"), text(row, "secretKey")));
+            entity.setSecretKey(credentialProtector.protectSecretKey(
+                    firstNonBlank(text(row, "secret_key"), text(row, "secretKey"))));
             entity.setExternalUserid(text(row, "external_userid"));
             entity.setUserid(text(row, "userid"));
             entity.setSendTime(number(row, "send_time"));

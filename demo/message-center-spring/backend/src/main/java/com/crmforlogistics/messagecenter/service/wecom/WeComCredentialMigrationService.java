@@ -3,6 +3,8 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -11,6 +13,7 @@ import org.springframework.stereotype.Service;
 public final class WeComCredentialMigrationService {
     private static final int BATCH_SIZE = 200;
     private static final String MARKER = "wecom-credentials-v1";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final WeComCredentialMigrationMapper mapper;
     private final WeComCredentialProtector protector;
@@ -26,7 +29,7 @@ public final class WeComCredentialMigrationService {
             if (mapper.markerExists(MARKER)) return;
             migrateInstallations();
             migrateChatDataMessages();
-            mapper.insertMarker(MARKER);
+            if (mapper.insertMarker(MARKER) != 1) throw failed();
         } catch (WeComException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -38,7 +41,8 @@ public final class WeComCredentialMigrationService {
         UUID afterId = null;
         while (true) {
             List<WeComCredentialRow> rows = mapper.nextInstallations(afterId, BATCH_SIZE);
-            if (rows == null || rows.isEmpty()) return;
+            if (rows == null) throw failed();
+            if (rows.isEmpty()) return;
             if (rows.size() > BATCH_SIZE) throw failed();
             for (WeComCredentialRow row : rows) {
                 migrate(row, true);
@@ -51,7 +55,8 @@ public final class WeComCredentialMigrationService {
         UUID afterId = null;
         while (true) {
             List<WeComCredentialRow> rows = mapper.nextChatDataMessages(afterId, BATCH_SIZE);
-            if (rows == null || rows.isEmpty()) return;
+            if (rows == null) throw failed();
+            if (rows.isEmpty()) return;
             if (rows.size() > BATCH_SIZE) throw failed();
             for (WeComCredentialRow row : rows) {
                 migrate(row, false);
@@ -64,7 +69,7 @@ public final class WeComCredentialMigrationService {
         if (row == null || row.id() == null || row.value() == null || row.value().isBlank()
                 || row.value().length() > 512) throw failed();
         if (protector.isEnvelope(row.value())) return;
-        if (looksLikeEnvelope(row.value())) throw failed();
+        if (!isNonJsonPlaintext(row.value())) throw failed();
         String encrypted = installation ? protector.protectPermanentCode(row.value())
                 : protector.protectSecretKey(row.value());
         int changed = installation
@@ -73,11 +78,14 @@ public final class WeComCredentialMigrationService {
         if (changed != 1) throw failed();
     }
 
-    private static boolean looksLikeEnvelope(String value) {
+    private static boolean isNonJsonPlaintext(String value) {
         String trimmed = value.trim();
-        return trimmed.startsWith("{") && trimmed.endsWith("}")
-                && (trimmed.contains("\"algorithm\"") || trimmed.contains("\"keyVersion\"")
-                || trimmed.contains("\"nonce\"") || trimmed.contains("\"ciphertext\""));
+        try {
+            var parsed = MAPPER.readTree(trimmed);
+            return parsed == null || !parsed.isContainerNode();
+        } catch (JsonProcessingException exception) {
+            return !(trimmed.startsWith("{") || trimmed.startsWith("["));
+        }
     }
 
     private static WeComException failed() {
