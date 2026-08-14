@@ -109,6 +109,7 @@ Spring 新增以下入口，并保留当前 `/api/wecom/callback`：
 - `POST /api/account/wecom-binding/attempts`
 - `POST /api/account/wecom-binding/exchange`
 - `DELETE /api/account/wecom-binding`
+- `POST /api/v1/wecom/conversation-view/bootstrap`
 - `GET /api/v1/wecom/js-sdk-config`
 - `POST /api/v1/wecom/conversation-view/sync`
 - `POST /api/v1/wecom/conversation-view/sessions`
