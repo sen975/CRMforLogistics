@@ -2,26 +2,24 @@
 
 **状态：** 已确认，待实施计划
 
-**日期：** 2026-08-14
+**日期：** 2026-08-14（2026-08-15 修订公共样板送审主线）
 
 ## 1. 目标
 
-把管理员 `公共模板库` 从表格和小型预览 Drawer 改为可扫描的消息预览卡片网格，并提供宽详情工作台。
-详情同时支持两条明确分离的业务路径：
-
-- `复制此模板`：沿用公共模板内容，调用现有 `CopyTemplate`。
-- `基于此模板创建`：把公共模板转换为可编辑草稿，复用现有 `CreateChatappTemplate` 创建和送审流程。
+把管理员 `公共模板库` 改为可扫描的消息预览卡片网格，并提供宽详情工作台。公共模板是创建样板，
+不是可直接复制的成品。唯一业务路径是：选择样板、转换为可编辑草稿、补全必填字段，然后复用现有
+`CreateChatappTemplate` 创建和送审流程。
 
 列表和详情必须使用同一个结构化消息预览 owner，支持参数占位符和示例值两种展示，不得根据扁平字符串
 或 UI 临时规则猜测模板内容。
 
 ## 2. 当前问题
 
-现有 `PublicTemplateLibrary` 使用 Ant Design Table 展示公共模板，预览使用宽度 560px 的 Drawer，复制使用
-独立 Modal。该结构可以完成查询和复制，但无法像模板库一样快速比较真实消息内容，也把模板预览、变量、按钮
-和复制设置拆散在多个表面中。
+现有 `PublicTemplateLibrary` 已具备卡片和宽详情，但仍保留 `CopyTemplate` 直接复制入口。真实 ChatApp
+公共模板库要求用户自定义模板名称、正文变量、示例和按钮等必填字段后送审，因此直接复制路径与真实产品
+语义冲突，也会把 provider 系统异常错误地暴露成用户可恢复的复制动作。
 
-更关键的是，当前公共模板投影把 `pageName` 和 `rcsTitle.realContent` 一起压入 `pages: string[]`，再把所有
+改造前的公共模板投影会把 `pageName` 和 `rcsTitle.realContent` 一起压入 `pages: string[]`，再把所有
 按钮压入全局 `buttons[]`。真实响应例如：
 
 ```json
@@ -40,8 +38,8 @@
 }
 ```
 
-现有投影会把它变成 `['page1', '$(text)...']`，导致 UI 可能把 `page1` 错当正文，也无法知道按钮属于哪一页。
-该合同不足以支撑可信预览和公共模板到自定义模板的转换，必须先结构化修正。
+旧投影会把它变成 `['page1', '$(text)...']`，导致 UI 可能把 `page1` 错当正文，也无法知道按钮属于哪一页。
+当前结构化 parser 和投影已经解决该问题，退役复制路径时必须保留这套单一合同。
 
 ## 3. 产品边界
 
@@ -51,14 +49,16 @@
 - 响应式消息预览卡片网格。
 - 宽详情工作台和 `参数 / 示例` 预览切换。
 - 页面级预览和多页面选择。
-- 现有 `CopyTemplate` 复制路径。
 - 公共模板到现有模板编辑器草稿的转换。
 - 无法完整转换时的人工补全与阻断提交。
+- 删除前端、API、应用服务和 provider adapter 中的 `CopyTemplate` 运行路径。
+- 用前向数据库迁移退役历史 `COPY` 操作，禁止它们继续重试或对账。
+- 清理所有 active spec、plan 和合同测试中的直接复制主线，历史 Git 提交不改写。
 - 桌面和移动端真实渲染验收。
 
 ### 3.2 本轮不包含
 
-- 新数据库表或字段。
+- 新数据库表或业务字段；允许增加只处理历史 `COPY` 操作的前向迁移。
 - 新的模板创建后端入口。
 - 第二套模板编辑器。
 - 公共模板直接进入发送选择器。
@@ -79,10 +79,10 @@
 - `PublicTemplateCardGrid`：响应式模板卡片集合。
 - `PublicTemplateCard`：单个模板的可访问入口和紧凑预览。
 - `TemplateMessagePreview`：参数和示例两种消息渲染的唯一 owner。
-- `PublicTemplateDetailModal`：详情工作台、多页选择、复制草稿和两个业务动作。
+- `PublicTemplateDetailModal`：详情工作台、多页选择和“基于此样板创建”入口。
 - `publicTemplateToEditorDraft`：公共投影到自定义编辑草稿的唯一转换 owner。
 - `TemplateEditorDrawer`：创建和修改模板的唯一编辑器。
-- `TemplatesPage`：创建、修改和复制结果接线；公共库子组件不能绕过它直接拥有创建状态机。
+- `TemplatesPage`：创建和修改结果接线；公共库子组件不能绕过它直接拥有创建状态机。
 
 `TemplateEditorDrawer` 不接收伪造的 `TemplateAdmin`。它应支持独立的 `TemplateEditorInitialValue`，明确区分
 已有模板编辑和公共模板初始化草稿。
@@ -181,11 +181,11 @@ interface PublicTemplateConversionResult {
 ### 8.2 详情工作台
 
 - 桌面 Modal 宽约 1120px，最大宽度受视口约束。
-- 左侧约 60%：模板信息、复制名称、页面选择、变量表格和按钮信息。
+- 左侧约 60%：模板信息、页面选择、变量表格和按钮信息。
 - 右侧约 40%：固定预览和 `参数 / 示例` 分段控制。
 - 移动端使用全屏纵向布局和固定底部操作区，预览与表单不得重叠。
-- `复制此模板` 是主操作；`基于此模板创建` 是独立次操作。
-- 复制模式下正文、变量编码和按钮 URL 只读；变量示例只作为本地审计快照可编辑。
+- `基于此模板创建` 是唯一主操作。
+- 详情只读展示源样板；所有需要修改和补全的字段进入现有编辑器处理。
 
 ### 8.3 自定义编辑器
 
@@ -206,18 +206,7 @@ ListBaseTemplate
   -> TemplateMessagePreview
 ```
 
-复制路径：
-
-```text
-PublicTemplateDetailModal
-  -> CopyTemplateCommand(code, language, templateName)
-  -> PublicTemplateApplicationService
-  -> CopyTemplate
-  -> reconciliation / sync
-  -> APPROVED + allowSend=true 后进入发送选择器
-```
-
-自定义路径：
+创建送审路径：
 
 ```text
 PublicTemplateDetailModal
@@ -232,12 +221,10 @@ PublicTemplateDetailModal
 ## 10. 并发、账号和错误状态
 
 - React Query key 继续包含账号 ID 和完整公共模板查询。
-- 账号切换时关闭详情、复制草稿和公共模板初始化草稿。
-- 复制继续复用稳定 `clientRequestId`，同一弹窗失败重试不生成新键。
+- 账号切换时关闭详情和公共模板初始化草稿。
 - 旧账号或旧草稿的 success/error 不能关闭或污染当前账号工作台。
 - 列表失败显示结构化 message 和 trace ID，并提供重试。
-- 复制失败保留名称和变量审计值。
-- 自定义转换问题与创建 API 错误分层展示，不能把 provider 错误伪装为字段转换问题。
+- 转换问题与创建 API 错误分层展示，不能把 provider 错误伪装为字段转换问题。
 - 完整 provider body、请求参数、Cookie、密钥和控制台内部字段不得进入浏览器 bundle、错误提示或普通日志。
 
 ## 11. 性能与可访问性
@@ -265,8 +252,8 @@ PublicTemplateDetailModal
 - 多页选择同步正文和按钮。
 - 单页公共模板自动生成编辑草稿。
 - 多页、未知按钮、缺失正文和未知语言/类别产生阻断问题。
-- 复制命令仍不包含 URL、正文、账号 ID 或 provider 私有字段。
-- 自定义路径复用现有 create mutation，不调用 CopyTemplate。
+- 公共样板路径复用现有 create mutation，前端不存在 `copyPublicTemplate` 调用。
+- API 类型、合同测试和页面文案不再暴露 `COPY` 操作或“复制并送审”。
 - 账号切换和 A -> B -> A 的旧异步结果隔离继续通过。
 
 ### 12.3 构建与浏览器验收
@@ -274,7 +261,7 @@ PublicTemplateDetailModal
 - 运行前端完整 Vitest/source tests 和生产构建。
 - 运行公共模板后端 focused suite 和 package。
 - 浏览器验证桌面宽屏、普通桌面和移动端。
-- 检查加载、空列表、错误、参数模式、示例模式、多页、复制失败保留草稿和自定义待补全。
+- 检查加载、空列表、错误、参数模式、示例模式、多页和自定义待补全。
 - 检查页面无框架错误覆盖层、无相关 console error/warning、无文本重叠和水平滚动陷阱。
 
 ## 13. 停止条件
@@ -286,14 +273,37 @@ PublicTemplateDetailModal
 - 变量声明与正文参数无法一一对应。
 - 多页模板未明确选择创建来源页面。
 - 目标账号不再是有效 WhatsApp/ChatApp 账号。
-- 创建或复制结果未知且无法通过现有 reconciliation 对账。
+- 创建结果未知且无法通过现有 reconciliation 对账。
 
 ## 14. 对现有文档的影响
 
-本设计替代 `2026-08-12-whatsapp-template-remarks-and-library-design.md` 中以下前端限制：
+本设计替代 `2026-08-12-whatsapp-template-remarks-and-library-design.md` 和
+`2026-08-13-chatapp-contacts-template-copy-mass-messaging-design.md` 中所有把 `CopyTemplate` 作为公共模板主线的规则，
+并替代其中以下前端限制：
 
 - 公共模板库使用表格和小型预览 Drawer。
 - 只实现 `复制到我的模板`。
 - 不实现控制台“自定义模板”分支。
 
-原文关于公共模板不能直接发送、CopyTemplate 参数边界、账号校验、审核状态和发送资格的规则继续有效。
+旧文档中的 `CopyTemplate` API、错误码、幂等、对账和真实写入验证全部失效，不得作为当前实现依据。公共模板
+不能直接发送、账号必须有效、创建后必须经过审核且只有 `APPROVED + allowSend=true` 才能发送等规则继续有效。
+
+## 15. “我的模板”视觉工作台扩展
+
+管理员的 `我的模板` 与 `公共模板库` 使用同一个 `TemplateMessagePreview` 消息预览 owner，避免两套变量替换、按钮展示和消息画布语义漂移。`我的模板` 只增加薄的本地投影：把现有 `TemplateAdmin.components`、`examples` 和按钮映射为预览页与变量列表。
+
+`我的模板` 列表从表格改为响应式卡片网格。卡片显示消息预览、备注展示名、官方名称、模板代码、语言、类别、审核状态、发送状态和上次同步时间，并保留查看、编辑备注、编辑模板、暂停/恢复发送和删除入口。宽详情工作台继续消费完整 `TemplateAdmin` 和操作记录，左侧展示管理字段与失败原因，右侧提供 `参数 / 示例` 切换；它不得重新定义审核状态、发送资格或操作结果。
+
+## 16. `CopyTemplate` 退役与历史数据
+
+运行时代码必须删除 `CopyTemplate` provider 调用、`POST /public-templates/{code}/copy`、复制应用服务、复制命令、
+复制错误码、复制前端状态和 `COPY` 运行时操作类型。`AliyunChatAppPublicTemplateGateway` 仅保留
+`ListBaseTemplate` 查询职责。
+
+已经执行过的数据库迁移不得回写或删除。新增前向迁移把已有 `template_operations.operation_type='COPY'`
+转换为通用只读 `RETIRED` 类型，并清除 `next_reconcile_at`，防止旧操作继续重试或对账。原有成功、失败和未知
+状态作为历史事实保留；详情页显示“旧公共模板复制路径已退役”，但不提供重试动作。新的数据库约束只允许
+`CREATE`、`MODIFY`、`SET_SEND_PERMISSION`、`DELETE`、`RECONCILE` 和 `RETIRED`。
+
+测试必须证明：运行时代码和前端 bundle 不再出现 `CopyTemplate` 调用；旧 `COPY` 行迁移为 `RETIRED`；
+公共样板只能进入现有编辑器，并最终调用 `CreateChatappTemplate`。
