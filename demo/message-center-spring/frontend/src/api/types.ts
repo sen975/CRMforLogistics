@@ -68,6 +68,19 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface WeComLoginAttempt {
+  loginType: string;
+  appId: string;
+  redirectUri: string;
+  state: string;
+  expiresIn: number;
+}
+
+export interface WeComLoginResponse extends LoginResponse {
+  viewerAuthToken: string | null;
+  viewerExpiresIn: number;
+}
+
 export interface ApiError {
   code: string;
   message: string;

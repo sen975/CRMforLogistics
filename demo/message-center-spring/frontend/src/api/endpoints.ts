@@ -17,6 +17,8 @@ import type {
   TemplateOperation,
   TemplateSyncResult,
   TemplateUpdateCommand,
+  WeComLoginAttempt,
+  WeComLoginResponse,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -26,6 +28,24 @@ export async function login(data: LoginRequest): Promise<LoginResponse> {
 
 export async function logout(): Promise<void> {
   await client.post('/auth/logout');
+}
+
+export async function createWeComAttempt(
+  purpose: 'login' | 'bind',
+): Promise<WeComLoginAttempt> {
+  const path = purpose === 'login'
+    ? '/auth/wecom/attempts'
+    : '/account/wecom-binding/attempts';
+  const res = await client.post<WeComLoginAttempt>(path);
+  return res.data;
+}
+
+export async function exchangeWeComLogin(data: {
+  code: string;
+  state: string;
+}): Promise<WeComLoginResponse> {
+  const res = await client.post<WeComLoginResponse>('/auth/wecom/exchange', data);
+  return res.data;
 }
 
 export async function fetchContacts(params?: {
