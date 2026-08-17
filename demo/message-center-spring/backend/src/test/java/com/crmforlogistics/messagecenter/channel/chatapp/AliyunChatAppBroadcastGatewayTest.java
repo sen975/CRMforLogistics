@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
@@ -100,14 +101,19 @@ class AliyunChatAppBroadcastGatewayTest {
 
     @Test
     void buildsGroupScopedReconciliationRequestAndMapsRecipientStatus() {
+        Instant startTime = Instant.parse("2026-08-17T07:55:00Z");
+        Instant endTime = Instant.parse("2026-08-17T08:00:00Z");
         var query = new BroadcastQuery(
-                UUID.randomUUID(), "60199999999", "group-1", 2, 100);
+                UUID.randomUUID(), "60199999999", "group-1",
+                startTime, endTime, 2, 100);
 
         var request = AliyunChatAppBroadcastGateway.buildQueryRequest(query, "space-1");
         assertThat(request.getChannelType()).isEqualTo("WHATSAPP");
         assertThat(request.getBusinessNumber()).isEqualTo("60199999999");
         assertThat(request.getCustSpaceId()).isEqualTo("space-1");
         assertThat(request.getGroupMessageId()).isEqualTo("group-1");
+        assertThat(request.getStartTime()).isEqualTo(startTime.toEpochMilli());
+        assertThat(request.getEndTime()).isEqualTo(endTime.toEpochMilli());
         assertThat(request.getPage().getIndex()).isEqualTo(2L);
         assertThat(request.getPage().getSize()).isEqualTo(100L);
 
@@ -128,6 +134,30 @@ class AliyunChatAppBroadcastGatewayTest {
             assertThat(item.status()).isEqualTo(DELIVERED);
             assertThat(item.providerMessageId()).isEqualTo("wamid-1");
         });
+    }
+
+    @Test
+    void mapsProvider400AsNonRetryableReconciliationFailure() {
+        PopServerException provider = new PopServerException();
+        provider.setStatusCode(400);
+        provider.setErrCode("QueryParam.startTime");
+        provider.setRequestId("request-400");
+        provider.setErrMessage("Query start time not allowed to be empty");
+
+        ChatAppBroadcastException mapped = AliyunChatAppBroadcastGateway.reconciliationFailure(
+                new ExecutionException(provider));
+
+        assertThat(mapped.retryable()).isFalse();
+        assertThat(mapped.providerCode()).isEqualTo("QueryParam.startTime");
+        assertThat(mapped.providerRequestId()).isEqualTo("request-400");
+    }
+
+    @Test
+    void mapsReconciliationTimeoutAsRetryable() {
+        ChatAppBroadcastException mapped = AliyunChatAppBroadcastGateway.reconciliationFailure(
+                new TimeoutException("timeout"));
+
+        assertThat(mapped.retryable()).isTrue();
     }
 
     @Test
@@ -193,6 +223,38 @@ class AliyunChatAppBroadcastGatewayTest {
         assertThat(item.rowNumber()).isEqualTo(7);
         assertThat(item.rawProviderStatus()).isEqualTo("Read");
         assertThat(item.status()).isEqualTo(READ);
+    }
+
+    @Test
+    void skipsUnrecognizedHigherPriorityStatusAndKeepsDeliveredFact() {
+        var row = ListChatappMessageResponseBody.Data.builder()
+                .userNumber("60111111111")
+                .messageId("wamid-delivered")
+                .clientReadStatusName("Unread")
+                .messageStatusName("Delivered")
+                .build();
+
+        ReconciliationItem item = AliyunChatAppBroadcastGateway.parseRow(row, 8);
+
+        assertThat(item.rawProviderStatus()).isEqualTo("Delivered");
+        assertThat(item.status()).isEqualTo(DELIVERED);
+        assertThat(item.diagnosticCode()).isBlank();
+    }
+
+    @Test
+    void readsStatusFromEventActionWhenDedicatedStatusFieldsAreEmpty() {
+        var row = ListChatappMessageResponseBody.Data.builder()
+                .userNumber("60111111111")
+                .messageId("group-1")
+                .uniqueMessageId("unique-1")
+                .eventActionName("Read")
+                .build();
+
+        ReconciliationItem item = AliyunChatAppBroadcastGateway.parseRow(row, 9);
+
+        assertThat(item.rawProviderStatus()).isEqualTo("Read");
+        assertThat(item.status()).isEqualTo(READ);
+        assertThat(item.diagnosticCode()).isBlank();
     }
 
     @Test

@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.io.EOFException;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -82,12 +83,10 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
         } catch (ChatAppBroadcastException e) {
             throw e;
         } catch (Exception e) {
-            ProviderFailure failure = providerFailure(e);
+            ChatAppBroadcastException mapped = reconciliationFailure(e);
             LOG.warn("ChatApp broadcast reconciliation failed: providerCode={}, requestId={}",
-                    failure.code(), failure.requestId());
-            throw new ChatAppBroadcastException(
-                    "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", HttpStatus.BAD_GATEWAY,
-                    false, true, failure.code(), failure.requestId(), failure.message(), e);
+                    mapped.providerCode(), mapped.providerRequestId());
+            throw mapped;
         }
     }
 
@@ -155,14 +154,29 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
         if (query.page() < 1 || query.size() < 1 || query.size() > 100) {
             throw new IllegalArgumentException("CHATAPP_BROADCAST_RECONCILIATION_PAGE_INVALID");
         }
+        if (query.startTime() == null || query.endTime() == null
+                || !query.endTime().isAfter(query.startTime())
+                || Duration.between(query.startTime(), query.endTime()).compareTo(Duration.ofDays(90)) > 0) {
+            throw new IllegalArgumentException("CHATAPP_BROADCAST_RECONCILIATION_TIME_RANGE_INVALID");
+        }
         return ListChatappMessageRequest.builder()
                 .channelType("WHATSAPP")
                 .custSpaceId(required(custSpaceId))
                 .businessNumber(required(ContactPointUtil.normalizePhone(query.businessNumber())))
                 .groupMessageId(required(query.groupMessageId()))
+                .startTime(query.startTime().toEpochMilli())
+                .endTime(query.endTime().toEpochMilli())
                 .page(ListChatappMessageRequest.Page.builder()
                         .index((long) query.page()).size((long) query.size()).build())
                 .build();
+    }
+
+    static ChatAppBroadcastException reconciliationFailure(Exception error) {
+        ProviderFailure failure = providerFailure(error);
+        return new ChatAppBroadcastException(
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", HttpStatus.BAD_GATEWAY,
+                false, reconciliationRetryable(error, failure), failure.code(),
+                failure.requestId(), failure.message(), error);
     }
 
     static ReconciliationPage parseReconciliation(
@@ -204,10 +218,11 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
             return new ReconciliationItem(rowNumber, "", "", "", RecipientStatus.PROCESSING,
                     "", "", null, "CHATAPP_BROADCAST_RECONCILIATION_ROW_MISSING");
         }
-        String rawStatus = firstNonBlank(
+        String rawStatus = firstRecognizedStatus(
                 value(row.getClientReadStatusName()), value(row.getMessageStatusName()),
                 value(row.getClientAcceptStatusName()), value(row.getMessageStatus()),
-                value(row.getClientReadStatus()));
+                value(row.getClientReadStatus()), value(row.getEventActionName()),
+                value(row.getEventAction()));
         String number = ContactPointUtil.normalizePhone(row.getUserNumber());
         String providerMessageId = value(row.getMessageId());
         String providerUniqueMessageId = value(row.getUniqueMessageId());
@@ -231,6 +246,16 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
             case "failed" -> RecipientStatus.FAILED_RECIPIENT;
             default -> RecipientStatus.PROCESSING;
         };
+    }
+
+    private static String firstRecognizedStatus(String... values) {
+        for (String candidate : values) {
+            String value = candidate == null ? "" : candidate.trim();
+            if (!ChatAppMessageStatusNormalizer.normalize(value).isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private static ChatAppBroadcastException invalid(
@@ -310,19 +335,41 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
             if (current instanceof PopClientException client) {
                 return new ProviderFailure(
                         value(client.getErrCode()), value(client.getRequestId()),
-                        value(client.getErrMessage()));
+                        value(client.getErrMessage()), client.getStatusCode());
             }
             if (current instanceof PopServerException server) {
                 return new ProviderFailure(
                         value(server.getErrCode()), value(server.getRequestId()),
-                        value(server.getErrMessage()));
+                        value(server.getErrMessage()), server.getStatusCode());
             }
             current = current.getCause();
         }
-        return new ProviderFailure("", "", "");
+        return new ProviderFailure("", "", "", null);
     }
 
-    private record ProviderFailure(String code, String requestId, String message) {
+    private static boolean reconciliationRetryable(Throwable error, ProviderFailure failure) {
+        if (hasCause(error, TimeoutException.class)
+                || hasCause(error, SocketTimeoutException.class)
+                || hasCause(error, SocketException.class)
+                || hasCause(error, EOFException.class)) {
+            return true;
+        }
+        Integer statusCode = failure.statusCode();
+        if (statusCode != null) {
+            return statusCode == 408 || statusCode == 429 || statusCode >= 500;
+        }
+        String code = failure.code().toLowerCase(Locale.ROOT);
+        if (code.matches("4\\d\\d")) {
+            return "408".equals(code) || "429".equals(code);
+        }
+        if (!code.isBlank()) {
+            return code.contains("throttl") || code.contains("timeout")
+                    || code.contains("serviceunavailable") || code.contains("internalerror");
+        }
+        return true;
+    }
+
+    private record ProviderFailure(String code, String requestId, String message, Integer statusCode) {
     }
 
     private static boolean hasCause(Throwable error, Class<? extends Throwable> type) {

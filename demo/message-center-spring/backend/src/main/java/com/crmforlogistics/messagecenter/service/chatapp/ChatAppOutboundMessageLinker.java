@@ -40,7 +40,8 @@ public class ChatAppOutboundMessageLinker {
     @Transactional
     public LinkResult resolve(UUID channelAccountId, ListChatappMessageResponseBody.Data row) {
         ReconciliationItem item = AliyunChatAppBroadcastGateway.parseRow(row, 1);
-        String providerMessageId = value(row.getMessageId());
+        String providerMessageId = ChatAppProviderMessageIdentity.canonical(
+                row.getMessageId(), row.getUniqueMessageId());
         List<MessageEntity> providerMatches = providerMessageId.isBlank()
                 ? List.of()
                 : messageMapper.findAllByProviderMessageId(channelAccountId, providerMessageId);

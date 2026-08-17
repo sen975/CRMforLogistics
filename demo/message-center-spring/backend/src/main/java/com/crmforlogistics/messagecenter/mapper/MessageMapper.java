@@ -109,8 +109,21 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             update messages
             set provider_message_id = coalesce(#{providerMessageId}, provider_message_id),
                 current_status = #{status},
-                current_status_at = #{statusAt}
+                current_status_at = greatest(current_status_at, #{statusAt})
             where id = #{messageId}::uuid
+              and (provider_message_id is null
+                   or provider_message_id = coalesce(#{providerMessageId}, provider_message_id))
+              and (lower(current_status) = lower(#{status}) or (
+                    lower(current_status) <> 'read'
+                    and not (lower(current_status) = 'delivered' and lower(#{status}) = 'failed')
+                    and (case lower(current_status)
+                        when 'pending' then 0 when 'processing' then 1 when 'submitted' then 2
+                        when 'sent' then 3 when 'failed' then 4 when 'delivered' then 5
+                        when 'read' then 6 else -1 end)
+                      <= (case lower(#{status})
+                        when 'pending' then 0 when 'processing' then 1 when 'submitted' then 2
+                        when 'sent' then 3 when 'failed' then 4 when 'delivered' then 5
+                        when 'read' then 6 else -1 end)))
             """)
     int updateDeliveryStatus(@Param("messageId") UUID messageId,
                              @Param("providerMessageId") String providerMessageId,
@@ -121,9 +134,27 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             update messages
             set provider_message_id = #{providerMessageId}
             where id = #{messageId}::uuid
+              and (provider_message_id is null or provider_message_id = #{providerMessageId})
             """)
     int updateProviderMessageId(@Param("messageId") UUID messageId,
                                 @Param("providerMessageId") String providerMessageId);
+
+    @Update("""
+            update messages target
+            set provider_message_id = #{replacementProviderMessageId}
+            where target.id = #{messageId}::uuid
+              and target.provider_message_id = #{expectedProviderMessageId}
+              and not exists (
+                  select 1 from messages other
+                  where other.channel_account_id = target.channel_account_id
+                    and other.provider_message_id = #{replacementProviderMessageId}
+                    and other.id <> target.id
+              )
+            """)
+    int replaceProviderMessageId(
+            @Param("messageId") UUID messageId,
+            @Param("expectedProviderMessageId") String expectedProviderMessageId,
+            @Param("replacementProviderMessageId") String replacementProviderMessageId);
 
     @Update("update messages set conversation_id = #{targetConversationId}::uuid, " +
         "ingest_sequence = #{targetSequence} " +

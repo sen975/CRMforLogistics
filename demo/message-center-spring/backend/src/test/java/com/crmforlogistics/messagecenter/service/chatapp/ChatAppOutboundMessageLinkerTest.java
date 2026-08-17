@@ -74,7 +74,7 @@ class ChatAppOutboundMessageLinkerTest {
     @Test
     void pollingLinksTheOnlyPendingBroadcastMessageInsteadOfImportingAnOrphan() {
         candidate.setMessageId(null);
-        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1")).thenReturn(List.of());
+        when(messageMapper.findAllByProviderMessageId(accountId, "unique-1")).thenReturn(List.of());
         when(messageMapper.findByClientRequestId(accountId, "unique-1")).thenReturn(Optional.empty());
         when(recipientMapper.findPendingCandidates(
                 accountId, "60111111111", "shipping_notice", "zh_CN", sentAt, 2))
@@ -100,7 +100,7 @@ class ChatAppOutboundMessageLinkerTest {
 
     @Test
     void multiplePendingBroadcastsStayAmbiguous() {
-        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1")).thenReturn(List.of());
+        when(messageMapper.findAllByProviderMessageId(accountId, "unique-1")).thenReturn(List.of());
         when(messageMapper.findByClientRequestId(accountId, "unique-1")).thenReturn(Optional.empty());
         when(recipientMapper.findPendingCandidates(
                 accountId, "60111111111", "shipping_notice", "zh_CN", sentAt, 2))
@@ -114,7 +114,7 @@ class ChatAppOutboundMessageLinkerTest {
 
     @Test
     void noPendingBroadcastReturnsOrphan() {
-        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1")).thenReturn(List.of());
+        when(messageMapper.findAllByProviderMessageId(accountId, "unique-1")).thenReturn(List.of());
         when(messageMapper.findByClientRequestId(accountId, "unique-1")).thenReturn(Optional.empty());
         when(recipientMapper.findPendingCandidates(
                 accountId, "60111111111", "shipping_notice", "zh_CN", sentAt, 2))
@@ -125,19 +125,20 @@ class ChatAppOutboundMessageLinkerTest {
 
     @Test
     void existingProviderMessageWinsBeforeBroadcastCandidateLookup() {
-        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1"))
+        when(messageMapper.findAllByProviderMessageId(accountId, "unique-1"))
                 .thenReturn(List.of(existingMessage));
 
         LinkResult result = linker.resolve(accountId, row);
 
         assertThat(result.kind()).isEqualTo(EXISTING_PROVIDER);
+        verify(messageMapper, never()).findAllByProviderMessageId(accountId, "wamid-1");
         verify(recipientMapper, never()).findPendingCandidates(
                 any(), any(), any(), any(), any(), anyInt());
     }
 
     @Test
     void duplicateProviderIdStopsBeforeAnyCandidateGuess() {
-        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1"))
+        when(messageMapper.findAllByProviderMessageId(accountId, "unique-1"))
                 .thenReturn(List.of(firstProviderMessage, secondProviderMessage));
 
         LinkResult result = linker.resolve(accountId, row);

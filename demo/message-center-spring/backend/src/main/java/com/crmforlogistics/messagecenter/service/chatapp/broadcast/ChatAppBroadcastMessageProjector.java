@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageStateMachine;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppProviderMessageIdentity;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -26,6 +27,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -98,10 +100,14 @@ public class ChatAppBroadcastMessageProjector {
 
         String providerMessageId = nullIfBlank(bounded(item.providerMessageId(), 255));
         String providerUniqueMessageId = nullIfBlank(bounded(item.providerUniqueMessageId(), 255));
-        java.util.List<MessageEntity> providerMatches = providerMessageId == null
+        String canonicalProviderMessageId = nullIfBlank(bounded(
+                ChatAppProviderMessageIdentity.canonicalForBroadcast(
+                        providerMessageId, providerUniqueMessageId,
+                        broadcast.getProviderGroupMessageId()), 255));
+        java.util.List<MessageEntity> providerMatches = canonicalProviderMessageId == null
                 ? java.util.List.of()
                 : messageMapper.findAllByProviderMessageId(
-                        broadcast.getChannelAccountId(), providerMessageId);
+                        broadcast.getChannelAccountId(), canonicalProviderMessageId);
         if (providerMatches.size() > 1) {
             return new ReconciliationProjectionResult(recipient.getMessageId(), false, false,
                     "CHATAPP_PROVIDER_MESSAGE_ID_CONFLICT");
@@ -136,9 +142,31 @@ public class ChatAppBroadcastMessageProjector {
             return new ReconciliationProjectionResult(target.getId(), created, false,
                     "CHATAPP_BROADCAST_MESSAGE_SCOPE_CONFLICT");
         }
+
+        String targetProviderMessageId = nullIfBlank(target.getProviderMessageId());
+        String groupMessageId = nullIfBlank(broadcast.getProviderGroupMessageId());
+        boolean legacyGroupBinding = canonicalProviderMessageId != null
+                && groupMessageId != null
+                && groupMessageId.equals(providerMessageId)
+                && groupMessageId.equals(targetProviderMessageId);
+        if (legacyGroupBinding) {
+            if (messageMapper.replaceProviderMessageId(
+                    target.getId(), groupMessageId, canonicalProviderMessageId) != 1) {
+                MessageEntity persisted = messageMapper.selectById(target.getId());
+                if (persisted == null
+                        || !canonicalProviderMessageId.equals(
+                        nullIfBlank(persisted.getProviderMessageId()))) {
+                    return new ReconciliationProjectionResult(target.getId(), created, false,
+                            "CHATAPP_PROVIDER_MESSAGE_ID_CONFLICT");
+                }
+                target = persisted;
+            } else {
+                target.setProviderMessageId(canonicalProviderMessageId);
+            }
+        }
         if (target.getProviderMessageId() != null && !target.getProviderMessageId().isBlank()
-                && providerMessageId != null
-                && !target.getProviderMessageId().equals(providerMessageId)) {
+                && canonicalProviderMessageId != null
+                && !target.getProviderMessageId().equals(canonicalProviderMessageId)) {
             return new ReconciliationProjectionResult(target.getId(), created, false,
                     "CHATAPP_PROVIDER_MESSAGE_ID_CONFLICT");
         }
@@ -158,13 +186,18 @@ public class ChatAppBroadcastMessageProjector {
         String nextStatus = recipientMessageStatus(item.status());
         String advanced = ChatAppOutboundMessageStateMachine.advance(target.getCurrentStatus(), nextStatus);
         boolean messageStatusChanged = !Objects.equals(target.getCurrentStatus(), advanced);
-        String effectiveProviderMessageId = providerMessageId == null
-                ? nullIfBlank(target.getProviderMessageId()) : providerMessageId;
-        boolean providerBindingChanged = providerMessageId != null
-                && !Objects.equals(nullIfBlank(target.getProviderMessageId()), providerMessageId);
+        String effectiveProviderMessageId = canonicalProviderMessageId == null
+                ? nullIfBlank(target.getProviderMessageId()) : canonicalProviderMessageId;
+        boolean providerBindingChanged = canonicalProviderMessageId != null
+                && !Objects.equals(
+                nullIfBlank(target.getProviderMessageId()), canonicalProviderMessageId);
+        boolean persistedMessageStatus = false;
         if (messageStatusChanged) {
-            messageMapper.updateDeliveryStatus(
-                    target.getId(), effectiveProviderMessageId, advanced, reconciledAt);
+            persistedMessageStatus = messageMapper.updateDeliveryStatus(
+                    target.getId(), effectiveProviderMessageId, advanced, reconciledAt) == 1;
+        }
+        boolean persistedProviderBinding = false;
+        if (persistedMessageStatus) {
             MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
             statusEvent.setId(UUID.randomUUID());
             statusEvent.setMessageId(target.getId());
@@ -173,18 +206,56 @@ public class ChatAppBroadcastMessageProjector {
             statusEvent.setProviderEventId(reconciliationEventId(
                     recipientId, effectiveProviderMessageId, advanced));
             statusEvent.setReasonCode(bounded(item.diagnosticCode(), 100));
-            statusEvent.setReasonMessage(bounded(item.failureReason(), 1000));
+            statusEvent.setReasonMessage(ChatAppBroadcastDiagnosticSanitizer.sanitize(item.failureReason()));
             statusEvent.setMetadataJsonb("{}");
             statusEventMapper.insertIgnore(statusEvent);
             conversationMapper.recomputeProjection(target.getConversationId());
         } else if (providerBindingChanged) {
-            messageMapper.updateProviderMessageId(target.getId(), effectiveProviderMessageId);
+            persistedProviderBinding = messageMapper.updateProviderMessageId(
+                    target.getId(), effectiveProviderMessageId) == 1;
+        }
+
+        if ((messageStatusChanged && !persistedMessageStatus)
+                || (providerBindingChanged && !messageStatusChanged && !persistedProviderBinding)) {
+            MessageEntity persisted = messageMapper.selectById(target.getId());
+            if (persisted == null) {
+                return new ReconciliationProjectionResult(target.getId(), created, false,
+                        "CHATAPP_BROADCAST_MESSAGE_NOT_FOUND");
+            }
+            if (!broadcast.getChannelAccountId().equals(persisted.getChannelAccountId())
+                    || !expected.getId().equals(persisted.getConversationId())
+                    || !"outbound".equals(persisted.getDirection())) {
+                return new ReconciliationProjectionResult(target.getId(), created, false,
+                        "CHATAPP_BROADCAST_MESSAGE_SCOPE_CONFLICT");
+            }
+            if (canonicalProviderMessageId != null
+                    && persisted.getProviderMessageId() != null
+                    && !persisted.getProviderMessageId().isBlank()
+                    && !canonicalProviderMessageId.equals(persisted.getProviderMessageId())) {
+                return new ReconciliationProjectionResult(target.getId(), created, false,
+                        "CHATAPP_PROVIDER_MESSAGE_ID_CONFLICT");
+            }
+            if (providerBindingChanged
+                    && (persisted.getProviderMessageId() == null
+                    || persisted.getProviderMessageId().isBlank())) {
+                return new ReconciliationProjectionResult(target.getId(), created, false,
+                        "CHATAPP_BROADCAST_MESSAGE_UPDATE_CONFLICT");
+            }
+            String persistedStatus = normalizeText(persisted.getCurrentStatus());
+            if (messageStatusChanged
+                    && !ChatAppOutboundMessageStateMachine.advance(persistedStatus, advanced)
+                    .equals(persistedStatus)) {
+                return new ReconciliationProjectionResult(target.getId(), created, false,
+                        "CHATAPP_BROADCAST_MESSAGE_UPDATE_CONFLICT");
+            }
+            target = persisted;
         }
 
         ChatAppBroadcastModels.RecipientStatus currentRecipientStatus =
                 ChatAppBroadcastModels.RecipientStatus.valueOf(recipient.getStatus());
-        ChatAppBroadcastModels.RecipientStatus nextRecipientStatus = item.status() == null
-                ? ChatAppBroadcastModels.RecipientStatus.PROCESSING : item.status();
+        String effectiveMessageStatus = persistedMessageStatus ? advanced : target.getCurrentStatus();
+        ChatAppBroadcastModels.RecipientStatus nextRecipientStatus =
+                recipientStatus(effectiveMessageStatus);
         ChatAppBroadcastModels.RecipientStatus advancedRecipientStatus =
                 ChatAppBroadcastStateMachine.advanceRecipient(
                         currentRecipientStatus, nextRecipientStatus);
@@ -194,29 +265,35 @@ public class ChatAppBroadcastMessageProjector {
                 ? nullIfBlank(recipient.getProviderUniqueMessageId()) : providerUniqueMessageId;
         String failureReason = advancedRecipientStatus
                 == ChatAppBroadcastModels.RecipientStatus.FAILED_RECIPIENT
-                ? bounded(item.failureReason(), 1000) : "";
+                ? item.failureReason() == null || item.failureReason().isBlank()
+                ? normalizeText(recipient.getFailureReason())
+                : ChatAppBroadcastDiagnosticSanitizer.sanitize(item.failureReason())
+                : "";
+        Instant effectiveProviderSentAt = item.providerSentAt() == null
+                ? recipient.getProviderSentAt() : item.providerSentAt();
         boolean recipientChanged = !Objects.equals(recipient.getStatus(), advancedRecipientStatus.name())
                 || !Objects.equals(nullIfBlank(recipient.getProviderMessageId()), effectiveRecipientMessageId)
                 || !Objects.equals(nullIfBlank(recipient.getProviderUniqueMessageId()), effectiveRecipientUniqueId)
                 || !Objects.equals(normalizeText(recipient.getFailureReason()), failureReason)
-                || !Objects.equals(recipient.getProviderSentAt(), item.providerSentAt());
+                || !Objects.equals(recipient.getProviderSentAt(), effectiveProviderSentAt);
         if (recipientChanged) {
             recipientMapper.updateProviderStatus(
                     recipientId, effectiveRecipientMessageId, effectiveRecipientUniqueId,
                     advancedRecipientStatus.name(), failureReason,
-                    item.providerSentAt(), reconciledAt);
+                    effectiveProviderSentAt, reconciledAt);
         }
         return new ReconciliationProjectionResult(
                 target.getId(), created,
-                messageStatusChanged || providerBindingChanged || recipientChanged, "");
+                persistedMessageStatus || persistedProviderBinding || recipientChanged, "");
     }
 
     private ProjectionResult ensureProcessingInternal(
             ChatAppBroadcastEntity broadcast, ChatAppBroadcastRecipientEntity recipient) {
         if (recipient.getMessageId() != null) {
             MessageEntity existing = messageMapper.selectById(recipient.getMessageId());
+            requireExpectedScope(broadcast, recipient, existing);
             return new ProjectionResult(recipient.getMessageId(), false,
-                    existing == null ? "processing" : existing.getCurrentStatus());
+                    existing.getCurrentStatus());
         }
 
         String clientRequestId = "broadcast:" + broadcast.getId() + ":recipient:" + recipient.getId();
@@ -224,7 +301,16 @@ public class ChatAppBroadcastMessageProjector {
                 broadcast.getChannelAccountId(), clientRequestId);
         if (duplicate.isPresent()) {
             MessageEntity existing = duplicate.orElseThrow();
-            recipientMapper.linkMessageIfAbsent(recipient.getId(), existing.getId(), clock.instant());
+            requireExpectedScope(broadcast, recipient, existing);
+            if (recipientMapper.linkMessageIfAbsent(
+                    recipient.getId(), existing.getId(), clock.instant()) != 1) {
+                ChatAppBroadcastRecipientEntity refreshed = recipientMapper.findByIdForUpdate(recipient.getId())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "CHATAPP_BROADCAST_RECIPIENT_NOT_FOUND"));
+                if (!existing.getId().equals(refreshed.getMessageId())) {
+                    throw new IllegalStateException("CHATAPP_BROADCAST_MESSAGE_SCOPE_CONFLICT");
+                }
+            }
             return new ProjectionResult(existing.getId(), false, existing.getCurrentStatus());
         }
 
@@ -234,8 +320,10 @@ public class ChatAppBroadcastMessageProjector {
         if (conversation == null || conversation.getId() == null) {
             throw new IllegalStateException("CHATAPP_BROADCAST_CONVERSATION_NOT_FOUND");
         }
-        Instant occurredAt = broadcast.getSubmittedAt() == null
-                ? clock.instant() : broadcast.getSubmittedAt();
+        if (broadcast.getSubmittedAt() == null) {
+            throw new IllegalStateException("CHATAPP_BROADCAST_SUBMITTED_AT_MISSING");
+        }
+        Instant occurredAt = broadcast.getSubmittedAt();
         MessageEntity message = new MessageEntity();
         message.setId(UUID.randomUUID());
         message.setConversationId(conversation.getId());
@@ -281,6 +369,34 @@ public class ChatAppBroadcastMessageProjector {
             case READ -> "read";
             case FAILED_RECIPIENT -> "failed";
         };
+    }
+
+    private static ChatAppBroadcastModels.RecipientStatus recipientStatus(String messageStatus) {
+        String normalized = messageStatus == null ? "" : messageStatus.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "sent", "submitted" -> ChatAppBroadcastModels.RecipientStatus.SENT;
+            case "failed" -> ChatAppBroadcastModels.RecipientStatus.FAILED_RECIPIENT;
+            case "delivered" -> ChatAppBroadcastModels.RecipientStatus.DELIVERED;
+            case "read" -> ChatAppBroadcastModels.RecipientStatus.READ;
+            default -> ChatAppBroadcastModels.RecipientStatus.PROCESSING;
+        };
+    }
+
+    private void requireExpectedScope(
+            ChatAppBroadcastEntity broadcast,
+            ChatAppBroadcastRecipientEntity recipient,
+            MessageEntity message) {
+        if (message == null) {
+            throw new IllegalStateException("CHATAPP_BROADCAST_MESSAGE_NOT_FOUND");
+        }
+        ConversationEntity expected = conversationMapper.getOrCreateConversationForSender(
+                broadcast.getChannelAccountId(), recipient.getContactIdentityId(),
+                broadcast.getCreatedByUserId());
+        if (!broadcast.getChannelAccountId().equals(message.getChannelAccountId())
+                || expected == null || !expected.getId().equals(message.getConversationId())
+                || !"outbound".equals(message.getDirection())) {
+            throw new IllegalStateException("CHATAPP_BROADCAST_MESSAGE_SCOPE_CONFLICT");
+        }
     }
 
     private static String bounded(String value, int maxLength) {

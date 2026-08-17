@@ -103,6 +103,13 @@ class ChatAppBroadcastPersistenceIntegrationTest {
             bean.setSqlSessionFactory(factory);
             return bean;
         }
+
+        @Bean
+        MapperFactoryBean<MessageMapper> messageMapper(SqlSessionFactory factory) {
+            MapperFactoryBean<MessageMapper> bean = new MapperFactoryBean<>(MessageMapper.class);
+            bean.setSqlSessionFactory(factory);
+            return bean;
+        }
     }
 
     @BeforeAll
@@ -118,6 +125,7 @@ class ChatAppBroadcastPersistenceIntegrationTest {
     @Autowired ChatAppBroadcastRecipientMapper recipientMapper;
     @Autowired ChatAppBroadcastReconciliationEvidenceMapper evidenceMapper;
     @Autowired ContactIdentityMapper contactIdentityMapper;
+    @Autowired MessageMapper messageMapper;
     @Autowired JdbcTemplate jdbc;
 
     private UUID accountId;
@@ -333,6 +341,131 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select message_id from chatapp_broadcast_recipients where id = ?",
                 UUID.class, recipientId)).isNull();
+    }
+
+    @Test
+    void conditionalMessageStatusUpdateRejectsStaleDeliveryRegression() {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        Instant readAt = Instant.parse("2026-08-17T08:05:00Z");
+        jdbc.update("insert into contacts (id, display_name, created_by) values (?, 'Recipient', ?)",
+                contactId, actorId);
+        jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
+                        + "identity_value, normalized_value) values (?, ?, 'chatapp', ?, "
+                        + "'60111111111', '60111111111')",
+                identityId, contactId, accountId.toString());
+        jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
+                        + "next_ingest_sequence) values (?, ?, ?, 1)",
+                conversationId, accountId, identityId);
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, direction, "
+                        + "message_kind, body_text, occurred_at, ingest_sequence, counts_as_unread, "
+                        + "current_status, current_status_at) values (?, ?, ?, 'outbound', 'text', "
+                        + "'hello', ?, 1, false, 'read', ?)",
+                messageId, conversationId, accountId, Timestamp.from(readAt), Timestamp.from(readAt));
+
+        assertThat(messageMapper.updateDeliveryStatus(
+                messageId, "wamid-1", "delivered", readAt.minusSeconds(60))).isZero();
+        assertThat(jdbc.queryForObject(
+                "select current_status from messages where id = ?", String.class, messageId))
+                .isEqualTo("read");
+    }
+
+    @Test
+    void conditionalMessageStatusUpdateAllowsConfirmedDeliveryToCorrectFailure() {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        Instant failedAt = Instant.parse("2026-08-17T08:05:00Z");
+        jdbc.update("insert into contacts (id, display_name, created_by) values (?, 'Recipient', ?)",
+                contactId, actorId);
+        jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
+                        + "identity_value, normalized_value) values (?, ?, 'chatapp', ?, "
+                        + "'60111111111', '60111111111')",
+                identityId, contactId, accountId.toString());
+        jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
+                        + "next_ingest_sequence) values (?, ?, ?, 1)",
+                conversationId, accountId, identityId);
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, direction, "
+                        + "message_kind, body_text, occurred_at, ingest_sequence, counts_as_unread, "
+                        + "current_status, current_status_at) values (?, ?, ?, 'outbound', 'text', "
+                        + "'hello', ?, 1, false, 'failed', ?)",
+                messageId, conversationId, accountId, Timestamp.from(failedAt), Timestamp.from(failedAt));
+
+        assertThat(messageMapper.updateDeliveryStatus(
+                messageId, "wamid-1", "delivered", failedAt.plusSeconds(60))).isOne();
+        assertThat(messageMapper.updateDeliveryStatus(
+                messageId, "wamid-1", "read", failedAt.plusSeconds(120))).isOne();
+        assertThat(jdbc.queryForObject(
+                "select current_status from messages where id = ?", String.class, messageId))
+                .isEqualTo("read");
+    }
+
+    @Test
+    void conditionalMessageStatusUpdateRejectsProviderBindingReplacement() {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-08-17T08:05:00Z");
+        jdbc.update("insert into contacts (id, display_name, created_by) values (?, 'Recipient', ?)",
+                contactId, actorId);
+        jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
+                        + "identity_value, normalized_value) values (?, ?, 'chatapp', ?, "
+                        + "'60111111111', '60111111111')",
+                identityId, contactId, accountId.toString());
+        jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
+                        + "next_ingest_sequence) values (?, ?, ?, 1)",
+                conversationId, accountId, identityId);
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
+                        + "provider_message_id, direction, message_kind, body_text, occurred_at, "
+                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
+                        + "values (?, ?, ?, 'wamid-existing', 'outbound', 'text', 'hello', ?, 1, "
+                        + "false, 'processing', ?)",
+                messageId, conversationId, accountId,
+                Timestamp.from(occurredAt), Timestamp.from(occurredAt));
+
+        assertThat(messageMapper.updateDeliveryStatus(
+                messageId, "wamid-replacement", "delivered", occurredAt.plusSeconds(60))).isZero();
+        assertThat(jdbc.queryForMap(
+                "select provider_message_id, current_status from messages where id = ?", messageId))
+                .containsEntry("provider_message_id", "wamid-existing")
+                .containsEntry("current_status", "processing");
+    }
+
+    @Test
+    void legacyGroupBindingReplacementRequiresUnclaimedUniqueMessageId() {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        Instant occurredAt = Instant.parse("2026-08-17T08:05:00Z");
+        jdbc.update("insert into contacts (id, display_name, created_by) values (?, 'Recipient', ?)",
+                contactId, actorId);
+        jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
+                        + "identity_value, normalized_value) values (?, ?, 'chatapp', ?, "
+                        + "'60111111111', '60111111111')",
+                identityId, contactId, accountId.toString());
+        jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
+                        + "next_ingest_sequence) values (?, ?, ?, 1)",
+                conversationId, accountId, identityId);
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
+                        + "provider_message_id, direction, message_kind, body_text, occurred_at, "
+                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
+                        + "values (?, ?, ?, 'group-1', 'outbound', 'text', 'hello', ?, 1, "
+                        + "false, 'processing', ?)",
+                messageId, conversationId, accountId,
+                Timestamp.from(occurredAt), Timestamp.from(occurredAt));
+
+        assertThat(messageMapper.replaceProviderMessageId(
+                messageId, "group-1", "unique-1")).isOne();
+        assertThat(messageMapper.replaceProviderMessageId(
+                messageId, "group-1", "unique-2")).isZero();
+        assertThat(jdbc.queryForObject(
+                "select provider_message_id from messages where id = ?", String.class, messageId))
+                .isEqualTo("unique-1");
     }
 
     @Test
