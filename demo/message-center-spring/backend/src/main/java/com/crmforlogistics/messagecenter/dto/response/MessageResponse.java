@@ -6,6 +6,7 @@ import java.util.UUID;
 
 public record MessageResponse(
         UUID id,
+        String sourceId,
         String direction,
         String kind,
         String subject,
@@ -18,4 +19,21 @@ public record MessageResponse(
         String status,
         int ingestSequence,
         List<MessageAttachmentResponse> attachments
-) {}
+) {
+    public MessageResponse(UUID id,
+                           String direction,
+                           String kind,
+                           String subject,
+                           String bodyText,
+                           String bodyHtml,
+                           String channelType,
+                           String from,
+                           String to,
+                           Instant occurredAt,
+                           String status,
+                           int ingestSequence,
+                           List<MessageAttachmentResponse> attachments) {
+        this(id, null, direction, kind, subject, bodyText, bodyHtml, channelType, from, to,
+                occurredAt, status, ingestSequence, attachments);
+    }
+}

@@ -109,7 +109,6 @@ public class ThreadService {
         java.util.Collections.reverse(items);
 
         // 6. Build MessageResponse records
-
         List<MessageResponse> messageResponses = new ArrayList<>();
         for (MessageEntity entity : items) {
             IdentityChannelPair pair = identityByConv.get(entity.getConversationId());
@@ -154,6 +153,7 @@ public class ThreadService {
 
         return new MessageResponse(
                 entity.getId(),
+                entity.getProviderMessageId(),
                 direction,
                 entity.getMessageKind(),
                 entity.getSubject(),

@@ -8,6 +8,10 @@ import com.crmforlogistics.messagecenter.mapper.WeComChatDataCursorMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import com.crmforlogistics.messagecenter.service.event.EventHub;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -23,13 +27,19 @@ public class WeComChatDataStore {
     private final WeComChatDataMessageMapper messageMapper;
     private final WeComChatDataCursorMapper cursorMapper;
     private final WeComCredentialProtector credentialProtector;
+    private final WeComMessageProjector projector;
+    private final EventHub eventHub;
 
     public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
                               WeComChatDataCursorMapper cursorMapper,
-                              WeComCredentialProtector credentialProtector) {
+                              WeComCredentialProtector credentialProtector,
+                              WeComMessageProjector projector,
+                              EventHub eventHub) {
         this.messageMapper = messageMapper;
         this.cursorMapper = cursorMapper;
         this.credentialProtector = credentialProtector;
+        this.projector = projector;
+        this.eventHub = eventHub;
     }
 
     public String cursor(SyncKey key) throws WeComChatDataException {
@@ -43,6 +53,7 @@ public class WeComChatDataStore {
         }
     }
 
+    @Transactional
     public PublishResult publishPage(SyncKey key, String nextCursor,
                                      List<DecryptedMessage> decrypted)
             throws WeComChatDataException {
@@ -53,6 +64,7 @@ public class WeComChatDataStore {
             }
             int stored = 0;
             int skipped = 0;
+            boolean projected = false;
             for (DecryptedMessage item : decrypted) {
                 Candidate candidate = project(item);
                 if (candidate == null) {
@@ -72,14 +84,33 @@ public class WeComChatDataStore {
                 } else {
                     skipped++;
                 }
+                WeComMessageProjector.ProjectionResult result = projector.project(
+                        new WeComMessageProjector.WeComProjectedMessage(
+                                candidate.msgid(), candidate.externalUserId(), candidate.userId(),
+                                candidate.sendTime(), candidate.direction()));
+                projected |= result.inserted();
             }
             cursorMapper.upsert(keyField(key), nextCursor);
+            if (projected) publishAfterCommit();
             return new PublishResult(stored, skipped);
         } catch (WeComChatDataException exception) {
             throw exception;
         } catch (Exception exception) {
             throw storeFailed(exception);
         }
+    }
+
+    private void publishAfterCommit() {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            eventHub.publish("message-new", "{}");
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                eventHub.publish("message-new", "{}");
+            }
+        });
     }
 
     public List<StoredMessageReference> load(Instant fromInclusive, Instant toExclusive)
