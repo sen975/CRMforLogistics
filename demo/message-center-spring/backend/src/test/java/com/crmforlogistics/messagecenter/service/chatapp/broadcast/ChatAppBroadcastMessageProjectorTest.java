@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
@@ -24,12 +25,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -53,6 +56,8 @@ class ChatAppBroadcastMessageProjectorTest {
     private UUID broadcastId;
     private UUID recipientId;
     private UUID conversationId;
+    private UUID accountId;
+    private ChatAppBroadcastEntity broadcast;
     private ChatAppBroadcastRecipientEntity recipient;
     private ChatAppBroadcastMessageProjector projector;
 
@@ -61,10 +66,11 @@ class ChatAppBroadcastMessageProjectorTest {
         broadcastId = UUID.randomUUID();
         recipientId = UUID.randomUUID();
         conversationId = UUID.randomUUID();
+        accountId = UUID.randomUUID();
 
-        ChatAppBroadcastEntity broadcast = new ChatAppBroadcastEntity();
+        broadcast = new ChatAppBroadcastEntity();
         broadcast.setId(broadcastId);
-        broadcast.setChannelAccountId(UUID.randomUUID());
+        broadcast.setChannelAccountId(accountId);
         broadcast.setTemplateCode("shipping_notice");
         broadcast.setTemplateName("Shipping Notice");
         broadcast.setTemplateBodySnapshot("订单 $(order) 已发货");
@@ -92,7 +98,7 @@ class ChatAppBroadcastMessageProjectorTest {
                 broadcast.getChannelAccountId(), recipient.getContactIdentityId(),
                 broadcast.getCreatedByUserId())).thenReturn(conversation);
         lenient().when(messageMapper.insertWithSequence(any())).thenReturn(1);
-        when(recipientMapper.linkMessageIfAbsent(any(), any(), any())).thenAnswer(invocation -> {
+        lenient().when(recipientMapper.linkMessageIfAbsent(any(), any(), any())).thenAnswer(invocation -> {
             recipient.setMessageId(invocation.getArgument(1));
             return 1;
         });
@@ -152,6 +158,109 @@ class ChatAppBroadcastMessageProjectorTest {
         verify(recipientMapper).linkMessageIfAbsent(recipientId, existingId, NOW);
         verify(messageMapper, never()).insertWithSequence(any());
         verify(eventHub, never()).publish(any(), any());
+    }
+
+    @Test
+    void reconciliationUpdatesLinkedProcessingMessage() {
+        UUID localId = UUID.randomUUID();
+        MessageEntity local = message(localId);
+        local.setChannelAccountId(accountId);
+        local.setConversationId(conversationId);
+        recipient.setMessageId(localId);
+        when(messageMapper.selectById(localId)).thenReturn(local);
+        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1")).thenReturn(List.of());
+
+        ChatAppBroadcastMessageProjector.ReconciliationProjectionResult result =
+                projector.applyReconciliation(broadcastId, recipientId,
+                        item("wamid-1", ChatAppBroadcastModels.RecipientStatus.DELIVERED), NOW);
+
+        assertThat(result).isEqualTo(new ChatAppBroadcastMessageProjector.ReconciliationProjectionResult(
+                localId, false, true, ""));
+        verify(messageMapper).updateDeliveryStatus(localId, "wamid-1", "delivered", NOW);
+        verify(recipientMapper).updateProviderStatus(
+                recipientId, "wamid-1", "unique-1", "DELIVERED", "", NOW, NOW);
+        ArgumentCaptor<MessageStatusEventEntity> statusEvent =
+                ArgumentCaptor.forClass(MessageStatusEventEntity.class);
+        verify(statusEventMapper).insertIgnore(statusEvent.capture());
+        assertThat(statusEvent.getValue().getProviderEventId())
+                .contains(":delivered:")
+                .hasSizeLessThanOrEqualTo(255);
+    }
+
+    @Test
+    void reconciliationReusesScopedProviderHistoryWhenLocalProjectionIsMissing() {
+        UUID historyId = UUID.randomUUID();
+        MessageEntity history = message(historyId);
+        history.setChannelAccountId(accountId);
+        history.setConversationId(conversationId);
+        history.setProviderMessageId("wamid-1");
+        recipient.setMessageId(null);
+        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(List.of(history));
+
+        ChatAppBroadcastMessageProjector.ReconciliationProjectionResult result =
+                projector.applyReconciliation(broadcastId, recipientId,
+                        item("wamid-1", ChatAppBroadcastModels.RecipientStatus.READ), NOW);
+
+        assertThat(result.messageId()).isEqualTo(historyId);
+        assertThat(result.diagnosticCode()).isBlank();
+        verify(recipientMapper).linkMessageIfAbsent(recipientId, historyId, NOW);
+        verify(messageMapper).updateDeliveryStatus(historyId, "wamid-1", "read", NOW);
+        verify(messageMapper, never()).insertWithSequence(any());
+    }
+
+    @Test
+    void reconciliationUsesSameMessageWhenLocalAndProviderLinksAgree() {
+        UUID messageId = UUID.randomUUID();
+        MessageEntity existing = message(messageId);
+        existing.setChannelAccountId(accountId);
+        existing.setConversationId(conversationId);
+        existing.setProviderMessageId("wamid-1");
+        recipient.setMessageId(messageId);
+        when(messageMapper.selectById(messageId)).thenReturn(existing);
+        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(List.of(existing));
+
+        ChatAppBroadcastMessageProjector.ReconciliationProjectionResult result =
+                projector.applyReconciliation(broadcastId, recipientId,
+                        item("wamid-1", ChatAppBroadcastModels.RecipientStatus.DELIVERED), NOW);
+
+        assertThat(result.messageId()).isEqualTo(messageId);
+        assertThat(result.updated()).isTrue();
+        verify(messageMapper).updateDeliveryStatus(messageId, "wamid-1", "delivered", NOW);
+        verify(recipientMapper, never()).linkMessageIfAbsent(any(), any(), any());
+    }
+
+    @Test
+    void reconciliationStopsWhenProviderIdBelongsToAnotherMessage() {
+        UUID localId = UUID.randomUUID();
+        UUID providerId = UUID.randomUUID();
+        MessageEntity local = message(localId);
+        local.setChannelAccountId(accountId);
+        local.setConversationId(conversationId);
+        MessageEntity providerHistory = message(providerId);
+        providerHistory.setChannelAccountId(accountId);
+        providerHistory.setConversationId(conversationId);
+        providerHistory.setProviderMessageId("wamid-1");
+        recipient.setMessageId(localId);
+        when(messageMapper.selectById(localId)).thenReturn(local);
+        when(messageMapper.findAllByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(List.of(providerHistory));
+
+        ChatAppBroadcastMessageProjector.ReconciliationProjectionResult result =
+                projector.applyReconciliation(broadcastId, recipientId,
+                        item("wamid-1", ChatAppBroadcastModels.RecipientStatus.DELIVERED), NOW);
+
+        assertThat(result.diagnosticCode()).isEqualTo("CHATAPP_PROVIDER_MESSAGE_ID_CONFLICT");
+        verify(messageMapper, never()).updateDeliveryStatus(any(), any(), any(), any());
+        verify(recipientMapper, never()).updateProviderStatus(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    private static ChatAppBroadcastGateway.ReconciliationItem item(
+            String providerMessageId, ChatAppBroadcastModels.RecipientStatus status) {
+        return new ChatAppBroadcastGateway.ReconciliationItem(
+                1, "60111111111", providerMessageId, "unique-1", status,
+                status.name(), "", NOW, "");
     }
 
     private MessageEntity message(UUID id) {

@@ -87,6 +87,17 @@ public interface ChatAppBroadcastMapper extends BaseMapper<ChatAppBroadcastEntit
                      @Param("status") String status,
                      @Param("updatedAt") Instant updatedAt);
 
+    @Update("update chatapp_broadcasts set last_reconciliation_request_id = #{requestId}, "
+            + "last_reconciliation_provider_code = #{providerCode}, error_code = #{errorCode}, "
+            + "error_message = left(#{errorMessage}, 1000), updated_at = #{updatedAt}, "
+            + "version = version + 1 where id = #{id}::uuid")
+    int updateReconciliationDiagnostic(@Param("id") UUID id,
+                                       @Param("requestId") String requestId,
+                                       @Param("providerCode") String providerCode,
+                                       @Param("errorCode") String errorCode,
+                                       @Param("errorMessage") String errorMessage,
+                                       @Param("updatedAt") Instant updatedAt);
+
     @Update("update chatapp_broadcasts set status = 'SUBMISSION_UNKNOWN', "
             + "error_code = 'CHATAPP_BROADCAST_SUBMISSION_UNKNOWN', "
             + "error_message = 'CHATAPP_BROADCAST_SUBMISSION_UNKNOWN', "
