@@ -286,7 +286,8 @@ public class ChatAppBroadcastWorker {
                         ? candidates.get(0) : null;
                 evidenceMapper.upsert(evidence(job, broadcast, page, item.rowNumber(),
                         matched, item, matchDiagnostic));
-                if (matched == null) {
+                if (matched == null || (item.diagnosticCode() != null
+                        && !item.diagnosticCode().isBlank())) {
                     pageUnmatched = true;
                     continue;
                 }

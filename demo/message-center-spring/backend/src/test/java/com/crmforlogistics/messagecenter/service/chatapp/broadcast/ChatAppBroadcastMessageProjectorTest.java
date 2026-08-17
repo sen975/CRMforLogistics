@@ -335,6 +335,33 @@ class ChatAppBroadcastMessageProjectorTest {
                 "DELIVERED", "", NOW, NOW);
     }
 
+    @Test
+    void reconciliationNeverClearsExistingProviderIdentifiersWhenRowOmitsThem() {
+        UUID messageId = UUID.randomUUID();
+        MessageEntity existing = message(messageId);
+        existing.setChannelAccountId(accountId);
+        existing.setConversationId(conversationId);
+        existing.setProviderMessageId("wamid-existing");
+        recipient.setMessageId(messageId);
+        recipient.setProviderMessageId("wamid-existing");
+        recipient.setProviderUniqueMessageId("unique-existing");
+        when(messageMapper.selectById(messageId)).thenReturn(existing);
+        ChatAppBroadcastGateway.ReconciliationItem missingIds =
+                new ChatAppBroadcastGateway.ReconciliationItem(
+                        1, "60111111111", "", "",
+                        ChatAppBroadcastModels.RecipientStatus.DELIVERED,
+                        "DELIVERED", "", NOW,
+                        "CHATAPP_BROADCAST_PROVIDER_MESSAGE_ID_MISSING");
+
+        projector.applyReconciliation(broadcastId, recipientId, missingIds, NOW);
+
+        verify(messageMapper).updateDeliveryStatus(
+                messageId, "wamid-existing", "delivered", NOW);
+        verify(recipientMapper).updateProviderStatus(
+                recipientId, "wamid-existing", "unique-existing",
+                "DELIVERED", "", NOW, NOW);
+    }
+
     private static ChatAppBroadcastGateway.ReconciliationItem item(
             String providerMessageId, ChatAppBroadcastModels.RecipientStatus status) {
         return new ChatAppBroadcastGateway.ReconciliationItem(

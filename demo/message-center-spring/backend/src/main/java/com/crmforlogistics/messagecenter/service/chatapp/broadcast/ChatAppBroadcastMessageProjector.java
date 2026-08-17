@@ -158,24 +158,27 @@ public class ChatAppBroadcastMessageProjector {
         String nextStatus = recipientMessageStatus(item.status());
         String advanced = ChatAppOutboundMessageStateMachine.advance(target.getCurrentStatus(), nextStatus);
         boolean messageStatusChanged = !Objects.equals(target.getCurrentStatus(), advanced);
-        boolean providerBindingChanged =
-                !Objects.equals(nullIfBlank(target.getProviderMessageId()), providerMessageId);
+        String effectiveProviderMessageId = providerMessageId == null
+                ? nullIfBlank(target.getProviderMessageId()) : providerMessageId;
+        boolean providerBindingChanged = providerMessageId != null
+                && !Objects.equals(nullIfBlank(target.getProviderMessageId()), providerMessageId);
         if (messageStatusChanged) {
-            messageMapper.updateDeliveryStatus(target.getId(), providerMessageId, advanced, reconciledAt);
+            messageMapper.updateDeliveryStatus(
+                    target.getId(), effectiveProviderMessageId, advanced, reconciledAt);
             MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
             statusEvent.setId(UUID.randomUUID());
             statusEvent.setMessageId(target.getId());
             statusEvent.setStatus(advanced);
             statusEvent.setOccurredAt(reconciledAt);
             statusEvent.setProviderEventId(reconciliationEventId(
-                    recipientId, providerMessageId, advanced));
+                    recipientId, effectiveProviderMessageId, advanced));
             statusEvent.setReasonCode(bounded(item.diagnosticCode(), 100));
             statusEvent.setReasonMessage(bounded(item.failureReason(), 1000));
             statusEvent.setMetadataJsonb("{}");
             statusEventMapper.insertIgnore(statusEvent);
             conversationMapper.recomputeProjection(target.getConversationId());
         } else if (providerBindingChanged) {
-            messageMapper.updateProviderMessageId(target.getId(), providerMessageId);
+            messageMapper.updateProviderMessageId(target.getId(), effectiveProviderMessageId);
         }
 
         ChatAppBroadcastModels.RecipientStatus currentRecipientStatus =
@@ -185,15 +188,21 @@ public class ChatAppBroadcastMessageProjector {
         ChatAppBroadcastModels.RecipientStatus advancedRecipientStatus =
                 ChatAppBroadcastStateMachine.advanceRecipient(
                         currentRecipientStatus, nextRecipientStatus);
-        String failureReason = bounded(item.failureReason(), 1000);
+        String effectiveRecipientMessageId = providerMessageId == null
+                ? nullIfBlank(recipient.getProviderMessageId()) : providerMessageId;
+        String effectiveRecipientUniqueId = providerUniqueMessageId == null
+                ? nullIfBlank(recipient.getProviderUniqueMessageId()) : providerUniqueMessageId;
+        String failureReason = advancedRecipientStatus
+                == ChatAppBroadcastModels.RecipientStatus.FAILED_RECIPIENT
+                ? bounded(item.failureReason(), 1000) : "";
         boolean recipientChanged = !Objects.equals(recipient.getStatus(), advancedRecipientStatus.name())
-                || !Objects.equals(nullIfBlank(recipient.getProviderMessageId()), providerMessageId)
-                || !Objects.equals(nullIfBlank(recipient.getProviderUniqueMessageId()), providerUniqueMessageId)
+                || !Objects.equals(nullIfBlank(recipient.getProviderMessageId()), effectiveRecipientMessageId)
+                || !Objects.equals(nullIfBlank(recipient.getProviderUniqueMessageId()), effectiveRecipientUniqueId)
                 || !Objects.equals(normalizeText(recipient.getFailureReason()), failureReason)
                 || !Objects.equals(recipient.getProviderSentAt(), item.providerSentAt());
         if (recipientChanged) {
             recipientMapper.updateProviderStatus(
-                    recipientId, providerMessageId, providerUniqueMessageId,
+                    recipientId, effectiveRecipientMessageId, effectiveRecipientUniqueId,
                     advancedRecipientStatus.name(), failureReason,
                     item.providerSentAt(), reconciledAt);
         }
