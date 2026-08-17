@@ -227,6 +227,9 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         broadcast.setTemplateBodySnapshot("订单 $(order) 已发货");
         assertThat(broadcastMapper.insertIfAbsent(broadcast)).isEqualTo(1);
         UUID broadcastId = broadcast.getId();
+        assertThat(jdbc.queryForObject(
+                "select template_body_snapshot from chatapp_broadcasts where id = ?",
+                String.class, broadcastId)).isEqualTo("订单 $(order) 已发货");
         UUID contactId = UUID.randomUUID();
         UUID identityId = UUID.randomUUID();
         UUID conversationId = UUID.randomUUID();
@@ -284,6 +287,7 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         unmatched.setPageNumber(1);
         unmatched.setRowNumber(1);
         unmatched.setUserNumber("60122222222");
+        unmatched.setFailureReason("x".repeat(1001));
         unmatched.setDiagnosticCode("CHATAPP_BROADCAST_RECIPIENT_UNMATCHED");
         unmatched.setCreatedAt(now);
         assertThat(evidenceMapper.upsert(envelope)).isEqualTo(1);
@@ -298,6 +302,10 @@ class ChatAppBroadcastPersistenceIntegrationTest {
                 .isEqualTo("CHATAPP_PROVIDER_SUCCESS_FLAG_CONFLICT");
         assertThat(evidenceMapper.upsert(unmatched)).isEqualTo(1);
         assertThat(evidenceMapper.countUnmatched(broadcastId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select length(failure_reason) from chatapp_broadcast_reconciliation_evidence "
+                        + "where job_id = ? and page_number = 1 and row_number = 1",
+                Integer.class, jobId)).isEqualTo(1000);
 
         UUID secondIdentityId = UUID.randomUUID();
         jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
@@ -319,6 +327,71 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         recipientMapper.insert(second);
         assertThatThrownBy(() -> recipientMapper.linkMessageIfAbsent(
                 second.getId(), messageId, Instant.now()))
+                .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
+
+        jdbc.update("delete from messages where id = ?", messageId);
+        assertThat(jdbc.queryForObject(
+                "select message_id from chatapp_broadcast_recipients where id = ?",
+                UUID.class, recipientId)).isNull();
+    }
+
+    @Test
+    void evidenceRejectsCrossBroadcastReferencesAndUsesOnlyLatestReconcileForUnmatchedCount() {
+        Instant now = Instant.parse("2026-08-17T08:00:00Z");
+        ChatAppBroadcastEntity first = broadcast("evidence-primary");
+        ChatAppBroadcastEntity second = broadcast("evidence-foreign");
+        assertThat(broadcastMapper.insertIfAbsent(first)).isEqualTo(1);
+        assertThat(broadcastMapper.insertIfAbsent(second)).isEqualTo(1);
+
+        UUID firstJob = insertJob(first.getId(), "RECONCILE", "SUCCEEDED", null);
+        UUID secondJob = insertJob(second.getId(), "RECONCILE", "SUCCEEDED", null);
+        ChatAppBroadcastReconciliationEvidenceEntity crossJob = evidence(first.getId(), secondJob, 1, 1, now);
+        assertThatThrownBy(() -> evidenceMapper.upsert(crossJob))
+                .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
+
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        jdbc.update("insert into contacts (id, display_name, created_by) values (?, 'Recipient', ?)",
+                contactId, actorId);
+        jdbc.update("insert into contact_identities (id, contact_id, channel_type, identity_scope, "
+                        + "identity_value, normalized_value) values (?, ?, 'chatapp', ?, "
+                        + "'60111111111', '60111111111')",
+                identityId, contactId, accountId.toString());
+        ChatAppBroadcastRecipientEntity foreignRecipient = recipient(second.getId(), contactId, identityId, now);
+        recipientMapper.insert(foreignRecipient);
+        ChatAppBroadcastReconciliationEvidenceEntity crossRecipient = evidence(first.getId(), firstJob, 1, 2, now);
+        crossRecipient.setMatchedRecipientId(foreignRecipient.getId());
+        assertThatThrownBy(() -> evidenceMapper.upsert(crossRecipient))
+                .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
+
+        ChatAppBroadcastReconciliationEvidenceEntity unmatched = evidence(first.getId(), firstJob, 1, 3, now);
+        assertThat(evidenceMapper.upsert(unmatched)).isEqualTo(1);
+        assertThat(evidenceMapper.countUnmatched(first.getId())).isEqualTo(1);
+
+        UUID latestJob = insertJob(first.getId(), "RECONCILE", "SUCCEEDED", null);
+        jdbc.update("update chatapp_broadcast_jobs set created_at = ?, updated_at = ? where id = ?",
+                Timestamp.from(now.plusSeconds(1)), Timestamp.from(now.plusSeconds(1)), latestJob);
+        ChatAppBroadcastRecipientEntity matchedRecipient = recipient(first.getId(), contactId, identityId, now);
+        recipientMapper.insert(matchedRecipient);
+        ChatAppBroadcastReconciliationEvidenceEntity matched = evidence(first.getId(), latestJob, 1, 1,
+                now.plusSeconds(1));
+        matched.setMatchedRecipientId(matchedRecipient.getId());
+        assertThat(evidenceMapper.upsert(matched)).isEqualTo(1);
+
+        assertThat(evidenceMapper.countUnmatched(first.getId())).isZero();
+        assertThat(evidenceMapper.findLatest(first.getId(), 10)).hasSize(2);
+    }
+
+    @Test
+    void evidenceRejectsOutOfRangePageAndRowNumbers() {
+        ChatAppBroadcastEntity broadcast = broadcast("evidence-checks");
+        assertThat(broadcastMapper.insertIfAbsent(broadcast)).isEqualTo(1);
+        UUID jobId = insertJob(broadcast.getId(), "RECONCILE", "SUCCEEDED", null);
+        Instant now = Instant.parse("2026-08-17T08:00:00Z");
+
+        assertThatThrownBy(() -> evidenceMapper.upsert(evidence(broadcast.getId(), jobId, 0, 1, now)))
+                .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
+        assertThatThrownBy(() -> evidenceMapper.upsert(evidence(broadcast.getId(), jobId, 1, 101, now)))
                 .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
     }
 
@@ -356,6 +429,37 @@ class ChatAppBroadcastPersistenceIntegrationTest {
                 leased ? "old-lease" : null, leased ? "old-worker" : null,
                 leased ? Timestamp.from(leaseExpiresAt) : null, Timestamp.from(due), Timestamp.from(due));
         return id;
+    }
+
+    private ChatAppBroadcastRecipientEntity recipient(
+            UUID broadcastId, UUID contactId, UUID identityId, Instant now) {
+        ChatAppBroadcastRecipientEntity recipient = new ChatAppBroadcastRecipientEntity();
+        recipient.setId(UUID.randomUUID());
+        recipient.setBroadcastId(broadcastId);
+        recipient.setContactId(contactId);
+        recipient.setContactIdentityId(identityId);
+        recipient.setRecipientNameSnapshot("Recipient");
+        recipient.setRecipientNumberSnapshot("60111111111");
+        recipient.setTemplateParamsJsonb("{}");
+        recipient.setStatus("PROCESSING");
+        recipient.setCreatedAt(now);
+        recipient.setUpdatedAt(now);
+        recipient.setVersion(0L);
+        return recipient;
+    }
+
+    private ChatAppBroadcastReconciliationEvidenceEntity evidence(
+            UUID broadcastId, UUID jobId, int pageNumber, int rowNumber, Instant createdAt) {
+        ChatAppBroadcastReconciliationEvidenceEntity evidence =
+                new ChatAppBroadcastReconciliationEvidenceEntity();
+        evidence.setId(UUID.randomUUID());
+        evidence.setBroadcastId(broadcastId);
+        evidence.setJobId(jobId);
+        evidence.setProviderRequestId("request-1");
+        evidence.setPageNumber(pageNumber);
+        evidence.setRowNumber(rowNumber);
+        evidence.setCreatedAt(createdAt);
+        return evidence;
     }
 
     private static <T> List<T> race(Callable<T> first, Callable<T> second) throws Exception {

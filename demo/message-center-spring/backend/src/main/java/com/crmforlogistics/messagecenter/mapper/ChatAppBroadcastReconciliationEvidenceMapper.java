@@ -28,9 +28,12 @@ public interface ChatAppBroadcastReconciliationEvidenceMapper {
             + "diagnostic_code = excluded.diagnostic_code, created_at = excluded.created_at")
     int upsert(ChatAppBroadcastReconciliationEvidenceEntity evidence);
 
-    @Select("select count(*) from chatapp_broadcast_reconciliation_evidence "
-            + "where broadcast_id = #{broadcastId}::uuid and row_number > 0 "
-            + "and matched_recipient_id is null")
+    @Select("select count(*) from chatapp_broadcast_reconciliation_evidence evidence "
+            + "where evidence.broadcast_id = #{broadcastId}::uuid and evidence.row_number > 0 "
+            + "and evidence.matched_recipient_id is null and evidence.job_id = ("
+            + "select job.id from chatapp_broadcast_jobs job "
+            + "where job.broadcast_id = #{broadcastId}::uuid and job.job_type = 'RECONCILE' "
+            + "order by job.created_at desc, job.id desc limit 1)")
     long countUnmatched(@Param("broadcastId") UUID broadcastId);
 
     @Select("select * from chatapp_broadcast_reconciliation_evidence "
