@@ -87,8 +87,9 @@ public interface ChatAppBroadcastMapper extends BaseMapper<ChatAppBroadcastEntit
                      @Param("status") String status,
                      @Param("updatedAt") Instant updatedAt);
 
-    @Update("update chatapp_broadcasts set last_reconciliation_request_id = #{requestId}, "
-            + "last_reconciliation_provider_code = #{providerCode}, error_code = #{errorCode}, "
+    @Update("update chatapp_broadcasts set last_reconciliation_request_id = left(#{requestId}, 255), "
+            + "last_reconciliation_provider_code = left(#{providerCode}, 100), "
+            + "error_code = left(#{errorCode}, 100), "
             + "error_message = left(#{errorMessage}, 1000), updated_at = #{updatedAt}, "
             + "version = version + 1 where id = #{id}::uuid")
     int updateReconciliationDiagnostic(@Param("id") UUID id,

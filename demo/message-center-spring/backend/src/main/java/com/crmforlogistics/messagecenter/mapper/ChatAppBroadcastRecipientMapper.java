@@ -32,8 +32,8 @@ public interface ChatAppBroadcastRecipientMapper extends BaseMapper<ChatAppBroad
     long countFailures(@Param("broadcastId") UUID broadcastId);
 
     @Select("select * from chatapp_broadcast_recipients where broadcast_id = #{broadcastId}::uuid "
-            + "and recipient_number_snapshot = #{number} limit 1")
-    Optional<ChatAppBroadcastRecipientEntity> findByNumber(
+            + "and recipient_number_snapshot = #{number} order by created_at, id")
+    List<ChatAppBroadcastRecipientEntity> findAllByNumber(
             @Param("broadcastId") UUID broadcastId,
             @Param("number") String number);
 

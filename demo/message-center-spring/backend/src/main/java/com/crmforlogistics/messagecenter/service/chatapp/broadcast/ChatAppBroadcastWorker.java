@@ -148,7 +148,10 @@ public class ChatAppBroadcastWorker {
             failSubmission(job, broadcast, "CHATAPP_BROADCAST_SNAPSHOT_INCOMPLETE", false);
             return;
         }
-        broadcastMapper.updateStatus(broadcast.getId(), BroadcastStatus.SUBMITTING.name(), now);
+        transactions.executeWithoutResult(status -> {
+            assertLease(job);
+            broadcastMapper.updateStatus(broadcast.getId(), BroadcastStatus.SUBMITTING.name(), now);
+        });
         BroadcastSubmission command = new BroadcastSubmission(
                 broadcast.getChannelAccountId(), account.getAccountIdentifier(),
                 broadcast.getTemplateCode(), broadcast.getTemplateName(), broadcast.getLanguageCode(),
@@ -163,8 +166,9 @@ public class ChatAppBroadcastWorker {
                     throw leaseLost();
                 }
                 broadcastMapper.markSubmitted(
-                        broadcast.getId(), result.groupMessageId(), result.providerRequestId(),
-                        result.providerCode(), now);
+                        broadcast.getId(), bounded(result.groupMessageId(), 255),
+                        bounded(result.providerRequestId(), 255),
+                        bounded(result.providerCode(), 100), now);
                 recipientMapper.updateAllStatuses(
                         broadcast.getId(), RecipientStatus.PROCESSING.name(), now);
                 ChatAppBroadcastJobEntity reconcile = new ChatAppBroadcastJobEntity();
@@ -231,14 +235,10 @@ public class ChatAppBroadcastWorker {
             return;
         }
         ChannelAccountEntity account = accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
-        for (ChatAppBroadcastRecipientEntity recipient
-                : recipientMapper.findWithoutMessage(broadcast.getId(), 1000)) {
-            try {
-                messageProjector.ensureProcessing(broadcast.getId(), recipient.getId());
-            } catch (RuntimeException projectionFailure) {
-                LOG.warn("ChatApp broadcast reconciliation projection deferred: broadcastId={} recipientId={} code={}",
-                        broadcast.getId(), recipient.getId(), code(projectionFailure));
-            }
+        if (!backfillProcessingMessages(broadcast)) {
+            retryReconciliation(
+                    job, broadcast, "CHATAPP_BROADCAST_MESSAGE_PROJECTION_FAILED");
+            return;
         }
         transactions.executeWithoutResult(status -> {
             assertLease(job);
@@ -275,28 +275,47 @@ public class ChatAppBroadcastWorker {
             boolean pageUnmatched = false;
             evidenceMapper.upsert(evidence(job, broadcast, page, 0, null, null, ""));
             for (ReconciliationItem item : page.items()) {
-                var stored = item.recipientNumber() == null || item.recipientNumber().isBlank()
-                        ? java.util.Optional.<ChatAppBroadcastRecipientEntity>empty()
-                        : recipientMapper.findByNumber(broadcast.getId(), item.recipientNumber());
-                String diagnostic = item.diagnosticCode();
+                List<ChatAppBroadcastRecipientEntity> candidates =
+                        item.recipientNumber() == null || item.recipientNumber().isBlank()
+                                ? List.of()
+                                : recipientMapper.findAllByNumber(
+                                        broadcast.getId(), item.recipientNumber());
+                String matchDiagnostic = candidates.size() > 1
+                        ? "CHATAPP_BROADCAST_RECIPIENT_AMBIGUOUS" : item.diagnosticCode();
+                ChatAppBroadcastRecipientEntity matched = candidates.size() == 1
+                        ? candidates.get(0) : null;
                 evidenceMapper.upsert(evidence(job, broadcast, page, item.rowNumber(),
-                        stored.orElse(null), item, diagnostic));
-                if (stored.isEmpty()) {
+                        matched, item, matchDiagnostic));
+                if (matched == null) {
                     pageUnmatched = true;
                     continue;
                 }
                 ChatAppBroadcastMessageProjector.ReconciliationProjectionResult projection =
                         messageProjector.applyReconciliation(
-                                broadcast.getId(), stored.orElseThrow().getId(), item, now);
+                                broadcast.getId(), matched.getId(), item, now);
                 if (projection != null && !projection.diagnosticCode().isBlank()) {
                     evidenceMapper.upsert(evidence(job, broadcast, page, item.rowNumber(),
-                            stored.orElse(null), item, projection.diagnosticCode()));
+                            matched, item, projection.diagnosticCode()));
                     pageUnmatched = true;
                 }
             }
             return pageUnmatched;
         });
         return Boolean.TRUE.equals(unmatched);
+    }
+
+    private boolean backfillProcessingMessages(ChatAppBroadcastEntity broadcast) {
+        for (ChatAppBroadcastRecipientEntity recipient
+                : recipientMapper.findWithoutMessage(broadcast.getId(), 1000)) {
+            try {
+                messageProjector.ensureProcessing(broadcast.getId(), recipient.getId());
+            } catch (RuntimeException projectionFailure) {
+                LOG.warn("ChatApp broadcast reconciliation projection failed: broadcastId={} recipientId={} code={}",
+                        broadcast.getId(), recipient.getId(), code(projectionFailure));
+                return false;
+            }
+        }
+        return true;
     }
 
     private void finalizeReconciliation(
