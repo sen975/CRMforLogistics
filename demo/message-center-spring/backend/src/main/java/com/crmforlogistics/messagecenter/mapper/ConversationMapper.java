@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.UUID;
 
@@ -30,6 +31,26 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                                                @Param("contactIdentityId") UUID contactIdentityId);
 
     /**
+     * Resolve the target conversation for an outbound send and atomically assign an
+     * unassigned conversation to the already-authorized sender. Existing assignments
+     * are never overwritten.
+     */
+    @Select("insert into conversations (id, channel_account_id, contact_identity_id, assigned_user_id) " +
+        "values (gen_random_uuid(), #{channelAccountId}::uuid, #{contactIdentityId}::uuid, #{actorUserId}::uuid) " +
+        "on conflict (channel_account_id, contact_identity_id) do update " +
+        "set assigned_user_id = case when conversations.assigned_user_id is null " +
+        "and conversations.assigned_team_id is null then excluded.assigned_user_id " +
+        "else conversations.assigned_user_id end, " +
+        "updated_at = case when conversations.assigned_user_id is null " +
+        "and conversations.assigned_team_id is null then now() else conversations.updated_at end " +
+        "returning id, channel_account_id, contact_identity_id, status, assigned_team_id, assigned_user_id, " +
+        "next_ingest_sequence, last_message_id, last_message_at, created_at, updated_at, version")
+    ConversationEntity getOrCreateConversationForSender(
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("contactIdentityId") UUID contactIdentityId,
+            @Param("actorUserId") UUID actorUserId);
+
+    /**
      * List conversation threads for a contact, across all identities.
      */
     @Select("<script>" +
@@ -49,6 +70,15 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         "from conversations where id = #{conversationId}::uuid and channel_account_id = #{channelAccountId}::uuid for update")
     ConversationEntity lockForMessage(@Param("conversationId") UUID conversationId,
                                       @Param("channelAccountId") UUID channelAccountId);
+
+    @Update("update conversations cv set " +
+        "last_message_id = (select m.id from messages m " +
+        "where m.conversation_id = cv.id order by m.occurred_at desc, m.id desc limit 1), " +
+        "last_message_at = (select m.occurred_at from messages m " +
+        "where m.conversation_id = cv.id order by m.occurred_at desc, m.id desc limit 1), " +
+        "updated_at = now(), version = version + 1 " +
+        "where cv.id = #{conversationId}::uuid")
+    int recomputeProjection(@Param("conversationId") UUID conversationId);
 
     @Select("<script>" +
         "select cv.id, cv.channel_account_id, cv.contact_identity_id, cv.status, " +

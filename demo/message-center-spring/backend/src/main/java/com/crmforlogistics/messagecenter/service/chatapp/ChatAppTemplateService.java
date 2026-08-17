@@ -42,7 +42,10 @@ public class ChatAppTemplateService {
     }
 
     public List<TemplateResponse> listAll() {
-        UUID accountId = fixedAccount().getId();
+        return listForAccount(fixedAccount().getId());
+    }
+
+    public List<TemplateResponse> listForAccount(UUID accountId) {
         return templateMapper.findSendableForChannelAccount(accountId).stream()
                 .filter(template -> isSendableBy(accountId, template))
                 .map(this::toResponse)
@@ -65,6 +68,14 @@ public class ChatAppTemplateService {
                 entity.getCategory(),
                 readComponents(entity.getComponentsJsonb()),
                 Map.copyOf(variableDefinitions));
+    }
+
+    public List<String> requiredPlaceholders(TemplateEntity entity) {
+        Objects.requireNonNull(entity, "template is required");
+        Map<String, List<String>> examples = readExamples(entity.getExamplesJsonb());
+        return examples.isEmpty()
+                ? templateTextResolver.placeholders(entity.getBody())
+                : List.copyOf(examples.keySet());
     }
 
     private ChannelAccountEntity fixedAccount() {

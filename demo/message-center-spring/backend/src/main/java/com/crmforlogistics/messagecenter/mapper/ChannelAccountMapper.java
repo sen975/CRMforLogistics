@@ -28,6 +28,14 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
     @Update("UPDATE channel_accounts SET sync_status = #{status}, last_synced_at = #{lastSyncedAt}, updated_at = now() WHERE id = #{id}::uuid")
     int updateSyncStatus(@Param("id") UUID id, @Param("status") String status, @Param("lastSyncedAt") java.time.Instant lastSyncedAt);
 
+    default List<ChannelAccountEntity> selectActiveChatAppAccounts() {
+        return selectList(new LambdaQueryWrapper<ChannelAccountEntity>()
+                .in(ChannelAccountEntity::getChannelType, List.of("chatapp", "whatsapp"))
+                .eq(ChannelAccountEntity::getAuthStatus, "active")
+                .isNull(ChannelAccountEntity::getDeletedAt)
+                .last("limit 2"));
+    }
+
     default ChannelAccountEntity selectSingleActiveByChannelType(String channelType) {
         List<ChannelAccountEntity> accounts = selectList(new LambdaQueryWrapper<ChannelAccountEntity>()
                 .eq(ChannelAccountEntity::getChannelType, channelType)
