@@ -80,6 +80,16 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
     Optional<MessageEntity> findByProviderMessageId(@Param("channelAccountId") UUID channelAccountId,
                                                     @Param("providerMessageId") String providerMessageId);
 
+    @Select("select id, provider_message_id, channel_account_id, conversation_id, " +
+        "source_event_id, client_request_id, direction, message_kind, subject, body_text, body_html, " +
+        "occurred_at, received_at, ingest_sequence, counts_as_unread, current_status, current_status_at, " +
+        "created_by_user_id, metadata_jsonb, created_at from messages " +
+        "where channel_account_id = #{channelAccountId}::uuid " +
+        "and provider_message_id = #{providerMessageId} order by created_at, id")
+    List<MessageEntity> findAllByProviderMessageId(
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("providerMessageId") String providerMessageId);
+
     /**
      * Find a message by client_request_id for the given channel account (idempotency check).
      */
@@ -114,6 +124,15 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             """)
     int updateProviderMessageId(@Param("messageId") UUID messageId,
                                 @Param("providerMessageId") String providerMessageId);
+
+    @Update("update messages set conversation_id = #{targetConversationId}::uuid, " +
+        "ingest_sequence = #{targetSequence} " +
+        "where id = #{messageId}::uuid " +
+        "and conversation_id = #{sourceConversationId}::uuid")
+    int updateConversationAndSequence(@Param("messageId") UUID messageId,
+                                      @Param("sourceConversationId") UUID sourceConversationId,
+                                      @Param("targetConversationId") UUID targetConversationId,
+                                      @Param("targetSequence") long targetSequence);
 
     @Update("""
             update messages

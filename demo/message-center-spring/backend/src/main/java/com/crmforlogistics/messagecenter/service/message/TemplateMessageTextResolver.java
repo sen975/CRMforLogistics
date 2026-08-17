@@ -21,8 +21,12 @@ import java.util.regex.Pattern;
 /** Resolves provider templates into the user-visible message text. */
 @Service
 public class TemplateMessageTextResolver {
-    private static final Pattern PLACEHOLDER = Pattern.compile(
-            "\\{\\{\\s*([A-Za-z0-9_.-]+)\\s*}}|\\$\\(\\s*([A-Za-z0-9_.-]+)\\s*\\)|\\(\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\)");
+    private static final Pattern OWNED_PLACEHOLDER = Pattern.compile(
+            "\\$\\(\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\)");
+    private static final Pattern HISTORICAL_PLACEHOLDER = Pattern.compile(
+            "\\$\\(\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*\\)"
+                    + "|\\$\\{\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*}"
+                    + "|\\{\\{\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*}}");
 
     private final TemplateMapper templateMapper;
     private final ObjectMapper objectMapper;
@@ -48,7 +52,7 @@ public class TemplateMessageTextResolver {
                 parameters == null ? Map.<String, Object>of().keySet() : parameters.keySet()))) {
             throw new IllegalArgumentException("CHATAPP_TEMPLATE_PARAMETERS_INVALID");
         }
-        return render(template.get().getBody(), parameters);
+        return render(OWNED_PLACEHOLDER, template.get().getBody(), parameters);
     }
 
     private LinkedHashSet<String> expectedVariables(TemplateEntity template) {
@@ -61,12 +65,17 @@ public class TemplateMessageTextResolver {
     public List<String> placeholders(String body) {
         List<String> result = new ArrayList<>();
         if (body == null || body.isBlank()) return result;
-        Matcher matcher = PLACEHOLDER.matcher(body);
+        Matcher matcher = OWNED_PLACEHOLDER.matcher(body);
         while (matcher.find()) {
-            String key = firstNonBlank(matcher.group(1), matcher.group(2), matcher.group(3));
+            String key = matcher.group(1);
             if (!key.isBlank() && !result.contains(key)) result.add(key);
         }
         return result;
+    }
+
+    public String renderSnapshot(String body, Map<String, ?> parameters) {
+        if (body == null || body.isBlank()) return "模板内容不可用";
+        return render(OWNED_PLACEHOLDER, body, parameters);
     }
 
     /** Returns a historical snapshot unless it is the old bracket placeholder. */
@@ -88,7 +97,8 @@ public class TemplateMessageTextResolver {
             if (template.isEmpty() || value(template.get().getBody()).isBlank()) {
                 return stored;
             }
-            return render(template.get().getBody(), parameters(metadata.get("templateParams")));
+            return render(HISTORICAL_PLACEHOLDER, template.get().getBody(),
+                    parameters(metadata.get("templateParams")));
         } catch (RuntimeException e) {
             return stored;
         }
@@ -119,18 +129,26 @@ public class TemplateMessageTextResolver {
         return Map.of();
     }
 
-    private static String render(String body, Map<String, ?> parameters) {
+    private static String render(Pattern pattern, String body, Map<String, ?> parameters) {
         Map<String, ?> safe = parameters == null ? Map.of() : parameters;
-        Matcher matcher = PLACEHOLDER.matcher(body);
+        Matcher matcher = pattern.matcher(body);
         StringBuffer rendered = new StringBuffer();
         while (matcher.find()) {
-            String key = firstNonBlank(matcher.group(1), matcher.group(2), matcher.group(3));
+            String key = firstMatchedGroup(matcher);
             Object raw = safe.get(key);
             String replacement = raw == null ? matcher.group() : String.valueOf(raw);
             matcher.appendReplacement(rendered, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(rendered);
         return rendered.toString();
+    }
+
+    private static String firstMatchedGroup(Matcher matcher) {
+        for (int index = 1; index <= matcher.groupCount(); index++) {
+            String value = matcher.group(index);
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return "";
     }
 
     private static boolean isSendableBy(UUID channelAccountId, TemplateEntity template) {
