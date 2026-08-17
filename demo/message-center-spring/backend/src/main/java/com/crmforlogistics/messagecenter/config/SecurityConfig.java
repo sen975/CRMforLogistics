@@ -54,6 +54,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/wecom/callback").permitAll()
                 .requestMatchers("/api/v1/webhooks/chatapp").permitAll()
                 .requestMatchers("/api/v1/call-records/*/audio").permitAll()
+                .requestMatchers("/api/v1/wecom/conversation-view/**", "/api/v1/wecom/js-sdk-config").authenticated()
                 .requestMatchers("/api/channel-accounts/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/channel-accounts/*/whatsapp/templates/**").hasRole("ADMIN")
                 .requestMatchers(

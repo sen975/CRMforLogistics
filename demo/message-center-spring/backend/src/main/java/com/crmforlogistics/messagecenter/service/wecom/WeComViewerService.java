@@ -48,6 +48,7 @@ public class WeComViewerService {
     private final WeComChatDataMessageMapper messageMapper;
     private final WeComCredentialProtector credentialProtector;
     private final WeComStartupGate startupGate;
+    private final WeComViewerReferenceLeaseRegistry referenceLeases;
     private final ConcurrentMap<String, CachedTicket> tickets = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerAuth> viewerAuthTokens = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerSession> viewerSessions = new ConcurrentHashMap<>();
@@ -60,16 +61,19 @@ public class WeComViewerService {
                               WeComViewerHttpGateway gateway, ViewerAuditSink audit,
                               WeComChatDataMessageMapper messageMapper,
                               WeComCredentialProtector credentialProtector,
-                              WeComStartupGate startupGate) {
+                              WeComStartupGate startupGate,
+                              WeComViewerReferenceLeaseRegistry referenceLeases) {
         this(config, Clock.systemUTC(), () -> UUID.randomUUID().toString().replace("-", ""),
-                gateway, installationService, audit, messageMapper, credentialProtector, startupGate);
+                gateway, installationService, audit, messageMapper, credentialProtector, startupGate,
+                referenceLeases);
     }
 
     private WeComViewerService(AppConfig config, Clock clock, NonceSource nonceSource,
                                WeComViewerHttpGateway gateway, WeComInstallationService installationService,
                                ViewerAuditSink audit, WeComChatDataMessageMapper messageMapper,
                                WeComCredentialProtector credentialProtector,
-                               WeComStartupGate startupGate) {
+                               WeComStartupGate startupGate,
+                               WeComViewerReferenceLeaseRegistry referenceLeases) {
         this.config = config;
         this.clock = clock;
         this.nonceSource = nonceSource;
@@ -79,6 +83,7 @@ public class WeComViewerService {
         this.messageMapper = messageMapper;
         this.credentialProtector = credentialProtector;
         this.startupGate = startupGate;
+        this.referenceLeases = Objects.requireNonNull(referenceLeases, "referenceLeases");
     }
 
     static WeComViewerService forTests(AppConfig config, Clock clock, NonceSource nonceSource,
@@ -89,7 +94,8 @@ public class WeComViewerService {
                                        WeComCredentialProtector credentialProtector,
                                        WeComStartupGate startupGate) {
         return new WeComViewerService(config, clock, nonceSource, gateway,
-                installationService, audit, messageMapper, credentialProtector, startupGate);
+                installationService, audit, messageMapper, credentialProtector, startupGate,
+                new WeComViewerReferenceLeaseRegistry(clock, MAX_ACTIVE_VIEWER_SESSIONS, 15));
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl) {
@@ -103,7 +109,7 @@ public class WeComViewerService {
             JsSdkConfig result = new JsSdkConfig(config.wecomCorpId(), config.wecomAgentId(),
                     List.of("selectExternalContact", "shareAppMessage", "wwapp.invokeJsApiByCallInfo"),
                     configSignature, agentSignature);
-            auditTrail.record("wecom.viewer.js_sdk_config", "success", "", "", "");
+            recordAudit("wecom.viewer.js_sdk_config", "success", "", "", "");
             return result;
         } catch (Exception exception) {
             recordFailure("wecom.viewer.js_sdk_config", "failed", "", "", "", exception);
@@ -118,7 +124,7 @@ public class WeComViewerService {
         String url = canonicalAllowedUrl(rawUrl);
         SignatureBundle configSignature = signatureBundle("corp", url, installation);
         SignatureBundle agentSignature = signatureBundle("agent", url, installation);
-        auditTrail.record("wecom.viewer.js_sdk_config", "success", auth.wecomUserId(), "", "");
+        recordAudit("wecom.viewer.js_sdk_config", "success", auth.wecomUserId(), "", "");
         return new JsSdkConfig(installation.authCorpId(), installation.agentId(),
                 List.of("selectExternalContact", "shareAppMessage", "wwapp.invokeJsApiByCallInfo"),
                 configSignature, agentSignature);
@@ -135,9 +141,9 @@ public class WeComViewerService {
             long now = clock.instant().getEpochSecond();
             cleanupExpiredViewerAuth(now);
             enforceViewerAuthLimit();
-            auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
             viewerAuthTokens.put(token, new ViewerAuth(token, userId,
                     now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(), "", 0L));
+            recordAudit("wecom.viewer.login_exchange", "success", userId, "", "");
             return new LoginExchangeResponse(userId, token, config.wecomViewerAuthTtlSeconds());
         } catch (Exception exception) {
             recordFailure("wecom.viewer.login_exchange", "failed", userId, "", "", exception);
@@ -172,15 +178,52 @@ public class WeComViewerService {
             long now = clock.instant().getEpochSecond();
             cleanupExpiredViewerAuth(now);
             enforceViewerAuthLimit();
-            auditTrail.record("wecom.viewer.login_exchange", "success", userId, "", "");
             viewerAuthTokens.put(token, new ViewerAuth(token, userId,
                     now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(),
                     binding.installationId(), binding.version()));
+            recordAudit("wecom.viewer.login_exchange", "success", userId, "", "");
             return new LoginExchangeResponse(userId, token, config.wecomViewerAuthTtlSeconds());
         } catch (Exception exception) {
             recordFailure("wecom.viewer.login_exchange", "failed", userId, "", "", exception);
             throw exception;
         }
+    }
+
+    public LoginExchangeResponse issueViewerAuth(
+            String wecomUserId, WeComLoginAttemptService.InstallationBinding binding) {
+        try {
+            startupGate.requireOpen();
+            requireBounded(wecomUserId, "WeCom user id", 128);
+            ResolvedInstallation resolved = validateInstallationBinding(binding);
+            long now = clock.instant().getEpochSecond();
+            cleanupExpiredViewerAuth(now);
+            enforceViewerAuthLimit();
+            String token = UUID.randomUUID().toString().replace("-", "");
+            viewerAuthTokens.put(token, new ViewerAuth(token, wecomUserId,
+                    now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(),
+                    resolved.installationId(), resolved.version()));
+            recordAudit("wecom.viewer.bootstrap", "success", wecomUserId, "", "");
+            return new LoginExchangeResponse(wecomUserId, token, config.wecomViewerAuthTtlSeconds());
+        } catch (Exception exception) {
+            recordFailure("wecom.viewer.bootstrap", "failed", wecomUserId, "", "", exception);
+            throw exception;
+        }
+    }
+
+    private ResolvedInstallation validateInstallationBinding(
+            WeComLoginAttemptService.InstallationBinding binding) {
+        if (binding == null) {
+            throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                    "企业微信授权安装存储不可用");
+        }
+        ResolvedInstallation resolved = installationService.resolveInstallation(
+                binding.suiteId(), binding.authCorpId());
+        if (!resolved.installationId().equals(binding.installationId())
+                || resolved.version() != binding.version()) {
+            throw new WeComException("WECOM_INSTALLATION_CHANGED", 403,
+                    "企业微信授权安装已变化，请重新获取展示凭证");
+        }
+        return resolved;
     }
 
     int activeViewerAuthTokenCount() {
@@ -224,10 +267,18 @@ public class WeComViewerService {
             removeViewerSessionsForToken(viewerAuthToken);
             viewerSessionId = UUID.randomUUID().toString().replace("-", "");
             long expiresAt = now + config.wecomViewerSessionTtlSeconds();
-            auditTrail.record("wecom.viewer.session_create", "success", wecomUserId,
+            ViewerSession viewerSession = new ViewerSession(viewerSessionId, viewerAuthToken, contactPointId,
+                    expiresAt, sessionOrder.incrementAndGet(), messages);
+            viewerSessions.put(viewerSessionId, viewerSession);
+            try {
+                referenceLeases.acquire(viewerSessionId,
+                        messages.stream().map(ViewerMessage::msgid).toList(), expiresAt);
+            } catch (RuntimeException exception) {
+                viewerSessions.remove(viewerSessionId, viewerSession);
+                throw exception;
+            }
+            recordAudit("wecom.viewer.session_create", "success", wecomUserId,
                     contactPointId, viewerSessionId);
-            viewerSessions.put(viewerSessionId, new ViewerSession(viewerSessionId, viewerAuthToken, contactPointId,
-                    expiresAt, sessionOrder.incrementAndGet(), messages));
             return new ViewerSessionResponse(viewerSessionId, config.wecomViewerSessionTtlSeconds());
         } catch (Exception exception) {
             String result = exception instanceof RateLimitException ? "rate_limited"
@@ -258,17 +309,13 @@ public class WeComViewerService {
             if (!viewerSessions.remove(viewerSessionId, session)) {
                 throw new IllegalArgumentException("WeCom viewer session is expired or missing");
             }
-            try {
-                auditTrail.record("wecom.viewer.session_read", "success", wecomUserId,
-                        session.contactPointId(), viewerSessionId);
-                removeViewedSessionsForToken(viewerAuthToken);
-                enforceViewedSessionLimit();
-                viewedSessionsByToken.put(viewerAuthToken, new ViewedSession(viewerSessionId,
-                        session.expiresAtEpochSecond(), session.createdOrder()));
-            } catch (Exception exception) {
-                viewerSessions.putIfAbsent(viewerSessionId, session);
-                throw exception;
-            }
+            referenceLeases.release(viewerSessionId);
+            recordAudit("wecom.viewer.session_read", "success", wecomUserId,
+                    session.contactPointId(), viewerSessionId);
+            removeViewedSessionsForToken(viewerAuthToken);
+            enforceViewedSessionLimit();
+            viewedSessionsByToken.put(viewerAuthToken, new ViewedSession(viewerSessionId,
+                    session.expiresAtEpochSecond(), session.createdOrder()));
             ResolvedInstallation installation = auth.installationId().isBlank()
                     ? null : requireBoundInstallation(auth);
             return new ViewerSessionDetail(session.id(),
@@ -300,12 +347,7 @@ public class WeComViewerService {
             if (!viewedSessionsByToken.remove(viewerAuthToken, viewed)) {
                 throw new SecurityException("WeCom viewer event does not match the viewed session");
             }
-            try {
-                auditTrail.record("wecom.viewer.component_error", "failed", wecomUserId, "", viewerSessionId);
-            } catch (Exception exception) {
-                viewedSessionsByToken.putIfAbsent(viewerAuthToken, viewed);
-                throw exception;
-            }
+            recordAudit("wecom.viewer.component_error", "failed", wecomUserId, "", viewerSessionId);
         } catch (Exception exception) {
             recordFailure("wecom.viewer.component_error", "failed", wecomUserId, "", viewerSessionId, exception);
             throw exception;
@@ -320,13 +362,26 @@ public class WeComViewerService {
         } catch (SecurityException ignored) {
             // The denied audit event remains useful even when no valid viewer identity is available.
         }
-        auditTrail.record("wecom.viewer.access_check", "denied", wecomUserId, contactPointId, "");
+        recordAudit("wecom.viewer.access_check", "denied", wecomUserId, contactPointId, "");
+    }
+
+    public Set<String> leasedMessageIds() {
+        cleanupExpiredSessions(clock.instant().getEpochSecond());
+        return referenceLeases.leasedMessageIds();
+    }
+
+    private void recordAudit(String action, String result, String wecomUserId,
+                             String contactPointId, String viewerSessionId) {
+        try {
+            auditTrail.record(action, result, wecomUserId, contactPointId, viewerSessionId);
+        } catch (Exception ignored) {
+            // Viewer audit is best effort and must not change the viewer result.
+        }
     }
 
     private void recordFailure(String action, String result, String wecomUserId,
                                String contactPointId, String viewerSessionId, Exception exception) {
         if ("wecom.viewer.login_exchange".equals(action)) {
-            logLoginExchangeFailure(exception);
             try {
                 if (exception instanceof WeComException authorization) {
                     auditTrail.recordDiagnostic(action, result, wecomUserId, contactPointId,
@@ -347,28 +402,6 @@ public class WeComViewerService {
         } catch (Exception auditFailure) {
             exception.addSuppressed(auditFailure);
         }
-    }
-
-    private static void logLoginExchangeFailure(Exception exception) {
-        if (!(exception instanceof WeComException authorization)) {
-            return;
-        }
-        StringBuilder event = new StringBuilder(
-                "{\"event\":\"wecom.viewer.login_exchange\",\"status\":\"failed\",\"code\":\"")
-                .append(safeToken(authorization.code())).append('"');
-        if (authorization.upstreamErrcode() != null) {
-            event.append(",\"upstreamErrcode\":").append(authorization.upstreamErrcode());
-        }
-        if (authorization.upstreamPath() != null) {
-            event.append(",\"upstreamPath\":\"").append(authorization.upstreamPath()).append('"');
-        }
-        if (authorization.upstreamHttpStatus() != null) {
-            event.append(",\"upstreamHttpStatus\":").append(authorization.upstreamHttpStatus());
-        }
-        if (authorization.upstreamHint() != null) {
-            event.append(",\"upstreamHint\":\"").append(authorization.upstreamHint()).append('"');
-        }
-        System.err.println(event.append('}'));
     }
 
     private static String safeToken(String value) {
@@ -518,16 +551,32 @@ public class WeComViewerService {
     }
 
     private void cleanupExpiredViewerAuth(long now) {
-        viewerAuthTokens.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
+        for (Map.Entry<String, ViewerAuth> entry : viewerAuthTokens.entrySet()) {
+            if (now >= entry.getValue().expiresAtEpochSecond()
+                    && viewerAuthTokens.remove(entry.getKey(), entry.getValue())) {
+                removeViewerSessionsForToken(entry.getKey());
+                removeViewedSessionsForToken(entry.getKey());
+            }
+        }
     }
 
     private void cleanupExpiredSessions(long now) {
-        viewerSessions.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
+        for (Map.Entry<String, ViewerSession> entry : viewerSessions.entrySet()) {
+            if (now >= entry.getValue().expiresAtEpochSecond()
+                    && viewerSessions.remove(entry.getKey(), entry.getValue())) {
+                referenceLeases.release(entry.getKey());
+            }
+        }
         viewedSessionsByToken.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
     }
 
     private void removeViewerSessionsForToken(String viewerAuthToken) {
-        viewerSessions.entrySet().removeIf(entry -> entry.getValue().viewerAuthToken().equals(viewerAuthToken));
+        for (Map.Entry<String, ViewerSession> entry : viewerSessions.entrySet()) {
+            if (entry.getValue().viewerAuthToken().equals(viewerAuthToken)
+                    && viewerSessions.remove(entry.getKey(), entry.getValue())) {
+                referenceLeases.release(entry.getKey());
+            }
+        }
     }
 
     private void removeViewedSessionsForToken(String viewerAuthToken) {
@@ -540,8 +589,12 @@ public class WeComViewerService {
         }
         viewerAuthTokens.entrySet().stream()
                 .min(Comparator.comparingLong(entry -> entry.getValue().createdOrder()))
-                .map(Map.Entry::getKey)
-                .ifPresent(viewerAuthTokens::remove);
+                .ifPresent(entry -> {
+                    if (viewerAuthTokens.remove(entry.getKey(), entry.getValue())) {
+                        removeViewerSessionsForToken(entry.getKey());
+                        removeViewedSessionsForToken(entry.getKey());
+                    }
+                });
     }
 
     private void enforceViewerSessionLimit() {
@@ -550,8 +603,11 @@ public class WeComViewerService {
         }
         viewerSessions.entrySet().stream()
                 .min(Comparator.comparingLong(entry -> entry.getValue().createdOrder()))
-                .map(Map.Entry::getKey)
-                .ifPresent(viewerSessions::remove);
+                .ifPresent(entry -> {
+                    if (viewerSessions.remove(entry.getKey(), entry.getValue())) {
+                        referenceLeases.release(entry.getKey());
+                    }
+                });
     }
 
     private void enforceViewedSessionLimit() {

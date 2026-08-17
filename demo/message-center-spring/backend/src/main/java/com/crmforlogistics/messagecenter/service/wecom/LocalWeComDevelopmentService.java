@@ -35,12 +35,14 @@ import java.util.concurrent.ConcurrentHashMap;
 public class LocalWeComDevelopmentService {
     private static final String LOCAL_USER_ID = "local-wecom-user";
     private static final int MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_ACTIVE_VIEWER_SESSIONS = 512;
 
     private final AppConfig config;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final WeComChatDataMessageMapper messageMapper;
     private final WeComCredentialProtector credentialProtector;
+    private final WeComViewerReferenceLeaseRegistry referenceLeases;
     private final Map<String, Long> attempts = new ConcurrentHashMap<>();
     private final Map<String, LocalToken> tokens = new ConcurrentHashMap<>();
     private final Map<String, LocalSession> sessions = new ConcurrentHashMap<>();
@@ -48,13 +50,22 @@ public class LocalWeComDevelopmentService {
     @Autowired
     public LocalWeComDevelopmentService(AppConfig config, ObjectMapper objectMapper,
                                         WeComChatDataMessageMapper messageMapper,
-                                        WeComCredentialProtector credentialProtector) {
-        this(config, objectMapper, messageMapper, credentialProtector, Clock.systemUTC());
+                                        WeComCredentialProtector credentialProtector,
+                                        WeComViewerReferenceLeaseRegistry referenceLeases) {
+        this(config, objectMapper, messageMapper, credentialProtector, Clock.systemUTC(), referenceLeases);
     }
 
     LocalWeComDevelopmentService(AppConfig config, ObjectMapper objectMapper,
                                  WeComChatDataMessageMapper messageMapper,
                                  WeComCredentialProtector credentialProtector, Clock clock) {
+        this(config, objectMapper, messageMapper, credentialProtector, clock,
+                new WeComViewerReferenceLeaseRegistry(clock, MAX_ACTIVE_VIEWER_SESSIONS, 15));
+    }
+
+    private LocalWeComDevelopmentService(AppConfig config, ObjectMapper objectMapper,
+                                         WeComChatDataMessageMapper messageMapper,
+                                         WeComCredentialProtector credentialProtector, Clock clock,
+                                         WeComViewerReferenceLeaseRegistry referenceLeases) {
         if (!config.localDevMode()) {
             throw new IllegalArgumentException("Local WeCom development mode is disabled");
         }
@@ -63,6 +74,7 @@ public class LocalWeComDevelopmentService {
         this.messageMapper = messageMapper;
         this.credentialProtector = credentialProtector;
         this.clock = clock;
+        this.referenceLeases = referenceLeases;
         seedTargetIfNeeded();
     }
 
@@ -90,9 +102,24 @@ public class LocalWeComDevelopmentService {
             throw new SecurityException("Local login state is expired, missing, or already used");
         }
         String token = randomToken();
+        cleanup();
+        enforceTokenLimit();
         tokens.put(token, new LocalToken(LOCAL_USER_ID, viewerAuthExpiresAt()));
         return new WeComViewerService.LoginExchangeResponse(
                 LOCAL_USER_ID, token, config.wecomViewerAuthTtlSeconds());
+    }
+
+    public WeComViewerService.LoginExchangeResponse issueViewerAuth(
+            String wecomUserId, WeComLoginAttemptService.InstallationBinding binding) {
+        if (wecomUserId == null || wecomUserId.isBlank() || wecomUserId.length() > 128) {
+            throw new IllegalArgumentException("Local WeCom user id is required");
+        }
+        cleanup();
+        enforceTokenLimit();
+        String token = randomToken();
+        tokens.put(token, new LocalToken(wecomUserId, viewerAuthExpiresAt()));
+        return new WeComViewerService.LoginExchangeResponse(
+                wecomUserId, token, config.wecomViewerAuthTtlSeconds());
     }
 
     public WeComChatDataSyncService.SyncResult sync(String viewerAuthToken) {
@@ -113,20 +140,28 @@ public class LocalWeComDevelopmentService {
         if (messages.isEmpty()) {
             throw new SecurityException("Local WeCom conversation is not available");
         }
-        sessions.entrySet().removeIf(entry -> entry.getValue().viewerAuthToken().equals(viewerAuthToken));
+        removeSessionsForToken(viewerAuthToken);
+        enforceSessionLimit();
         String sessionId = randomToken();
+        long expiresAt = viewerSessionExpiresAt();
         sessions.put(sessionId, new LocalSession(sessionId, viewerAuthToken, contactPointId,
-                viewerSessionExpiresAt(), messages));
+                expiresAt, messages));
+        referenceLeases.acquire(sessionId,
+                messages.stream().map(WeComViewerService.ViewerMessage::msgid).toList(), expiresAt);
         return new WeComViewerService.ViewerSessionResponse(sessionId, config.wecomViewerSessionTtlSeconds());
     }
 
     public WeComViewerService.ViewerSessionDetail readSession(String sessionId, String viewerAuthToken) {
         requireToken(viewerAuthToken);
-        LocalSession session = sessions.remove(sessionId);
+        LocalSession session = sessions.get(sessionId);
         if (session == null || !session.viewerAuthToken().equals(viewerAuthToken)
                 || clock.instant().getEpochSecond() >= session.expiresAtEpochSecond()) {
             throw new SecurityException("Local WeCom viewer session is expired or missing");
         }
+        if (!sessions.remove(sessionId, session)) {
+            throw new SecurityException("Local WeCom viewer session is expired or missing");
+        }
+        referenceLeases.release(sessionId);
         return new WeComViewerService.ViewerSessionDetail(session.id(), "local-corp", "local-agent",
                 session.messages());
     }
@@ -145,6 +180,14 @@ public class LocalWeComDevelopmentService {
     public Map<String, Object> jsSdkConfig() {
         return Map.of("localDevMode", true, "corpId", "local-corp", "agentId", "local-agent",
                 "jsApiList", List.of());
+    }
+
+    public Map<String, Object> jsSdkConfig(String rawUrl, String viewerAuthToken) {
+        requireToken(viewerAuthToken);
+        if (rawUrl == null || rawUrl.isBlank() || rawUrl.length() > 2048) {
+            throw new IllegalArgumentException("Local WeCom JSAPI URL is required");
+        }
+        return jsSdkConfig();
     }
 
     private List<WeComViewerService.ViewerMessage> messagesFor(String contactPointId,
@@ -268,8 +311,50 @@ public class LocalWeComDevelopmentService {
     private void cleanup() {
         long now = clock.instant().getEpochSecond();
         attempts.entrySet().removeIf(entry -> now >= entry.getValue());
-        tokens.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
-        sessions.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
+        for (Map.Entry<String, LocalToken> entry : tokens.entrySet()) {
+            if (now >= entry.getValue().expiresAtEpochSecond() && tokens.remove(entry.getKey(), entry.getValue())) {
+                removeSessionsForToken(entry.getKey());
+            }
+        }
+        for (Map.Entry<String, LocalSession> entry : sessions.entrySet()) {
+            if (now >= entry.getValue().expiresAtEpochSecond()
+                    && sessions.remove(entry.getKey(), entry.getValue())) {
+                referenceLeases.release(entry.getKey());
+            }
+        }
+    }
+
+    private void removeSessionsForToken(String viewerAuthToken) {
+        for (Map.Entry<String, LocalSession> entry : sessions.entrySet()) {
+            if (entry.getValue().viewerAuthToken().equals(viewerAuthToken)
+                    && sessions.remove(entry.getKey(), entry.getValue())) {
+                referenceLeases.release(entry.getKey());
+            }
+        }
+    }
+
+    private void enforceTokenLimit() {
+        if (tokens.size() < MAX_ACTIVE_VIEWER_SESSIONS) return;
+        tokens.entrySet().stream()
+                .min(Map.Entry.comparingByValue(
+                        java.util.Comparator.comparingLong(LocalToken::expiresAtEpochSecond)))
+                .ifPresent(entry -> {
+                    if (tokens.remove(entry.getKey(), entry.getValue())) {
+                        removeSessionsForToken(entry.getKey());
+                    }
+                });
+    }
+
+    private void enforceSessionLimit() {
+        if (sessions.size() < MAX_ACTIVE_VIEWER_SESSIONS) return;
+        sessions.entrySet().stream()
+                .min(Map.Entry.comparingByValue(
+                        java.util.Comparator.comparingLong(LocalSession::expiresAtEpochSecond)))
+                .ifPresent(entry -> {
+                    if (sessions.remove(entry.getKey(), entry.getValue())) {
+                        referenceLeases.release(entry.getKey());
+                    }
+                });
     }
 
     private long loginAttemptExpiresAt() {
