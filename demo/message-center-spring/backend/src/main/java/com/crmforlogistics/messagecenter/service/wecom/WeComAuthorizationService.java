@@ -15,7 +15,11 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /** Coordinates required audit, bounded callback work and installation mutation. */
@@ -23,6 +27,7 @@ import org.springframework.stereotype.Service;
 @ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComAuthorizationService {
+    private static final Logger log = LoggerFactory.getLogger(WeComAuthorizationService.class);
     private static final String RECONCILIATION_REQUIRED =
             "WECOM_AUTHORIZATION_AUDIT_RECONCILIATION_REQUIRED";
 
@@ -32,19 +37,23 @@ public class WeComAuthorizationService {
     private final WeComAuthorizationGateway gateway;
     private final WeComAuthorizationMutationService mutations;
     private final WeComStartupGate startupGate;
+    private final WeComChatDataPublicKeyRegistrar publicKeyRegistrar;
     private final BlockingQueue<AuthorizationEvent> queue;
     private final Thread worker;
     private final Object lifecycle = new Object();
     private int activeAdmissions;
     private volatile boolean closed;
 
+    @Autowired
     public WeComAuthorizationService(AppConfig config,
                                      WeComAuthorizationAuditTrail audit,
                                      WeComInstallationService installations,
                                      WeComAuthorizationGateway gateway,
                                      WeComAuthorizationMutationService mutations,
-                                     WeComStartupGate startupGate) {
+                                     WeComStartupGate startupGate,
+                                     ObjectProvider<WeComChatDataPublicKeyRegistrar> registrarProvider) {
         this(config, audit, installations, gateway, mutations, startupGate,
+                registrarProvider.getIfAvailable(),
                 new ArrayBlockingQueue<>(config.wecomAuthorizationQueueCapacity()), true);
     }
 
@@ -56,12 +65,25 @@ public class WeComAuthorizationService {
                               WeComStartupGate startupGate,
                               BlockingQueue<AuthorizationEvent> queue,
                               boolean startWorker) {
+        this(config, audit, installations, gateway, mutations, startupGate, null, queue, startWorker);
+    }
+
+    WeComAuthorizationService(AppConfig config,
+                              WeComAuthorizationAuditTrail audit,
+                              WeComInstallationService installations,
+                              WeComAuthorizationGateway gateway,
+                              WeComAuthorizationMutationService mutations,
+                              WeComStartupGate startupGate,
+                              WeComChatDataPublicKeyRegistrar publicKeyRegistrar,
+                              BlockingQueue<AuthorizationEvent> queue,
+                              boolean startWorker) {
         this.config = Objects.requireNonNull(config, "config");
         this.audit = Objects.requireNonNull(audit, "audit");
         this.installations = Objects.requireNonNull(installations, "installations");
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.mutations = Objects.requireNonNull(mutations, "mutations");
         this.startupGate = Objects.requireNonNull(startupGate, "startupGate");
+        this.publicKeyRegistrar = publicKeyRegistrar;
         this.queue = Objects.requireNonNull(queue, "queue");
         if (startWorker) {
             worker = new Thread(this::runWorker, "wecom-authorization-worker");
@@ -204,8 +226,18 @@ public class WeComAuthorizationService {
             audit.pending(event.attempt(), authCorpId[0], "ACTIVE", expectedVersion);
             mutations.applyActive(event.attempt(), callback, authCorpId[0], prepared.agentId(),
                     prepared.permanentCode(), expectedVersion);
+            requestPublicKeyRegistration();
         } catch (RuntimeException failure) {
             closeFailed(event.attempt(), authCorpId[0], authorizationFailure(failure));
+        }
+    }
+
+    private void requestPublicKeyRegistration() {
+        if (publicKeyRegistrar == null) return;
+        try {
+            publicKeyRegistrar.requestRegistration();
+        } catch (RuntimeException registrationFailure) {
+            log.warn("WeCom public key registration signal failed after authorization commit", registrationFailure);
         }
     }
 

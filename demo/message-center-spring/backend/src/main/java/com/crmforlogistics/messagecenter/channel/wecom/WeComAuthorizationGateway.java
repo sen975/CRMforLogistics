@@ -6,9 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -39,8 +41,15 @@ public class WeComAuthorizationGateway {
         this.config = config;
         this.objectMapper = objectMapper;
         this.clock = Clock.systemUTC();
+        Duration socketTimeout = configuredTimeout(config.wecomApiTimeoutSeconds());
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(socketTimeout)
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(socketTimeout);
         this.restClient = RestClient.builder()
                 .baseUrl(config.wecomApiBaseUrl())
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -160,6 +169,7 @@ public class WeComAuthorizationGateway {
     }
 
     private JsonNode getJson(String path, Duration timeout) throws WeComException {
+        requireTimeout(timeout);
         try {
             String response = restClient.get()
                     .uri(path)
@@ -204,6 +214,7 @@ public class WeComAuthorizationGateway {
 
     private JsonNode postJson(String path, Map<String, String> values, Duration timeout)
             throws WeComException {
+        requireTimeout(timeout);
         try {
             String json = objectMapper.writeValueAsString(values);
             String response = restClient.post()
@@ -265,6 +276,19 @@ public class WeComAuthorizationGateway {
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private static Duration configuredTimeout(int seconds) {
+        if (seconds < 1 || seconds > 300) {
+            throw new IllegalArgumentException("wecomApiTimeoutSeconds must be between 1 and 300");
+        }
+        return Duration.ofSeconds(seconds);
+    }
+
+    private static void requireTimeout(Duration timeout) {
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            throw new IllegalArgumentException("WeCom request timeout must be positive");
+        }
     }
 
     public record PermanentCodeResponse(String authCorpId, String permanentCode) {}

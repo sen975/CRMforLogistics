@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -25,16 +26,34 @@ public class WeComChatDataSyncService {
     private final WeComChatDataGateway gateway;
     private final WeComChatDataStore store;
     private final ViewerAuditSink audit;
+    private final WeComInstallationService installationService;
+    private final WeComStartupGate startupGate;
     private final Map<String, ReentrantLock> installationLocks = new ConcurrentHashMap<>();
     private final Map<String, RateWindow> userRates = new ConcurrentHashMap<>();
     private volatile WeComChatDataCrypto crypto;
 
     public WeComChatDataSyncService(AppConfig config, WeComChatDataGateway gateway,
-                                    WeComChatDataStore store, ViewerAuditSink audit) {
+                                    WeComChatDataStore store, ViewerAuditSink audit,
+                                    WeComInstallationService installationService,
+                                    WeComStartupGate startupGate) {
         this.config = config;
         this.gateway = gateway;
         this.store = store;
         this.audit = audit;
+        this.installationService = installationService;
+        this.startupGate = startupGate;
+    }
+
+    public SyncResult syncSystem() throws WeComChatDataException {
+        startupGate.requireOpen();
+        String authCorpId = config.wecomLoginAuthCorpId();
+        if (authCorpId == null || authCorpId.isBlank()) {
+            throw new WeComChatDataException("WECOM_CHATDATA_NOT_CONFIGURED", 503,
+                    "企业微信会话同步尚未配置");
+        }
+        ResolvedInstallation installation = installationService.resolveInstallation(
+                config.wecomSuiteId(), authCorpId);
+        return sync(new ViewerSyncContext("system:auto-sync", installation));
     }
 
     public SyncResult sync(ViewerSyncContext context) throws WeComChatDataException {

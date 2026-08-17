@@ -6,6 +6,9 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataMessageEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataCursorMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,22 +27,35 @@ import java.util.List;
 @ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComChatDataStore {
+    private static final Logger log = LoggerFactory.getLogger(WeComChatDataStore.class);
     private final WeComChatDataMessageMapper messageMapper;
     private final WeComChatDataCursorMapper cursorMapper;
     private final WeComCredentialProtector credentialProtector;
     private final WeComMessageProjector projector;
     private final EventHub eventHub;
+    private final WeComChatDataRetention retention;
 
+    @Autowired
     public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
                               WeComChatDataCursorMapper cursorMapper,
                               WeComCredentialProtector credentialProtector,
                               WeComMessageProjector projector,
-                              EventHub eventHub) {
+                              EventHub eventHub,
+                              WeComChatDataRetention retention) {
         this.messageMapper = messageMapper;
         this.cursorMapper = cursorMapper;
         this.credentialProtector = credentialProtector;
         this.projector = projector;
         this.eventHub = eventHub;
+        this.retention = retention;
+    }
+
+    WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
+                       WeComChatDataCursorMapper cursorMapper,
+                       WeComCredentialProtector credentialProtector,
+                       WeComMessageProjector projector,
+                       EventHub eventHub) {
+        this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, null);
     }
 
     public String cursor(SyncKey key) throws WeComChatDataException {
@@ -91,7 +107,7 @@ public class WeComChatDataStore {
                 projected |= result.inserted();
             }
             cursorMapper.upsert(keyField(key), nextCursor);
-            if (projected) publishAfterCommit();
+            runAfterCommit(projected);
             return new PublishResult(stored, skipped);
         } catch (WeComChatDataException exception) {
             throw exception;
@@ -100,17 +116,31 @@ public class WeComChatDataStore {
         }
     }
 
-    private void publishAfterCommit() {
+    private void runAfterCommit(boolean publishMessageEvent) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            eventHub.publish("message-new", "{}");
+            afterCommit(publishMessageEvent);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                eventHub.publish("message-new", "{}");
+                WeComChatDataStore.this.afterCommit(publishMessageEvent);
             }
         });
+    }
+
+    private void afterCommit(boolean publishMessageEvent) {
+        if (retention != null) {
+            try {
+                WeComChatDataRetention.RetentionResult result = retention.enforce();
+                if (!result.withinBudget()) {
+                    log.warn("WeCom chatdata retention remains above its configured budget");
+                }
+            } catch (RuntimeException failure) {
+                log.warn("WeCom chatdata retention failed after page commit", failure);
+            }
+        }
+        if (publishMessageEvent) eventHub.publish("message-new", "{}");
     }
 
     public List<StoredMessageReference> load(Instant fromInclusive, Instant toExclusive)

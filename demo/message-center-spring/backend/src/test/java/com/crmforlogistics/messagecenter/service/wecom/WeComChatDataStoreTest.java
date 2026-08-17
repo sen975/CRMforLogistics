@@ -29,14 +29,16 @@ class WeComChatDataStoreTest {
     private final WeComCredentialProtector protector = mock(WeComCredentialProtector.class);
     private final WeComMessageProjector projector = mock(WeComMessageProjector.class);
     private final EventHub events = mock(EventHub.class);
+    private final WeComChatDataRetention retention = mock(WeComChatDataRetention.class);
     private final WeComChatDataStore store = new WeComChatDataStore(
-            messages, cursors, protector, projector, events);
+            messages, cursors, protector, projector, events, retention);
 
     @Test
     void publishesReferenceProjectionAndCursorInOneTransaction() {
         when(protector.protectSecretKey("secret")).thenReturn("encrypted");
         when(messages.insertIgnore(any())).thenReturn(1);
         when(projector.project(any())).thenReturn(new WeComMessageProjector.ProjectionResult(true));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
         TransactionSynchronizationManager.initSynchronization();
         try {
             WeComChatDataStore.PublishResult result = store.publishPage(
@@ -54,9 +56,22 @@ class WeComChatDataStoreTest {
                 synchronization.afterCommit();
             }
             verify(events).publish("message-new", "{}");
+            verify(retention).enforce();
         } finally {
             TransactionSynchronizationManager.clearSynchronization();
         }
+    }
+
+    @Test
+    void duplicateOnlyPageStillRunsRetentionWithoutPublishingMessageEvent() {
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted");
+        when(projector.project(any())).thenReturn(new WeComMessageProjector.ProjectionResult(false));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(1, true));
+
+        store.publishPage(key(), "next", List.of(decrypted("m1", 1, 2)));
+
+        verify(retention).enforce();
+        verify(events, never()).publish(anyString(), any());
     }
 
     @Test

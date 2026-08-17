@@ -56,7 +56,6 @@ public record AppConfig(
         @DefaultValue("https://qyapi.weixin.qq.com") String wecomApiBaseUrl,
         @DefaultValue("10") int wecomApiTimeoutSeconds,
         @DefaultValue("300") int wecomTokenRefreshSkewSeconds,
-        @DefaultValue("false") boolean wecomSyncEnabled,
         @DefaultValue("") String wecomLoginSuiteId,
         @DefaultValue("") String wecomLoginSuiteSecret,
         @DefaultValue("") String wecomCorpId,
