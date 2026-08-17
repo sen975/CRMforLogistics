@@ -4,7 +4,6 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
-import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.List;
@@ -86,11 +85,12 @@ public final class WeComCredentialMigrationService {
 
     private static boolean isNonEnvelopePlaintext(String value) {
         String trimmed = value.trim();
-        try (var parser = MAPPER.getFactory().createParser(trimmed)) {
-            while (parser.nextToken() != null) {
-                if (parser.currentToken() == JsonToken.FIELD_NAME
-                        && ENVELOPE_FIELDS.contains(parser.currentName())) {
-                    return false;
+        try {
+            var root = MAPPER.readTree(trimmed);
+            if (root != null && root.isObject()) {
+                var fields = root.fieldNames();
+                while (fields.hasNext()) {
+                    if (ENVELOPE_FIELDS.contains(fields.next())) return false;
                 }
             }
             return true;

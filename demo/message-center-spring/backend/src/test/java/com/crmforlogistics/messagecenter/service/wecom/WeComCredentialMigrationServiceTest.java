@@ -147,6 +147,44 @@ class WeComCredentialMigrationServiceTest {
         verify(protector, never()).protectPermanentCode(truncatedEnvelope);
     }
 
+    @Test
+    void encryptsRootArrayWhenEnvelopeFieldAppearsOnlyInsideArray() {
+        String opaqueArray = "[{\"algorithm\":\"ordinary-metadata\"}]";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, opaqueArray)));
+        when(mapper.nextInstallations(INSTALLATION_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.isEnvelope(opaqueArray)).thenReturn(false);
+        when(protector.protectPermanentCode(opaqueArray)).thenReturn("encrypted-array-metadata");
+        when(mapper.replaceInstallation(INSTALLATION_ID, opaqueArray, "encrypted-array-metadata"))
+                .thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(opaqueArray);
+        verify(mapper).replaceInstallation(INSTALLATION_ID, opaqueArray, "encrypted-array-metadata");
+    }
+
+    @Test
+    void encryptsNestedMetadataWhenEnvelopeFieldAppearsBelowRootObject() {
+        String opaqueObject = "{\"metadata\":{\"nonce\":\"x\"}}";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, opaqueObject)));
+        when(mapper.nextInstallations(INSTALLATION_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.isEnvelope(opaqueObject)).thenReturn(false);
+        when(protector.protectPermanentCode(opaqueObject)).thenReturn("encrypted-nested-metadata");
+        when(mapper.replaceInstallation(INSTALLATION_ID, opaqueObject, "encrypted-nested-metadata"))
+                .thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(opaqueObject);
+        verify(mapper).replaceInstallation(INSTALLATION_ID, opaqueObject, "encrypted-nested-metadata");
+    }
+
     private static void assertMigrationFailure(org.junit.jupiter.api.function.Executable action) {
         assertThatThrownBy(() -> action.execute())
                 .isInstanceOf(com.crmforlogistics.messagecenter.channel.wecom.WeComException.class)
