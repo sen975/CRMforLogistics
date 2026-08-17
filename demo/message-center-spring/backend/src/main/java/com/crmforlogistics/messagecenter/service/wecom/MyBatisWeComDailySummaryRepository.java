@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComDailySummaryEntity;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComDailySummaryJobEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComDailySummaryMapper;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class MyBatisWeComDailySummaryRepository implements WeComDailySummaryRepository {
     private static final int MAX_SUMMARY_BYTES = 65_536;

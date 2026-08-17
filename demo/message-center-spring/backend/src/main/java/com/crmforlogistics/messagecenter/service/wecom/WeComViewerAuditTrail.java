@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComViewerAuditEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComViewerAuditMapper;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import java.time.Clock;
 import java.util.List;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComViewerAuditTrail implements ViewerAuditSink {
     private static final Logger log = LoggerFactory.getLogger(WeComViewerAuditTrail.class);

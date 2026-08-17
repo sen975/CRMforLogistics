@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComAuthorizationGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
@@ -14,6 +15,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComAccessTokenService {
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(10);

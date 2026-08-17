@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAccessTokenService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,6 +26,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComChatDataGateway {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;

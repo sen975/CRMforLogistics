@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataMessageEntity;
@@ -16,6 +17,7 @@ import java.util.HexFormat;
 import java.util.List;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComChatDataStore {
     private final WeComChatDataMessageMapper messageMapper;

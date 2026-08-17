@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComSummaryException;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Set;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComSummaryGateway {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;

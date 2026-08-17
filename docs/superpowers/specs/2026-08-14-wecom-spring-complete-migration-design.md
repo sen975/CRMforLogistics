@@ -26,6 +26,19 @@ Spring 版已经包含授权回调、文本发送、chatdata、viewer、公钥�
 - chatdata 同步后进入统一联系人、会话和消息时间线，并由官方 OpenDataFrame 展示原文。
 - 将 demo 已确认的企业微信连续消息段和纯企业微信整窗展示交互迁移到 React。
 - 授权回调采用有界队列、数据库 required audit、事件幂等、版本递增和启动对账。
+
+## 模块隔离运行
+
+- `app.wecom-enabled` 是 WeCom Spring Bean 的总开关，默认值为 `true`，不改变生产启动策略。
+- `chatapp-only` profile 将总开关设为 `false`。该模式不注册 WeCom Controller、Service、Runner、Scheduler 或外部 Gateway，但保留数据库 schema 和 Mapper 类型，避免为局部测试改写迁移历史。
+- ChatApp/WhatsApp 独立测试使用 `dev,chatapp-only` profile。`CREDENTIAL_MASTER_KEY` 仍属于共享渠道凭据加密边界，不是 WeCom 私有配置，因此仍需从本地 secret 显式传入。
+
+```bash
+cd demo/message-center-spring/backend
+CREDENTIAL_MASTER_KEY="$(tr -d '\r\n' < secrets/credential_master_key)" \
+SPRING_PROFILES_ACTIVE=dev,chatapp-only \
+mvn spring-boot:run
+```
 - 加密保存 permanent code 和 chatdata secret key，并完成已有明文数据的一次性迁移。
 - 授权成功后立即触发公钥注册，同时保留定时补偿。
 - 清除 tracked 配置中的真实凭据，只保留环境变量合同。

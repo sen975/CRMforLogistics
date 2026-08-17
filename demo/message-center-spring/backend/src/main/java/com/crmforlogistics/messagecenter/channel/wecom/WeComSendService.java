@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -11,6 +12,7 @@ import org.springframework.web.client.RestClient;
 import java.util.Map;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComSendService {
     private final AppConfig config;

@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComViewerHttpGateway;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -33,6 +34,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComViewerService {
     private static final int MAX_ACTIVE_VIEWER_SESSIONS = 512;

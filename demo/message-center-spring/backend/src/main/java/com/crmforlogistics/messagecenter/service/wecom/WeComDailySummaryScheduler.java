@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 
 @Component
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank() and '${app.wecom-daily-summary-enabled:false}' == 'true'")
 public class WeComDailySummaryScheduler {
     private static final Logger log = LoggerFactory.getLogger(WeComDailySummaryScheduler.class);

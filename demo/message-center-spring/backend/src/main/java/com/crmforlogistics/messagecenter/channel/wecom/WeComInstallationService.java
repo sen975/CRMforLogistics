@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComInstallationMapper;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationAuditTrail;
 import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialProtector;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComInstallationService {
     private final WeComInstallationMapper mapper;

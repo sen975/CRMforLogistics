@@ -1,11 +1,13 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnWeComEnabled
 public final class WeComCredentialProtector {
     private static final int MAX_CREDENTIAL_LENGTH = 512;
 

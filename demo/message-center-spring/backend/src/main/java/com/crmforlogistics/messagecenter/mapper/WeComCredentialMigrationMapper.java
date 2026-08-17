@@ -11,15 +11,29 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface WeComCredentialMigrationMapper {
 
-    @Select("SELECT id, permanent_code AS value FROM wecom_installations "
-            + "WHERE permanent_code IS NOT NULL AND (#{afterId} IS NULL OR id > #{afterId}) "
-            + "ORDER BY id LIMIT #{limit}")
+    @Select({
+            "<script>",
+            "SELECT id, permanent_code AS value FROM wecom_installations",
+            "WHERE permanent_code IS NOT NULL",
+            "<if test='afterId != null'>",
+            "AND id > #{afterId}",
+            "</if>",
+            "ORDER BY id LIMIT #{limit}",
+            "</script>"
+    })
     List<WeComCredentialRow> nextInstallations(@Param("afterId") UUID afterId,
                                                @Param("limit") int limit);
 
-    @Select("SELECT id, secret_key AS value FROM wecom_chatdata_messages "
-            + "WHERE secret_key IS NOT NULL AND (#{afterId} IS NULL OR id > #{afterId}) "
-            + "ORDER BY id LIMIT #{limit}")
+    @Select({
+            "<script>",
+            "SELECT id, secret_key AS value FROM wecom_chatdata_messages",
+            "WHERE secret_key IS NOT NULL",
+            "<if test='afterId != null'>",
+            "AND id > #{afterId}",
+            "</if>",
+            "ORDER BY id LIMIT #{limit}",
+            "</script>"
+    })
     List<WeComCredentialRow> nextChatDataMessages(@Param("afterId") UUID afterId,
                                                   @Param("limit") int limit);
 

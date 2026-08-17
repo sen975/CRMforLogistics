@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataMessageEntity;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * credentials; messages are seeded into the PostgreSQL chatdata table.
  */
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnProperty(name = "app.local-dev-mode", havingValue = "true")
 public class LocalWeComDevelopmentService {
     private static final String LOCAL_USER_ID = "local-wecom-user";

@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -13,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 @Component
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank() and '${app.wecom-chatdata-auto-sync-enabled:false}' == 'true'")
 public class WeComChatDataSyncRuntime {
     private static final Logger log = LoggerFactory.getLogger(WeComChatDataSyncRuntime.class);

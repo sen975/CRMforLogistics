@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
 import com.fasterxml.jackson.core.JsonToken;
@@ -12,6 +13,7 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnWeComEnabled
 public final class WeComCredentialMigrationService {
     private static final int BATCH_SIZE = 200;
     private static final String MARKER = "wecom-credentials-v1";

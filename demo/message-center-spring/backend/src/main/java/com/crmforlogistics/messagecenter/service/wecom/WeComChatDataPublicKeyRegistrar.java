@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataPublicKeyGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -11,6 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank() and '${app.wecom-chatdata-public-key-auto-register:false}' == 'true'")
 public class WeComChatDataPublicKeyRegistrar {
     private static final Logger log = LoggerFactory.getLogger(WeComChatDataPublicKeyRegistrar.class);

@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComDailySummaryBatcher {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");

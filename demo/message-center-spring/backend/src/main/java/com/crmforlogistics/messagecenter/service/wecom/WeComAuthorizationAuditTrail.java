@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComAuthorizationAuditEntity;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComCallbackCodec;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
@@ -14,6 +15,7 @@ import java.time.Instant;
  * {@code wecom_authorization_audit} table.
  */
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComAuthorizationAuditTrail {
     private final WeComAuthorizationAuditMapper mapper;

@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComPublicKeyRegistrationEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComPublicKeyRegistrationMapper;
@@ -7,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComChatDataPublicKeyRegistrationStore {
     private final WeComPublicKeyRegistrationMapper registrationMapper;

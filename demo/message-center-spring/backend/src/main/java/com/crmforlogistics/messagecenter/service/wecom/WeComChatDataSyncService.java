@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Service
+@ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComChatDataSyncService {
     private final AppConfig config;
