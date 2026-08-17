@@ -66,6 +66,7 @@ public record AppConfig(
         @DefaultValue("http://localhost:8099/") String wecomLoginRedirectUri,
         @DefaultValue("300") int wecomLoginAttemptTtlSeconds,
         @DefaultValue("256") int wecomLoginMaxPending,
+        @DefaultValue("20") int wecomLoginAttemptRateLimitPerMinute,
         @DefaultValue("") String wecomAllowedJsapiOrigins,
         @DefaultValue("28800") int wecomViewerAuthTtlSeconds,
         @DefaultValue("300") int wecomViewerSessionTtlSeconds,

@@ -12,6 +12,12 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -100,6 +106,88 @@ class WeComLoginAttemptServiceTest {
 
         WeComException error = assertThrows(WeComException.class, service::createAttempt);
         assertEquals("WECOM_LOGIN_INSTALLATION_NOT_SELECTED", error.code());
+    }
+
+    @Test
+    void wrongUserCannotConsumeBindingAttemptBeforeTargetUserRetries() {
+        stubConfig(2);
+        when(installationService.resolveInstallation("dk-test-suite", "ww-test-corp"))
+                .thenReturn(installation(1L));
+        UUID targetUserId = UUID.randomUUID();
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, installationService,
+                Clock.systemUTC(), () -> "dddddddddddddddddddddddddddddddd", NO_OP_AUDIT);
+        var attempt = service.createBindingAttempt(targetUserId, "127.0.0.1");
+
+        WeComException denied = assertThrows(WeComException.class,
+                () -> service.executeOnce(attempt.state(), WeComLoginAttemptService.Purpose.BIND,
+                        UUID.randomUUID(), "authorization-code", ignored -> "unexpected"));
+        assertEquals("WECOM_LOGIN_PURPOSE_MISMATCH", denied.code());
+
+        String result = service.executeOnce(attempt.state(), WeComLoginAttemptService.Purpose.BIND,
+                targetUserId, "authorization-code", ignored -> "bound");
+        assertEquals("bound", result);
+    }
+
+    @Test
+    void completedReplayDoesNotConsumePendingAttemptCapacity() {
+        stubConfig(1);
+        when(installationService.resolveInstallation("dk-test-suite", "ww-test-corp"))
+                .thenReturn(installation(1L));
+        AtomicInteger nonce = new AtomicInteger();
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, installationService,
+                Clock.systemUTC(), () -> String.format("%032d", nonce.incrementAndGet()), NO_OP_AUDIT);
+
+        var first = service.createAttempt();
+        assertEquals("first", service.executeOnce(first.state(), WeComLoginAttemptService.Purpose.LOGIN,
+                null, "first-code", ignored -> "first"));
+
+        var second = service.createAttempt();
+        assertEquals("second", service.executeOnce(second.state(), WeComLoginAttemptService.Purpose.LOGIN,
+                null, "second-code", ignored -> "second"));
+        assertThrows(SecurityException.class,
+                () -> service.executeOnce(first.state(), WeComLoginAttemptService.Purpose.LOGIN,
+                        null, "first-code", ignored -> "must-not-run"));
+    }
+
+    @Test
+    void concurrentReplayReturnsRetryableInProgressErrorWithoutWaiting() throws Exception {
+        stubConfig(2);
+        when(installationService.resolveInstallation("dk-test-suite", "ww-test-corp"))
+                .thenReturn(installation(1L));
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, installationService,
+                Clock.systemUTC(), () -> "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", NO_OP_AUDIT);
+        var attempt = service.createAttempt();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var leader = executor.submit(() -> service.executeOnce(attempt.state(),
+                    WeComLoginAttemptService.Purpose.LOGIN, null, "authorization-code", ignored -> {
+                        started.countDown();
+                        try {
+                            if (!release.await(2, TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(exception);
+                        }
+                        return "logged-in";
+                    }));
+            if (!started.await(1, TimeUnit.SECONDS)) throw new AssertionError("leader did not start");
+
+            WeComException error = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    Duration.ofMillis(250),
+                    () -> assertThrows(WeComException.class,
+                            () -> service.executeOnce(attempt.state(), WeComLoginAttemptService.Purpose.LOGIN,
+                                    null, "authorization-code", ignored -> "duplicate")));
+            assertEquals("WECOM_LOGIN_EXCHANGE_IN_PROGRESS", error.code());
+            assertEquals(409, error.httpStatus());
+
+            release.countDown();
+            assertEquals("logged-in", leader.get(1, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private void stubConfig(int maxPending) {

@@ -48,6 +48,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/wecom/attempts", "/api/auth/wecom/exchange").permitAll()
+                .requestMatchers("/api/account/wecom-binding/**").authenticated()
                 .requestMatchers("/api/events").permitAll()
                 .requestMatchers("/api/wecom/callback").permitAll()
                 .requestMatchers("/api/v1/webhooks/chatapp").permitAll()
