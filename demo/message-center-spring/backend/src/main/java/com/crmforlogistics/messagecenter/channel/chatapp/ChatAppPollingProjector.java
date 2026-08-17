@@ -6,6 +6,8 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageLinker;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageLinker.LinkResult;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageStatusNormalizer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,15 +29,18 @@ public class ChatAppPollingProjector {
     private final MessageMapper messageMapper;
     private final ChannelEventMapper eventMapper;
     private final ChatAppWebhookProjector webhookProjector;
+    private final ChatAppOutboundMessageLinker outboundMessageLinker;
     private final ObjectMapper objectMapper;
 
     public ChatAppPollingProjector(MessageMapper messageMapper,
                                    ChannelEventMapper eventMapper,
                                    ChatAppWebhookProjector webhookProjector,
+                                   ChatAppOutboundMessageLinker outboundMessageLinker,
                                    ObjectMapper objectMapper) {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.eventMapper = Objects.requireNonNull(eventMapper);
         this.webhookProjector = Objects.requireNonNull(webhookProjector);
+        this.outboundMessageLinker = Objects.requireNonNull(outboundMessageLinker);
         this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
@@ -49,13 +54,21 @@ public class ChatAppPollingProjector {
         boolean inbound = isInbound(row);
         String status = "";
         if (!inbound) {
-            Optional<MessageEntity> local = messageMapper.findByProviderMessageId(
-                    channelAccountId, providerMessageId);
-            if (local.isEmpty()) {
-                String taskId = value(row.getUniqueMessageId());
-                if (!taskId.isBlank()) {
-                    local = messageMapper.findByClientRequestId(channelAccountId, taskId);
-                }
+            LinkResult link = outboundMessageLinker.resolve(channelAccountId, row);
+            if (link.kind() == LinkResult.Kind.AMBIGUOUS_BROADCAST) {
+                return false;
+            }
+            if (link.kind() == LinkResult.Kind.PROVIDER_CONFLICT) {
+                return false;
+            }
+            if (link.kind() == LinkResult.Kind.UNIQUE_BROADCAST) {
+                return true;
+            }
+            Optional<MessageEntity> local = link.messageResolved()
+                    ? Optional.ofNullable(messageMapper.selectById(link.messageId()))
+                    : Optional.empty();
+            if (link.messageResolved() && local.isEmpty()) {
+                return false;
             }
             if (local.isEmpty() && value(row.getUserNumber()).isBlank()) {
                 return false;

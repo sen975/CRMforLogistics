@@ -21,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Set;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,9 +29,6 @@ import java.util.UUID;
 public class ChatAppWebhookProjector {
     private static final Set<String> MESSAGE_KINDS = Set.of(
             "text", "template", "image", "video", "document", "email", "system");
-    private static final Map<String, Integer> SUCCESS_STATUS_RANK = Map.of(
-            "pending", 0, "submitted", 1, "sent", 2, "delivered", 3, "read", 4);
-
     private final ChannelEventMapper channelEventMapper;
     private final MessageMapper messageMapper;
     private final MessageStatusEventMapper statusEventMapper;
@@ -92,11 +88,13 @@ public class ChatAppWebhookProjector {
         boolean imported = existing.isEmpty();
         MessageEntity message = existing.orElseGet(
                 () -> importOutboundHistory(event, providerMessageId, status, root));
-        if (!imported && shouldAdvance(message.getCurrentStatus(), status)) {
-            message.setCurrentStatus(status);
+        String advancedStatus = ChatAppOutboundMessageStateMachine.advance(
+                message.getCurrentStatus(), status);
+        if (!imported && !Objects.equals(message.getCurrentStatus(), advancedStatus)) {
+            message.setCurrentStatus(advancedStatus);
             message.setCurrentStatusAt(Instant.now());
             messageMapper.updateDeliveryStatus(
-                    message.getId(), message.getProviderMessageId(), status,
+                    message.getId(), message.getProviderMessageId(), advancedStatus,
                     message.getCurrentStatusAt());
         }
         MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
@@ -224,17 +222,6 @@ public class ChatAppWebhookProjector {
         identity.setSource("synced");
         contactIdentityMapper.insert(identity);
         return identity;
-    }
-
-    private static boolean shouldAdvance(String currentStatus, String nextStatus) {
-        if ("failed".equals(nextStatus)) {
-            return !"delivered".equals(currentStatus) && !"read".equals(currentStatus);
-        }
-        if ("failed".equals(currentStatus)) {
-            return SUCCESS_STATUS_RANK.containsKey(nextStatus);
-        }
-        return SUCCESS_STATUS_RANK.getOrDefault(nextStatus, -1)
-                >= SUCCESS_STATUS_RANK.getOrDefault(currentStatus, -1);
     }
 
     static String field(JsonNode node, String... names) {

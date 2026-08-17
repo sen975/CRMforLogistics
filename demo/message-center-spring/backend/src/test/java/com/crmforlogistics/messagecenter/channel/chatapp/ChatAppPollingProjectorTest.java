@@ -6,7 +6,10 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageLinker;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageLinker.LinkResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -26,8 +29,15 @@ class ChatAppPollingProjectorTest {
     private final MessageMapper messageMapper = mock(MessageMapper.class);
     private final ChannelEventMapper eventMapper = mock(ChannelEventMapper.class);
     private final ChatAppWebhookProjector webhookProjector = mock(ChatAppWebhookProjector.class);
+    private final ChatAppOutboundMessageLinker linker = mock(ChatAppOutboundMessageLinker.class);
     private final ChatAppPollingProjector projector = new ChatAppPollingProjector(
-            messageMapper, eventMapper, webhookProjector, new ObjectMapper());
+            messageMapper, eventMapper, webhookProjector, linker, new ObjectMapper());
+
+    @BeforeEach
+    void defaultOutboundLinkIsOrphan() {
+        when(linker.resolve(any(), any())).thenReturn(
+                new LinkResult(LinkResult.Kind.ORPHAN, null, ""));
+    }
 
     @Test
     void inboundRowUsesWebhookProjectorWithCustomerAsSender() {
@@ -71,6 +81,9 @@ class ChatAppPollingProjectorTest {
                 .businessNumber("8613266259485")
                 .userNumber("60123456789")
                 .build();
+        when(linker.resolve(accountId, row)).thenReturn(new LinkResult(
+                LinkResult.Kind.EXISTING_CLIENT_REQUEST, message.getId(), ""));
+        when(messageMapper.selectById(message.getId())).thenReturn(message);
 
         assertThat(projector.project(row, accountId)).isTrue();
 
@@ -149,6 +162,9 @@ class ChatAppPollingProjectorTest {
                 .clientReadStatusName("Unread")
                 .messageStatusName("DELIVERED")
                 .build();
+        when(linker.resolve(accountId, row)).thenReturn(new LinkResult(
+                LinkResult.Kind.EXISTING_PROVIDER, message.getId(), ""));
+        when(messageMapper.selectById(message.getId())).thenReturn(message);
 
         assertThat(projector.project(row, accountId)).isTrue();
 

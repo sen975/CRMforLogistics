@@ -98,6 +98,19 @@ class ChatAppWebhookProjectorTest {
     }
 
     @Test
+    void equalProviderStatusDoesNotIssueAnotherDeliveryUpdate() {
+        UUID accountId = UUID.randomUUID();
+        MessageEntity message = messageWithStatus("delivered");
+        when(messageMapper.findByProviderMessageId(accountId, "wamid-1"))
+                .thenReturn(Optional.of(message));
+
+        projector().project(statusEvent(accountId, "DELIVERED"));
+
+        verify(messageMapper, never()).updateDeliveryStatus(any(), any(), any(), any());
+        verify(statusEventMapper).insertIgnore(any());
+    }
+
+    @Test
     void orphanOutboundStatusCreatesHistoryMessageInRecipientConversation() {
         UUID accountId = UUID.randomUUID();
         ContactIdentityEntity identity = new ContactIdentityEntity();

@@ -52,6 +52,25 @@ public interface ChatAppBroadcastRecipientMapper extends BaseMapper<ChatAppBroad
     List<ChatAppBroadcastRecipientEntity> findWithoutMessage(
             @Param("broadcastId") UUID broadcastId, @Param("limit") int limit);
 
+    @Select("select r.* from chatapp_broadcast_recipients r "
+            + "join chatapp_broadcasts b on b.id = r.broadcast_id "
+            + "where b.channel_account_id = #{channelAccountId}::uuid "
+            + "and r.recipient_number_snapshot = #{normalizedNumber} "
+            + "and b.template_code = #{templateCode} "
+            + "and b.language_code = #{languageCode} "
+            + "and r.provider_message_id is null "
+            + "and r.status = 'PROCESSING' "
+            + "and (#{providerSentAt} is null or b.submitted_at between "
+            + "#{providerSentAt} - interval '24 hours' and #{providerSentAt} + interval '5 minutes') "
+            + "order by b.submitted_at desc, r.id limit 2")
+    List<ChatAppBroadcastRecipientEntity> findPendingCandidates(
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("normalizedNumber") String normalizedNumber,
+            @Param("templateCode") String templateCode,
+            @Param("languageCode") String languageCode,
+            @Param("providerSentAt") Instant providerSentAt,
+            @Param("limit") int limit);
+
     @Update("update chatapp_broadcast_recipients set provider_message_id = #{providerMessageId}, "
             + "provider_unique_message_id = #{providerUniqueMessageId}, status = #{status}, "
             + "failure_reason = #{failureReason}, provider_sent_at = #{providerSentAt}, "
