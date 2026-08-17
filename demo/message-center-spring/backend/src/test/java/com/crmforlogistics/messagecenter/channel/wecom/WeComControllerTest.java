@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
+import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,7 @@ class WeComControllerTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper objectMapper;
     @MockitoBean WeComCallbackCodec codec;
-    @MockitoBean WeComInstallationService installationService;
+    @MockitoBean WeComAuthorizationService authorizationService;
     @MockitoBean WeComSendService sendService;
     @MockitoBean WeComStartupGate startupGate;
 
@@ -42,6 +43,8 @@ class WeComControllerTest {
                 Instant.now());
         when(codec.decode(eq("sig1"), eq("1234567890"), eq("nonce1"), any()))
                 .thenReturn(callback);
+        when(authorizationService.handle(callback))
+                .thenReturn(WeComAuthorizationService.CallbackAck.accepted());
 
         mvc.perform(post("/api/wecom/callback")
                         .param("msg_signature", "sig1")
@@ -53,7 +56,26 @@ class WeComControllerTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .content().string("success"));
 
-        verify(installationService).handleCallback(callback);
+        verify(authorizationService).handle(callback);
+    }
+
+    @Test
+    void shouldReturnServiceUnavailableWhenAuthorizationRequestsRetry() throws Exception {
+        var callback = new WeComCallbackCodec.DecodedCallback(
+                "ww123", "create_auth", "corp1", "code1", "", "state1",
+                Instant.now());
+        when(codec.decode(eq("sig1"), eq("1234567890"), eq("nonce1"), any()))
+                .thenReturn(callback);
+        when(authorizationService.handle(callback))
+                .thenReturn(WeComAuthorizationService.CallbackAck.retry());
+
+        mvc.perform(post("/api/wecom/callback")
+                        .param("msg_signature", "sig1")
+                        .param("timestamp", "1234567890")
+                        .param("nonce", "nonce1")
+                        .contentType(MediaType.TEXT_XML)
+                        .content("<xml><Encrypt>test</Encrypt></xml>"))
+                .andExpect(status().isServiceUnavailable());
     }
 
     @Test

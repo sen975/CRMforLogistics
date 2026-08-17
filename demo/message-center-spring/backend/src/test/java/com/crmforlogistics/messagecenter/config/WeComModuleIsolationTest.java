@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.config;
 
 import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialMigrationRunner;
 import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialMigrationService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationRecovery;
 import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -22,6 +23,8 @@ class WeComModuleIsolationTest {
     private final ApplicationContextRunner runnerContext = new ApplicationContextRunner()
             .withBean(WeComCredentialMigrationService.class,
                     () -> mock(WeComCredentialMigrationService.class))
+            .withBean(WeComAuthorizationRecovery.class,
+                    () -> mock(WeComAuthorizationRecovery.class))
             .withBean(WeComStartupGate.class, () -> mock(WeComStartupGate.class))
             .withUserConfiguration(WeComCredentialMigrationRunner.class);
 

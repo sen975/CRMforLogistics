@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
+import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.ResponseEntity;
@@ -19,16 +20,16 @@ import java.util.Map;
 @RequestMapping("/api/wecom")
 public class WeComController {
     private final WeComCallbackCodec codec;
-    private final WeComInstallationService installationService;
+    private final WeComAuthorizationService authorizationService;
     private final WeComSendService sendService;
     private final WeComStartupGate startupGate;
 
     public WeComController(WeComCallbackCodec codec,
-                            WeComInstallationService installationService,
+                            WeComAuthorizationService authorizationService,
                             WeComSendService sendService,
                             WeComStartupGate startupGate) {
         this.codec = codec;
-        this.installationService = installationService;
+        this.authorizationService = authorizationService;
         this.sendService = sendService;
         this.startupGate = startupGate;
     }
@@ -42,8 +43,9 @@ public class WeComController {
         try {
             startupGate.requireOpen();
             var decoded = codec.decode(msgSignature, timestamp, nonce, body);
-            installationService.handleCallback(decoded);
-            return ResponseEntity.ok("success");
+            WeComAuthorizationService.CallbackAck ack = authorizationService.handle(decoded);
+            return ack.success() ? ResponseEntity.ok("success")
+                    : ResponseEntity.status(503).body("retry");
         } catch (WeComException e) {
             return ResponseEntity.status(e.httpStatus())
                     .body(e.getMessage());

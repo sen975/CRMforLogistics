@@ -19,7 +19,10 @@ public interface WeComInstallationMapper extends BaseMapper<WeComInstallationEnt
             + "auth_status = #{authStatus}, authorized_at = #{authorizedAt}, "
             + "last_authorization_event_id = #{eventId}, last_authorization_event_at = #{eventAt}, "
             + "version = version + 1, updated_at = now() "
-            + "WHERE id = #{id}::uuid AND version = #{expectedVersion}")
+            + "WHERE id = #{id}::uuid AND version = #{expectedVersion} "
+            + "AND (last_authorization_event_at IS NULL "
+            + "OR last_authorization_event_at < #{eventAt} "
+            + "OR (last_authorization_event_at = #{eventAt} AND auth_status <> 'REVOKED'))")
     int updateForEvent(@Param("id") UUID id,
                        @Param("agentId") String agentId,
                        @Param("permanentCode") String permanentCode,

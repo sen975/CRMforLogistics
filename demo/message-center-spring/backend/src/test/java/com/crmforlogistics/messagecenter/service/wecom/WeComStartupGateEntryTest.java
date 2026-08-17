@@ -20,14 +20,14 @@ class WeComStartupGateEntryTest {
     @Test
     void rejectsCallbackBeforeMigrationCompletes() {
         WeComCallbackCodec codec = mock(WeComCallbackCodec.class);
-        WeComInstallationService installationService = mock(WeComInstallationService.class);
-        WeComController controller = new WeComController(codec, installationService,
+        WeComAuthorizationService authorizationService = mock(WeComAuthorizationService.class);
+        WeComController controller = new WeComController(codec, authorizationService,
                 mock(WeComSendService.class), new WeComStartupGate());
 
         var response = controller.callback("signature", "timestamp", "nonce", "body");
 
         assertThat(response.getStatusCode().value()).isEqualTo(503);
-        verifyNoInteractions(codec, installationService);
+        verifyNoInteractions(codec, authorizationService);
     }
 
     @Test

@@ -1,163 +1,89 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComInstallationMapper;
-import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationAuditTrail;
 import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialProtector;
-
+import java.time.Instant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
+/** Owns installation persistence and credential access, not callback orchestration. */
 @Service
 @ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComInstallationService {
     private final WeComInstallationMapper mapper;
     private final WeComAuthorizationGateway gateway;
-    private final WeComAuthorizationAuditTrail auditTrail;
     private final WeComCredentialProtector credentialProtector;
-    private final Map<String, Instant> latestCancellation = new ConcurrentHashMap<>();
-    private final Object installationMutationLock = new Object();
 
     public WeComInstallationService(WeComInstallationMapper mapper,
-                                     WeComAuthorizationGateway gateway,
-                                     WeComAuthorizationAuditTrail auditTrail,
-                                     WeComCredentialProtector credentialProtector) {
+                                    WeComAuthorizationGateway gateway,
+                                    WeComCredentialProtector credentialProtector) {
         this.mapper = mapper;
         this.gateway = gateway;
-        this.auditTrail = auditTrail;
         this.credentialProtector = credentialProtector;
     }
 
-    public void handleCallback(WeComCallbackCodec.DecodedCallback callback)
-            throws WeComException {
-        if (callback == null || callback.infoType() == null || callback.infoType().isBlank()) {
-            throw new WeComException("WECOM_CALLBACK_INVALID", 400,
-                    "企业微信授权回调缺少 InfoType");
+    public WeComInstallationEntity find(String suiteId, String authCorpId) {
+        if (suiteId == null || suiteId.isBlank() || authCorpId == null || authCorpId.isBlank()) {
+            return null;
         }
-        String affectedCorpId = callback.authCorpId();
-        try {
-            switch (callback.infoType()) {
-                case "suite_ticket" -> {
-                    gateway.acceptSuiteTicket(callback.suiteId(),
-                            callback.suiteTicket(), callback.timestamp());
-                    recordTicketTimestamp(callback.suiteId(), callback.timestamp());
-                }
-                case "create_auth" -> {
-                    var perm = gateway.getPermanentCode(callback.authCode());
-                    affectedCorpId = perm.authCorpId();
-                    var info = gateway.getAuthInfo(perm.authCorpId(), perm.permanentCode());
-                    if (!perm.authCorpId().equals(info.authCorpId())) {
-                        throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 500,
-                                "企业微信授权信息不一致");
-                    }
-                    synchronized (installationMutationLock) {
-                        if (cancelledAtOrAfter(callback.suiteId(), perm.authCorpId(), callback.timestamp())) {
-                            return;
-                        }
-                        for (var agent : info.agents()) {
-                            upsert(callback.suiteId(), perm.authCorpId(),
-                                    agent.agentId(), perm.permanentCode());
-                        }
-                    }
-                }
-                case "change_auth" -> {
-                    var existing = findActive(callback.suiteId(), callback.authCorpId());
-                    if (existing != null) {
-                        var info = gateway.getAuthInfo(callback.authCorpId(),
-                                credentialProtector.revealPermanentCode(existing.getPermanentCode()));
-                        synchronized (installationMutationLock) {
-                            if (cancelledAtOrAfter(callback.suiteId(), callback.authCorpId(),
-                                    callback.timestamp())) {
-                                return;
-                            }
-                            for (var agent : info.agents()) {
-                                upsert(callback.suiteId(), callback.authCorpId(),
-                                        agent.agentId(), credentialProtector.revealPermanentCode(
-                                                existing.getPermanentCode()));
-                            }
-                        }
-                    }
-                }
-                case "reset_permanent_code" -> {
-                    var perm = gateway.getPermanentCode(callback.authCode());
-                    affectedCorpId = perm.authCorpId();
-                    var info = gateway.getAuthInfo(perm.authCorpId(), perm.permanentCode());
-                    if (!perm.authCorpId().equals(info.authCorpId())) {
-                        throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 500,
-                                "企业微信授权信息不一致");
-                    }
-                    synchronized (installationMutationLock) {
-                        if (cancelledAtOrAfter(callback.suiteId(), perm.authCorpId(), callback.timestamp())) {
-                            return;
-                        }
-                        for (var agent : info.agents()) {
-                            upsert(callback.suiteId(), perm.authCorpId(),
-                                    agent.agentId(), perm.permanentCode());
-                        }
-                    }
-                }
-                case "cancel_auth" -> {
-                    synchronized (installationMutationLock) {
-                        latestCancellation.merge(installationKey(callback.suiteId(), callback.authCorpId()),
-                                callback.timestamp(), (left, right) -> left.isAfter(right) ? left : right);
-                        revoke(callback.suiteId(), callback.authCorpId());
-                    }
-                }
-                default -> throw new WeComException("WECOM_CALLBACK_UNKNOWN_INFOTYPE",
-                        400, "未知的 InfoType: " + callback.infoType());
-            }
-            recordAudit(callback, affectedCorpId, "succeeded", null);
-        } catch (WeComException failure) {
-            markFailedIfNeeded(callback, affectedCorpId, callback.timestamp());
-            recordAudit(callback, affectedCorpId, "failed", failure);
-            throw failure;
+        return mapper.selectOne(new LambdaQueryWrapper<WeComInstallationEntity>()
+                .eq(WeComInstallationEntity::getSuiteId, suiteId)
+                .eq(WeComInstallationEntity::getAuthCorpId, authCorpId)
+                .isNull(WeComInstallationEntity::getDeletedAt));
+    }
+
+    public void applyActiveForEvent(WeComCallbackCodec.DecodedCallback callback,
+                                    String authCorpId, String agentId, String permanentCode,
+                                    String eventId, long expectedVersion) {
+        requireMutation(callback, authCorpId, eventId, expectedVersion);
+        WeComInstallationEntity current = find(callback.suiteId(), authCorpId);
+        if (isReplay(current, eventId)) return;
+        rejectStale(current, callback.timestamp(), "ACTIVE");
+        String protectedCode = credentialProtector.protectPermanentCode(permanentCode);
+        if (current == null) {
+            if (expectedVersion != 0) throw versionConflict();
+            WeComInstallationEntity entity = new WeComInstallationEntity();
+            entity.setSuiteId(callback.suiteId());
+            entity.setAuthCorpId(authCorpId);
+            entity.setAgentId(required(agentId, "agentId", 32));
+            entity.setPermanentCode(protectedCode);
+            entity.setAuthStatus("ACTIVE");
+            entity.setAuthorizedAt(Instant.now());
+            entity.setLastAuthorizationEventId(eventId);
+            entity.setLastAuthorizationEventAt(callback.timestamp());
+            entity.setVersion(1L);
+            if (mapper.insert(entity) != 1) throw versionConflict();
+            return;
+        }
+        long version = version(current);
+        if (version != expectedVersion || mapper.updateForEvent(current.getId(),
+                required(agentId, "agentId", 32), protectedCode, "ACTIVE", Instant.now(),
+                eventId, callback.timestamp(), expectedVersion) != 1) {
+            throw versionConflict();
         }
     }
 
-    private boolean cancelledAtOrAfter(String suiteId, String authCorpId, Instant eventTimestamp) {
-        Instant cancelledAt = latestCancellation.get(installationKey(suiteId, authCorpId));
-        return cancelledAt != null && !cancelledAt.isBefore(eventTimestamp);
-    }
-
-    private static String installationKey(String suiteId, String authCorpId) {
-        return suiteId + "\u0000" + authCorpId;
-    }
-
-    private void recordAudit(WeComCallbackCodec.DecodedCallback callback, String authCorpId,
-                             String result, WeComException failure) {
-        try {
-            auditTrail.record(callback, authCorpId, result, failure);
-        } catch (RuntimeException auditFailure) {
-            // Audit failures must never poison installation state or callback ack.
+    public void revokeForEvent(WeComCallbackCodec.DecodedCallback callback,
+                               WeComInstallationEntity installation,
+                               String eventId, long expectedVersion) {
+        requireMutation(callback, callback.authCorpId(), eventId, expectedVersion);
+        WeComInstallationEntity current = find(callback.suiteId(), callback.authCorpId());
+        if (isReplay(current, eventId)) return;
+        rejectStale(current, callback.timestamp(), "REVOKED");
+        if (current == null || installation == null || current.getId() == null
+                || !current.getId().equals(installation.getId())
+                || version(current) != expectedVersion
+                || mapper.updateStatusForEvent(current.getId(), "REVOKED", eventId,
+                callback.timestamp(), expectedVersion) != 1) {
+            throw versionConflict();
         }
     }
 
-    private void markFailedIfNeeded(WeComCallbackCodec.DecodedCallback callback,
-                                    String authCorpId, Instant eventTimestamp) {
-        if (authCorpId == null || authCorpId.isBlank()) return;
-        try {
-            synchronized (installationMutationLock) {
-                if (cancelledAtOrAfter(callback.suiteId(), authCorpId, eventTimestamp)) return;
-                var existing = findActive(callback.suiteId(), authCorpId);
-                if (existing != null) {
-                    existing.setAuthStatus("FAILED");
-                    existing.setUpdatedAt(Instant.now());
-                    mapper.updateById(existing);
-                }
-            }
-        } catch (RuntimeException ignored) {
-            // Failure marking must not mask the original callback error.
-        }
-    }
-
-    public WeComInstallationEntity resolveActive(String suiteId, String authCorpId)
-            throws WeComException {
-        var entity = mapper.findActive(suiteId, authCorpId);
+    public WeComInstallationEntity resolveActive(String suiteId, String authCorpId) {
+        WeComInstallationEntity entity = mapper.findActive(suiteId, authCorpId);
         if (entity == null) {
             throw new WeComException("WECOM_INSTALLATION_NOT_FOUND", 404,
                     "未找到企业微信安装记录");
@@ -165,71 +91,77 @@ public class WeComInstallationService {
         return entity;
     }
 
-    public String accessToken(String suiteId, String authCorpId)
-            throws WeComException {
-        var installation = resolveActive(suiteId, authCorpId);
+    public String accessToken(String suiteId, String authCorpId) {
+        WeComInstallationEntity installation = resolveActive(suiteId, authCorpId);
         var token = gateway.getCorpToken(authCorpId,
                 credentialProtector.revealPermanentCode(installation.getPermanentCode()));
         return token.accessToken();
     }
 
-    public ResolvedInstallation resolveInstallation(String suiteId, String authCorpId)
-            throws WeComException {
-        var entity = mapper.findActive(suiteId, authCorpId);
+    public ResolvedInstallation resolveInstallation(String suiteId, String authCorpId) {
+        WeComInstallationEntity entity = resolveActive(suiteId, authCorpId);
+        return resolved(entity);
+    }
+
+    public ResolvedInstallation resolveRefreshable(String suiteId, String authCorpId) {
+        WeComInstallationEntity entity = find(suiteId, authCorpId);
         if (entity == null) {
-            throw new WeComException("WECOM_INSTALLATION_NOT_FOUND", 404,
-                    "未找到企业微信安装记录");
+            throw new WeComException("WECOM_INSTALLATION_NOT_FOUND", 403,
+                    "未找到企业微信授权安装记录");
         }
+        if ("REVOKED".equals(entity.getAuthStatus())) {
+            throw new WeComException("WECOM_INSTALLATION_INACTIVE", 403,
+                    "企业微信授权安装已撤销或失效");
+        }
+        return resolved(entity);
+    }
+
+    private ResolvedInstallation resolved(WeComInstallationEntity entity) {
         String installationId = entity.getId() == null ? "" : entity.getId().toString();
-        long version = entity.getVersion() == null || entity.getVersion() < 1 ? 1 : entity.getVersion();
         return new ResolvedInstallation(installationId, entity.getSuiteId(), entity.getAuthCorpId(),
-                entity.getAgentId(), credentialProtector.revealPermanentCode(entity.getPermanentCode()), version);
+                entity.getAgentId(), credentialProtector.revealPermanentCode(entity.getPermanentCode()),
+                version(entity));
     }
 
-    private WeComInstallationEntity findActive(String suiteId, String authCorpId) {
-        return mapper.findActive(suiteId, authCorpId);
+    private static boolean isReplay(WeComInstallationEntity current, String eventId) {
+        return current != null && eventId.equals(current.getLastAuthorizationEventId());
     }
 
-    private void upsert(String suiteId, String authCorpId, String agentId, String permanentCode) {
-        var existing = findActive(suiteId, authCorpId);
-        if (existing != null) {
-            existing.setAgentId(agentId);
-            existing.setPermanentCode(credentialProtector.protectPermanentCode(permanentCode));
-            existing.setAuthStatus("ACTIVE");
-            existing.setAuthorizedAt(Instant.now());
-            existing.setUpdatedAt(Instant.now());
-            mapper.updateById(existing);
-        } else {
-            var entity = new WeComInstallationEntity();
-            entity.setSuiteId(suiteId);
-            entity.setAuthCorpId(authCorpId);
-            entity.setAgentId(agentId);
-            entity.setPermanentCode(credentialProtector.protectPermanentCode(permanentCode));
-            entity.setAuthStatus("ACTIVE");
-            entity.setAuthorizedAt(Instant.now());
-            mapper.insert(entity);
+    private static void rejectStale(WeComInstallationEntity current, Instant eventAt,
+                                    String targetStatus) {
+        if (current != null && current.getLastAuthorizationEventAt() != null
+                && (eventAt.isBefore(current.getLastAuthorizationEventAt())
+                || (eventAt.equals(current.getLastAuthorizationEventAt())
+                && "ACTIVE".equals(targetStatus)
+                && "REVOKED".equals(current.getAuthStatus())))) {
+            throw new WeComException("WECOM_AUTHORIZATION_EVENT_STALE", 409,
+                    "企业微信授权事件早于当前安装状态");
         }
     }
 
-    private void revoke(String suiteId, String authCorpId) {
-        var existing = findActive(suiteId, authCorpId);
-        if (existing != null) {
-            existing.setAuthStatus("REVOKED");
-            existing.setUpdatedAt(Instant.now());
-            mapper.updateById(existing);
-        }
+    private static long version(WeComInstallationEntity entity) {
+        return entity.getVersion() == null ? 0L : entity.getVersion();
     }
 
-    private void recordTicketTimestamp(String suiteId, Instant timestamp) {
-        if (suiteId == null || suiteId.isBlank()) return;
-        var entities = mapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<WeComInstallationEntity>()
-                        .eq(WeComInstallationEntity::getSuiteId, suiteId)
-                        .eq(WeComInstallationEntity::getAuthStatus, "ACTIVE")
-                        .isNull(WeComInstallationEntity::getDeletedAt));
-        for (var entity : entities) {
-            entity.setLastSuiteTicketAt(timestamp);
-            mapper.updateById(entity);
+    private static void requireMutation(WeComCallbackCodec.DecodedCallback callback,
+                                        String authCorpId, String eventId, long expectedVersion) {
+        if (callback == null || callback.timestamp() == null || expectedVersion < 0
+                || eventId == null || !eventId.matches("sha256:[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("authorization mutation is invalid");
         }
+        required(callback.suiteId(), "suiteId", 128);
+        required(authCorpId, "authCorpId", 128);
+    }
+
+    private static String required(String value, String name, int maxLength) {
+        if (value == null || value.isBlank() || value.length() > maxLength) {
+            throw new IllegalArgumentException(name + " is invalid");
+        }
+        return value;
+    }
+
+    private static WeComException versionConflict() {
+        return new WeComException("WECOM_AUTHORIZATION_VERSION_CONFLICT", 409,
+                "企业微信授权安装版本已变化，请重试");
     }
 }
