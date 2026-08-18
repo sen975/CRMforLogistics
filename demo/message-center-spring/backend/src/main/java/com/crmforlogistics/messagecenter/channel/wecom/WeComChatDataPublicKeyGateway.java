@@ -24,11 +24,10 @@ public class WeComChatDataPublicKeyGateway {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
-    public WeComChatDataPublicKeyGateway(AppConfig config, ObjectMapper objectMapper) {
+    public WeComChatDataPublicKeyGateway(AppConfig config, ObjectMapper objectMapper,
+                                         WeComRestClientFactory restClients) {
         this.objectMapper = objectMapper;
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .build();
+        this.restClient = restClients.create();
     }
 
     public void register(String accessToken, WeComChatDataCrypto.PublicKeyMaterial material) {
@@ -60,7 +59,7 @@ public class WeComChatDataPublicKeyGateway {
         } catch (WeComChatDataException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw failed(exception);
+            throw failed(null);
         }
     }
 

@@ -14,6 +14,7 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComUserBindingService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComViewerService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Locale;
 
 @RestController
 @Validated
@@ -57,6 +60,18 @@ public class WeComViewerController {
         this.localProvider = localProvider;
         this.syncProvider = syncProvider;
         this.bindingProvider = bindingProvider;
+    }
+
+    @ModelAttribute
+    void rejectViewerTokensInQuery(HttpServletRequest request) {
+        request.getParameterMap().keySet().stream()
+                .map(name -> name.toLowerCase(Locale.ROOT))
+                .filter(name -> name.contains("token"))
+                .findAny()
+                .ifPresent(name -> {
+                    throw new WeComException("WECOM_VIEWER_REQUEST_INVALID", 400,
+                            "企业微信展示凭证只能通过专用请求头传递");
+                });
     }
 
     @PostMapping("/conversation-view/bootstrap")

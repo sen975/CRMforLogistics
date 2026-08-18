@@ -141,6 +141,7 @@ class WeComViewerControllerTest {
     void sessionRequestRejectsViewerTokenOutsideTheDedicatedHeader() throws Exception {
         mvc.perform(post("/api/v1/wecom/conversation-view/sessions?viewerAuthToken=viewer-token")
                         .header("Authorization", "Bearer crm-token")
+                        .header("X-WeCom-Viewer-Token", "viewer-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"contactPointId\":\"wecom:external\",\"messageIds\":[\"m1\"]}"))
                 .andExpect(status().isBadRequest());
@@ -151,6 +152,8 @@ class WeComViewerControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"contactPointId\":\"wecom:external\",\"messageIds\":[\"m1\"],\"viewerAuthToken\":\"legacy-token\"}"))
                 .andExpect(status().isBadRequest());
+
+        verify(viewer, never()).createViewerSession(any(), any(), any());
     }
 
     @Test

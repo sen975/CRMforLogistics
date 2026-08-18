@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +16,9 @@ import java.nio.file.Path;
 
 @Component
 @ConditionalOnWeComEnabled
-@ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank() and '${app.wecom-chatdata-auto-sync-enabled:false}' == 'true'")
+@ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
+@ConditionalOnProperty(name = "app.wecom-chatdata-auto-sync-enabled",
+        havingValue = "true", matchIfMissing = true)
 public class WeComChatDataSyncRuntime {
     private static final Logger log = LoggerFactory.getLogger(WeComChatDataSyncRuntime.class);
     private final AppConfig config;

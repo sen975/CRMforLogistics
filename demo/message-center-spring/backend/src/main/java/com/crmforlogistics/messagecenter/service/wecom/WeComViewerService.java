@@ -139,9 +139,7 @@ public class WeComViewerService {
             requireBounded(userId, "WeCom user id", 128);
             String token = UUID.randomUUID().toString().replace("-", "");
             long now = clock.instant().getEpochSecond();
-            cleanupExpiredViewerAuth(now);
-            enforceViewerAuthLimit();
-            viewerAuthTokens.put(token, new ViewerAuth(token, userId,
+            storeViewerAuth(new ViewerAuth(token, userId,
                     now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(), "", 0L));
             recordAudit("wecom.viewer.login_exchange", "success", userId, "", "");
             return new LoginExchangeResponse(userId, token, config.wecomViewerAuthTtlSeconds());
@@ -176,9 +174,7 @@ public class WeComViewerService {
             requireBounded(userId, "WeCom user id", 128);
             String token = UUID.randomUUID().toString().replace("-", "");
             long now = clock.instant().getEpochSecond();
-            cleanupExpiredViewerAuth(now);
-            enforceViewerAuthLimit();
-            viewerAuthTokens.put(token, new ViewerAuth(token, userId,
+            storeViewerAuth(new ViewerAuth(token, userId,
                     now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(),
                     binding.installationId(), binding.version()));
             recordAudit("wecom.viewer.login_exchange", "success", userId, "", "");
@@ -196,10 +192,8 @@ public class WeComViewerService {
             requireBounded(wecomUserId, "WeCom user id", 128);
             ResolvedInstallation resolved = validateInstallationBinding(binding);
             long now = clock.instant().getEpochSecond();
-            cleanupExpiredViewerAuth(now);
-            enforceViewerAuthLimit();
             String token = UUID.randomUUID().toString().replace("-", "");
-            viewerAuthTokens.put(token, new ViewerAuth(token, wecomUserId,
+            storeViewerAuth(new ViewerAuth(token, wecomUserId,
                     now + config.wecomViewerAuthTtlSeconds(), sessionOrder.incrementAndGet(),
                     resolved.installationId(), resolved.version()));
             recordAudit("wecom.viewer.bootstrap", "success", wecomUserId, "", "");
@@ -226,7 +220,7 @@ public class WeComViewerService {
         return resolved;
     }
 
-    int activeViewerAuthTokenCount() {
+    synchronized int activeViewerAuthTokenCount() {
         cleanupExpiredViewerAuth(clock.instant().getEpochSecond());
         return viewerAuthTokens.size();
     }
@@ -257,26 +251,16 @@ public class WeComViewerService {
             ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, now);
             wecomUserId = auth.wecomUserId();
             enforceViewerSessionRate(wecomUserId, now);
-            cleanupExpiredSessions(now);
-            enforceViewerSessionLimit();
             List<String> messageIds = validateRequestedMessageIds(requestedMessageIds);
             List<ViewerMessage> messages = readViewerMessages(contactPointId, wecomUserId, messageIds);
             if (messages.isEmpty()) {
                 throw new SecurityException("WeCom conversation is not viewable by this session");
             }
-            removeViewerSessionsForToken(viewerAuthToken);
             viewerSessionId = UUID.randomUUID().toString().replace("-", "");
             long expiresAt = now + config.wecomViewerSessionTtlSeconds();
             ViewerSession viewerSession = new ViewerSession(viewerSessionId, viewerAuthToken, contactPointId,
                     expiresAt, sessionOrder.incrementAndGet(), messages);
-            viewerSessions.put(viewerSessionId, viewerSession);
-            try {
-                referenceLeases.acquire(viewerSessionId,
-                        messages.stream().map(ViewerMessage::msgid).toList(), expiresAt);
-            } catch (RuntimeException exception) {
-                viewerSessions.remove(viewerSessionId, viewerSession);
-                throw exception;
-            }
+            storeViewerSession(viewerSession);
             recordAudit("wecom.viewer.session_create", "success", wecomUserId,
                     contactPointId, viewerSessionId);
             return new ViewerSessionResponse(viewerSessionId, config.wecomViewerSessionTtlSeconds());
@@ -312,9 +296,7 @@ public class WeComViewerService {
             referenceLeases.release(viewerSessionId);
             recordAudit("wecom.viewer.session_read", "success", wecomUserId,
                     session.contactPointId(), viewerSessionId);
-            removeViewedSessionsForToken(viewerAuthToken);
-            enforceViewedSessionLimit();
-            viewedSessionsByToken.put(viewerAuthToken, new ViewedSession(viewerSessionId,
+            storeViewedSession(viewerAuthToken, new ViewedSession(viewerSessionId,
                     session.expiresAtEpochSecond(), session.createdOrder()));
             ResolvedInstallation installation = auth.installationId().isBlank()
                     ? null : requireBoundInstallation(auth);
@@ -548,6 +530,33 @@ public class WeComViewerService {
             throw new RateLimitException("WeCom viewer session rate limit exceeded");
         }
         viewerSessionRates.put(wecomUserId, new SessionRateWindow(current.windowStartedAt(), current.count() + 1));
+    }
+
+    private synchronized void storeViewerAuth(ViewerAuth auth) {
+        cleanupExpiredViewerAuth(clock.instant().getEpochSecond());
+        enforceViewerAuthLimit();
+        viewerAuthTokens.put(auth.token(), auth);
+    }
+
+    private synchronized void storeViewerSession(ViewerSession session) {
+        cleanupExpiredSessions(clock.instant().getEpochSecond());
+        removeViewerSessionsForToken(session.viewerAuthToken());
+        enforceViewerSessionLimit();
+        viewerSessions.put(session.id(), session);
+        try {
+            referenceLeases.acquire(session.id(),
+                    session.messages().stream().map(ViewerMessage::msgid).toList(),
+                    session.expiresAtEpochSecond());
+        } catch (RuntimeException exception) {
+            viewerSessions.remove(session.id(), session);
+            throw exception;
+        }
+    }
+
+    private synchronized void storeViewedSession(String viewerAuthToken, ViewedSession session) {
+        removeViewedSessionsForToken(viewerAuthToken);
+        enforceViewedSessionLimit();
+        viewedSessionsByToken.put(viewerAuthToken, session);
     }
 
     private void cleanupExpiredViewerAuth(long now) {

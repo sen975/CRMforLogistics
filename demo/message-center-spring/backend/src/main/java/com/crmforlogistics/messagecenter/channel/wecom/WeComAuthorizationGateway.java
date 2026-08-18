@@ -6,11 +6,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -31,26 +30,23 @@ public class WeComAuthorizationGateway {
     private static final Pattern UPSTREAM_HINT = Pattern.compile(
             "(?i)(?:^|\\s)hint\\s*:\\s*\\[([A-Za-z0-9_-]{1,128})]");
     private final AppConfig config;
-    private final RestClient restClient;
+    private final WeComRestClientFactory restClients;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final Map<String, SuiteTicket> tickets = new ConcurrentHashMap<>();
     private final Map<String, SuiteToken> suiteTokens = new ConcurrentHashMap<>();
 
-    public WeComAuthorizationGateway(AppConfig config, ObjectMapper objectMapper) {
+    @Autowired
+    public WeComAuthorizationGateway(AppConfig config, ObjectMapper objectMapper,
+                                     WeComRestClientFactory restClients) {
         this.config = config;
         this.objectMapper = objectMapper;
         this.clock = Clock.systemUTC();
-        Duration socketTimeout = configuredTimeout(config.wecomApiTimeoutSeconds());
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(socketTimeout)
-                .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(socketTimeout);
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .requestFactory(requestFactory)
-                .build();
+        this.restClients = restClients;
+    }
+
+    public WeComAuthorizationGateway(AppConfig config, ObjectMapper objectMapper) {
+        this(config, objectMapper, new WeComRestClientFactory(config));
     }
 
     public void acceptSuiteTicket(String suiteId, String suiteTicket, Instant receivedAt)
@@ -88,7 +84,7 @@ public class WeComAuthorizationGateway {
         require(authCode, "authCode", 512);
         String path = "/cgi-bin/service/v2/get_permanent_code";
         JsonNode body = postJson(path + "?suite_access_token="
-                + encode(suiteAccessToken(config.wecomSuiteId())), Map.of("auth_code", authCode));
+                + encode(suiteAccessToken(config.wecomSuiteId())), path, Map.of("auth_code", authCode));
         String permanentCode = successString(body, "permanent_code", path);
         JsonNode authInfo = body.has("auth_corp_info") && body.get("auth_corp_info").isObject()
                 ? body.get("auth_corp_info") : null;
@@ -101,8 +97,9 @@ public class WeComAuthorizationGateway {
     public AuthorizationInfo getAuthInfo(String authCorpId, String permanentCode) throws WeComException {
         require(authCorpId, "authCorpId", 128);
         require(permanentCode, "permanentCode", 512);
-        JsonNode body = postJson("/cgi-bin/service/v2/get_auth_info?suite_access_token="
-                + encode(suiteAccessToken(config.wecomSuiteId())), Map.of("auth_corpid", authCorpId,
+        String path = "/cgi-bin/service/v2/get_auth_info";
+        JsonNode body = postJson(path + "?suite_access_token="
+                + encode(suiteAccessToken(config.wecomSuiteId())), path, Map.of("auth_corpid", authCorpId,
                 "permanent_code", permanentCode));
         JsonNode authCorpInfo = body.has("auth_corp_info") && body.get("auth_corp_info").isObject()
                 ? body.get("auth_corp_info") : null;
@@ -130,7 +127,7 @@ public class WeComAuthorizationGateway {
         require(permanentCode, "permanentCode", 512);
         String path = "/cgi-bin/service/get_corp_token";
         JsonNode body = postJson(path + "?suite_access_token="
-                + encode(suiteAccessToken(config.wecomSuiteId())), Map.of(
+                + encode(suiteAccessToken(config.wecomSuiteId())), path, Map.of(
                 "auth_corpid", authCorpId,
                 "permanent_code", permanentCode));
         return new CorpTokenResponse(successString(body, "access_token", path),
@@ -143,7 +140,7 @@ public class WeComAuthorizationGateway {
         require(developedAppSecret, "developedAppSecret", 512);
         String path = "/cgi-bin/gettoken";
         JsonNode body = getJson(path + "?corpid=" + encode(authCorpId)
-                + "&corpsecret=" + encode(developedAppSecret), timeout);
+                + "&corpsecret=" + encode(developedAppSecret), path, timeout);
         return new CorpTokenResponse(successString(body, "access_token", path),
                 positiveInt(body, "expires_in", 7200));
     }
@@ -154,9 +151,10 @@ public class WeComAuthorizationGateway {
             throw new WeComException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
                     "企业微信登录授权 Suite 尚未配置");
         }
-        String path = "/cgi-bin/service/auth/getuserinfo3rd?suite_access_token="
+        String diagnosticPath = "/cgi-bin/service/auth/getuserinfo3rd";
+        String path = diagnosticPath + "?suite_access_token="
                 + encode(suiteAccessToken(config.wecomLoginSuiteId())) + "&code=" + encode(code);
-        JsonNode body = getJson(path, timeout);
+        JsonNode body = getJson(path, diagnosticPath, timeout);
         String corpId = string(body, "corpid");
         String userId = string(body, "userid");
         if (corpId.isBlank() || userId.isBlank()) {
@@ -168,30 +166,31 @@ public class WeComAuthorizationGateway {
         return new LoginIdentity(corpId, userId);
     }
 
-    private JsonNode getJson(String path, Duration timeout) throws WeComException {
+    private JsonNode getJson(String requestPath, String diagnosticPath, Duration timeout)
+            throws WeComException {
         requireTimeout(timeout);
         try {
-            String response = restClient.get()
-                    .uri(path)
+            String response = restClients.create(timeout).get()
+                    .uri(requestPath)
                     .retrieve()
                     .body(String.class);
             if (response == null || response.length() > MAX_RESPONSE_BYTES) {
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游响应异常", null, path, 200, null);
+                        "企业微信上游响应异常", null, diagnosticPath, 200, null);
             }
             JsonNode body = objectMapper.readTree(response);
             int errcode = body.has("errcode") ? body.get("errcode").asInt(-1) : -1;
             if (errcode != 0) {
                 String errmsg = string(body, "errmsg");
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游返回错误: " + errmsg, errcode, path, 200, extractHint(errmsg));
+                        "企业微信上游返回错误: " + errmsg, errcode, diagnosticPath, 200, extractHint(errmsg));
             }
             return body;
         } catch (WeComException e) {
             throw e;
         } catch (Exception e) {
             throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                    "企业微信上游服务暂时不可用", null, path, null, null, e);
+                    "企业微信上游服务暂时不可用", null, diagnosticPath, null, null);
         }
     }
 
@@ -209,37 +208,48 @@ public class WeComAuthorizationGateway {
     }
 
     private JsonNode postJson(String path, Map<String, String> values) throws WeComException {
-        return postJson(path, values, TIMEOUT);
+        return postJson(path, path, values, TIMEOUT);
     }
 
     private JsonNode postJson(String path, Map<String, String> values, Duration timeout)
             throws WeComException {
+        return postJson(path, path, values, timeout);
+    }
+
+    private JsonNode postJson(String requestPath, String diagnosticPath,
+                              Map<String, String> values) throws WeComException {
+        return postJson(requestPath, diagnosticPath, values, TIMEOUT);
+    }
+
+    private JsonNode postJson(String requestPath, String diagnosticPath,
+                              Map<String, String> values, Duration timeout)
+            throws WeComException {
         requireTimeout(timeout);
         try {
             String json = objectMapper.writeValueAsString(values);
-            String response = restClient.post()
-                    .uri(path)
+            String response = restClients.create(timeout).post()
+                    .uri(requestPath)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(json)
                     .retrieve()
                     .body(String.class);
             if (response == null || response.length() > MAX_RESPONSE_BYTES) {
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游响应异常", null, path, 200, null);
+                        "企业微信上游响应异常", null, diagnosticPath, 200, null);
             }
             JsonNode body = objectMapper.readTree(response);
             int errcode = body.has("errcode") ? body.get("errcode").asInt(-1) : -1;
             if (errcode != 0) {
                 String errmsg = string(body, "errmsg");
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游返回错误: " + errmsg, errcode, path, 200, extractHint(errmsg));
+                        "企业微信上游返回错误: " + errmsg, errcode, diagnosticPath, 200, extractHint(errmsg));
             }
             return body;
         } catch (WeComException e) {
             throw e;
         } catch (Exception e) {
             throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                    "企业微信上游服务暂时不可用", null, path, null, null, e);
+                    "企业微信上游服务暂时不可用", null, diagnosticPath, null, null);
         }
     }
 
@@ -276,13 +286,6 @@ public class WeComAuthorizationGateway {
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
-    }
-
-    private static Duration configuredTimeout(int seconds) {
-        if (seconds < 1 || seconds > 300) {
-            throw new IllegalArgumentException("wecomApiTimeoutSeconds must be between 1 and 300");
-        }
-        return Duration.ofSeconds(seconds);
     }
 
     private static void requireTimeout(Duration timeout) {

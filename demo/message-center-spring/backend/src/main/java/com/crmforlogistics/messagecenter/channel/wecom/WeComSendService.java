@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -20,15 +21,28 @@ public class WeComSendService {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public WeComSendService(AppConfig config,
                              WeComInstallationService installationService,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             WeComRestClientFactory restClients) {
+        this(config, installationService, objectMapper, restClients.create());
+    }
+
+    public WeComSendService(AppConfig config,
+                            WeComInstallationService installationService,
+                            ObjectMapper objectMapper) {
+        this(config, installationService, objectMapper, RestClient.create());
+    }
+
+    private WeComSendService(AppConfig config,
+                             WeComInstallationService installationService,
+                             ObjectMapper objectMapper,
+                             RestClient restClient) {
         this.config = config;
         this.installationService = installationService;
         this.objectMapper = objectMapper;
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .build();
+        this.restClient = restClient;
     }
 
     public SendResult send(String corpId, String agentId, String toUser,
@@ -61,7 +75,7 @@ public class WeComSendService {
             throw e;
         } catch (Exception e) {
             throw new WeComException("WECOM_SEND_FAILED", 502,
-                    "企业微信消息发送失败", e);
+                    "企业微信消息发送失败");
         }
     }
 

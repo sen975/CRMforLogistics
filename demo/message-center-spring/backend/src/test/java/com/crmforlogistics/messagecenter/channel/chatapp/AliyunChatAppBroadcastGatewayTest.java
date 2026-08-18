@@ -20,6 +20,7 @@ import java.util.concurrent.TimeoutException;
 import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus.DELIVERED;
 import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus.FAILED_RECIPIENT;
 import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus.READ;
+import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus.SENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -254,6 +255,22 @@ class AliyunChatAppBroadcastGatewayTest {
 
         assertThat(item.rawProviderStatus()).isEqualTo("Read");
         assertThat(item.status()).isEqualTo(READ);
+        assertThat(item.diagnosticCode()).isBlank();
+    }
+
+    @Test
+    void treatsUniqueMessageIdWithoutDeliveryStatusAsSentAndPreservesRawStatus() {
+        var row = ListChatappMessageResponseBody.Data.builder()
+                .userNumber("8613928816227")
+                .messageId("group-1")
+                .uniqueMessageId("unique-1")
+                .clientReadStatus("1")
+                .build();
+
+        ReconciliationItem item = AliyunChatAppBroadcastGateway.parseRow(row, 10);
+
+        assertThat(item.rawProviderStatus()).isEqualTo("1");
+        assertThat(item.status()).isEqualTo(SENT);
         assertThat(item.diagnosticCode()).isBlank();
     }
 

@@ -102,9 +102,7 @@ public class LocalWeComDevelopmentService {
             throw new SecurityException("Local login state is expired, missing, or already used");
         }
         String token = randomToken();
-        cleanup();
-        enforceTokenLimit();
-        tokens.put(token, new LocalToken(LOCAL_USER_ID, viewerAuthExpiresAt()));
+        storeToken(token, new LocalToken(LOCAL_USER_ID, viewerAuthExpiresAt()));
         return new WeComViewerService.LoginExchangeResponse(
                 LOCAL_USER_ID, token, config.wecomViewerAuthTtlSeconds());
     }
@@ -114,10 +112,8 @@ public class LocalWeComDevelopmentService {
         if (wecomUserId == null || wecomUserId.isBlank() || wecomUserId.length() > 128) {
             throw new IllegalArgumentException("Local WeCom user id is required");
         }
-        cleanup();
-        enforceTokenLimit();
         String token = randomToken();
-        tokens.put(token, new LocalToken(wecomUserId, viewerAuthExpiresAt()));
+        storeToken(token, new LocalToken(wecomUserId, viewerAuthExpiresAt()));
         return new WeComViewerService.LoginExchangeResponse(
                 wecomUserId, token, config.wecomViewerAuthTtlSeconds());
     }
@@ -140,14 +136,10 @@ public class LocalWeComDevelopmentService {
         if (messages.isEmpty()) {
             throw new SecurityException("Local WeCom conversation is not available");
         }
-        removeSessionsForToken(viewerAuthToken);
-        enforceSessionLimit();
         String sessionId = randomToken();
         long expiresAt = viewerSessionExpiresAt();
-        sessions.put(sessionId, new LocalSession(sessionId, viewerAuthToken, contactPointId,
+        storeSession(new LocalSession(sessionId, viewerAuthToken, contactPointId,
                 expiresAt, messages));
-        referenceLeases.acquire(sessionId,
-                messages.stream().map(WeComViewerService.ViewerMessage::msgid).toList(), expiresAt);
         return new WeComViewerService.ViewerSessionResponse(sessionId, config.wecomViewerSessionTtlSeconds());
     }
 
@@ -343,6 +335,27 @@ public class LocalWeComDevelopmentService {
                         removeSessionsForToken(entry.getKey());
                     }
                 });
+    }
+
+    private synchronized void storeToken(String token, LocalToken value) {
+        cleanup();
+        enforceTokenLimit();
+        tokens.put(token, value);
+    }
+
+    private synchronized void storeSession(LocalSession session) {
+        cleanup();
+        removeSessionsForToken(session.viewerAuthToken());
+        enforceSessionLimit();
+        sessions.put(session.id(), session);
+        try {
+            referenceLeases.acquire(session.id(),
+                    session.messages().stream().map(WeComViewerService.ViewerMessage::msgid).toList(),
+                    session.expiresAtEpochSecond());
+        } catch (RuntimeException exception) {
+            sessions.remove(session.id(), session);
+            throw exception;
+        }
     }
 
     private void enforceSessionLimit() {

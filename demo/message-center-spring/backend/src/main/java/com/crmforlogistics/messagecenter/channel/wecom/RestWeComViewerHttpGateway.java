@@ -28,14 +28,13 @@ public class RestWeComViewerHttpGateway implements WeComViewerHttpGateway {
 
     public RestWeComViewerHttpGateway(AppConfig config, ObjectMapper objectMapper,
                                       WeComAccessTokenService accessTokens,
-                                      WeComAuthorizationGateway authorizationGateway) {
+                                      WeComAuthorizationGateway authorizationGateway,
+                                      WeComRestClientFactory restClients) {
         this.config = config;
         this.objectMapper = objectMapper;
         this.accessTokens = accessTokens;
         this.authorizationGateway = authorizationGateway;
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .build();
+        this.restClient = restClients.create();
     }
 
     @Override
@@ -102,7 +101,7 @@ public class RestWeComViewerHttpGateway implements WeComViewerHttpGateway {
             throw exception;
         } catch (Exception exception) {
             throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                    "企业微信上游服务暂时不可用", exception);
+                    "企业微信上游服务暂时不可用");
         }
     }
 

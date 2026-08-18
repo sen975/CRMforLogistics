@@ -6,6 +6,8 @@ import com.crmforlogistics.messagecenter.channel.email.EmailSyncService;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.service.wecom.WeComChatDataSyncService;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +25,7 @@ public class ChannelSettingsController {
     private final ChatAppMessageSyncService chatAppMessageSyncService;
     private final ChatAppTemplateSyncService chatAppTemplateSyncService;
     private final EmailSyncService emailSyncService;
+    private final ObjectProvider<WeComChatDataSyncService> weComSyncProvider;
     private final CredentialCipher credentialCipher;
 
     private static final Set<String> SECRET_KEYS = Set.of(
@@ -32,11 +35,13 @@ public class ChannelSettingsController {
                                       ChatAppMessageSyncService chatAppMessageSyncService,
                                       ChatAppTemplateSyncService chatAppTemplateSyncService,
                                       EmailSyncService emailSyncService,
+                                      ObjectProvider<WeComChatDataSyncService> weComSyncProvider,
                                       CredentialCipher credentialCipher) {
         this.channelAccountMapper = channelAccountMapper;
         this.chatAppMessageSyncService = chatAppMessageSyncService;
         this.chatAppTemplateSyncService = chatAppTemplateSyncService;
         this.emailSyncService = emailSyncService;
+        this.weComSyncProvider = weComSyncProvider;
         this.credentialCipher = credentialCipher;
     }
 
@@ -98,6 +103,11 @@ public class ChannelSettingsController {
         try {
             Object result = switch (entity.getChannelType().toLowerCase()) {
                 case "email" -> emailSyncService.receiveLatest();
+                case "wecom" -> {
+                    WeComChatDataSyncService service = weComSyncProvider.getIfAvailable();
+                    if (service == null) throw new IllegalStateException("WECOM_CHATDATA_NOT_CONFIGURED");
+                    yield service.syncSystem();
+                }
                 case "chatapp" -> {
                     var msgResult = chatAppMessageSyncService.runOnce();
                     var tplResult = chatAppTemplateSyncService.runOnce();

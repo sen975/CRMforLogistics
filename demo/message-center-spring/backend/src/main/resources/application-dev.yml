@@ -68,7 +68,6 @@ app:
   wecom-api-base-url: https://qyapi.weixin.qq.com
   wecom-api-timeout-seconds: 10
   wecom-token-refresh-skew-seconds: 300
-  wecom-sync-enabled: false
   wecom-login-suite-id: ${WECOM_LOGIN_SUITE_ID:}
   wecom-login-suite-secret: ${WECOM_LOGIN_SUITE_SECRET:}
 

@@ -15,6 +15,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,6 +26,47 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class WeComViewerServiceTest {
+    @Test
+    void concurrentViewerBootstrapNeverExceedsTheGlobalTokenBound() throws Exception {
+        AppConfig config = viewerConfig();
+        WeComInstallationService installations = mock(WeComInstallationService.class);
+        when(installations.resolveInstallation("suite", "corp"))
+                .thenReturn(new com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation(
+                        "installation", "suite", "corp", "agent", "ignored", 1L));
+        WeComViewerService service = WeComViewerService.forTests(config,
+                Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), () -> "nonce",
+                mock(WeComViewerHttpGateway.class), installations, noOpAudit(),
+                mock(WeComChatDataMessageMapper.class), mock(WeComCredentialProtector.class), openGate());
+        WeComLoginAttemptService.InstallationBinding binding =
+                new WeComLoginAttemptService.InstallationBinding(
+                        "installation", 1L, "suite", "corp", "agent");
+        for (int index = 0; index < 500; index++) {
+            service.issueViewerAuth("prefill-user-" + index, binding);
+        }
+        int calls = 128;
+        CountDownLatch ready = new CountDownLatch(calls);
+        CountDownLatch start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(calls);
+        try {
+            for (int index = 0; index < calls; index++) {
+                int user = index;
+                executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    service.issueViewerAuth("wecom-user-" + user, binding);
+                    return null;
+                });
+            }
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+        } finally {
+            executor.shutdown();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        }
+
+        assertThat(service.activeViewerAuthTokenCount()).isLessThanOrEqualTo(512);
+    }
+
     @Test
     void issueViewerAuthReusesBoundIdentityWithoutAnotherCodeExchange() {
         AppConfig config = viewerConfig();

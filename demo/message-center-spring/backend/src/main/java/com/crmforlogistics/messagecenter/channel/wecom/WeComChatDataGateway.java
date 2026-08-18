@@ -43,17 +43,18 @@ public class WeComChatDataGateway {
     private final AppConfig config;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    private final WeComRestClientFactory restClients;
     private final AccessTokenProvider accessTokens;
 
     @Autowired
     public WeComChatDataGateway(AppConfig config, ObjectMapper objectMapper,
-                                WeComAccessTokenService accessTokens) {
+                                WeComAccessTokenService accessTokens,
+                                WeComRestClientFactory restClients) {
         this.config = config;
         this.objectMapper = objectMapper;
         this.accessTokens = accessTokens::accessToken;
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .build();
+        this.restClient = null;
+        this.restClients = restClients;
     }
 
     WeComChatDataGateway(AppConfig config, ObjectMapper objectMapper, RestClient restClient,
@@ -61,6 +62,7 @@ public class WeComChatDataGateway {
         this.config = config;
         this.objectMapper = objectMapper;
         this.restClient = restClient;
+        this.restClients = null;
         this.accessTokens = accessTokens;
     }
 
@@ -87,7 +89,7 @@ public class WeComChatDataGateway {
             int httpStatus;
             String response;
             try {
-                ResponseEntity<String> entity = restClient.post()
+                ResponseEntity<String> entity = client(remaining(deadline)).post()
                         .uri(path)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(json)
@@ -126,10 +128,14 @@ public class WeComChatDataGateway {
             throw exception;
         } catch (WeComException exception) {
             throw programError(exception.upstreamErrcode(), exception.upstreamPath(),
-                    exception.upstreamHttpStatus(), exception.upstreamHint(), exception);
+                    exception.upstreamHttpStatus(), exception.upstreamHint(), null);
         } catch (Exception exception) {
-            throw programError(exception);
+            throw programError(null);
         }
+    }
+
+    private RestClient client(Duration timeout) {
+        return restClient != null ? restClient : restClients.create(timeout);
     }
 
     private ProgramPage parseProgramPage(String raw, int limit, int upstreamHttpStatus)

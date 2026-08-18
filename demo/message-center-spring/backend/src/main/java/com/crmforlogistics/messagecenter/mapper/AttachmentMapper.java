@@ -20,6 +20,18 @@ public interface AttachmentMapper extends BaseMapper<AttachmentEntity> {
             "and storage_status = 'ready' and deleted_at is null order by created_at asc")
     List<AttachmentEntity> listReadyByMessageId(@Param("messageId") UUID messageId);
 
+    @Select({
+            "<script>",
+            "select * from attachments where message_id in",
+            "<foreach collection='messageIds' item='messageId' open='(' separator=',' close=')'>",
+            "#{messageId}::uuid",
+            "</foreach>",
+            "and storage_status = 'ready' and deleted_at is null",
+            "order by message_id asc, created_at asc",
+            "</script>"
+    })
+    List<AttachmentEntity> listReadyByMessageIds(@Param("messageIds") List<UUID> messageIds);
+
     @Select("select a.* from attachments a " +
             "join messages m on m.id = a.message_id " +
             "join conversations cv on cv.id = m.conversation_id " +

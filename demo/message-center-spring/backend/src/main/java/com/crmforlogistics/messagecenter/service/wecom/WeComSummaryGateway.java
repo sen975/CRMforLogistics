@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComSummaryException;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComRestClientFactory;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -37,17 +38,18 @@ public class WeComSummaryGateway {
     private final AppConfig config;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    private final WeComRestClientFactory restClients;
     private final AccessTokenProvider accessTokens;
 
     @Autowired
     public WeComSummaryGateway(AppConfig config, ObjectMapper objectMapper,
-                               WeComAccessTokenService accessTokens) {
+                               WeComAccessTokenService accessTokens,
+                               WeComRestClientFactory restClients) {
         this.config = config;
         this.objectMapper = objectMapper;
         this.accessTokens = accessTokens::accessToken;
-        this.restClient = RestClient.builder()
-                .baseUrl(config.wecomApiBaseUrl())
-                .build();
+        this.restClient = null;
+        this.restClients = restClients;
     }
 
     WeComSummaryGateway(AppConfig config, ObjectMapper objectMapper, RestClient restClient,
@@ -55,6 +57,7 @@ public class WeComSummaryGateway {
         this.config = config;
         this.objectMapper = objectMapper;
         this.restClient = restClient;
+        this.restClients = null;
         this.accessTokens = accessTokens;
     }
 
@@ -105,7 +108,7 @@ public class WeComSummaryGateway {
             int httpStatus;
             String response;
             try {
-                ResponseEntity<String> entity = restClient.post()
+                ResponseEntity<String> entity = client(remaining(deadline)).post()
                         .uri(path)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(json)
@@ -128,8 +131,12 @@ public class WeComSummaryGateway {
         } catch (WeComSummaryException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw programError(exception);
+            throw programError(null);
         }
+    }
+
+    private RestClient client(Duration timeout) {
+        return restClient != null ? restClient : restClients.create(timeout);
     }
 
     private ProgramResult parseProgramResult(String raw) throws WeComSummaryException {

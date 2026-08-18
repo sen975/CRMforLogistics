@@ -218,14 +218,26 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
             return new ReconciliationItem(rowNumber, "", "", "", RecipientStatus.PROCESSING,
                     "", "", null, "CHATAPP_BROADCAST_RECONCILIATION_ROW_MISSING");
         }
-        String rawStatus = firstRecognizedStatus(
+        String recognizedStatus = firstRecognizedStatus(
                 value(row.getClientReadStatusName()), value(row.getMessageStatusName()),
                 value(row.getClientAcceptStatusName()), value(row.getMessageStatus()),
                 value(row.getClientReadStatus()), value(row.getEventActionName()),
                 value(row.getEventAction()));
+        String firstRawStatus = firstNonBlank(
+                value(row.getClientReadStatusName()), value(row.getMessageStatusName()),
+                value(row.getClientAcceptStatusName()), value(row.getMessageStatus()),
+                value(row.getClientReadStatus()), value(row.getEventActionName()),
+                value(row.getEventAction()));
+        String rawStatus = recognizedStatus.isBlank() ? firstRawStatus : recognizedStatus;
         String number = ContactPointUtil.normalizePhone(row.getUserNumber());
         String providerMessageId = value(row.getMessageId());
         String providerUniqueMessageId = value(row.getUniqueMessageId());
+        String failureReason = value(row.getFailReason());
+        RecipientStatus parsedStatus = recipientStatus(recognizedStatus);
+        RecipientStatus effectiveStatus = parsedStatus == RecipientStatus.PROCESSING
+                && !providerUniqueMessageId.isBlank()
+                && failureReason.isBlank()
+                ? RecipientStatus.SENT : parsedStatus;
         String diagnosticCode = number.isBlank()
                 ? "CHATAPP_BROADCAST_RECIPIENT_NUMBER_MISSING"
                 : providerMessageId.isBlank() && providerUniqueMessageId.isBlank()
@@ -233,7 +245,7 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
                 : rawStatus.isBlank() ? "CHATAPP_BROADCAST_PROVIDER_STATUS_MISSING" : "";
         return new ReconciliationItem(
                 rowNumber, number, providerMessageId, providerUniqueMessageId,
-                recipientStatus(rawStatus), rawStatus, value(row.getFailReason()),
+                effectiveStatus, rawStatus, failureReason,
                 parseInstant(row.getSendTime()), diagnosticCode);
     }
 
@@ -254,6 +266,13 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
             if (!ChatAppMessageStatusNormalizer.normalize(value).isBlank()) {
                 return value;
             }
+        }
+        return "";
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String candidate : values) {
+            if (candidate != null && !candidate.isBlank()) return candidate.trim();
         }
         return "";
     }
