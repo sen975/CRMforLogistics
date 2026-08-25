@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Mapper
@@ -28,6 +29,18 @@ public interface ChatAppBroadcastReconciliationEvidenceMapper {
             + "diagnostic_code = excluded.diagnostic_code, created_at = excluded.created_at")
     int upsert(ChatAppBroadcastReconciliationEvidenceEntity evidence);
 
+    @Select("select count(*) from chatapp_broadcast_reconciliation_evidence "
+            + "where broadcast_id = #{broadcastId}::uuid")
+    long countByBroadcastId(@Param("broadcastId") UUID broadcastId);
+
+    @Select("select count(*) from chatapp_broadcast_reconciliation_evidence evidence "
+            + "where evidence.broadcast_id = #{broadcastId}::uuid and evidence.row_number > 0 "
+            + "and evidence.matched_recipient_id is not null and evidence.job_id = ("
+            + "select job.id from chatapp_broadcast_jobs job "
+            + "where job.broadcast_id = #{broadcastId}::uuid and job.job_type = 'RECONCILE' "
+            + "order by job.created_at desc, job.id desc limit 1)")
+    long countMatched(@Param("broadcastId") UUID broadcastId);
+
     @Select("select count(*) from chatapp_broadcast_reconciliation_evidence evidence "
             + "where evidence.broadcast_id = #{broadcastId}::uuid and evidence.row_number > 0 "
             + "and evidence.matched_recipient_id is null and evidence.job_id = ("
@@ -35,6 +48,13 @@ public interface ChatAppBroadcastReconciliationEvidenceMapper {
             + "where job.broadcast_id = #{broadcastId}::uuid and job.job_type = 'RECONCILE' "
             + "order by job.created_at desc, job.id desc limit 1)")
     long countUnmatched(@Param("broadcastId") UUID broadcastId);
+
+    @Select("select * from chatapp_broadcast_reconciliation_evidence "
+            + "where broadcast_id = #{broadcastId}::uuid "
+            + "and diagnostic_code is not null and diagnostic_code <> '' "
+            + "order by created_at desc, id desc limit 1")
+    Optional<ChatAppBroadcastReconciliationEvidenceEntity> findLatestDiagnostic(
+            @Param("broadcastId") UUID broadcastId);
 
     @Select("select * from chatapp_broadcast_reconciliation_evidence "
             + "where broadcast_id = #{broadcastId}::uuid order by created_at desc, id desc limit #{limit}")

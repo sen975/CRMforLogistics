@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 @ConditionalOnWeComEnabled
@@ -38,6 +39,7 @@ public class WeComViewerAuditTrail implements ViewerAuditSink {
             throw new IllegalArgumentException("WeCom viewer audit event is invalid");
         }
         WeComViewerAuditEntity entity = new WeComViewerAuditEntity();
+        entity.setId(UUID.randomUUID());
         entity.setOccurredAt(clock.instant());
         entity.setAction(action);
         entity.setResult(result);
@@ -73,6 +75,7 @@ public class WeComViewerAuditTrail implements ViewerAuditSink {
             throw new IllegalArgumentException("WeCom upstream hint is invalid");
         }
         WeComViewerAuditEntity entity = new WeComViewerAuditEntity();
+        entity.setId(UUID.randomUUID());
         entity.setOccurredAt(clock.instant());
         entity.setAction(action);
         entity.setResult(result);

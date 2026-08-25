@@ -20,6 +20,7 @@ export interface ContactResponse {
 
 export interface MessageResponse {
   id: string;
+  sourceId?: string | null;
   direction: string;
   kind: string;
   subject: string;
@@ -52,9 +53,108 @@ export interface ThreadResponse {
 export interface TemplateResponse {
   templateCode: string;
   templateName: string;
+  displayName: string;
   languageCode: string;
   body: string;
   placeholders: string[];
+  category?: string | null;
+  components?: unknown;
+  variableDefinitions?: Record<string, string[]>;
+}
+
+export type ChatAppBroadcastStatus =
+  | 'DRAFT'
+  | 'QUEUED'
+  | 'SUBMITTING'
+  | 'SUBMITTED'
+  | 'RECONCILING'
+  | 'SUCCEEDED'
+  | 'PARTIALLY_FAILED'
+  | 'FAILED'
+  | 'SUBMISSION_UNKNOWN'
+  | 'STATUS_UNKNOWN'
+  | 'CANCELLED';
+
+export interface ChatAppBroadcast {
+  id: string;
+  channelAccountId: string;
+  name: string;
+  templateCode: string;
+  templateName: string;
+  languageCode: string;
+  recipientCount: number;
+  successCount: number;
+  failedCount: number;
+  processingCount: number;
+  status: ChatAppBroadcastStatus;
+  providerGroupMessageId: string | null;
+  providerRequestId: string | null;
+  providerCode: string | null;
+  lastReconciliationRequestId: string | null;
+  lastReconciliationProviderCode: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  retriesBroadcastId: string | null;
+  createdByUserId: string;
+  submittedAt: string | null;
+  reconciledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatAppBroadcastPage {
+  records: ChatAppBroadcast[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface ChatAppBroadcastRecipient {
+  id: string;
+  contactId: string;
+  contactIdentityId: string;
+  recipientName: string;
+  maskedNumber: string;
+  templateParams: Record<string, string>;
+  messageId: string | null;
+  providerMessageId: string | null;
+  providerUniqueMessageId: string | null;
+  status: 'QUEUED' | 'PROCESSING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED_RECIPIENT';
+  failureReason: string | null;
+  providerSentAt: string | null;
+  lastReconciledAt: string | null;
+}
+
+export interface ChatAppBroadcastDetail {
+  broadcast: ChatAppBroadcast;
+  recipients: ChatAppBroadcastRecipient[];
+  reconciliation: {
+    evidenceRows: number;
+    matchedRows: number;
+    unmatchedRows: number;
+    processingRecipients: number;
+    latestDiagnosticCode: string | null;
+  };
+}
+
+export interface ChatAppBroadcastRecipientPage {
+  records: ChatAppBroadcastRecipient[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface CreateChatAppBroadcastCommand {
+  channelAccountId: string;
+  name: string;
+  templateCode: string;
+  languageCode: string;
+  clientRequestId: string;
+  recipients: Array<{
+    contactIdentityId: string;
+    templateParams: Record<string, string>;
+  }>;
+  sharedTemplateParams: Record<string, string>;
 }
 
 export interface LoginResponse {
@@ -71,6 +171,7 @@ export interface LoginRequest {
 export interface WeComLoginAttempt {
   loginType: string;
   appId: string;
+  agentId: string;
   redirectUri: string;
   state: string;
   expiresIn: number;
@@ -79,6 +180,68 @@ export interface WeComLoginAttempt {
 export interface WeComLoginResponse extends LoginResponse {
   viewerAuthToken: string | null;
   viewerExpiresIn: number;
+}
+
+export interface WeComBindingResponse {
+  userId: string;
+  authCorpId: string | null;
+  wecomUserId: string | null;
+  provisioningSource: 'AUTO_CREATED' | 'BOUND_EXISTING' | null;
+  bound: boolean;
+}
+
+export interface WeComViewerBootstrapResponse {
+  wecomUserId: string;
+  viewerAuthToken: string;
+  expiresIn: number;
+}
+
+export interface WeComViewerSessionResponse {
+  viewerSessionId: string;
+  expiresIn: number;
+}
+
+export interface WeComViewerMessage {
+  msgid: string;
+  secretKey: string;
+}
+
+export interface WeComViewerSessionDetail {
+  viewerSessionId: string;
+  corpId: string;
+  agentId: string;
+  messages: WeComViewerMessage[];
+}
+
+export interface WeComSignatureBundle {
+  timestamp: string;
+  nonceStr: string;
+  signature: string;
+}
+
+export interface WeComJsSdkConfig {
+  corpId: string;
+  agentId: string;
+  jsApiList: string[];
+  configSignature: WeComSignatureBundle;
+  agentConfigSignature: WeComSignatureBundle;
+}
+
+export interface WeComInstallationSummary {
+  authCorpId: string;
+  corpName?: string | null;
+  agentId: string;
+  authStatus: string;
+  authorizedAt: string | null;
+}
+
+export type WeComProviderData = Record<string, unknown>;
+
+export interface WeComCursorPage<T = WeComProviderData> {
+  items: T[];
+  nextCursor?: string | null;
+  hasMore?: boolean | number;
+  [key: string]: unknown;
 }
 
 export interface ApiError {
@@ -90,6 +253,7 @@ export interface ApiError {
 
 export interface ChannelCapability {
   channelType: string;
+  channelAccountId: string;
   displayName: string;
   authStatus: string;
 }
@@ -256,12 +420,17 @@ export interface TemplateAdmin {
   accountId: string;
   templateCode: string;
   name: string;
+  remark: string | null;
+  displayName: string;
   language: string;
   category: string | null;
   reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED' | 'UNKNOWN';
   providerAuditStatus: string | null;
   rejectionReason: string | null;
   allowSend: boolean;
+  desiredAllowSend: boolean;
+  permissionSyncStatus: 'IDLE' | 'PENDING' | 'FAILED';
+  permissionSyncError: string | null;
   components: TemplateComponent[];
   examples: Record<string, string[]>;
   messageSendTtlSeconds: number | null;
@@ -273,7 +442,7 @@ export interface TemplateAdmin {
 
 export interface TemplateOperation {
   operationId: string;
-  operationType: 'CREATE' | 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'RECONCILE';
+  operationType: 'CREATE' | 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'RECONCILE' | 'RETIRED';
   operationStatus: 'PROCESSING' | 'SUCCEEDED' | 'SUBMISSION_UNKNOWN' | 'FAILED';
   templateCode: string;
   language: string | null;
@@ -334,4 +503,61 @@ export interface TemplateSyncResult {
   fetched: number;
   changed: number;
   complete: boolean;
+}
+
+export interface PublicTemplateVariable {
+  code: string;
+  name: string | null;
+  example: string | null;
+  format: string | null;
+}
+
+export interface PublicTemplateButton {
+  name: string | null;
+  type: string | null;
+  url: string | null;
+}
+
+export interface PublicTemplatePage {
+  name: string | null;
+  text: string | null;
+  buttons: PublicTemplateButton[];
+}
+
+export interface PublicTemplateContent {
+  templateName: string | null;
+  sceneTemplateName: string | null;
+  externalTemplateCode: string | null;
+  languageCode: string | null;
+  category: string | null;
+  pages: PublicTemplatePage[];
+  variables: PublicTemplateVariable[];
+}
+
+export interface PublicTemplate {
+  code: string;
+  name: string;
+  language: string;
+  category: string | null;
+  industries: string[];
+  usecase: string | null;
+  topic: string | null;
+  content: PublicTemplateContent;
+}
+
+export interface PublicTemplateListPage {
+  items: PublicTemplate[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface PublicTemplateQuery {
+  name?: string;
+  language?: string;
+  category?: string;
+  industries?: string[];
+  usecases?: string[];
+  page?: number;
+  size?: number;
 }

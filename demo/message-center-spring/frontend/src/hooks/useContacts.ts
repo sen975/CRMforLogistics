@@ -6,11 +6,28 @@ import {
   splitContact,
 } from '../api/endpoints';
 
-export function useContacts(search?: string, page = 1, size = 20) {
+interface ContactFilters {
+  channelType?: string;
+  channelAccountId?: string;
+}
+
+interface ContactsQueryOptions {
+  enabled?: boolean;
+}
+
+export function useContacts(
+  search?: string,
+  page = 1,
+  size = 20,
+  filters?: ContactFilters,
+  options?: ContactsQueryOptions,
+) {
+  const { channelType, channelAccountId } = filters ?? {};
   return useQuery({
-    queryKey: ['contacts', search, page, size],
-    queryFn: () => fetchContacts({ search, page, size }),
-    placeholderData: (prev) => prev,
+    queryKey: ['contacts', search, page, size, channelType, channelAccountId],
+    queryFn: () => fetchContacts({ search, page, size, channelType, channelAccountId }),
+    enabled: options?.enabled ?? true,
+    placeholderData: channelAccountId ? undefined : (prev) => prev,
   });
 }
 

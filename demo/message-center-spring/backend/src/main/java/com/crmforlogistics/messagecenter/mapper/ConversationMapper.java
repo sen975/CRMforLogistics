@@ -13,6 +13,16 @@ import java.util.UUID;
 @Mapper
 public interface ConversationMapper extends BaseMapper<ConversationEntity> {
 
+    @Select("insert into conversations (id, channel_account_id, contact_identity_id, source_conversation_id) "
+        + "values (gen_random_uuid(), #{channelAccountId}::uuid, null, #{sourceConversationId}::uuid) "
+        + "on conflict (channel_account_id, source_conversation_id) "
+        + "where source_conversation_id is not null do update set updated_at = now() "
+        + "returning id, channel_account_id, contact_identity_id, source_conversation_id, status, assigned_team_id, "
+        + "assigned_user_id, next_ingest_sequence, last_message_id, last_message_at, created_at, updated_at, version")
+    ConversationEntity getOrCreateSourceConversation(
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("sourceConversationId") UUID sourceConversationId);
+
     /**
      * Get or create a conversation for a given channel account + contact identity pair.
      * Uses PostgreSQL CTE to atomically upsert and return the row.
@@ -71,6 +81,13 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
     ConversationEntity lockForMessage(@Param("conversationId") UUID conversationId,
                                       @Param("channelAccountId") UUID channelAccountId);
 
+    @Select("update conversations set next_ingest_sequence = " +
+        "greatest(next_ingest_sequence, coalesce((select max(ingest_sequence) from messages " +
+        "where conversation_id = #{conversationId}::uuid), 0)) + 1, " +
+        "updated_at = now(), version = version + 1 " +
+        "where id = #{conversationId}::uuid returning next_ingest_sequence")
+    long allocateNextIngestSequence(@Param("conversationId") UUID conversationId);
+
     @Update("update conversations cv set " +
         "last_message_id = (select m.id from messages m " +
         "where m.conversation_id = cv.id order by m.occurred_at desc, m.id desc limit 1), " +
@@ -112,4 +129,20 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         "or exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = #{userId}::uuid and r.code = 'admin'))")
     java.util.List<ConversationEntity> listAccessibleForContact(@Param("contactId") UUID contactId,
                                                                   @Param("userId") UUID userId);
+
+    /** WeCom source conversations are visible through an external party linked to this CRM contact. */
+    @Select("select distinct cv.id, cv.channel_account_id, cv.contact_identity_id, cv.source_conversation_id, "
+        + "cv.status, cv.assigned_team_id, cv.assigned_user_id, cv.next_ingest_sequence, cv.last_message_id, "
+        + "cv.last_message_at, cv.created_at, cv.updated_at, cv.version "
+        + "from conversations cv join wecom_source_conversations sc on sc.id = cv.source_conversation_id "
+        + "join wecom_source_conversation_participants sp on sp.source_conversation_id = sc.id "
+        + "join wecom_parties p on p.id = sp.party_id and p.party_type in ('EXTERNAL_CONTACT', 'EMPLOYEE') "
+        + "join contact_identities ci on ci.channel_type = 'wecom' and ci.identity_scope = cv.channel_account_id::text "
+        + "and ci.identity_value = p.provider_party_id and ci.contact_id = #{contactId}::uuid "
+        + "where sp.participant_status = 'OBSERVED' and ci.deleted_at is null and ("
+        + "cv.assigned_user_id = #{userId}::uuid or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) "
+        + "or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())) "
+        + "or exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = #{userId}::uuid and r.code = 'admin'))")
+    java.util.List<ConversationEntity> listAccessibleWeComSourceForContact(@Param("contactId") UUID contactId,
+                                                                             @Param("userId") UUID userId);
 }

@@ -1,18 +1,64 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import AppLayout from './components/AppLayout';
-import LoginPage from './pages/LoginPage';
-import HomePage from './pages/HomePage';
-import ThreadPage from './pages/ThreadPage';
-import SendPage from './pages/SendPage';
-import TemplatesPage from './pages/TemplatesPage';
-import ChannelSettingsPage from './pages/ChannelSettingsPage';
-import PhoneRepositoryPage from './pages/PhoneRepositoryPage';
+import { Button, Result, Spin } from 'antd';
 import { AuthProvider } from './hooks/useAuth';
 
-function AuthGuard({ children }: { children: React.ReactNode }) {
+const AppLayout = lazy(() => import('./components/AppLayout'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const HomePage = lazy(() => import('./pages/HomePage'));
+const ThreadPage = lazy(() => import('./pages/ThreadPage'));
+const SendPage = lazy(() => import('./pages/SendPage'));
+const TemplatesPage = lazy(() => import('./pages/TemplatesPage'));
+const ChannelSettingsPage = lazy(() => import('./pages/ChannelSettingsPage'));
+const WeComManagementPage = lazy(() => import('./pages/WeComManagementPage'));
+const PhoneRepositoryPage = lazy(() => import('./pages/PhoneRepositoryPage'));
+const BroadcastsPage = lazy(() => import('./pages/BroadcastsPage'));
+
+function AuthGuard({ children }: { children: ReactNode }) {
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;
   return <>{children}</>;
+}
+
+function RouteLoadingFallback({ fullPage = false }: { fullPage?: boolean }) {
+  return (
+    <div
+      style={{
+        alignItems: 'center',
+        display: 'flex',
+        justifyContent: 'center',
+        minHeight: fullPage ? '100vh' : '100%',
+        width: '100%',
+      }}
+    >
+      <Spin />
+    </div>
+  );
+}
+
+function RouteBoundary({ children, fullPage = false }: { children: ReactNode; fullPage?: boolean }) {
+  return (
+    <Suspense fallback={<RouteLoadingFallback fullPage={fullPage} />}>
+      {children}
+    </Suspense>
+  );
+}
+
+function RouteLoadError() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+      <Result
+        status="error"
+        title="页面加载失败"
+        subTitle="请重新加载页面后重试。"
+        extra={(
+          <Button type="primary" onClick={() => window.location.reload()}>
+            重新加载
+          </Button>
+        )}
+      />
+    </div>
+  );
 }
 
 export const router = createBrowserRouter([
@@ -20,26 +66,34 @@ export const router = createBrowserRouter([
     path: '/login',
     element: (
       <AuthProvider>
-        <LoginPage />
+        <RouteBoundary fullPage>
+          <LoginPage />
+        </RouteBoundary>
       </AuthProvider>
     ),
+    errorElement: <RouteLoadError />,
   },
   {
     path: '/',
     element: (
       <AuthProvider>
         <AuthGuard>
-          <AppLayout />
+          <RouteBoundary fullPage>
+            <AppLayout />
+          </RouteBoundary>
         </AuthGuard>
       </AuthProvider>
     ),
+    errorElement: <RouteLoadError />,
     children: [
-      { index: true, element: <HomePage /> },
-      { path: 'thread/:contactId', element: <ThreadPage /> },
-      { path: 'send', element: <SendPage /> },
-      { path: 'templates', element: <TemplatesPage /> },
-      { path: 'settings/channels', element: <ChannelSettingsPage /> },
-      { path: 'phone-repository', element: <PhoneRepositoryPage /> },
+      { index: true, element: <RouteBoundary><HomePage /></RouteBoundary> },
+      { path: 'thread/:contactId', element: <RouteBoundary><ThreadPage /></RouteBoundary> },
+      { path: 'send', element: <RouteBoundary><SendPage /></RouteBoundary> },
+      { path: 'broadcasts', element: <RouteBoundary><BroadcastsPage /></RouteBoundary> },
+      { path: 'templates', element: <RouteBoundary><TemplatesPage /></RouteBoundary> },
+      { path: 'settings/channels', element: <RouteBoundary><ChannelSettingsPage /></RouteBoundary> },
+      { path: 'settings/wecom', element: <RouteBoundary><WeComManagementPage /></RouteBoundary> },
+      { path: 'phone-repository', element: <RouteBoundary><PhoneRepositoryPage /></RouteBoundary> },
     ],
   },
 ]);

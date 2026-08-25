@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastReconciliationEvidenceMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.BroadcastQuery;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationPage;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.SubmissionResult;
@@ -159,6 +160,9 @@ class ChatAppBroadcastWorkerTest {
                 1, false, "request-2"));
         when(recipientMapper.findAllByNumber(broadcastId, "60111111111"))
                 .thenReturn(List.of(matched));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(
+                recipient(broadcastId, "60111111111", "DELIVERED"),
+                recipient(broadcastId, "60122222222", "PROCESSING")));
         when(jobMapper.assertLeaseOwned(job.getId(), job.getLeaseId())).thenReturn(1);
         when(jobMapper.failIfLeased(
                 job.getId(), job.getLeaseId(), "DEAD", NOW,
@@ -171,10 +175,71 @@ class ChatAppBroadcastWorkerTest {
                 new ReconciliationItem(1, "60111111111", "wamid-1", "unique-1",
                         DELIVERED, "DELIVERED", "", NOW, ""), NOW);
         verify(evidenceMapper, times(3)).upsert(any(ChatAppBroadcastReconciliationEvidenceEntity.class));
-        verify(broadcastMapper).markError(
-                broadcastId, "STATUS_UNKNOWN",
+        verify(broadcastMapper).updateAggregate(
+                broadcastId, "STATUS_UNKNOWN", 1, 0, 1, NOW,
                 "CHATAPP_BROADCAST_RECONCILIATION_UNMATCHED_RECIPIENT",
                 "CHATAPP_BROADCAST_RECONCILIATION_UNMATCHED_RECIPIENT", NOW);
+    }
+
+    @Test
+    void missingNumberUsesUniqueProviderMessageBindingAndKeepsStatusFact() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "RECONCILE");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "SUBMITTED");
+        broadcast.setProviderGroupMessageId("group-1");
+        ChatAppBroadcastRecipientEntity matched = recipient(
+                broadcastId, "60111111111", "PROCESSING");
+        matched.setProviderMessageId("wamid-1");
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(broadcast.getChannelAccountId()))
+                .thenReturn(account(broadcast.getChannelAccountId()));
+        ReconciliationItem item = new ReconciliationItem(
+                1, "", "wamid-1", "unique-1", DELIVERED, "DELIVERED", "", NOW,
+                "CHATAPP_BROADCAST_RECIPIENT_NUMBER_MISSING");
+        when(gateway.reconcile(any())).thenReturn(new ReconciliationPage(
+                List.of(item), 1, false, "request-2"));
+        when(recipientMapper.findAllByProviderMessageId(broadcastId, "wamid-1", 2))
+                .thenReturn(List.of(matched));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(
+                recipient(broadcastId, "60111111111", "DELIVERED")));
+        when(jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), NOW)).thenReturn(1);
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(messageProjector).applyReconciliation(broadcastId, matched.getId(), item, NOW);
+        verify(broadcastMapper).updateAggregate(
+                broadcastId, "SUCCEEDED", 1, 0, 0, NOW, null, null, NOW);
+    }
+
+    @Test
+    void successfulPageRefreshesLatestProviderDiagnostic() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "RECONCILE");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "SUBMITTED");
+        broadcast.setProviderGroupMessageId("group-1");
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(broadcast.getChannelAccountId()))
+                .thenReturn(account(broadcast.getChannelAccountId()));
+        ChatAppBroadcastRecipientEntity matched = recipient(
+                broadcastId, "60111111111", "PROCESSING");
+        ReconciliationItem item = new ReconciliationItem(
+                1, "60111111111", "wamid-1", "unique-1", DELIVERED,
+                "DELIVERED", "", NOW, "");
+        when(gateway.reconcile(any())).thenReturn(new ReconciliationPage(
+                List.of(item), 1, false,
+                new ChatAppBroadcastGateway.ProviderDiagnostic("OK", "", "request-fresh", "")));
+        when(recipientMapper.findAllByNumber(broadcastId, "60111111111"))
+                .thenReturn(List.of(matched));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(
+                recipient(broadcastId, "60111111111", "DELIVERED")));
+        when(jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), NOW)).thenReturn(1);
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(broadcastMapper).updateReconciliationDiagnostic(
+                broadcastId, "request-fresh", "OK", "", "", NOW);
     }
 
     @Test
@@ -208,8 +273,48 @@ class ChatAppBroadcastWorkerTest {
         verify(broadcastMapper).updateReconciliationDiagnostic(
                 broadcastId, "request-throttle", "Throttling",
                 "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", "rate limited", NOW);
+        verify(eventHub).publish(eq("broadcast-updated"), any());
         verify(messageProjector, never()).applyReconciliation(any(), any(), any(), any());
         verify(recipientMapper, never()).updateProviderStatus(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void nonRetryableProviderFailureImmediatelyMarksReconciliationUnknownWithKnownCounts() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "RECONCILE");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "SUBMITTED");
+        broadcast.setProviderGroupMessageId("group-1");
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(broadcast.getChannelAccountId()))
+                .thenReturn(account(broadcast.getChannelAccountId()));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(
+                recipient(broadcastId, "60111111111", "DELIVERED"),
+                recipient(broadcastId, "60122222222", "FAILED_RECIPIENT")));
+        when(jobMapper.assertLeaseOwned(job.getId(), job.getLeaseId())).thenReturn(1);
+        when(gateway.reconcile(any())).thenThrow(new ChatAppBroadcastException(
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", HttpStatus.BAD_GATEWAY,
+                false, false, "QueryParam.startTime", "request-400",
+                "Query start time not allowed to be empty", null));
+        when(jobMapper.failIfLeased(
+                job.getId(), job.getLeaseId(), "DEAD", NOW,
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE",
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", NOW)).thenReturn(1);
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(jobMapper).failIfLeased(
+                job.getId(), job.getLeaseId(), "DEAD", NOW,
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE",
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", NOW);
+        verify(broadcastMapper).updateAggregate(
+                broadcastId, "STATUS_UNKNOWN", 1, 1, 0, NOW,
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE",
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", NOW);
+        verify(jobMapper, never()).failIfLeased(
+                job.getId(), job.getLeaseId(), "FAILED", NOW.plusSeconds(10),
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE",
+                "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", NOW);
     }
 
     @Test
@@ -236,7 +341,10 @@ class ChatAppBroadcastWorkerTest {
 
         var ordered = inOrder(messageProjector, gateway);
         ordered.verify(messageProjector).ensureProcessing(broadcastId, recipient.getId());
-        ordered.verify(gateway).reconcile(any());
+        ArgumentCaptor<BroadcastQuery> query = ArgumentCaptor.forClass(BroadcastQuery.class);
+        ordered.verify(gateway).reconcile(query.capture());
+        assertThat(query.getValue().startTime()).isEqualTo(NOW.minusSeconds(360));
+        assertThat(query.getValue().endTime()).isEqualTo(NOW);
     }
 
     @Test
@@ -516,8 +624,8 @@ class ChatAppBroadcastWorkerTest {
         worker.runAvailable("worker-1", 10);
 
         verify(gateway, times(20)).reconcile(any());
-        verify(broadcastMapper).markError(
-                broadcastId, "STATUS_UNKNOWN",
+        verify(broadcastMapper).updateAggregate(
+                broadcastId, "STATUS_UNKNOWN", 0, 0, 2, NOW,
                 "CHATAPP_BROADCAST_RECONCILIATION_PAGE_LIMIT",
                 "CHATAPP_BROADCAST_RECONCILIATION_PAGE_LIMIT", NOW);
     }
@@ -566,6 +674,7 @@ class ChatAppBroadcastWorkerTest {
         broadcast.setFailedCount(0);
         broadcast.setProcessingCount(2);
         broadcast.setStatus(status);
+        broadcast.setSubmittedAt(NOW.minusSeconds(60));
         return broadcast;
     }
 

@@ -40,10 +40,12 @@ public class ChatAppMediaApplicationService {
     }
 
     public MessageSendApplicationService.MessageAccepted accept(
-            String recipient, String kind, byte[] bytes, String fileName, String contentType,
+            UUID contactId, UUID recipientIdentityId, String kind,
+            byte[] bytes, String fileName, String contentType,
             String caption, String clientRequestId, UUID actorUserId) throws Exception {
         validate(kind, bytes, contentType);
-        messageApplicationService.authorizeRecipient(recipient, actorUserId);
+        messageApplicationService.authorizeContactIdentity(
+                contactId, recipientIdentityId, actorUserId);
         String digest = sha256(bytes);
         String objectKey = minioStorage.store(bytes, contentType);
         Map<String, Object> content = new LinkedHashMap<>();
@@ -54,8 +56,9 @@ public class ChatAppMediaApplicationService {
         try {
             MessageSendApplicationService.MessageAccepted accepted = transactions.execute(status -> {
                 MessageSendApplicationService.MessageAccepted result =
-                        messageApplicationService.acceptRecipient(
-                                recipient, kind, clientRequestId, content, actorUserId);
+                        messageApplicationService.acceptContactIdentity(
+                                contactId, recipientIdentityId, kind,
+                                clientRequestId, content, actorUserId);
                 if (!result.duplicate()) {
                     AttachmentEntity attachment = new AttachmentEntity();
                     attachment.setId(UUID.randomUUID());

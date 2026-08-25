@@ -16,6 +16,8 @@ import jakarta.mail.Session;
 import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMultipart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -33,6 +35,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
 public class EmailSendService {
@@ -44,6 +47,8 @@ public class EmailSendService {
     private final ConversationMapper conversationMapper;
     private final ChannelAccountMapper channelAccountMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final EmailAttachmentReader attachmentReader;
+    private final EmailAttachmentStore attachmentStore;
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -54,12 +59,38 @@ public class EmailSendService {
         this.conversationMapper = conversationMapper;
         this.channelAccountMapper = channelAccountMapper;
         this.contactIdentityMapper = contactIdentityMapper;
+        this.attachmentReader = new EmailAttachmentReader(
+                positiveIntOrDefault(config.emailAttachmentMaxCount(), 16),
+                positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
+        this.attachmentStore = null;
+    }
+
+    @Autowired
+    public EmailSendService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            EmailAttachmentStore attachmentStore) {
+        this.config = config;
+        this.messageMapper = messageMapper;
+        this.conversationMapper = conversationMapper;
+        this.channelAccountMapper = channelAccountMapper;
+        this.contactIdentityMapper = contactIdentityMapper;
+        this.attachmentReader = new EmailAttachmentReader(
+                positiveIntOrDefault(config.emailAttachmentMaxCount(), 16),
+                positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
+        this.attachmentStore = attachmentStore;
     }
 
     public record SendResult(String messageId, String from, String to, String subject, String status) {}
 
     public SendResult send(String to, String subject, String body) throws Exception {
+        return send(to, subject, body, List.of());
+    }
+
+    public SendResult send(String to, String subject, String body, List<EmailAttachmentInput> attachmentInputs) throws Exception {
         String cleanTo = required(to, "to");
+        var attachments = attachmentReader.read(attachmentInputs == null ? List.of() : attachmentInputs);
         SmtpEndpoint endpoint = smtpEndpoint();
         Session session = Session.getInstance(smtpProperties(endpoint));
         MimeMessage message = new MimeMessage(session);
@@ -75,7 +106,22 @@ public class EmailSendService {
         }
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(cleanTo, false));
         message.setSubject(subject == null ? "" : subject, "UTF-8");
-        message.setText(body == null ? "" : body, "UTF-8");
+        if (attachments.isEmpty()) {
+            message.setText(body == null ? "" : body, "UTF-8");
+        } else {
+            MimeMultipart multipart = new MimeMultipart("mixed");
+            MimeBodyPart bodyPart = new MimeBodyPart();
+            bodyPart.setText(body == null ? "" : body, "UTF-8");
+            multipart.addBodyPart(bodyPart);
+            for (EmailAttachmentPayload attachment : attachments) {
+                MimeBodyPart part = new MimeBodyPart();
+                part.setContent(attachment.bytes(), attachment.mimeType());
+                part.setFileName(jakarta.mail.internet.MimeUtility.encodeText(attachment.fileName(), "UTF-8", null));
+                part.setDisposition(jakarta.mail.Part.ATTACHMENT);
+                multipart.addBodyPart(part);
+            }
+            message.setContent(multipart);
+        }
         message.saveChanges();
         message.setHeader("Message-ID", messageIdHeader(mailFrom(), endpoint.serverName()));
 
@@ -87,6 +133,9 @@ public class EmailSendService {
 
         String messageId = message.getMessageID() == null ? "" : message.getMessageID();
         UUID dbId = persistOutbound(cleanTo, subject, body, messageId);
+        if (dbId != null && attachmentStore != null && !attachments.isEmpty()) {
+            attachmentStore.store(dbId, attachments, true);
+        }
         return new SendResult(dbId != null ? dbId.toString() : messageId,
                 mailFrom(), cleanTo, subject, "sent");
     }
@@ -222,6 +271,14 @@ public class EmailSendService {
             throw new IllegalArgumentException(name + " is required");
         }
         return value.trim();
+    }
+
+    private static long positiveOrDefault(long value, long fallback) {
+        return value > 0 ? value : fallback;
+    }
+
+    private static int positiveIntOrDefault(int value, int fallback) {
+        return value > 0 ? value : fallback;
     }
 
     static String messageIdHeader(String from, String smtpHost) {

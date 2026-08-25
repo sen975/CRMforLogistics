@@ -172,6 +172,7 @@ function detectContent(message: MessageResponse): DetectedContent {
 }
 
 export default function MessageBubble({ message, isActive, onClick }: MessageBubbleProps) {
+  if (message.channelType === 'wecom') return null;
   const isOutbound = message.direction === 'outbound';
 
   return (

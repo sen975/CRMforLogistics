@@ -1,8 +1,11 @@
 spring:
   application:
     name: message-center
-  profiles:
-    active: dev
+  config:
+    import: optional:file:.env[.properties]
+
+server:
+  forward-headers-strategy: framework
   servlet:
     multipart:
       max-file-size: 64MB
@@ -17,8 +20,83 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
+logging:
+  level:
+    org.springframework.web.client: INFO
+    com.aliyun: ERROR
+
 app:
+  data-dir: ${APP_DATA_DIR:${DATA_DIR:${user.dir}/data}}
+  local-dev-mode: ${APP_LOCAL_DEV_MODE:false}
+  web-bind-address: ${APP_WEB_BIND_ADDRESS:${WEB_BIND_ADDRESS:127.0.0.1}}
+  cust-space-id: ${APP_CUST_SPACE_ID:${CAMS_CUST_SPACE_ID:}}
+  chatapp-from: ${APP_CHATAPP_FROM:${CHATAPP_FROM:}}
+  chatapp-sync-enabled: ${APP_CHATAPP_SYNC_ENABLED:true}
+  aliyun-access-key-id: ${APP_ALIYUN_ACCESS_KEY_ID:${ALIYUN_ACCESS_KEY_ID:}}
+  aliyun-access-key-secret: ${APP_ALIYUN_ACCESS_KEY_SECRET:${ALIYUN_ACCESS_KEY_SECRET:}}
+  cams-region: ${APP_CAMS_REGION:${CAMS_REGION:ap-southeast-1}}
+  cams-endpoint: ${APP_CAMS_ENDPOINT:${CAMS_ENDPOINT:cams.ap-southeast-1.aliyuncs.com}}
+  email-sync-enabled: ${APP_EMAIL_SYNC_ENABLED:false}
+  smtp-host: ${APP_SMTP_HOST:${SMTP_HOST:smtp.139.com}}
+  smtp-port: "${APP_SMTP_PORT:${SMTP_PORT:465}}"
+  smtp-user: ${APP_SMTP_USER:${SMTP_USER:}}
+  smtp-password: ${APP_SMTP_PASSWORD:${SMTP_PASSWORD:}}
+  smtp-ssl: ${APP_SMTP_SSL:true}
+  smtp-start-tls: ${APP_SMTP_START_TLS:false}
+  smtp-resolve-ipv4: ${APP_SMTP_RESOLVE_IPV4:true}
+  mail-from: ${APP_MAIL_FROM:${MAIL_FROM:}}
+  mail-from-name: ${APP_MAIL_FROM_NAME:${MAIL_FROM_NAME:}}
+  imap-host: ${APP_IMAP_HOST:${IMAP_HOST:imap.139.com}}
+  imap-port: "${APP_IMAP_PORT:${IMAP_PORT:993}}"
+  imap-user: ${APP_IMAP_USER:${IMAP_USER:}}
+  imap-password: ${APP_IMAP_PASSWORD:${IMAP_PASSWORD:}}
+  imap-ssl: ${APP_IMAP_SSL:true}
+  receive-limit: ${APP_RECEIVE_LIMIT:10}
+  mail-provider: ${APP_MAIL_PROVIDER:139}
+  imap-139-use-openssl: ${APP_IMAP_139_USE_OPENSSL:true}
+  inbox-folder: ${APP_INBOX_FOLDER:INBOX}
+  sent-folder: ${APP_SENT_FOLDER:Sent}
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,https://www.blindac.com,https://blindac.com}
+  email-attachment-max-count: 16
+  email-attachment-max-total-bytes: 20971520
+  wecom-enabled: ${WECOM_ENABLED:true}
+  wecom-suite-id: ${WECOM_SUITE_ID:}
+  wecom-suite-secret: ${WECOM_SUITE_SECRET:}
+  wecom-token: ${WECOM_TOKEN:}
+  wecom-encoding-aes-key: ${WECOM_ENCODING_AES_KEY:}
+  wecom-callback-receive-id: ${WECOM_CALLBACK_RECEIVE_ID:}
+  wecom-api-base-url: ${WECOM_API_BASE_URL:https://qyapi.weixin.qq.com}
+  wecom-api-timeout-seconds: ${WECOM_API_TIMEOUT_SECONDS:10}
+  wecom-token-refresh-skew-seconds: ${WECOM_TOKEN_REFRESH_SKEW_SECONDS:300}
+
+  # 企业微信扫码登录和已有账号绑定（使用已授权代开发安装记录）
+  wecom-login-auth-corp-id: ${WECOM_LOGIN_AUTH_CORP_ID:}
+  wecom-login-redirect-uri: ${WECOM_LOGIN_REDIRECT_URI:http://localhost:5173/login}
+  wecom-allowed-jsapi-origins: ${WECOM_ALLOWED_JSAPI_ORIGINS:}
+
+  # 会话专区同步和官方 OpenDataFrame 展示
+  wecom-chatdata-program-id: ${WECOM_CHATDATA_PROGRAM_ID:}
+  wecom-chatdata-ability-id: ${WECOM_CHATDATA_ABILITY_ID:conversation_viewer_sync}
+  wecom-chatdata-private-key-file: ${WECOM_CHATDATA_PRIVATE_KEY_FILE:}
+  wecom-chatdata-public-key-version: ${WECOM_CHATDATA_PUBLIC_KEY_VERSION:1}
+  wecom-chatdata-public-key-auto-register: ${WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER:false}
+  wecom-chatdata-auto-sync-enabled: ${WECOM_CHATDATA_AUTO_SYNC_ENABLED:true}
+  wecom-chatdata-auto-sync-interval-seconds: ${WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS:60}
+
+  # 企业微信审计自动保留与分批清理
+  wecom-audit-retention-days: ${WECOM_AUDIT_RETENTION_DAYS:7}
+  wecom-audit-cleanup-interval-seconds: ${WECOM_AUDIT_CLEANUP_INTERVAL_SECONDS:3600}
+  wecom-audit-cleanup-batch-size: ${WECOM_AUDIT_CLEANUP_BATCH_SIZE:500}
+  wecom-audit-cleanup-max-batches: ${WECOM_AUDIT_CLEANUP_MAX_BATCHES:32}
+
+  # 每日摘要默认关闭
+  wecom-daily-summary-enabled: ${WECOM_DAILY_SUMMARY_ENABLED:false}
+  wecom-daily-summary-ability-id: ${WECOM_DAILY_SUMMARY_ABILITY_ID:conversation_daily_summary}
   chatapp-outbox-enabled: true
+  chatapp-broadcast-worker-enabled: true
+  chatapp-broadcast-worker-interval-ms: 1000
+  chatapp-broadcast-worker-initial-delay-ms: 1000
   chatapp-webhook-worker-enabled: true
   chatapp-webhook-secret: ${CHATAPP_WEBHOOK_SECRET:}
   chatapp-webhook-max-skew-seconds: 300

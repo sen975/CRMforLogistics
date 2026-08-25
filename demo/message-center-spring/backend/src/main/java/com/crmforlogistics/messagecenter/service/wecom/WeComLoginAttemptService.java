@@ -84,18 +84,6 @@ public class WeComLoginAttemptService {
             throw new WeComException("WECOM_LOGIN_INSTALLATION_NOT_SELECTED", 400,
                     "未配置登录首屏使用的授权企业");
         }
-        boolean anyLoginSuite = !config.wecomLoginSuiteId().isBlank()
-                || !config.wecomLoginSuiteSecret().isBlank();
-        boolean completeLoginSuite = !config.wecomLoginSuiteId().isBlank()
-                && !config.wecomLoginSuiteSecret().isBlank();
-        if (anyLoginSuite && !completeLoginSuite) {
-            throw new WeComException("WECOM_LOGIN_SUITE_INCOMPLETE", 400,
-                    "企业微信登录授权 Suite 配置必须同时提供 SuiteID 和 SuiteSecret");
-        }
-        if (!completeLoginSuite) {
-            throw new WeComException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
-                    "企业微信登录授权 Suite 尚未配置");
-        }
         String redirectUri = config.wecomLoginRedirectUri();
         if (attempts.size() + inFlightReplayCount() >= config.wecomLoginMaxPending()
                 || !admitSource(remoteAddress, now)) {
@@ -113,8 +101,8 @@ public class WeComLoginAttemptService {
         attempts.put(state, new Attempt(purpose, targetUserId, now + config.wecomLoginAttemptTtlSeconds(),
                 installation.installationId(), installation.version(), installation.suiteId(),
                 installation.authCorpId(), installation.agentId()));
-        return new LoginAttemptResponse("ServiceApp", config.wecomLoginSuiteId(), redirectUri,
-                state, config.wecomLoginAttemptTtlSeconds());
+        return new LoginAttemptResponse("CorpApp", installation.authCorpId(), installation.agentId(),
+                redirectUri, state, config.wecomLoginAttemptTtlSeconds());
     }
 
     public synchronized InstallationBinding consume(String state) {
@@ -352,8 +340,8 @@ public class WeComLoginAttemptService {
         }
     }
 
-    public record LoginAttemptResponse(String loginType, String appId, String redirectUri,
-                                       String state, int expiresIn) {}
+    public record LoginAttemptResponse(String loginType, String appId, String agentId,
+                                       String redirectUri, String state, int expiresIn) {}
 
     public record InstallationBinding(String installationId, long version, String suiteId,
                                       String authCorpId, String agentId) {}

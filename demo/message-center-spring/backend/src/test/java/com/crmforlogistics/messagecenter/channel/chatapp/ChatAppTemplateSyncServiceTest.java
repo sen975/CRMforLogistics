@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplatePermissionReconciliationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -27,6 +28,7 @@ class ChatAppTemplateSyncServiceTest {
 
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock WhatsAppTemplateReconciliationService reconciliationService;
+    @Mock WhatsAppTemplatePermissionReconciliationService permissionReconciliationService;
 
     @Test
     void shouldConstructWithDependencies() {
@@ -37,12 +39,13 @@ class ChatAppTemplateSyncServiceTest {
     @Test
     void shouldRejectNullDependencies() {
         assertThrows(NullPointerException.class, () ->
-                new ChatAppTemplateSyncService(null, channelAccountMapper));
+                new ChatAppTemplateSyncService(
+                        null, permissionReconciliationService, channelAccountMapper));
     }
 
     @Test
     void skipsWhenNoChatAppAccountExists() {
-        when(channelAccountMapper.selectList(any())).thenReturn(List.of());
+        when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of());
 
         ChatAppTemplateSyncService.SyncResultRecord result = service().runOnce();
 
@@ -57,7 +60,7 @@ class ChatAppTemplateSyncServiceTest {
         UUID channelAccountId = UUID.randomUUID();
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(channelAccountId);
-        when(channelAccountMapper.selectList(any())).thenReturn(List.of(account));
+        when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account));
         when(reconciliationService.syncAccount(channelAccountId))
                 .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(2, 120, 7, true));
 
@@ -67,9 +70,31 @@ class ChatAppTemplateSyncServiceTest {
         assertEquals(120, result.fetched());
         assertEquals(7, result.changed());
         verify(reconciliationService).syncAccount(channelAccountId);
+        verify(permissionReconciliationService).reconcileDueTemplates(
+                org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
+    }
+
+    @Test
+    void runAccountDelegatesTheExplicitAccountId() {
+        UUID channelAccountId = UUID.randomUUID();
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(channelAccountId);
+        account.setChannelType("whatsapp");
+        account.setAuthStatus("active");
+        when(channelAccountMapper.selectById(channelAccountId)).thenReturn(account);
+        when(reconciliationService.syncAccount(channelAccountId))
+                .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 10, 2, true));
+
+        ChatAppTemplateSyncService.SyncResultRecord result = service().runAccount(channelAccountId);
+
+        assertEquals(10, result.fetched());
+        verify(reconciliationService).syncAccount(channelAccountId);
+        verify(permissionReconciliationService).reconcileDueTemplates(
+                org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
     }
 
     private ChatAppTemplateSyncService service() {
-        return new ChatAppTemplateSyncService(reconciliationService, channelAccountMapper);
+        return new ChatAppTemplateSyncService(
+                reconciliationService, permissionReconciliationService, channelAccountMapper);
     }
 }

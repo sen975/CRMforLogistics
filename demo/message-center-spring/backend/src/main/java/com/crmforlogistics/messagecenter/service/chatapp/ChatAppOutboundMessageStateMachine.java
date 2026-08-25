@@ -10,8 +10,9 @@ public final class ChatAppOutboundMessageStateMachine {
             "processing", 1,
             "submitted", 2,
             "sent", 3,
-            "delivered", 4,
-            "read", 5);
+            "failed", 4,
+            "delivered", 5,
+            "read", 6);
 
     private ChatAppOutboundMessageStateMachine() {}
 
@@ -20,12 +21,7 @@ public final class ChatAppOutboundMessageStateMachine {
         String nextValue = normalize(next);
         if (nextValue.isBlank()) return currentValue;
         if (currentValue.isBlank()) return nextValue;
-        if ("failed".equals(nextValue)) {
-            return rank(currentValue) >= rank("delivered") ? currentValue : "failed";
-        }
-        if ("failed".equals(currentValue) && SUCCESS_RANK.containsKey(nextValue)) {
-            return nextValue;
-        }
+        if ("read".equals(currentValue)) return currentValue;
         return rank(nextValue) >= rank(currentValue) ? nextValue : currentValue;
     }
 

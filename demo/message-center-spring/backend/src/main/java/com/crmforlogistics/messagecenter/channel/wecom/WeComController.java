@@ -8,17 +8,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
 @RestController
 @ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
-@RequestMapping("/api/wecom")
 public class WeComController {
+    private static final Logger log = LoggerFactory.getLogger(WeComController.class);
     private final WeComCallbackCodec codec;
     private final WeComAuthorizationService authorizationService;
     private final WeComSendService sendService;
@@ -34,7 +35,11 @@ public class WeComController {
         this.startupGate = startupGate;
     }
 
-    @PostMapping("/callback")
+    @PostMapping({
+            "/api/wecom/callback",
+            "/api/v1/wecom/authorization/callback",
+            "/hook_path"
+    })
     public ResponseEntity<String> callback(
             @RequestParam("msg_signature") String msgSignature,
             @RequestParam("timestamp") String timestamp,
@@ -47,12 +52,17 @@ public class WeComController {
             return ack.success() ? ResponseEntity.ok("success")
                     : ResponseEntity.status(503).body("retry");
         } catch (WeComException e) {
+            logCallbackRejection(e);
             return ResponseEntity.status(e.httpStatus())
                     .body(e.getMessage());
         }
     }
 
-    @GetMapping("/callback")
+    @GetMapping({
+            "/api/wecom/callback",
+            "/api/v1/wecom/authorization/callback",
+            "/hook_path"
+    })
     public ResponseEntity<String> verifyCallback(
             @RequestParam("msg_signature") String msgSignature,
             @RequestParam("timestamp") String timestamp,
@@ -64,11 +74,12 @@ public class WeComController {
                     msgSignature, timestamp, nonce, echostr);
             return ResponseEntity.ok(decrypted);
         } catch (WeComException e) {
+            logCallbackRejection(e);
             return ResponseEntity.status(e.httpStatus()).build();
         }
     }
 
-    @PostMapping("/send")
+    @PostMapping("/api/wecom/send")
     public ResponseEntity<?> send(@RequestBody Map<String, Object> body) {
         try {
             String corpId = (String) body.get("corpId");
@@ -81,5 +92,16 @@ public class WeComController {
             return ResponseEntity.status(e.httpStatus())
                     .body(Map.of("error", e.getMessage()));
         }
+    }
+
+    private static void logCallbackRejection(WeComException exception) {
+        if (exception instanceof WeComCallbackFailure callbackFailure) {
+            log.warn("event=wecom.callback_rejected stage={} code={} httpStatus={} upstreamPath={} receiveIdSha256={}",
+                    callbackFailure.stage().name().toLowerCase(java.util.Locale.ROOT), exception.code(),
+                    exception.httpStatus(), exception.upstreamPath(), callbackFailure.receiveIdSha256());
+            return;
+        }
+        log.warn("event=wecom.callback_rejected stage=startup_or_authorization code={} httpStatus={} upstreamPath={}",
+                exception.code(), exception.httpStatus(), exception.upstreamPath());
     }
 }

@@ -1,4 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { waitFor } from '@testing-library/react';
+
+const viewerSdk = vi.hoisted(() => ({
+  register: vi.fn(),
+  initOpenData: vi.fn(),
+  createOpenDataFrameFactory: vi.fn(),
+}));
+
+vi.mock('@wecom/jssdk', () => viewerSdk);
 
 afterEach(() => {
   document.querySelectorAll('script[data-wecom-sdk]').forEach((script) => script.remove());
@@ -38,5 +47,28 @@ describe('loadWeComSdk', () => {
     (window as Window & { ww?: unknown }).ww = sdk;
     document.querySelector('script[data-wecom-sdk]')?.dispatchEvent(new Event('load'));
     await expect(retry).resolves.toBe(sdk);
+  });
+});
+
+describe('loadWeComViewerSdk', () => {
+  it('uses the module viewer SDK rather than the login SDK global', async () => {
+    const loginSdk = { createWWLoginPanel: vi.fn() };
+    (window as Window & { ww?: unknown }).ww = loginSdk;
+    const { loadWeComViewerSdk } = await import('./wecomSdk');
+
+    const loading = loadWeComViewerSdk();
+    await waitFor(() => {
+      expect(document.querySelector('script[data-wecom-sdk="viewer"]')).toBeInTheDocument();
+    });
+    const script = document.querySelector<HTMLScriptElement>('script[data-wecom-sdk="viewer"]');
+    expect(script).toHaveAttribute(
+      'src',
+      'https://open.work.weixin.qq.com/wwopen/js/jwxwork-1.0.0.js',
+    );
+
+    script?.dispatchEvent(new Event('load'));
+
+    await expect(loading).resolves.toMatchObject(viewerSdk);
+    expect(window.ww).toBe(loginSdk);
   });
 });

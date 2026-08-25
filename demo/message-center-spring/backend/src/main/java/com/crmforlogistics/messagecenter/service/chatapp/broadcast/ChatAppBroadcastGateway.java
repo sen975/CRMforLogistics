@@ -38,6 +38,8 @@ public interface ChatAppBroadcastGateway {
             UUID channelAccountId,
             String businessNumber,
             String groupMessageId,
+            Instant startTime,
+            Instant endTime,
             int page,
             int size) {
     }

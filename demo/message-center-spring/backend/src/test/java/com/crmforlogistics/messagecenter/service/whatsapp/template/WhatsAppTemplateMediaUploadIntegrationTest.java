@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.UploadedMedia;
+import com.crmforlogistics.messagecentertest.whatsapp.WhatsAppTemplateMediaUploadTestConfiguration;
 import io.minio.MinioClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,9 +13,6 @@ import org.mockito.Mockito;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -42,7 +40,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = "spring.profiles.active=test")
+@SpringBootTest(
+        classes = {com.crmforlogistics.messagecenter.App.class, WhatsAppTemplateMediaUploadTestConfiguration.class},
+        properties = "spring.profiles.active=test")
 @Testcontainers
 class WhatsAppTemplateMediaUploadIntegrationTest {
     private static final String ONE_BYTE_SHA256 =
@@ -65,21 +65,6 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
         registry.add("minio.bucket", () -> "test");
         registry.add("credential.master-key", () ->
                 java.util.Base64.getEncoder().encodeToString(new byte[32]));
-    }
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class TestConfig {
-        @Bean
-        @Primary
-        WhatsAppTemplateGateway mediaUploadGateway() {
-            return Mockito.mock(WhatsAppTemplateGateway.class);
-        }
-
-        @Bean
-        @Primary
-        MinioClient testMinioClient() {
-            return Mockito.mock(MinioClient.class);
-        }
     }
 
     @Autowired private WhatsAppTemplateMediaUploadService mediaUploadService;

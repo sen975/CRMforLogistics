@@ -30,7 +30,7 @@ public class ChatAppBroadcastException extends RuntimeException {
         this.retryable = retryable;
         this.providerCode = bounded(providerCode, 100);
         this.providerRequestId = bounded(providerRequestId, 255);
-        this.safeMessage = bounded(safeMessage, 1000);
+        this.safeMessage = ChatAppBroadcastDiagnosticSanitizer.sanitize(safeMessage);
     }
 
     public HttpStatus status() {

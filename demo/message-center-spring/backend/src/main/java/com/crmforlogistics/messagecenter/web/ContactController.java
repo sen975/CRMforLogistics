@@ -44,6 +44,8 @@ public class ContactController {
      * @param search               optional search string (ilike on display_name + remark)
      * @param beforeLastMessageAt  cursor: sort_at timestamp (ISO-8601)
      * @param beforeId             cursor: contact id
+     * @param channelType          optional channel filter; chatapp requires channelAccountId
+     * @param channelAccountId     optional ChatApp account scope
      * @param page                 page number (1-based, default 1)
      * @param size                 page size (1-100, default 20)
      * @return paginated list of contacts enriched with channel types and last message info
@@ -53,11 +55,13 @@ public class ContactController {
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "beforeLastMessageAt", required = false) Instant beforeLastMessageAt,
             @RequestParam(value = "beforeId", required = false) UUID beforeId,
+            @RequestParam(value = "channelType", required = false) String channelType,
+            @RequestParam(value = "channelAccountId", required = false) UUID channelAccountId,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         UUID userId = SecurityUtil.currentUserId();
         return contactService.listForUser(userId, search,
-                beforeLastMessageAt, beforeId, page, size);
+                beforeLastMessageAt, beforeId, page, size, channelType, channelAccountId);
     }
 
     /**

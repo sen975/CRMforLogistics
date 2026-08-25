@@ -1,12 +1,15 @@
 package com.crmforlogistics.messagecenter.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.crmforlogistics.messagecenter.typehandler.JsonbStringTypeHandler;
+import org.apache.ibatis.type.JdbcType;
 import java.time.Instant;
 import java.util.UUID;
 
-@TableName("channel_accounts")
+@TableName(value = "channel_accounts", autoResultMap = true)
 public class ChannelAccountEntity {
 
     @TableId(type = IdType.ASSIGN_UUID)
@@ -18,6 +21,8 @@ public class ChannelAccountEntity {
     private String accountIdentifierNormalized;
     private String authStatus;
     private String syncStatus;
+    @TableField(value = "encrypted_config", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonbStringTypeHandler.class)
     private String encryptedConfig;
     private Instant lastSyncedAt;
     private Instant createdAt;

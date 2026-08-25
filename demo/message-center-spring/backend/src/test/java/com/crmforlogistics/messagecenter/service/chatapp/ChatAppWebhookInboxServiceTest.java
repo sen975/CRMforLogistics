@@ -43,7 +43,7 @@ class ChatAppWebhookInboxServiceTest {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(UUID.randomUUID());
         account.setAccountIdentifier("8613266259485");
-        when(accountMapper.selectList(any())).thenReturn(List.of(account));
+        when(accountMapper.selectActiveChatAppAccounts()).thenReturn(List.of(account));
         when(eventMapper.insertIgnore(any())).thenReturn(0);
         String body = "{\"EventId\":\"event-1\",\"To\":\"8613266259485\","
                 + "\"MessageId\":\"wamid-1\",\"Message\":\"hello\"}";
@@ -59,7 +59,7 @@ class ChatAppWebhookInboxServiceTest {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(UUID.randomUUID());
         account.setAccountIdentifier("8613266259485");
-        when(accountMapper.selectList(any())).thenReturn(List.of(account));
+        when(accountMapper.selectActiveChatAppAccounts()).thenReturn(List.of(account));
         when(eventMapper.insertIgnore(any())).thenReturn(1);
         String body = "{\"EventId\":\"event-1\",\"To\":\"8613266259485\","
                 + "\"From\":\"60123456789\",\"MessageId\":\"wamid-1\","
@@ -75,5 +75,27 @@ class ChatAppWebhookInboxServiceTest {
                 .contains("hello")
                 .doesNotContain("unneededSecret")
                 .doesNotContain("must-not-persist");
+    }
+
+    @Test
+    void statusCallbackMatchesBusinessNumberFromSender() {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        account.setAccountIdentifier("8613266259485");
+        when(accountMapper.selectActiveChatAppAccounts()).thenReturn(List.of(account));
+        when(eventMapper.insertIgnore(any())).thenReturn(1);
+        String body = "{\"Status\":\"Read\",\"MessageId\":\"wamid-status-1\","
+                + "\"From\":\"8613266259485\",\"To\":\"60123456789\"}";
+
+        service.accept("signature", "timestamp", body);
+
+        ArgumentCaptor<ChannelEventEntity> event =
+                ArgumentCaptor.forClass(ChannelEventEntity.class);
+        verify(eventMapper).insertIgnore(event.capture());
+        assertThat(event.getValue().getEventType()).isEqualTo("chatapp_status");
+        assertThat(event.getValue().getPayloadJsonb())
+                .contains("wamid-status-1")
+                .contains("\"Status\":\"Read\"");
+        verify(projector).project(event.getValue());
     }
 }

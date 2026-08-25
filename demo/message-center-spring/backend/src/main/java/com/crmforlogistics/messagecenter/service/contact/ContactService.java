@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import com.crmforlogistics.messagecenter.dto.response.ContactIdentityResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
+import com.crmforlogistics.messagecenter.dto.response.PhoneContactBindingResponse;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
@@ -14,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -23,6 +25,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -42,15 +45,18 @@ public class ContactService {
     private final ContactIdentityMapper contactIdentityMapper;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
+    private final ChatAppAccountResolver chatAppAccountResolver;
 
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
                           ConversationMapper conversationMapper,
-                          MessageMapper messageMapper) {
+                          MessageMapper messageMapper,
+                          ChatAppAccountResolver chatAppAccountResolver) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
+        this.chatAppAccountResolver = chatAppAccountResolver;
     }
 
     /**
@@ -71,11 +77,28 @@ public class ContactService {
     public IPage<ContactResponse> listForUser(UUID userId, String search,
                                                Instant beforeLastMessageAt, UUID beforeId,
                                                int page, int size) {
+        return listForUser(userId, search, beforeLastMessageAt, beforeId,
+                page, size, null, null);
+    }
+
+    public IPage<ContactResponse> listForUser(UUID userId, String search,
+                                               Instant beforeLastMessageAt, UUID beforeId,
+                                               int page, int size, String channelType,
+                                               UUID channelAccountId) {
+        boolean chatAppFilter = "chatapp".equalsIgnoreCase(channelType);
+        if ((chatAppFilter && channelAccountId == null)
+                || (channelAccountId != null && !chatAppFilter)) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        if (chatAppFilter) {
+            chatAppAccountResolver.requireCurrentAccount(channelAccountId);
+        }
         int safeSize = clampSize(size);
         Page<ContactEntity> pageParam = new Page<>(page, safeSize);
         boolean isAdmin = isCurrentUserAdmin();
         IPage<ContactEntity> pageResult = contactMapper.listForUser(
-                pageParam, userId, search, beforeLastMessageAt, beforeId, isAdmin);
+                pageParam, userId, search, beforeLastMessageAt, beforeId, isAdmin,
+                chatAppFilter ? "chatapp" : null, chatAppFilter ? channelAccountId : null);
 
         List<ContactResponse> records = pageResult.getRecords().stream()
                 .map(contact -> toResponse(contact, userId))
@@ -202,6 +225,58 @@ public class ContactService {
         if (!conversationIds.isEmpty()) {
             messageMapper.markRead(conversationIds);
         }
+    }
+
+    /**
+     * Bind a phone number to a contact as a new phone identity.
+     *
+     * @param contactId   the contact UUID as a string
+     * @param contactName optional display name for the contact
+     * @param phoneNumber the raw phone number to normalize and bind
+     * @return the bound contact id, normalized phone point, and display name
+     * @throws IllegalArgumentException if phoneNumber or contactId is missing/invalid
+     */
+    public PhoneContactBindingResponse bindPhone(String contactId, String contactName,
+                                                 String phoneNumber) {
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            throw new IllegalArgumentException("phoneNumber is required");
+        }
+        String digits = phoneNumber.replaceAll("[^0-9+]", "");
+        if (digits.startsWith("+")) {
+            digits = digits.substring(1);
+        }
+        String phonePoint = "phone:" + digits;
+        UUID contactUuid = null;
+        if (contactId != null && !contactId.isBlank()) {
+            contactUuid = UUID.fromString(contactId);
+        }
+        if (contactUuid == null) {
+            throw new IllegalArgumentException("contactId is required for phone binding");
+        }
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(contactUuid);
+        identity.setChannelType("phone");
+        identity.setIdentityValue(phonePoint);
+        identity.setNormalizedValue(digits);
+        identity.setDisplayName(contactName != null ? contactName : phoneNumber);
+        identity.setIsPrimary(false);
+        identity.setVerifyStatus("unverified");
+        identity.setCreatedAt(Instant.now());
+        identity.setUpdatedAt(Instant.now());
+        identity.setVersion(1L);
+        Optional<ContactIdentityEntity> existing =
+                contactIdentityMapper.findByNormalizedValue("phone", digits);
+        if (existing.isPresent()) {
+            ContactIdentityEntity found = existing.get();
+            return new PhoneContactBindingResponse(
+                    found.getContactId().toString(),
+                    found.getIdentityValue(),
+                    found.getDisplayName() != null ? found.getDisplayName() : phoneNumber);
+        }
+        contactIdentityMapper.insert(identity);
+        return new PhoneContactBindingResponse(
+                contactUuid.toString(), phonePoint, identity.getDisplayName());
     }
 
     private static int clampSize(int size) {

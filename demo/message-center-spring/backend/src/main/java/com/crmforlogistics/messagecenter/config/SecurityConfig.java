@@ -5,11 +5,10 @@ import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
@@ -21,6 +20,7 @@ import java.util.UUID;
 
 @Configuration
 @EnableWebSecurity
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class SecurityConfig {
 
     @Bean
@@ -51,12 +51,24 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/wecom/attempts", "/api/auth/wecom/exchange").permitAll()
                 .requestMatchers("/api/account/wecom-binding/**").authenticated()
                 .requestMatchers("/api/events").permitAll()
-                .requestMatchers("/api/wecom/callback").permitAll()
+                .requestMatchers(
+                        "/api/wecom/callback",
+                        "/api/v1/wecom/authorization/callback",
+                        "/hook_path")
+                    .permitAll()
                 .requestMatchers("/api/v1/webhooks/chatapp").permitAll()
                 .requestMatchers("/api/v1/call-records/*/audio").permitAll()
                 .requestMatchers("/api/v1/wecom/conversation-view/**", "/api/v1/wecom/js-sdk-config").authenticated()
+                .requestMatchers(
+                        "/api/v1/chatapp/broadcasts",
+                        "/api/v1/chatapp/broadcasts/**")
+                    .hasAnyRole("ADMIN", "BROADCAST_SENDER")
+                .requestMatchers("/api/v1/wecom/installations", "/api/v1/wecom/installations/**")
+                    .hasRole("ADMIN")
+                .requestMatchers("/api/chatapp/sync/messages/reconcile").hasRole("ADMIN")
                 .requestMatchers("/api/channel-accounts/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/channel-accounts/*/whatsapp/templates/**").hasRole("ADMIN")
+                .requestMatchers("/api/v1/channel-accounts/*/whatsapp/public-templates/**").hasRole("ADMIN")
                 .requestMatchers(
                         "/api/v1/channel-accounts/*/whatsapp/template-media",
                         "/api/v1/channel-accounts/*/whatsapp/template-media/**")
@@ -67,8 +79,4 @@ public class SecurityConfig {
         return http.build();
     }
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
-    }
 }

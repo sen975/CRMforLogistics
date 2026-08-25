@@ -1,57 +1,56 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
 @Service
 public class ChatAppMessageApplicationService {
-    private final ChannelAccountMapper channelAccountMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final ContactMapper contactMapper;
     private final ConversationMapper conversationMapper;
     private final MessageSendApplicationService sendService;
     private final ConversationAccessService conversationAccessService;
-    private final AppConfig config;
+    private final ChatAppAccountResolver accountResolver;
 
-    public ChatAppMessageApplicationService(ChannelAccountMapper channelAccountMapper,
-                                            ContactIdentityMapper contactIdentityMapper,
+    public ChatAppMessageApplicationService(ContactIdentityMapper contactIdentityMapper,
+                                            ContactMapper contactMapper,
                                             ConversationMapper conversationMapper,
                                             MessageSendApplicationService sendService,
                                             ConversationAccessService conversationAccessService,
-                                            AppConfig config) {
-        this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
+                                            ChatAppAccountResolver accountResolver) {
         this.contactIdentityMapper = Objects.requireNonNull(contactIdentityMapper);
+        this.contactMapper = Objects.requireNonNull(contactMapper);
         this.conversationMapper = Objects.requireNonNull(conversationMapper);
         this.sendService = Objects.requireNonNull(sendService);
         this.conversationAccessService = Objects.requireNonNull(conversationAccessService);
-        this.config = Objects.requireNonNull(config);
+        this.accountResolver = Objects.requireNonNull(accountResolver);
     }
 
-    public MessageSendApplicationService.MessageAccepted acceptRecipient(
-            String recipient, String kind, String clientRequestId,
+    public MessageSendApplicationService.MessageAccepted acceptContactIdentity(
+            UUID contactId, UUID recipientIdentityId, String kind, String clientRequestId,
             Map<String, Object> content, UUID actorUserId) {
-        RecipientContext context = resolveRecipient(recipient, actorUserId);
+        RecipientContext context = resolveContactIdentity(
+                contactId, recipientIdentityId, actorUserId);
         return accept(context.account(), context.conversation(), context.recipient(),
                 kind, clientRequestId, content, actorUserId);
     }
 
-    public void authorizeRecipient(String recipient, UUID actorUserId) {
-        resolveRecipient(recipient, actorUserId);
+    public void authorizeContactIdentity(
+            UUID contactId, UUID recipientIdentityId, UUID actorUserId) {
+        authorizeRecipient(contactId, recipientIdentityId, actorUserId);
     }
 
     public MessageSendApplicationService.MessageAccepted acceptConversation(
@@ -61,15 +60,15 @@ public class ChatAppMessageApplicationService {
         if (conversation == null) {
             throw new IllegalArgumentException("CHATAPP_CONVERSATION_NOT_FOUND");
         }
-        ChannelAccountEntity account = channelAccountMapper.selectById(conversation.getChannelAccountId());
-        validateAccount(account);
-        ContactIdentityEntity identity = contactIdentityMapper.selectById(conversation.getContactIdentityId());
-        if (identity == null || identity.getDeletedAt() != null) {
-            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_NOT_FOUND");
+        ContactIdentityEntity identity = requireIdentity(conversation.getContactIdentityId());
+        if (!"chatapp".equalsIgnoreCase(identity.getChannelType())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_CHANNEL_INVALID");
         }
+        ChannelAccountEntity account = accountResolver.requireCurrentAccount(
+                conversation.getChannelAccountId());
+        String recipient = recipientForAccount(account, identity);
         conversationAccessService.requireAccessible(
                 conversation.getId(), account.getId(), actorUserId);
-        String recipient = ContactPointUtil.normalizePhone(identity.getIdentityValue());
         return accept(account, conversation, recipient, kind, clientRequestId, content, actorUserId);
     }
 
@@ -83,58 +82,76 @@ public class ChatAppMessageApplicationService {
                 account.getId(), conversation.getId(), kind, clientRequestId, providerContent), actorUserId);
     }
 
-    private ChannelAccountEntity fixedAccount() {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
-                new LambdaQueryWrapper<ChannelAccountEntity>()
-                        .in(ChannelAccountEntity::getChannelType, List.of("chatapp", "whatsapp"))
-                        .eq(ChannelAccountEntity::getAuthStatus, "active")
-                        .isNull(ChannelAccountEntity::getDeletedAt)
-                        .last("limit 2"));
-        if (accounts.isEmpty()) {
-            throw new IllegalStateException("CHATAPP_CHANNEL_ACCOUNT_NOT_CONFIGURED");
-        }
-        if (accounts.size() > 1) {
-            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_VIOLATION");
-        }
-        ChannelAccountEntity account = accounts.get(0);
-        validateAccount(account);
-        return account;
+    private RecipientContext resolveContactIdentity(
+            UUID contactId, UUID recipientIdentityId, UUID actorUserId) {
+        AuthorizedRecipient authorized = authorizeRecipient(
+                contactId, recipientIdentityId, actorUserId);
+        ConversationEntity conversation = conversationMapper.getOrCreateConversationForSender(
+                authorized.account().getId(), authorized.identity().getId(), actorUserId);
+        conversationAccessService.requireAccessible(
+                conversation.getId(), authorized.account().getId(), actorUserId);
+        return new RecipientContext(
+                authorized.account(), conversation, authorized.recipient());
     }
 
-    private RecipientContext resolveRecipient(String recipient, UUID actorUserId) {
-        String normalizedRecipient = ContactPointUtil.normalizePhone(recipient);
-        if (normalizedRecipient.isBlank()) {
+    private AuthorizedRecipient authorizeRecipient(
+            UUID contactId, UUID recipientIdentityId, UUID actorUserId) {
+        if (contactId == null) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_REQUIRED");
+        }
+        if (recipientIdentityId == null) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_REQUIRED");
+        }
+        ContactIdentityEntity identity = requireIdentity(recipientIdentityId);
+        if (!"chatapp".equalsIgnoreCase(identity.getChannelType())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_CHANNEL_INVALID");
+        }
+        if (!contactId.equals(identity.getContactId())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_MISMATCH");
+        }
+        UUID channelAccountId;
+        try {
+            channelAccountId = UUID.fromString(identity.getIdentityScope());
+        } catch (RuntimeException error) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE", error);
+        }
+        ChannelAccountEntity account = accountResolver.requireCurrentAccount(channelAccountId);
+        String recipient = recipientForAccount(account, identity);
+        if (contactMapper.findAccessibleForChatAppSend(
+                contactId, identity.getId(), account.getId(), actorUserId).isEmpty()) {
+            throw new SecurityException("CHATAPP_CONVERSATION_FORBIDDEN");
+        }
+        return new AuthorizedRecipient(account, identity, recipient);
+    }
+
+    private ContactIdentityEntity requireIdentity(UUID identityId) {
+        ContactIdentityEntity identity = contactIdentityMapper.selectById(identityId);
+        if (identity == null || identity.getDeletedAt() != null) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_NOT_FOUND");
+        }
+        return identity;
+    }
+
+    private String recipientForAccount(ChannelAccountEntity account,
+                                       ContactIdentityEntity identity) {
+        if (!"chatapp".equalsIgnoreCase(identity.getChannelType())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_CHANNEL_INVALID");
+        }
+        if (!account.getId().toString().equals(identity.getIdentityScope())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        String recipient = ContactPointUtil.normalizePhone(identity.getIdentityValue());
+        if (recipient.isBlank()) {
             throw new IllegalArgumentException("CHATAPP_RECIPIENT_REQUIRED");
         }
-        ChannelAccountEntity account = fixedAccount();
-        ContactIdentityEntity identity = contactIdentityMapper
-                .findByNormalizedValue("chatapp", normalizedRecipient)
-                .orElseThrow(() -> new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_NOT_FOUND"));
-        ConversationEntity conversation = conversationMapper.getOrCreateConversation(
-                account.getId(), identity.getId());
-        conversationAccessService.requireAccessible(
-                conversation.getId(), account.getId(), actorUserId);
-        return new RecipientContext(account, conversation, normalizedRecipient);
-    }
-
-    private void validateAccount(ChannelAccountEntity account) {
-        if (account == null || account.getDeletedAt() != null
-                || !isChatApp(account.getChannelType())
-                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
-            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
-        }
-        String configured = ContactPointUtil.normalizePhone(config.chatappFrom());
-        String stored = ContactPointUtil.normalizePhone(account.getAccountIdentifier());
-        if (configured.isBlank() || !configured.equals(stored)) {
-            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_CONFIG_MISMATCH");
-        }
-    }
-
-    private static boolean isChatApp(String channelType) {
-        return "chatapp".equalsIgnoreCase(channelType) || "whatsapp".equalsIgnoreCase(channelType);
+        return recipient;
     }
 
     private record RecipientContext(ChannelAccountEntity account,
                                     ConversationEntity conversation,
                                     String recipient) {}
+
+    private record AuthorizedRecipient(ChannelAccountEntity account,
+                                       ContactIdentityEntity identity,
+                                       String recipient) {}
 }

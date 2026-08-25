@@ -27,6 +27,7 @@ export function WeComLoginPanel({ purpose, onAuthenticated }: WeComLoginPanelPro
           params: {
             login_type: attempt.loginType,
             appid: attempt.appId,
+            agentid: attempt.agentId,
             redirect_uri: attempt.redirectUri,
             state: attempt.state,
             redirect_type: 'callback',

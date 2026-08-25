@@ -21,4 +21,3 @@ public record CallRecordConfig(
         @DefaultValue("8") int audioSessionMaxPerActor,
         @DefaultValue("256") int audioSessionMaxActive
 ) {}
-

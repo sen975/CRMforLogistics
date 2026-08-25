@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.response.WeComBindingResponse;
 import com.crmforlogistics.messagecenter.dto.response.WeComLoginResponse;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.wecom.WeComLoginApplicationService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComLoginAttemptService;
@@ -11,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,6 +26,8 @@ import java.util.UUID;
 import java.util.Map;
 
 @RestController
+@ConditionalOnWeComEnabled
+@ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 @RequestMapping("/api")
 public class WeComAuthController {
     private final WeComLoginAttemptService attempts;

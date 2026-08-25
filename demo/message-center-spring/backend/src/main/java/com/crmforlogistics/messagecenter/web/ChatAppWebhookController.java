@@ -21,8 +21,8 @@ public class ChatAppWebhookController {
 
     @PostMapping("/api/v1/webhooks/chatapp")
     public ResponseEntity<ChatAppWebhookInboxService.WebhookReceipt> receive(
-            @RequestHeader("X-CAMS-Signature") String signature,
-            @RequestHeader("X-CAMS-Timestamp") String timestamp,
+            @RequestHeader(value = "X-CAMS-Signature", required = false) String signature,
+            @RequestHeader(value = "X-CAMS-Timestamp", required = false) String timestamp,
             HttpServletRequest request) throws IOException {
         if (request.getContentLengthLong() > MAX_BODY_BYTES) {
             throw new IllegalArgumentException("CHATAPP_WEBHOOK_BODY_SIZE_INVALID");

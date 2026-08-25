@@ -12,6 +12,10 @@ public class WeComChatDataMessageEntity {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
+    private UUID installationId;
+    private UUID sourceConversationId;
+    private UUID senderPartyId;
+    private String receiverPartyIds;
     private String msgid;
     private String secretKey;
     private String externalUserid;
@@ -19,11 +23,24 @@ public class WeComChatDataMessageEntity {
     private Long sendTime;
     private String msgtype;
     private String direction;
+    private String ingestStatus;
     private Instant createdAt;
     private Instant updatedAt;
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
+
+    public UUID getInstallationId() { return installationId; }
+    public void setInstallationId(UUID installationId) { this.installationId = installationId; }
+
+    public UUID getSourceConversationId() { return sourceConversationId; }
+    public void setSourceConversationId(UUID sourceConversationId) { this.sourceConversationId = sourceConversationId; }
+
+    public UUID getSenderPartyId() { return senderPartyId; }
+    public void setSenderPartyId(UUID senderPartyId) { this.senderPartyId = senderPartyId; }
+
+    public String getReceiverPartyIds() { return receiverPartyIds; }
+    public void setReceiverPartyIds(String receiverPartyIds) { this.receiverPartyIds = receiverPartyIds; }
 
     public String getMsgid() { return msgid; }
     public void setMsgid(String msgid) { this.msgid = msgid; }
@@ -45,6 +62,9 @@ public class WeComChatDataMessageEntity {
 
     public String getDirection() { return direction; }
     public void setDirection(String direction) { this.direction = direction; }
+
+    public String getIngestStatus() { return ingestStatus; }
+    public void setIngestStatus(String ingestStatus) { this.ingestStatus = ingestStatus; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

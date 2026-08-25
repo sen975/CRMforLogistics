@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageApplicationService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppHistoryReconciliationResult;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,30 +41,30 @@ public class ChatAppController {
     }
 
     @PostMapping("/send/text")
-    public ResponseEntity<?> sendText(@RequestBody Map<String, String> body) {
-        String clientRequestId = body.getOrDefault("clientRequestId", UUID.randomUUID().toString());
-        return ResponseEntity.ok(messageApplicationService.acceptRecipient(
-                body.get("to"), "text", clientRequestId,
-                Map.of("text", body.getOrDefault("text", "")),
+    public ResponseEntity<?> sendText(@RequestBody TextSendRequest request) {
+        return ResponseEntity.ok(messageApplicationService.acceptContactIdentity(
+                request.contactId(), request.recipientIdentityId(), "text",
+                clientRequestId(request.clientRequestId()),
+                Map.of("text", value(request.text())),
                 SecurityUtil.currentUserId()));
     }
 
     @PostMapping("/send/template")
-    public ResponseEntity<?> sendTemplate(@RequestBody Map<String, String> body) {
+    public ResponseEntity<?> sendTemplate(@RequestBody TemplateSendRequest request) {
         try {
-            String clientRequestId = body.getOrDefault("clientRequestId", UUID.randomUUID().toString());
             @SuppressWarnings("unchecked")
-            Map<String, String> params = body.containsKey("templateParams")
+            Map<String, String> params = request.templateParams() != null
                     ? new com.fasterxml.jackson.databind.ObjectMapper().readValue(
-                            body.get("templateParams"), Map.class)
+                            request.templateParams(), Map.class)
                     : Map.of();
             Map<String, Object> content = new java.util.LinkedHashMap<>();
-            content.put("templateCode", body.get("templateCode"));
-            content.put("templateName", body.get("templateName"));
-            content.put("languageCode", body.get("languageCode"));
+            content.put("templateCode", request.templateCode());
+            content.put("templateName", request.templateName());
+            content.put("languageCode", request.languageCode());
             content.put("templateParams", params);
-            return ResponseEntity.ok(messageApplicationService.acceptRecipient(
-                    body.get("to"), "template", clientRequestId, content,
+            return ResponseEntity.ok(messageApplicationService.acceptContactIdentity(
+                    request.contactId(), request.recipientIdentityId(), "template",
+                    clientRequestId(request.clientRequestId()), content,
                     SecurityUtil.currentUserId()));
         } catch (SecurityException e) {
             throw e;
@@ -80,6 +82,14 @@ public class ChatAppController {
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping("/sync/messages/reconcile")
+    public ResponseEntity<ChatAppHistoryReconciliationResult> reconcileMessages(
+            @RequestBody HistoryReconciliationRequest request) {
+        return ResponseEntity.ok(messageSyncService.runAccount(
+                request.accountId(), request.startTime(), request.endTime(),
+                request.maxPages(), request.dryRun()));
+    }
+
     @PostMapping("/sync/templates")
     public ResponseEntity<?> syncTemplates() {
         ChatAppTemplateSyncService.SyncResultRecord result = templateSyncService.runOnce();
@@ -92,4 +102,34 @@ public class ChatAppController {
         eventHub.publish("message-new", "{}");
         return ResponseEntity.ok(result);
     }
+
+    private static String clientRequestId(String value) {
+        return value == null || value.isBlank() ? UUID.randomUUID().toString() : value;
+    }
+
+    private static String value(String value) {
+        return value == null ? "" : value;
+    }
+
+    public record TextSendRequest(
+            UUID contactId,
+            UUID recipientIdentityId,
+            String text,
+            String clientRequestId) {}
+
+    public record TemplateSendRequest(
+            UUID contactId,
+            UUID recipientIdentityId,
+            String templateCode,
+            String templateName,
+            String languageCode,
+            String templateParams,
+            String clientRequestId) {}
+
+    public record HistoryReconciliationRequest(
+            UUID accountId,
+            Instant startTime,
+            Instant endTime,
+            int maxPages,
+            boolean dryRun) {}
 }

@@ -25,6 +25,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +38,47 @@ class ThreadServiceTemplateRenderingTest {
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock TemplateMessageTextResolver templateMessageTextResolver;
     @Mock AttachmentMapper attachmentMapper;
+
+    @Test
+    void threadResolvesChatAppAccountFromIdentityScope() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID scopedAccountId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(identityId);
+        identity.setContactId(contactId);
+        identity.setChannelType("chatapp");
+        identity.setIdentityScope(scopedAccountId.toString());
+        identity.setIdentityValue("8613800138000");
+        ChannelAccountEntity scopedAccount = new ChannelAccountEntity();
+        scopedAccount.setId(scopedAccountId);
+        scopedAccount.setChannelType("chatapp");
+        scopedAccount.setAuthStatus("active");
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(conversationId);
+
+        when(contactIdentityMapper.findByContactId(contactId)).thenReturn(List.of(identity));
+        when(channelAccountMapper.selectById(scopedAccountId)).thenReturn(scopedAccount);
+        when(conversationMapper.getOrCreateConversation(scopedAccountId, identityId))
+                .thenReturn(conversation);
+        IPage<MessageEntity> page = new Page<>(1, 11, false);
+        page.setRecords(List.of());
+        when(messageMapper.listMessagesByConversations(
+                any(), anyList(), eq(userId), isNull(), isNull(), eq(false))).thenReturn(page);
+
+        ThreadService service = new ThreadService(
+                conversationMapper, messageMapper, contactIdentityMapper, channelAccountMapper,
+                templateMessageTextResolver, attachmentMapper);
+
+        service.threadPage(userId, contactId, "chatapp", null, 10);
+
+        verify(channelAccountMapper).selectById(scopedAccountId);
+        verify(channelAccountMapper, never()).selectOne(any());
+        verify(conversationMapper).getOrCreateConversation(scopedAccountId, identityId);
+    }
 
     @Test
     void threadUsesResolvedTemplateTextForHistoricalPlaceholder() {
@@ -120,7 +163,7 @@ class ThreadServiceTemplateRenderingTest {
         page.setRecords(List.of(message));
         when(messageMapper.listMessagesByConversations(
                 any(), anyList(), eq(userId), isNull(), isNull(), eq(false))).thenReturn(page);
-        when(attachmentMapper.listReadyByMessageId(messageId)).thenReturn(List.of(attachment));
+        when(attachmentMapper.listReadyByMessageIds(List.of(messageId))).thenReturn(List.of(attachment));
 
         ThreadService service = new ThreadService(
                 conversationMapper, messageMapper, contactIdentityMapper, channelAccountMapper,
@@ -136,5 +179,7 @@ class ThreadServiceTemplateRenderingTest {
             assertThat(item.sizeBytes()).isEqualTo(123L);
             assertThat(item.toString()).doesNotContain("must-not-leak");
         });
+        verify(attachmentMapper).listReadyByMessageIds(List.of(messageId));
+        verify(attachmentMapper, never()).listReadyByMessageId(any());
     }
 }

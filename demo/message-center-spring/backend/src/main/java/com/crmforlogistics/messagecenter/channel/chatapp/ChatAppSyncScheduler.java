@@ -2,7 +2,6 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -11,7 +10,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.util.List;
 
 @Component
 @EnableScheduling
@@ -34,22 +32,19 @@ public class ChatAppSyncScheduler {
 
     @Scheduled(fixedDelay = 5000)
     public void syncMessages() {
-        ChannelAccountEntity account = resolveChatappAccount();
-        if (account != null) {
+        for (ChannelAccountEntity account : channelAccountMapper.selectActiveChatAppAccountsForSync()) {
             channelAccountMapper.updateSyncStatus(account.getId(), "syncing", null);
-        }
-        try {
-            ChatAppMessageSyncService.SyncResultRecord result = messageSyncService.runOnce();
-            if (result.fetched() > 0) {
-                log.info("Message sync: pages={} fetched={} saved={} durationMs={}",
-                        result.pages(), result.fetched(), result.saved(), result.durationMs());
-            }
-            if (account != null) {
+            try {
+                ChatAppMessageSyncService.SyncResultRecord result =
+                        messageSyncService.runAccount(account.getId());
+                if (result.fetched() > 0) {
+                    log.info("Message sync: accountId={} pages={} fetched={} saved={} durationMs={}",
+                            account.getId(), result.pages(), result.fetched(), result.saved(), result.durationMs());
+                }
                 channelAccountMapper.updateSyncStatus(account.getId(), "success", Instant.now());
-            }
-        } catch (Exception e) {
-            log.error("Message sync failed", e);
-            if (account != null) {
+            } catch (Exception e) {
+                log.error("Message sync failed: accountId={} code={}", account.getId(),
+                        stableErrorCode(e, "CHATAPP_MESSAGE_HISTORY_SYNC_FAILED"));
                 channelAccountMapper.updateSyncStatus(account.getId(), "failed", Instant.now());
             }
         }
@@ -57,23 +52,26 @@ public class ChatAppSyncScheduler {
 
     @Scheduled(fixedDelay = 300_000)
     public void syncTemplates() {
-        try {
-            ChatAppTemplateSyncService.SyncResultRecord result = templateSyncService.runOnce();
-            if (result.fetched() > 0) {
-                log.info("Template sync: pages={} fetched={} changed={} durationMs={}",
-                        result.pages(), result.fetched(), result.changed(), result.durationMs());
+        for (ChannelAccountEntity account : channelAccountMapper.selectActiveChatAppAccountsForSync()) {
+            try {
+                ChatAppTemplateSyncService.SyncResultRecord result =
+                        templateSyncService.runAccount(account.getId());
+                if (result.fetched() > 0) {
+                    log.info("Template sync: accountId={} pages={} fetched={} changed={} durationMs={}",
+                            account.getId(), result.pages(), result.fetched(), result.changed(), result.durationMs());
+                }
+            } catch (Exception e) {
+                log.error("Template sync failed: accountId={} code={}", account.getId(),
+                        stableErrorCode(e, "CHATAPP_TEMPLATE_SYNC_FAILED"));
             }
-        } catch (Exception e) {
-            log.error("Template sync failed", e);
         }
     }
 
-    private ChannelAccountEntity resolveChatappAccount() {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
-                new LambdaQueryWrapper<ChannelAccountEntity>()
-                        .eq(ChannelAccountEntity::getChannelType, "chatapp")
-                        .isNull(ChannelAccountEntity::getDeletedAt)
-                        .last("limit 1"));
-        return accounts.isEmpty() ? null : accounts.get(0);
+    private static String stableErrorCode(Exception error, String fallback) {
+        String message = error.getMessage();
+        if (message != null && message.matches("CHATAPP_[A-Z0-9_]+")) {
+            return message;
+        }
+        return fallback;
     }
 }

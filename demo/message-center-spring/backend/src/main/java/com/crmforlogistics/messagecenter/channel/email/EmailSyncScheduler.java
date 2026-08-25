@@ -41,7 +41,10 @@ public class EmailSyncScheduler {
                 channelAccountMapper.updateSyncStatus(account.getId(), "success", Instant.now());
             }
         } catch (Exception e) {
-            log.error("Email sync failed", e);
+            String code = e instanceof EmailException emailException
+                    ? emailException.code() : "EMAIL_SYNC_FAILED";
+            log.error("event=email.sync_failed code={} accountId={}", code,
+                    account == null ? "" : account.getId(), e);
             if (account != null) {
                 channelAccountMapper.updateSyncStatus(account.getId(), "failed", Instant.now());
             }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Table, Tag, Button, Typography, App, Space, Input, Spin, Empty, Descriptions, Modal, Form, Switch } from 'antd';
 import {
   MailOutlined,
@@ -9,6 +10,7 @@ import {
   CloseOutlined,
   EditOutlined,
   KeyOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -259,14 +261,21 @@ export default function ChannelSettingsPage() {
       key: 'action',
       width: 80,
       render: (_: unknown, record: ChannelAccount) => (
-        <Button
-          size="small"
-          icon={<SyncOutlined />}
-          loading={syncMutation.isPending && syncMutation.variables === record.id}
-          onClick={() => syncMutation.mutate(record.id)}
-        >
-          同步
-        </Button>
+        <Space>
+          <Button
+            size="small"
+            icon={<SyncOutlined />}
+            loading={syncMutation.isPending && syncMutation.variables === record.id}
+            onClick={() => syncMutation.mutate(record.id)}
+          >
+            同步
+          </Button>
+          {record.channelType === 'wecom' && (
+            <Link to="/settings/wecom">
+              <Button size="small" icon={<SettingOutlined />} aria-label="管理企业微信">管理</Button>
+            </Link>
+          )}
+        </Space>
       ),
     },
   ];

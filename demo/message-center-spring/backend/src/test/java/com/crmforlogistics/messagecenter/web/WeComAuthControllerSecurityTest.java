@@ -19,7 +19,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(WeComAuthController.class)
+@WebMvcTest(value = WeComAuthController.class, properties = {
+        "app.wecom-enabled=true",
+        "app.wecom-suite-id=test"
+})
 @Import(SecurityConfig.class)
 class WeComAuthControllerSecurityTest {
     @Autowired MockMvc mvc;
@@ -31,7 +34,7 @@ class WeComAuthControllerSecurityTest {
     void loginAttemptIsPublic() throws Exception {
         when(attempts.createLoginAttempt(anyString())).thenReturn(
                 new WeComLoginAttemptService.LoginAttemptResponse(
-                        "ServiceApp", "suite", "http://localhost/", "state", 300));
+                        "CorpApp", "corp", "agent", "http://localhost/", "state", 300));
         mvc.perform(post("/api/auth/wecom/attempts"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.state").value("state"));

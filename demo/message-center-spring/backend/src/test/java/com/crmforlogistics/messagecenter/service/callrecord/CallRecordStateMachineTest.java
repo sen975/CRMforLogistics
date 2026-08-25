@@ -51,11 +51,46 @@ class CallRecordStateMachineTest {
     }
 
     @Test
+    void requeuedLeaseWhenStateIsQueued(){
+        CallRecordEntity queued = new CallRecordEntity();
+        queued.setTranscriptionState("queued");
+        queued.setTranscriptionLeaseId("worked-1");
+        queued.setTranscriptionLeaseExpiresAt(NOW.plusSeconds(60));
+        queued.setVersion(4L);
+        queued.setTranscriptionAttempts(0);
+        queued.setTranscriptionState("queued");
+
+        CallRecordEntity requeued = CallRecordStateMachine.lease(queued, "worked-2", NOW,NOW.plusSeconds(60));
+
+// 删掉这行，assertion 改成：
+        assertThat(requeued.getTranscriptionLeaseId()).isNotNull();
+        assertThat(requeued.getTranscriptionLeaseWorkerId()).isEqualTo("worked-2");
+        assertThat(requeued.getTranscriptionLeaseExpiresAt()).isEqualTo(NOW.plusSeconds(60));
+        assertThat(requeued.getVersion()).isEqualTo(5L);
+        assertThat(requeued.getTranscriptionState()).isEqualTo("processing");
+    }
+
+    @Test
     void rejectsCompletedTranscriptThatAlreadyHasRealSegments() {
         CallRecordEntity completed = completedRecord(
                 "[{\"startSeconds\":0.0,\"endSeconds\":1.0,\"text\":\"你好。\"}]");
 
         assertThatThrownBy(() -> CallRecordStateMachine.manualRetry(completed, NOW))
+                .isInstanceOf(CallRecordException.class)
+                .extracting(error -> ((CallRecordException) error).code())
+                .isEqualTo("CALL_RECORD_STATE_INVALID");
+    }
+
+    @Test
+    void rejectsLeaseWhenStateIsNotQueued() {
+        CallRecordEntity processing = new CallRecordEntity();
+        processing.setTranscriptionState("processing");
+        processing.setTranscriptionLeaseId("lease-1");
+        processing.setTranscriptionLeaseExpiresAt(NOW.plusSeconds(60));
+        processing.setVersion(4L);
+        processing.setTranscriptionState("processing");
+
+        assertThatThrownBy(() -> CallRecordStateMachine.lease(processing, "lease-2", NOW,NOW.plusSeconds(60)))
                 .isInstanceOf(CallRecordException.class)
                 .extracting(error -> ((CallRecordException) error).code())
                 .isEqualTo("CALL_RECORD_STATE_INVALID");
@@ -70,4 +105,5 @@ class CallRecordStateMachineTest {
         record.setVersion(6L);
         return record;
     }
+
 }

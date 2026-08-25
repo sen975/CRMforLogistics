@@ -13,6 +13,7 @@ interface AuthState {
   logout: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
+  canBroadcast: boolean;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthState>({
   logout: async () => {},
   isAuthenticated: false,
   isAdmin: false,
+  canBroadcast: false,
 });
 
 function readStoredRoles(): string[] {
@@ -92,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       isAuthenticated: !!token,
       isAdmin: roles.includes('ADMIN'),
+      canBroadcast: roles.includes('ADMIN') || roles.includes('BROADCAST_SENDER'),
     }),
     [token, username, roles, wecomViewerAuthToken, login, loginWithWeCom, logout],
   );

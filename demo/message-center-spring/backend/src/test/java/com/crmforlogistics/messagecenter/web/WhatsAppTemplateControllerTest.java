@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateApplicationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService.OperationHistoryView;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService.OperationView;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService.TemplatePageView;
@@ -29,6 +30,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateRemarkService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -82,8 +84,10 @@ class WhatsAppTemplateControllerTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper objectMapper;
     @MockitoBean WhatsAppTemplateApplicationService templateService;
+    @MockitoBean PublicTemplateApplicationService publicTemplateService;
     @MockitoBean WhatsAppTemplateReconciliationService reconciliationService;
     @MockitoBean WhatsAppTemplateMediaUploadService mediaUploadService;
+    @MockitoBean WhatsAppTemplateRemarkService remarkService;
     @MockitoBean ChatAppTemplateService salesTemplateService;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -140,6 +144,8 @@ class WhatsAppTemplateControllerTest {
                 eq(false), eq("permission-1"), eq(ADMIN_ID), any())).thenReturn(operation);
         when(templateService.delete(eq(ACCOUNT_ID), eq("delivery_update"), eq("en_US"),
                 eq("delete-1"), eq(ADMIN_ID), any())).thenReturn(operation);
+        when(remarkService.update(eq(ACCOUNT_ID), eq("delivery_update"), eq("en_US"),
+                eq("delivery remark"), eq(ADMIN_ID), any())).thenReturn(templateView());
         when(mediaUploadService.upload(eq(ACCOUNT_ID), eq(HeaderFormat.IMAGE), any(), eq(3L),
                 eq("header.png"), eq("image/png"), eq("upload-management"), eq(ADMIN_ID), any()))
                 .thenReturn(new UploadResult(uploadedView("upload-management", MediaAssetStatus.UPLOADED), true));
@@ -149,7 +155,7 @@ class WhatsAppTemplateControllerTest {
         List<RequestBuilder> requests = managementWriteRequests();
         for (int index = 0; index < requests.size(); index++) {
             var action = mvc.perform(requests.get(index)).andExpect(status().is2xxSuccessful());
-            if (index < 4) {
+            if (index < 5 && index != 3) {
                 action.andExpect(jsonPath("$.traceId").isNotEmpty());
             }
         }
@@ -176,6 +182,9 @@ class WhatsAppTemplateControllerTest {
                         .param("deleted", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].templateCode").value("delivery_update"))
+                .andExpect(jsonPath("$.items[0].name").value("delivery"))
+                .andExpect(jsonPath("$.items[0].remark").value("发货提醒"))
+                .andExpect(jsonPath("$.items[0].displayName").value("发货提醒（delivery）"))
                 .andExpect(jsonPath("$.items[0].rejectionReason").value("BODY_NOT_ALLOWED"))
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.page").value(2))
@@ -194,6 +203,9 @@ class WhatsAppTemplateControllerTest {
         mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}",
                         ACCOUNT_ID, "delivery_update").param("language", "en_US"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("delivery"))
+                .andExpect(jsonPath("$.remark").value("发货提醒"))
+                .andExpect(jsonPath("$.displayName").value("发货提醒（delivery）"))
                 .andExpect(jsonPath("$.components[0].type").value("BODY"));
 
         mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/operations",
@@ -202,6 +214,25 @@ class WhatsAppTemplateControllerTest {
                 .andExpect(jsonPath("$[0].operationId").value(OPERATION_ID.toString()))
                 .andExpect(jsonPath("$[0].errorCode").value("PROVIDER_REJECTED"))
                 .andExpect(jsonPath("$[0].providerRequestId").doesNotExist());
+    }
+
+    @Test
+    @WithMockUser(username = ADMIN_ID_TEXT, roles = "ADMIN")
+    void adminUpdatesRemarkAndReceivesCanonicalTemplateProjection() throws Exception {
+        when(remarkService.update(eq(ACCOUNT_ID), eq("tpl-1"), eq("zh_CN"), eq("发货提醒"),
+                eq(ADMIN_ID), any())).thenReturn(templateView());
+
+        mvc.perform(put(BASE + "/templates/tpl-1/remark")
+                        .param("language", "zh_CN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"remark\":\"发货提醒\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("delivery"))
+                .andExpect(jsonPath("$.remark").value("发货提醒"))
+                .andExpect(jsonPath("$.displayName").value("发货提醒（delivery）"));
+
+        verify(remarkService).update(eq(ACCOUNT_ID), eq("tpl-1"), eq("zh_CN"), eq("发货提醒"),
+                eq(ADMIN_ID), any());
     }
 
     @Test
@@ -405,7 +436,7 @@ class WhatsAppTemplateControllerTest {
         account.setAuthStatus("active");
         when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
         when(mapper.selectCount(any())).thenReturn(51L);
-        when(mapper.selectList(any(QueryWrapper.class))).thenReturn(List.<TemplateEntity>of());
+        when(mapper.selectList(any())).thenReturn(List.of());
         WhatsAppTemplateApplicationService owner = new WhatsAppTemplateApplicationService(
                 accountMapper, operationMapper, mediaMapper, mapper, auditMapper,
                 mock(WhatsAppTemplateGateway.class), mock(WhatsAppTemplateValidator.class),
@@ -415,10 +446,10 @@ class WhatsAppTemplateControllerTest {
                 null, null, null, null);
 
         assertEquals(51, page.total());
-        var countQuery = org.mockito.ArgumentCaptor.forClass(QueryWrapper.class);
+        var countQuery = org.mockito.ArgumentCaptor.<QueryWrapper<TemplateEntity>>captor();
         verify(mapper).selectCount(countQuery.capture());
         assertTrue(!countQuery.getValue().getCustomSqlSegment().contains("ORDER BY"));
-        var query = org.mockito.ArgumentCaptor.forClass(QueryWrapper.class);
+        var query = org.mockito.ArgumentCaptor.<QueryWrapper<TemplateEntity>>captor();
         verify(mapper).selectList(query.capture());
         assertTrue(query.getValue().getCustomSqlSegment().contains("ORDER BY updated_at DESC"));
         assertTrue(query.getValue().getCustomSqlSegment().contains("LIMIT 25 OFFSET 25"));
@@ -467,6 +498,11 @@ class WhatsAppTemplateControllerTest {
                         .param("language", "en_US")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"allowSend\":false,\"clientRequestId\":\"permission-1\"}"),
+                put("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}/remark",
+                        ACCOUNT_ID, "delivery_update")
+                        .param("language", "en_US")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"remark\":\"delivery remark\"}"),
                 delete("/api/v1/channel-accounts/{accountId}/whatsapp/templates/{templateCode}",
                         ACCOUNT_ID, "delivery_update")
                         .param("language", "en_US")
@@ -486,20 +522,22 @@ class WhatsAppTemplateControllerTest {
 
     private static String createJson() {
         return "{\"name\":\"delivery\",\"language\":\"en_US\",\"category\":\"UTILITY\","
-                + "\"components\":[{\"type\":\"BODY\",\"text\":\"Hello {{customer}}\"}],"
+                + "\"components\":[{\"type\":\"BODY\",\"text\":\"Hello $(customer)\"}],"
                 + "\"examples\":{\"customer\":[\"Ada\"]},\"clientRequestId\":\"create-1\"}";
     }
 
     private static String updateJson() {
         return "{\"name\":\"delivery\",\"category\":\"UTILITY\","
-                + "\"components\":[{\"type\":\"BODY\",\"text\":\"Updated {{customer}}\"}],"
+                + "\"components\":[{\"type\":\"BODY\",\"text\":\"Updated $(customer)\"}],"
                 + "\"examples\":{\"customer\":[\"Ada\"]},\"clientRequestId\":\"modify-1\"}";
     }
 
     private static TemplateView templateView() {
-        return new TemplateView(TEMPLATE_ID, ACCOUNT_ID, "delivery_update", "delivery", "en_US", "UTILITY",
-                "REJECTED", "fail", "BODY_NOT_ALLOWED", false,
-                List.of(new TemplateComponent(ComponentType.BODY, null, "Hello {{customer}}", null, List.of())),
+        return new TemplateView(TEMPLATE_ID, ACCOUNT_ID, "delivery_update", "delivery", "发货提醒",
+                "发货提醒（delivery）", "en_US", "UTILITY",
+                "REJECTED", "fail", "BODY_NOT_ALLOWED", false, true,
+                "FAILED", "CAMS 暂时不可用",
+                List.of(new TemplateComponent(ComponentType.BODY, null, "Hello $(customer)", null, List.of())),
                 Map.of("customer", List.of("Ada")), null, "GREEN", NOW, NOW, null);
     }
 

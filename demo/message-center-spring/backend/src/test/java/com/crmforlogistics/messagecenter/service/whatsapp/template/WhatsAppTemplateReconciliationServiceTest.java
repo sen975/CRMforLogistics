@@ -42,6 +42,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -169,6 +170,32 @@ class WhatsAppTemplateReconciliationServiceTest {
     }
 
     @Test
+    void providerDetailSyncPreservesLocalRemark() {
+        TemplateEntity existing = template("tpl-1", "APPROVED",
+                "[{\"type\":\"BODY\",\"text\":\"Old body\"}]");
+        existing.setName("old_official_name");
+        existing.setBody("Old body");
+        existing.setRemark("发货提醒");
+        when(templateMapper.selectList(any())).thenReturn(List.of(existing));
+        when(gateway.list(ACCOUNT_ID, 1, 100)).thenReturn(new ProviderTemplatePage(
+                List.of(summary("tpl-1", "new_official_name", "pending")), 1, false));
+        TemplateSnapshot providerDetail = new TemplateSnapshot(ACCOUNT_ID, "tpl-1", "new_official_name",
+                "en_US", "UTILITY", ReviewStatus.PENDING, "pending", null, false,
+                List.of(new TemplateComponent(ComponentType.BODY, null, "New body", null, List.of())),
+                Map.of(), null, NOW, null);
+        when(gateway.detail(ACCOUNT_ID, "tpl-1", "en_US")).thenReturn(Optional.of(providerDetail));
+
+        service.syncAccount(ACCOUNT_ID);
+
+        ArgumentCaptor<TemplateEntity> updated = ArgumentCaptor.forClass(TemplateEntity.class);
+        verify(templateMapper).updateById(updated.capture());
+        assertThat(updated.getValue().getName()).isEqualTo("new_official_name");
+        assertThat(updated.getValue().getBody()).isEqualTo("New body");
+        assertThat(updated.getValue().getStatus()).isEqualTo("PENDING");
+        assertThat(updated.getValue().getRemark()).isEqualTo("发货提醒");
+    }
+
+    @Test
     void mismatchedDetailCannotMoveAProjectionAcrossAccounts() {
         UUID otherAccount = UUID.randomUUID();
         TemplateEntity existing = template("tpl-1", "APPROVED", "[{\"type\":\"BODY\",\"text\":\"old\"}]");
@@ -262,6 +289,21 @@ class WhatsAppTemplateReconciliationServiceTest {
         verify(operationMapper).markUnknown(eq(operation.getId()), eq("RECONCILIATION_AMBIGUOUS"), any(), any());
         verify(mediaMapper, never()).markAttached(any(), any());
         verify(mediaMapper, never()).markOrphaned(any());
+    }
+
+    @Test
+    void retiredOperationIsIgnoredWithoutMutationWhenEncounteredByReconciliation() {
+        TemplateOperationEntity operation = retiredOperation();
+        when(operationMapper.claimUnknown("worker-1", NOW, NOW.plusSeconds(120), 20))
+                .thenReturn(List.of(operation));
+
+        int resolved = service.reconcileUnknown("worker-1");
+
+        assertThat(resolved).isZero();
+        verifyNoInteractions(gateway);
+        verify(operationMapper, never()).markSucceeded(any(), any(), any(), any());
+        verify(operationMapper, never()).markUnknown(any(), any(), any(), any());
+        verify(operationMapper, never()).markFailed(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -428,6 +470,20 @@ class WhatsAppTemplateReconciliationServiceTest {
         operation.setProviderTemplateId(templateCode);
         operation.setLanguageCode("en_US");
         operation.setRequestedSnapshotJsonb(objectMapper.writeValueAsString(command));
+        operation.setReconcileAttemptCount(1);
+        operation.setStartedAt(NOW.minusSeconds(60));
+        return operation;
+    }
+
+    private TemplateOperationEntity retiredOperation() {
+        TemplateOperationEntity operation = new TemplateOperationEntity();
+        operation.setId(UUID.randomUUID());
+        operation.setChannelAccountId(ACCOUNT_ID);
+        operation.setOperationType("RETIRED");
+        operation.setOperationStatus("SUBMISSION_UNKNOWN");
+        operation.setProviderTemplateId("retired-template");
+        operation.setLanguageCode("en_US");
+        operation.setRequestedSnapshotJsonb("{}");
         operation.setReconcileAttemptCount(1);
         operation.setStartedAt(NOW.minusSeconds(60));
         return operation;

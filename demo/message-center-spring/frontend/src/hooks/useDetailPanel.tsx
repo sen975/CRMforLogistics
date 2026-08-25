@@ -13,6 +13,9 @@ interface DetailPanelContextType {
   detailPanelOpen: boolean;
   setDetailPanelOpen: (open: boolean) => void;
   toggleDetailPanel: () => void;
+  selectedChannel: string | null;
+  selectChannel: (channelType: string) => void;
+  clearChannel: () => void;
 }
 
 const DetailPanelContext = createContext<DetailPanelContextType>({
@@ -23,11 +26,15 @@ const DetailPanelContext = createContext<DetailPanelContextType>({
   detailPanelOpen: false,
   setDetailPanelOpen: () => {},
   toggleDetailPanel: () => {},
+  selectedChannel: null,
+  selectChannel: () => {},
+  clearChannel: () => {},
 });
 
 export function DetailPanelProvider({ children }: { children: ReactNode }) {
   const [selectedDetail, setSelectedDetail] = useState<DetailSelection>(null);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
 
   const selectMessage = useCallback((id: string | null) => {
     setSelectedDetail(id ? { kind: 'message', id } : null);
@@ -47,6 +54,14 @@ export function DetailPanelProvider({ children }: { children: ReactNode }) {
     setDetailPanelOpen((open) => !open);
   }, []);
 
+  const selectChannel = useCallback((channelType: string) => {
+    setSelectedChannel(channelType);
+  }, []);
+
+  const clearChannel = useCallback(() => {
+    setSelectedChannel(null);
+  }, []);
+
   return (
     <DetailPanelContext.Provider
       value={{
@@ -57,6 +72,9 @@ export function DetailPanelProvider({ children }: { children: ReactNode }) {
         detailPanelOpen,
         setDetailPanelOpen,
         toggleDetailPanel,
+        selectedChannel,
+        selectChannel,
+        clearChannel,
       }}
     >
       {children}

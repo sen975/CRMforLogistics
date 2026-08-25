@@ -62,7 +62,8 @@ class WeComCredentialMigrationServiceTest {
     @Test
     void skipsAlreadyEncryptedRowsWithoutReplacingThem() {
         when(mapper.nextInstallations(null, 200))
-                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, "envelope")), List.of());
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, "envelope")))
+                .thenReturn(List.of());
         when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
         when(protector.isEnvelope("envelope")).thenReturn(true);
         when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);

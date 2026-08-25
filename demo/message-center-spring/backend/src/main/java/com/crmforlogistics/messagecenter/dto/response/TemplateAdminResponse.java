@@ -14,12 +14,17 @@ public record TemplateAdminResponse(
         UUID accountId,
         String templateCode,
         String name,
+        String remark,
+        String displayName,
         String language,
         String category,
         String reviewStatus,
         String providerAuditStatus,
         String rejectionReason,
         boolean allowSend,
+        boolean desiredAllowSend,
+        String permissionSyncStatus,
+        String permissionSyncError,
         List<TemplateComponent> components,
         Map<String, List<String>> examples,
         Integer messageSendTtlSeconds,
@@ -29,9 +34,11 @@ public record TemplateAdminResponse(
         Instant deletedAt) {
 
     public static TemplateAdminResponse from(TemplateView view) {
-        return new TemplateAdminResponse(view.id(), view.accountId(), view.templateCode(), view.name(),
+        return new TemplateAdminResponse(view.id(), view.accountId(), view.templateCode(), view.name(), view.remark(),
+                view.displayName(),
                 view.language(), view.category(), view.reviewStatus(), view.providerAuditStatus(),
-                view.rejectionReason(), view.allowSend(), view.components(), view.examples(),
+                view.rejectionReason(), view.allowSend(), view.desiredAllowSend(),
+                view.permissionSyncStatus(), view.permissionSyncError(), view.components(), view.examples(),
                 view.messageSendTtlSeconds(), view.qualityScore(), view.providerUpdatedAt(),
                 view.lastSyncedAt(), view.deletedAt());
     }

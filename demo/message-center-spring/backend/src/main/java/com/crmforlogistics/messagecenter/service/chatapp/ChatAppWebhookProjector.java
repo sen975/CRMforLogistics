@@ -8,12 +8,16 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
+import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -37,6 +41,8 @@ public class ChatAppWebhookProjector {
     private final ConversationMapper conversationMapper;
     private final EventHub eventHub;
     private final ObjectMapper objectMapper;
+    private final ChatAppBroadcastRecipientMapper broadcastRecipientMapper;
+    private final ChatAppBroadcastMessageProjector broadcastMessageProjector;
 
     public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
                                    MessageMapper messageMapper,
@@ -45,7 +51,9 @@ public class ChatAppWebhookProjector {
                                    ContactMapper contactMapper,
                                    ConversationMapper conversationMapper,
                                    EventHub eventHub,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   ChatAppBroadcastRecipientMapper broadcastRecipientMapper,
+                                   ChatAppBroadcastMessageProjector broadcastMessageProjector) {
         this.channelEventMapper = Objects.requireNonNull(channelEventMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -54,6 +62,8 @@ public class ChatAppWebhookProjector {
         this.conversationMapper = Objects.requireNonNull(conversationMapper);
         this.eventHub = Objects.requireNonNull(eventHub);
         this.objectMapper = Objects.requireNonNull(objectMapper);
+        this.broadcastRecipientMapper = Objects.requireNonNull(broadcastRecipientMapper);
+        this.broadcastMessageProjector = Objects.requireNonNull(broadcastMessageProjector);
     }
 
     @Transactional
@@ -85,6 +95,9 @@ public class ChatAppWebhookProjector {
                                String status, JsonNode root) {
         Optional<MessageEntity> existing = messageMapper.findByProviderMessageId(
                 event.getChannelAccountId(), providerMessageId);
+        if (existing.isEmpty() && projectBroadcastStatus(event, providerMessageId, status, root)) {
+            return;
+        }
         boolean imported = existing.isEmpty();
         MessageEntity message = existing.orElseGet(
                 () -> importOutboundHistory(event, providerMessageId, status, root));
@@ -109,6 +122,51 @@ public class ChatAppWebhookProjector {
         statusEventMapper.insertIgnore(statusEvent);
     }
 
+    private boolean projectBroadcastStatus(ChannelEventEntity event,
+                                           String providerMessageId,
+                                           String status,
+                                           JsonNode root) {
+        String recipientNumber = ContactPointUtil.normalizePhone(field(
+                root, "To", "to", "recipient", "userNumber"));
+        if (recipientNumber.isBlank()) return false;
+        var matches = broadcastRecipientMapper.findByGroupMessageIdAndNumber(
+                event.getChannelAccountId(), providerMessageId, recipientNumber, 2);
+        if (matches.isEmpty()) return false;
+        if (matches.size() > 1) {
+            throw new IllegalStateException("CHATAPP_BROADCAST_STATUS_RECIPIENT_AMBIGUOUS");
+        }
+        var recipient = matches.get(0);
+        RecipientStatus recipientStatus = recipientStatus(status);
+        ReconciliationItem item = new ReconciliationItem(
+                0,
+                recipientNumber,
+                providerMessageId,
+                field(root, "UniqueMessageId", "uniqueMessageId", "UniqueId"),
+                recipientStatus,
+                field(root, "Status", "status", "messageStatus"),
+                field(root, "ErrorDescription", "errorDescription", "reason"),
+                event.getOccurredAt(),
+                "");
+        var result = broadcastMessageProjector.applyReconciliation(
+                recipient.getBroadcastId(), recipient.getId(), item,
+                event.getOccurredAt() == null ? Instant.now() : event.getOccurredAt());
+        if (result != null && result.diagnosticCode() != null
+                && !result.diagnosticCode().isBlank()) {
+            throw new IllegalStateException(result.diagnosticCode());
+        }
+        return true;
+    }
+
+    private static RecipientStatus recipientStatus(String status) {
+        return switch (status) {
+            case "sent", "submitted" -> RecipientStatus.SENT;
+            case "delivered" -> RecipientStatus.DELIVERED;
+            case "read" -> RecipientStatus.READ;
+            case "failed" -> RecipientStatus.FAILED_RECIPIENT;
+            default -> RecipientStatus.PROCESSING;
+        };
+    }
+
     private MessageEntity importOutboundHistory(ChannelEventEntity event,
                                                 String providerMessageId,
                                                 String status,
@@ -122,7 +180,8 @@ public class ChatAppWebhookProjector {
         if (normalized.isBlank()) {
             throw new IllegalArgumentException("CHATAPP_OUTBOUND_RECIPIENT_REQUIRED");
         }
-        ContactIdentityEntity identity = findOrCreateIdentity(normalized, recipient);
+        ContactIdentityEntity identity = findOrCreateIdentity(
+                event.getChannelAccountId(), normalized, recipient);
         ConversationEntity conversation = conversationMapper.getOrCreateConversation(
                 event.getChannelAccountId(), identity.getId());
         Instant occurredAt = event.getOccurredAt() == null ? Instant.now() : event.getOccurredAt();
@@ -164,7 +223,11 @@ public class ChatAppWebhookProjector {
         if (normalized.isBlank()) {
             throw new IllegalArgumentException("CHATAPP_WEBHOOK_SENDER_REQUIRED");
         }
-        ContactIdentityEntity identity = findOrCreateIdentity(normalized, from);
+        String displayName = field(root, "ContactName", "contactName", "contact_name",
+                "Name", "FromUserName", "fromUserName");
+        ContactIdentityEntity identity = findOrCreateIdentity(
+                event.getChannelAccountId(), normalized,
+                displayName.isBlank() ? from : displayName);
         ConversationEntity conversation = conversationMapper.getOrCreateConversation(
                 event.getChannelAccountId(), identity.getId());
         Instant occurredAt = Instant.now();
@@ -195,17 +258,21 @@ public class ChatAppWebhookProjector {
         return false;
     }
 
-    private ContactIdentityEntity findOrCreateIdentity(String normalized, String display) {
+    private ContactIdentityEntity findOrCreateIdentity(UUID channelAccountId,
+                                                       String normalized,
+                                                       String display) {
+        String identityScope = channelAccountId.toString();
         Optional<ContactIdentityEntity> existing =
-                contactIdentityMapper.findByNormalizedValue("chatapp", normalized);
-        if (existing.isEmpty()) {
-            existing = contactIdentityMapper.findByNormalizedValue("whatsapp", normalized);
+                contactIdentityMapper.findByNormalizedValueInScope(
+                        "chatapp", identityScope, normalized);
+        if (existing.isPresent()) {
+            return backfillDisplayName(existing.get(), normalized, display);
         }
-        if (existing.isPresent()) return existing.get();
 
+        String resolvedDisplay = display == null || display.isBlank() ? normalized : display;
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
-        contact.setDisplayName(display == null || display.isBlank() ? normalized : display);
+        contact.setDisplayName(resolvedDisplay);
         contact.setStatus("active");
         contactMapper.insert(contact);
 
@@ -213,14 +280,30 @@ public class ChatAppWebhookProjector {
         identity.setId(UUID.randomUUID());
         identity.setContactId(contact.getId());
         identity.setChannelType("chatapp");
-        identity.setIdentityScope("phone");
+        identity.setIdentityScope(identityScope);
         identity.setIdentityValue(normalized);
         identity.setNormalizedValue(normalized);
-        identity.setDisplayName(display);
+        identity.setDisplayName(resolvedDisplay);
         identity.setIsPrimary(true);
         identity.setVerifyStatus("unverified");
         identity.setSource("synced");
         contactIdentityMapper.insert(identity);
+        return identity;
+    }
+
+    private ContactIdentityEntity backfillDisplayName(ContactIdentityEntity identity,
+                                                      String normalized,
+                                                      String display) {
+        if (display == null || display.isBlank() || display.equals(normalized)) {
+            return identity;
+        }
+        String current = identity.getDisplayName();
+        if (current != null && !current.isBlank() && !current.equals(normalized)) {
+            return identity;
+        }
+        identity.setDisplayName(display);
+        contactIdentityMapper.updateDisplayName(identity.getId(), display);
+        contactMapper.updateDisplayName(identity.getContactId(), display);
         return identity;
     }
 

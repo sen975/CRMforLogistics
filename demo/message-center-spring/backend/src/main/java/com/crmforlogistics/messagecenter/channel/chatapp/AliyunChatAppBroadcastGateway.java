@@ -270,13 +270,6 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
         return "";
     }
 
-    private static String firstNonBlank(String... values) {
-        for (String candidate : values) {
-            if (candidate != null && !candidate.isBlank()) return candidate.trim();
-        }
-        return "";
-    }
-
     private static ChatAppBroadcastException invalid(
             String code, String providerCode, String requestId, String message) {
         return new ChatAppBroadcastException(code, HttpStatus.BAD_GATEWAY,

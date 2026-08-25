@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateButton;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
+import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -15,11 +16,16 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Component
 public class WhatsAppTemplateValidator {
     private static final int MAX_BODY_LENGTH = 1_024;
     private static final int MAX_HEADER_OR_FOOTER_LENGTH = 60;
     private static final int MAX_BUTTONS = 10;
-    private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\{\\{\\s*([A-Za-z][A-Za-z0-9_]*)\\s*}}");
+    private static final Pattern VARIABLE_PATTERN = Pattern.compile(
+            "\\$\\(\\s*([A-Za-z][A-Za-z0-9_]*)\\s*\\)");
+    private static final Pattern UNSUPPORTED_VARIABLE_PATTERN = Pattern.compile(
+            "\\{\\{\\s*[A-Za-z][A-Za-z0-9_]*\\s*}}"
+                    + "|\\$\\{\\s*[A-Za-z][A-Za-z0-9_]*\\s*}");
 
     public TemplateCommand validate(TemplateCommand command) {
         Map<String, String> errors = new LinkedHashMap<>();
@@ -59,6 +65,8 @@ public class WhatsAppTemplateValidator {
             errors.put("body.text", "is required");
         } else if (body.text().length() > MAX_BODY_LENGTH) {
             errors.put("body.text", "must not exceed 1024 characters");
+        } else {
+            validateVariableSyntax(body.text(), "body.text", errors);
         }
     }
 
@@ -97,6 +105,14 @@ public class WhatsAppTemplateValidator {
             errors.put(field, "is required");
         } else if (text.length() > MAX_HEADER_OR_FOOTER_LENGTH) {
             errors.put(field, "must not exceed 60 characters");
+        } else {
+            validateVariableSyntax(text, field, errors);
+        }
+    }
+
+    private void validateVariableSyntax(String text, String field, Map<String, String> errors) {
+        if (UNSUPPORTED_VARIABLE_PATTERN.matcher(text).find()) {
+            errors.put(field, "variables must use $(name) syntax");
         }
     }
 

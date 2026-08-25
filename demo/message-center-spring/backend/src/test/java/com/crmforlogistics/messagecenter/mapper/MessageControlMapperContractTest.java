@@ -11,6 +11,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MessageControlMapperContractTest {
     @Test
+    void templateOperationClaimNeverPicksRetiredOperations() throws Exception {
+        String sql = String.join(" ", TemplateOperationMapper.class
+                .getMethod("claimUnknown", String.class, Instant.class, Instant.class, int.class)
+                .getAnnotation(Select.class).value());
+
+        assertThat(sql)
+                .contains("operation_status = 'SUBMISSION_UNKNOWN'")
+                .contains("operation_type <> 'RETIRED'");
+    }
+
+    @Test
     void outboxDoesNotReclaimUnknownProviderSubmissions() throws Exception {
         String outboxSql = String.join(" ", OutboxJobMapper.class
                 .getMethod("claimDue", String.class, Instant.class, int.class)

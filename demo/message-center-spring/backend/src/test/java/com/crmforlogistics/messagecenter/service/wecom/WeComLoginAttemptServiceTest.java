@@ -50,10 +50,11 @@ class WeComLoginAttemptServiceTest {
                 Clock.systemUTC(), () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NO_OP_AUDIT);
 
         WeComLoginAttemptService.LoginAttemptResponse first = service.createAttempt();
-        assertEquals("ServiceApp", first.loginType());
-        assertEquals("ww-login-suite", first.appId());
+        assertEquals("CorpApp", first.loginType());
+        assertEquals("ww-test-corp", first.appId());
         assertEquals("https://crm.example.com/", first.redirectUri());
         assertEquals(30, first.expiresIn());
+        assertEquals("1000247", first.agentId());
 
         WeComLoginAttemptService.InstallationBinding binding = service.consume(first.state());
         assertEquals("dk-test-suite", binding.suiteId());
@@ -98,8 +99,6 @@ class WeComLoginAttemptServiceTest {
     void rejectsMissingLoginAuthCorpId() {
         when(config.wecomSuiteId()).thenReturn("dk-test-suite");
         when(config.wecomLoginAuthCorpId()).thenReturn("");
-        when(config.wecomLoginSuiteId()).thenReturn("ww-login-suite");
-        when(config.wecomLoginSuiteSecret()).thenReturn("login-suite-secret");
 
         WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, installationService,
                 Clock.systemUTC(), () -> "cccccccccccccccccccccccccccccccc", NO_OP_AUDIT);
@@ -193,8 +192,6 @@ class WeComLoginAttemptServiceTest {
     private void stubConfig(int maxPending) {
         when(config.wecomSuiteId()).thenReturn("dk-test-suite");
         when(config.wecomLoginAuthCorpId()).thenReturn("ww-test-corp");
-        when(config.wecomLoginSuiteId()).thenReturn("ww-login-suite");
-        when(config.wecomLoginSuiteSecret()).thenReturn("login-suite-secret");
         when(config.wecomLoginRedirectUri()).thenReturn("https://crm.example.com/");
         when(config.wecomLoginAttemptTtlSeconds()).thenReturn(30);
         when(config.wecomLoginMaxPending()).thenReturn(maxPending);

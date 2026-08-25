@@ -89,6 +89,12 @@
             <artifactId>alibabacloud-cams20200606</artifactId>
             <version>5.0.5</version>
         </dependency>
+        <!-- Official generic OpenAPI client for CAMS actions not present in the pinned generated SDK. -->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>tea-openapi</artifactId>
+            <version>0.3.15</version>
+        </dependency>
 
         <!-- Argon2 password hasher -->
         <dependency>
@@ -133,6 +139,7 @@
     </dependencies>
 
     <build>
+        <finalName>message-center</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
@@ -147,4 +154,20 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>production</id>
+            <build>
+                <resources>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                        <excludes>
+                            <exclude>application-dev.yml</exclude>
+                        </excludes>
+                    </resource>
+                </resources>
+            </build>
+        </profile>
+    </profiles>
 </project>

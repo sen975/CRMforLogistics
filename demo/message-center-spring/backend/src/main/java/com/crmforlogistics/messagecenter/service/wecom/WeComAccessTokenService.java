@@ -67,5 +67,10 @@ public class WeComAccessTokenService {
         return response.accessToken();
     }
 
+    public void invalidate(ResolvedInstallation installation) {
+        if (installation == null) return;
+        tokens.remove(installation.installationId() + ":" + installation.version());
+    }
+
     private record CachedToken(String value, long expiresAtEpochSecond) {}
 }

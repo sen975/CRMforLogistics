@@ -59,7 +59,9 @@ class MessageSendApplicationServiceTest {
         existing.setClientRequestId("request-1");
         existing.setCurrentStatus("pending");
         when(messageMapper.findByClientRequestId(accountId, "request-1"))
-                .thenReturn(Optional.empty(), Optional.empty(), Optional.of(existing));
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(existing));
         when(messageMapper.insertWithSequence(any())).thenAnswer(invocation -> {
             MessageEntity inserted = invocation.getArgument(0);
             inserted.setId(existing.getId());
@@ -156,11 +158,12 @@ class MessageSendApplicationServiceTest {
         when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
                 .thenReturn(conversation);
         when(messageMapper.findByClientRequestId(accountId, "request-template"))
-                .thenReturn(java.util.Optional.empty(), java.util.Optional.empty());
+                .thenReturn(java.util.Optional.empty())
+                .thenReturn(java.util.Optional.empty());
 
         TemplateEntity template = new TemplateEntity();
         template.setChannelAccountId(accountId);
-        template.setBody("Hello {{customer}}, your order {{orderNo}} is ready.");
+        template.setBody("Hello $(customer), your order $(orderNo) is ready.");
         template.setStatus("APPROVED");
         template.setAllowSend(true);
         when(templateMapper.findForSend(accountId, "order_ready", "en_US"))
@@ -193,7 +196,8 @@ class MessageSendApplicationServiceTest {
         when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
                 .thenReturn(conversation);
         when(messageMapper.findByClientRequestId(accountId, "request-missing-template"))
-                .thenReturn(Optional.empty(), Optional.empty());
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.empty());
         when(templateMapper.findForSend(accountId, "missing_template", "en_US"))
                 .thenReturn(Optional.empty());
 
@@ -225,10 +229,11 @@ class MessageSendApplicationServiceTest {
         when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
                 .thenReturn(conversation);
         when(messageMapper.findByClientRequestId(accountId, "request-suspended-template"))
-                .thenReturn(Optional.empty(), Optional.empty());
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.empty());
         TemplateEntity suspended = new TemplateEntity();
         suspended.setChannelAccountId(accountId);
-        suspended.setBody("Hello {{customer}}");
+        suspended.setBody("Hello $(customer)");
         suspended.setStatus("SUSPENDED");
         suspended.setAllowSend(true);
         when(templateMapper.findForSend(accountId, "order_ready", "en_US"))

@@ -24,7 +24,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -73,7 +75,7 @@ public class ThreadService {
         record IdentityChannelPair(ContactIdentityEntity identity, ChannelAccountEntity channelAccount) {}
         List<IdentityChannelPair> pairs = new ArrayList<>();
         for (ContactIdentityEntity ci : identities) {
-            ChannelAccountEntity ca = findChannelAccount(ci.getChannelType());
+            ChannelAccountEntity ca = findChannelAccount(ci);
             if (ca != null) {
                 pairs.add(new IdentityChannelPair(ci, ca));
             }
@@ -90,6 +92,11 @@ public class ThreadService {
                     pair.channelAccount().getId(), pair.identity().getId());
             conversationIds.add(conversation.getId());
             identityByConv.put(conversation.getId(), pair);
+        }
+        if ("wecom".equalsIgnoreCase(channelType) || channelType == null || channelType.isBlank()) {
+            for (ConversationEntity source : conversationMapper.listAccessibleWeComSourceForContact(contactId, userId)) {
+                if (!conversationIds.contains(source.getId())) conversationIds.add(source.getId());
+            }
         }
 
         // 4. Decode cursor: base64 "{occurredAt}:{messageId}"
@@ -108,30 +115,63 @@ public class ThreadService {
         // SQL returns DESC (newest first); reverse to chronological (oldest first)
         java.util.Collections.reverse(items);
 
-        // 6. Build MessageResponse records
+        // 6. Fetch ready attachments once for the bounded message page.
+        Map<UUID, List<MessageAttachmentResponse>> attachmentsByMessageId = new LinkedHashMap<>();
+        if (!items.isEmpty()) {
+            List<UUID> messageIds = items.stream().map(MessageEntity::getId).toList();
+            attachmentMapper.listReadyByMessageIds(messageIds).forEach(attachment ->
+                    attachmentsByMessageId
+                            .computeIfAbsent(attachment.getMessageId(), ignored -> new ArrayList<>())
+                            .add(MessageAttachmentResponse.from(attachment)));
+        }
+
+        // 7. Build MessageResponse records
         List<MessageResponse> messageResponses = new ArrayList<>();
         for (MessageEntity entity : items) {
             IdentityChannelPair pair = identityByConv.get(entity.getConversationId());
             if (pair != null) {
-                messageResponses.add(toMessageResponse(entity, pair.channelAccount(), pair.identity()));
+                messageResponses.add(toMessageResponse(entity, pair.channelAccount(), pair.identity(),
+                        attachmentsByMessageId.getOrDefault(entity.getId(), List.of())));
+            } else {
+                ChannelAccountEntity account = channelAccountMapper.selectById(entity.getChannelAccountId());
+                if (account != null && "wecom".equalsIgnoreCase(account.getChannelType())) {
+                    messageResponses.add(toSourceMessageResponse(entity, account,
+                            attachmentsByMessageId.getOrDefault(entity.getId(), List.of())));
+                }
             }
         }
 
-        // 7. Encode next cursor from the oldest item in this page (first after reverse)
+        // 8. Encode next cursor from the oldest item in this page (first after reverse)
         String nextCursor = null;
         if (hasMore && !items.isEmpty()) {
             MessageEntity oldestItem = items.get(0);
             nextCursor = encodeCursor(oldestItem.getOccurredAt(), oldestItem.getId());
         }
 
-        // 8. Return ThreadResponse
+        // 9. Return ThreadResponse
         return new ThreadResponse(messageResponses, nextCursor, messageResponses.size(), "");
     }
 
-    private ChannelAccountEntity findChannelAccount(String channelType) {
+    private ChannelAccountEntity findChannelAccount(ContactIdentityEntity identity) {
+        String scope = identity.getIdentityScope();
+        if (scope != null && !scope.isBlank()) {
+            try {
+                UUID accountId = UUID.fromString(scope);
+                ChannelAccountEntity scoped = channelAccountMapper.selectById(accountId);
+                if (scoped != null
+                        && identity.getChannelType().equalsIgnoreCase(scoped.getChannelType())
+                        && "active".equalsIgnoreCase(scoped.getAuthStatus())
+                        && scoped.getDeletedAt() == null) {
+                    return scoped;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Email identities use a symbolic scope; only UUID scopes identify accounts.
+            }
+        }
         return channelAccountMapper.selectOne(
                 new LambdaQueryWrapper<ChannelAccountEntity>()
-                        .eq(ChannelAccountEntity::getChannelType, channelType)
+                        .eq(ChannelAccountEntity::getChannelType, identity.getChannelType())
+                        .eq(ChannelAccountEntity::getAuthStatus, "active")
                         .isNull(ChannelAccountEntity::getDeletedAt));
     }
 
@@ -144,7 +184,8 @@ public class ThreadService {
 
     private MessageResponse toMessageResponse(MessageEntity entity,
                                               ChannelAccountEntity channelAccount,
-                                              ContactIdentityEntity identity) {
+                                              ContactIdentityEntity identity,
+                                              List<MessageAttachmentResponse> attachments) {
         String channelType = channelAccount.getChannelType();
         String direction = entity.getDirection();
         boolean isInbound = "inbound".equals(direction);
@@ -165,10 +206,19 @@ public class ThreadService {
                 entity.getOccurredAt(),
                 entity.getCurrentStatus(),
                 entity.getIngestSequence() != null ? entity.getIngestSequence().intValue() : 0,
-                attachmentMapper.listReadyByMessageId(entity.getId()).stream()
-                        .map(MessageAttachmentResponse::from)
-                        .toList()
+                attachments
         );
+    }
+
+    private MessageResponse toSourceMessageResponse(MessageEntity entity,
+                                                     ChannelAccountEntity account,
+                                                     List<MessageAttachmentResponse> attachments) {
+        String display = channelAccountName(account);
+        return new MessageResponse(entity.getId(), entity.getProviderMessageId(), entity.getDirection(),
+                entity.getMessageKind(), entity.getSubject(), templateMessageTextResolver.resolve(entity),
+                entity.getBodyHtml(), account.getChannelType(), display, display, entity.getOccurredAt(),
+                entity.getCurrentStatus(), entity.getIngestSequence() != null
+                ? entity.getIngestSequence().intValue() : 0, attachments);
     }
 
     private static String identityValue(ContactIdentityEntity identity) {

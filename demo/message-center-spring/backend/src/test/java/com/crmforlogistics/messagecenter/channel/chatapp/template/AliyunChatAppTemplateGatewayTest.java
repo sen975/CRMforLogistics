@@ -91,6 +91,7 @@ class AliyunChatAppTemplateGatewayTest {
         assertThat(request.getValue().getCategory()).isEqualTo("UTILITY");
         assertThat(request.getValue().getCustSpaceId()).isEqualTo("cams-space");
         assertThat(request.getValue().getComponents()).hasSize(4);
+        assertThat(request.getValue().getComponents().get(1).getText()).isEqualTo("Hello $(customer)");
         assertThat(request.getValue().getComponents().get(3).getButtons())
                 .extracting(button -> button.getType()).containsExactly("QUICK_REPLY", "URL", "PHONE_NUMBER");
         assertThat(request.getValue().getComponents().get(3).getButtons().get(1).getUrl()).isEqualTo("https://example.test/{{1}}");
@@ -172,7 +173,7 @@ class AliyunChatAppTemplateGatewayTest {
                 .name("delivery_notice").language("en_US").category("UTILITY").auditStatus("pass")
                 .allowSend(true).components(List.of(
                         GetChatappTemplateDetailResponseBody.Components.builder()
-                                .type("BODY").text("Hello {{customer}}").build(),
+                                .type("BODY").text("Hello $(customer)").build(),
                         GetChatappTemplateDetailResponseBody.Components.builder().type("BUTTONS")
                                 .buttons(List.of(
                                         GetChatappTemplateDetailResponseBody.Buttons.builder()
@@ -303,7 +304,7 @@ class AliyunChatAppTemplateGatewayTest {
     private static TemplateCommand command() {
         return new TemplateCommand("delivery_notice", "en_US", "UTILITY", List.of(
                 new TemplateComponent(HEADER, HeaderFormat.TEXT, "Delivery update", null, List.of()),
-                new TemplateComponent(BODY, null, "Hello {{customer}}", null, List.of()),
+                new TemplateComponent(BODY, null, "Hello $(customer)", null, List.of()),
                 new TemplateComponent(FOOTER, null, "Reply STOP", null, List.of()),
                 new TemplateComponent(ComponentType.BUTTONS, null, null, null, List.of(
                         new TemplateButton(ButtonType.QUICK_REPLY, "Yes", null, null),

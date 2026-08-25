@@ -14,9 +14,13 @@ import java.util.UUID;
 @Mapper
 public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMessageEntity> {
 
-    @Insert("INSERT INTO wecom_chatdata_messages (msgid, secret_key, external_userid, userid, send_time, msgtype, direction) "
-            + "VALUES (#{msgid}, #{secretKey}, #{externalUserid}, #{userid}, #{sendTime}, #{msgtype}, #{direction}) "
-            + "ON CONFLICT (msgid, userid, external_userid) DO NOTHING")
+    @Insert("INSERT INTO wecom_chatdata_messages (id, installation_id, source_conversation_id, sender_party_id, "
+            + "receiver_party_ids, msgid, secret_key, external_userid, userid, send_time, msgtype, direction, ingest_status) "
+            + "VALUES (#{id}, #{installationId}, #{sourceConversationId}, #{senderPartyId}, "
+            + "CAST(COALESCE(#{receiverPartyIds}, '[]') AS jsonb), "
+            + "#{msgid}, #{secretKey}, #{externalUserid}, #{userid}, #{sendTime}, #{msgtype}, #{direction}, "
+            + "COALESCE(#{ingestStatus}, 'stored')) "
+            + "ON CONFLICT DO NOTHING")
     int insertIgnore(WeComChatDataMessageEntity entity);
 
     @Select("SELECT * FROM wecom_chatdata_messages WHERE send_time >= #{from} AND send_time < #{to} "
@@ -26,6 +30,62 @@ public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMess
     @Select("SELECT * FROM wecom_chatdata_messages WHERE external_userid = #{externalUserid} "
             + "ORDER BY send_time, msgid")
     List<WeComChatDataMessageEntity> findByExternalUserid(String externalUserid);
+
+    /**
+     * Includes migrated DIRECT/GROUP rows whose legacy userid column is null,
+     * but whose source conversation still records the viewer as an observed
+     * employee participant.
+     */
+    @Select("""
+            SELECT m.*
+            FROM wecom_chatdata_messages m
+            WHERE m.external_userid = #{externalUserid}
+              AND (
+                m.userid = #{wecomUserId}
+                OR EXISTS (
+                    SELECT 1
+                    FROM wecom_source_conversation_participants sp
+                    JOIN wecom_parties p ON p.id = sp.party_id
+                    WHERE sp.source_conversation_id = m.source_conversation_id
+                      AND sp.participant_status = 'OBSERVED'
+                      AND p.party_type = 'EMPLOYEE'
+                      AND p.provider_party_id = #{wecomUserId}
+                )
+              )
+            ORDER BY m.send_time, m.msgid
+            """)
+    List<WeComChatDataMessageEntity> findViewableByExternalUserid(
+            @Param("externalUserid") String externalUserid,
+            @Param("wecomUserId") String wecomUserId);
+
+    /** Resolves employee-to-employee/direct rows where legacy external_userid is null. */
+    @Select("""
+            SELECT m.*
+            FROM wecom_chatdata_messages m
+            WHERE m.source_conversation_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM wecom_source_conversation_participants contact_sp
+                  JOIN wecom_parties contact_party ON contact_party.id = contact_sp.party_id
+                  WHERE contact_sp.source_conversation_id = m.source_conversation_id
+                    AND contact_sp.participant_status = 'OBSERVED'
+                    AND contact_party.provider_party_id = #{contactPartyId}
+                    AND contact_party.party_type IN ('EMPLOYEE', 'EXTERNAL_CONTACT')
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM wecom_source_conversation_participants viewer_sp
+                  JOIN wecom_parties viewer_party ON viewer_party.id = viewer_sp.party_id
+                  WHERE viewer_sp.source_conversation_id = m.source_conversation_id
+                    AND viewer_sp.participant_status = 'OBSERVED'
+                    AND viewer_party.party_type = 'EMPLOYEE'
+                    AND viewer_party.provider_party_id = #{wecomUserId}
+              )
+            ORDER BY m.send_time, m.msgid
+            """)
+    List<WeComChatDataMessageEntity> findViewableByContactParty(
+            @Param("contactPartyId") String contactPartyId,
+            @Param("wecomUserId") String wecomUserId);
 
     @Select("""
             SELECT count(*) AS message_count,

@@ -19,6 +19,12 @@ public final class ChatAppMessageStatusNormalizer {
         if (normalized.contains("read")) return "read";
         if (normalized.contains("sent")) return "sent";
         if (normalized.contains("submit") || normalized.contains("accept")) return "submitted";
+        // CAMS ListChatappMessage uses the display value "Success" for a
+        // provider-accepted outbound message. It does not prove delivery.
+        if (normalized.equals("success") || normalized.equals("successful")
+                || normalized.equals("succeeded") || normalized.equals("ok")) {
+            return "submitted";
+        }
         if (normalized.contains("fail") || normalized.contains("reject")) return "failed";
         return "";
     }

@@ -12,8 +12,10 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Folder;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
@@ -26,10 +28,12 @@ import jakarta.mail.internet.MimeUtility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -46,6 +50,9 @@ public class EmailSyncService {
     private final ContactIdentityMapper contactIdentityMapper;
     private final ContactMapper contactMapper;
     private final EventHub eventHub;
+    private final CredentialCipher credentialCipher;
+    private final EmailMimeParser mimeParser = new EmailMimeParser();
+    private final EmailAttachmentStore attachmentStore;
 
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -53,6 +60,30 @@ public class EmailSyncService {
                             ContactIdentityMapper contactIdentityMapper,
                             ContactMapper contactMapper,
                             EventHub eventHub) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper,
+                contactIdentityMapper, contactMapper, eventHub, null);
+    }
+
+    public EmailSyncService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            ContactMapper contactMapper,
+                            EventHub eventHub,
+                            EmailAttachmentStore attachmentStore) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper,
+                contactIdentityMapper, contactMapper, eventHub, null, attachmentStore);
+    }
+
+    @Autowired
+    public EmailSyncService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            ContactMapper contactMapper,
+                            EventHub eventHub,
+                            CredentialCipher credentialCipher,
+                            EmailAttachmentStore attachmentStore) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -60,20 +91,26 @@ public class EmailSyncService {
         this.contactIdentityMapper = contactIdentityMapper;
         this.contactMapper = contactMapper;
         this.eventHub = eventHub;
+        this.credentialCipher = credentialCipher;
+        this.attachmentStore = attachmentStore;
     }
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
 
     public SyncResult receiveLatest() throws Exception {
+        EmailSyncSettings settings = resolveSettings();
         SyncResult result = new SyncResult("email", 0, 0, 0, "");
-        if (usesOpenSslImapFallback()) {
-            receiveLatestWithOpenSsl(result);
-            return new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
-                    "received " + result.saved() + " new email messages");
+        if (usesOpenSslImapFallback(settings)) {
+            SyncResult finalResult = receiveLatestWithOpenSsl(settings, result);
+            if (finalResult.saved() > 0) {
+                eventHub.publish("message-new", "{}");
+            }
+            return new SyncResult("email", finalResult.fetched(), finalResult.saved(), finalResult.skipped(),
+                    "received " + finalResult.saved() + " new email messages");
         }
-        try (Store store = connectStore()) {
-            receiveLatestFromFolder(store, config.inboxFolder(), "in", receiveLimit(), result);
-            receiveLatestFromFolder(store, config.sentFolder(), "out", receiveLimit(), result);
+        try (Store store = connectStore(settings)) {
+            result = receiveLatestFromFolder(store, settings.inboxFolder(), "in", settings.receiveLimit(), result);
+            result = receiveLatestFromFolder(store, settings.sentFolder(), "out", settings.receiveLimit(), result);
         }
         SyncResult finalResult = new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
                 "received " + result.saved() + " new email messages");
@@ -84,36 +121,45 @@ public class EmailSyncService {
     }
 
     boolean usesOpenSslImapFallback() {
-        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider()) && config.imap139UseOpenssl();
+        return usesOpenSslImapFallback(resolveSettings());
     }
 
-    private void receiveLatestWithOpenSsl(SyncResult result) throws Exception {
-        requireConfig("imapHost");
-        requireConfig("imapUser");
-        requireConfig("imapPassword");
-        OpenSslImapClient client = new OpenSslImapClient(config);
-        receiveLatestFromOpenSslFolder(client, config.inboxFolder(), "in", receiveLimit(), result);
-        receiveLatestFromOpenSslFolder(client, config.sentFolder(), "out", receiveLimit(), result);
+    private boolean usesOpenSslImapFallback(EmailSyncSettings settings) {
+        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider(settings)) && settings.imap139UseOpenssl();
     }
 
-    private void receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName,
-                                                 String direction, int limit, SyncResult result) throws Exception {
-        if (folderName == null || folderName.isBlank()) return;
-        for (Message message : client.fetchLatest(folderName, limit)) {
+    private SyncResult receiveLatestWithOpenSsl(EmailSyncSettings settings, SyncResult result) throws Exception {
+        logSettings(settings);
+        requireConfig(settings.imapHost(), "imapHost");
+        requireConfig(settings.imapUser(), "imapUser");
+        requireConfig(settings.imapPassword(), "imapPassword");
+        OpenSslImapClient client = new OpenSslImapClient(settings);
+        result = receiveLatestFromOpenSslFolder(client, settings.inboxFolder(), "in", settings.receiveLimit(), result);
+        return receiveLatestFromOpenSslFolder(client, settings.sentFolder(), "out", settings.receiveLimit(), result);
+    }
+
+    private SyncResult receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName,
+                                                       String direction, int limit, SyncResult result) throws Exception {
+        if (folderName == null || folderName.isBlank()) return result;
+        var messages = client.fetchLatest(folderName, limit);
+        result = new SyncResult("email", result.fetched() + messages.size(),
+                result.saved(), result.skipped(), result.message());
+        for (Message message : messages) {
             SyncResult updated = appendReceived(result, message, direction);
             result = updated;
         }
+        return result;
     }
 
-    private void receiveLatestFromFolder(Store store, String folderName, String direction,
-                                          int limit, SyncResult result) throws Exception {
-        if (folderName == null || folderName.isBlank()) return;
+    private SyncResult receiveLatestFromFolder(Store store, String folderName, String direction,
+                                                int limit, SyncResult result) throws Exception {
+        if (folderName == null || folderName.isBlank()) return result;
         Folder folder = store.getFolder(folderName);
-        if (!folder.exists()) return;
+        if (!folder.exists()) return result;
         folder.open(Folder.READ_ONLY);
         try {
             int count = folder.getMessageCount();
-            if (count == 0) return;
+            if (count == 0) return result;
             int start = Math.max(1, count - Math.max(1, limit) + 1);
             Message[] messages = folder.getMessages(start, count);
             result = new SyncResult("email", result.fetched() + messages.length,
@@ -122,6 +168,7 @@ public class EmailSyncService {
                 SyncResult updated = appendReceived(result, message, direction);
                 result = updated;
             }
+            return result;
         } finally {
             folder.close(false);
         }
@@ -138,17 +185,24 @@ public class EmailSyncService {
             String contactSource = "out".equals(normalizedDirection) ? to : from;
             String contactEmail = ContactPointUtil.extractEmail(contactSource);
             String subject = decodeMimeText(message.getSubject());
-            String bodyText = bodyText(message);
+            var parsed = mimeParser.parse(message);
+            String bodyText = parsed.bodyText();
             Instant sentDate = message.getSentDate() != null
                     ? message.getSentDate().toInstant() : Instant.now();
             String messageId = firstHeader(message, "Message-ID");
 
-            if (isDuplicate(messageId, normalizedDirection, subject, sentDate.toString(), contactEmail)) {
-                return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
-            }
-
             ChannelAccountEntity account = resolveEmailAccount();
             if (account == null) {
+                return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
+            }
+            Optional<MessageEntity> duplicate = findDuplicate(account.getId(), messageId, subject, sentDate);
+            if (duplicate.isPresent()) {
+                MessageEntity existing = duplicate.get();
+                if ((existing.getProviderMessageId() == null || existing.getProviderMessageId().isBlank())
+                        && messageId != null && !messageId.isBlank()) {
+                    messageMapper.updateProviderMessageId(existing.getId(), messageId);
+                }
+                repairAttachments(existing, parsed);
                 return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
             }
 
@@ -160,14 +214,28 @@ public class EmailSyncService {
             entity.setChannelAccountId(account.getId());
             entity.setConversationId(conversation.getId());
             entity.setDirection(normalizedDirection.equals("out") ? "outbound" : "inbound");
+            entity.setCountsAsUnread("in".equals(normalizedDirection));
             entity.setMessageKind("email");
+            entity.setProviderMessageId(messageId);
             entity.setSubject(subject);
             entity.setBodyText(bodyText);
             entity.setOccurredAt(sentDate);
             entity.setCurrentStatus("delivered");
             entity.setCurrentStatusAt(Instant.now());
-            entity.setIngestSequence(hashMessageId(messageId));
-            messageMapper.insert(entity);
+            messageMapper.insertWithSequence(entity);
+            if (attachmentStore != null && !parsed.attachments().isEmpty()) {
+                try {
+                    var payloads = new EmailAttachmentReader(
+                            config.emailAttachmentMaxCount(), config.emailAttachmentMaxTotalBytes())
+                            .readAvailable(parsed.attachments());
+                    attachmentStore.store(entity.getId(), payloads, true);
+                } catch (Exception attachmentError) {
+                    String code = attachmentError instanceof EmailException emailError
+                            ? emailError.code() : "EMAIL_ATTACHMENT_STORE_FAILED";
+                    log.warn("Email attachment persistence failed code={} messageId={}",
+                            code, entity.getId(), attachmentError);
+                }
+            }
 
             return new SyncResult("email", result.fetched(), result.saved() + 1, result.skipped(), result.message());
         } catch (Exception e) {
@@ -176,18 +244,36 @@ public class EmailSyncService {
         }
     }
 
-    private Long hashMessageId(String messageId) {
-        if (messageId == null || messageId.isBlank()) return System.nanoTime() & 0x7FFFFFFFFFFFFFFFL;
-        return (long) messageId.hashCode() & 0x7FFFFFFFFFFFFFFFL;
+    private Optional<MessageEntity> findDuplicate(UUID accountId, String messageId,
+                                                   String subject, Instant sentDate) {
+        if (messageId == null || messageId.isBlank()) return Optional.empty();
+        Optional<MessageEntity> current = messageMapper.findByProviderMessageId(accountId, messageId);
+        if (current.isPresent()) return current;
+
+        long legacySequence = (long) messageId.hashCode() & 0x7FFFFFFFFFFFFFFFL;
+        List<MessageEntity> legacy = messageMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MessageEntity>()
+                        .eq(MessageEntity::getChannelAccountId, accountId)
+                        .isNull(MessageEntity::getProviderMessageId)
+                        .eq(MessageEntity::getIngestSequence, legacySequence)
+                        .eq(MessageEntity::getSubject, subject)
+                        .eq(MessageEntity::getOccurredAt, sentDate));
+        return legacy.size() == 1 ? Optional.of(legacy.get(0)) : Optional.empty();
     }
 
-    private boolean isDuplicate(String messageId, String direction, String subject,
-                                 String sentDate, String contactEmail) {
-        if (messageId == null || messageId.isBlank()) return false;
-        List<MessageEntity> existing = messageMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MessageEntity>()
-                        .eq(MessageEntity::getIngestSequence, hashMessageId(messageId)));
-        return !existing.isEmpty();
+    private void repairAttachments(MessageEntity entity, EmailMimeParser.ParsedEmail parsed) {
+        if (attachmentStore == null || parsed.attachments().isEmpty()) return;
+        try {
+            var payloads = new EmailAttachmentReader(
+                    config.emailAttachmentMaxCount(), config.emailAttachmentMaxTotalBytes())
+                    .readAvailable(parsed.attachments());
+            attachmentStore.storeIfMissing(entity.getId(), payloads);
+        } catch (EmailException attachmentError) {
+            log.warn("Email attachment repair failed code={} messageId={}",
+                    attachmentError.code(), entity.getId());
+        } catch (Exception attachmentError) {
+            log.warn("Email attachment repair failed messageId={}", entity.getId(), attachmentError);
+        }
     }
 
     private ChannelAccountEntity resolveEmailAccount() {
@@ -223,6 +309,7 @@ public class EmailSyncService {
         identity.setUpdatedAt(Instant.now());
 
         ContactEntity contact = new ContactEntity();
+        contact.setId(UUID.randomUUID());
         contact.setDisplayName(ContactPointUtil.extractName(email, normalized));
         if (contact.getDisplayName() == null || contact.getDisplayName().isBlank()) {
             contact.setDisplayName(normalized);
@@ -237,6 +324,7 @@ public class EmailSyncService {
 
     private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized) {
         ContactEntity contact = new ContactEntity();
+        contact.setId(UUID.randomUUID());
         String displayName = ContactPointUtil.extractName(email, normalized);
         contact.setDisplayName(!displayName.isBlank() ? displayName : normalized);
         contact.setCreatedAt(Instant.now());
@@ -262,53 +350,94 @@ public class EmailSyncService {
         return conversation;
     }
 
-    private Store connectStore() throws MessagingException {
-        requireConfig("imapHost");
-        requireConfig("imapUser");
-        requireConfig("imapPassword");
-        Session session = Session.getInstance(imapProperties());
-        Store store = session.getStore(storeProtocol());
-        store.connect(config.imapHost(), imapPort(),
-                config.imapUser(), config.imapPassword());
+    private Store connectStore(EmailSyncSettings settings) throws MessagingException {
+        logSettings(settings);
+        requireConfig(settings.imapHost(), "imapHost");
+        requireConfig(settings.imapUser(), "imapUser");
+        requireConfig(settings.imapPassword(), "imapPassword");
+        Session session = Session.getInstance(imapProperties(settings));
+        Store store = session.getStore(storeProtocol(settings));
+        try {
+            store.connect(settings.imapHost(), imapPort(settings),
+                    settings.imapUser(), settings.imapPassword());
+        } catch (MessagingException exception) {
+            mapConnectionFailure(exception);
+            throw exception;
+        }
         return store;
     }
 
+    static void mapConnectionFailure(MessagingException exception) {
+        if (isAuthenticationFailure(exception)) {
+            throw new EmailException("EMAIL_IMAP_AUTHENTICATION_FAILED",
+                    "IMAP authentication failed", exception);
+        }
+    }
+
+    private static boolean isAuthenticationFailure(Throwable exception) {
+        for (Throwable current = exception; current != null; current = current.getCause()) {
+            if (current instanceof AuthenticationFailedException) return true;
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase(Locale.ROOT).matches(
+                    ".*(authentication\\s*failed|login\\s*failed|errno\\s*=\\s*1310).*")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     Properties imapProperties() {
+        return imapProperties(resolveSettings());
+    }
+
+    private Properties imapProperties(EmailSyncSettings settings) {
         Properties props = new Properties();
-        putImapProperties(props, "mail.imap");
-        putImapProperties(props, "mail.imaps");
+        putImapProperties(props, "mail.imap", settings);
+        putImapProperties(props, "mail.imaps", settings);
         return props;
     }
 
     private void putImapProperties(Properties props, String prefix) {
-        props.put(prefix + ".host", config.imapHost() != null ? config.imapHost() : "");
-        props.put(prefix + ".port", Integer.toString(imapPort()));
-        props.put(prefix + ".ssl.enable", Boolean.toString(config.imapSsl()));
+        putImapProperties(props, prefix, resolveSettings());
+    }
+
+    private void putImapProperties(Properties props, String prefix, EmailSyncSettings settings) {
+        props.put(prefix + ".host", settings.imapHost() != null ? settings.imapHost() : "");
+        props.put(prefix + ".port", Integer.toString(imapPort(settings)));
+        props.put(prefix + ".ssl.enable", Boolean.toString(settings.imapSsl()));
         props.put(prefix + ".connectiontimeout", "15000");
         props.put(prefix + ".timeout", "30000");
         props.put(prefix + ".ssl.protocols", "TLSv1.2");
-        String cipherSuite = javaMailCipherSuite();
+        String cipherSuite = javaMailCipherSuite(settings);
         if (!cipherSuite.isBlank()) {
             props.put(prefix + ".ssl.ciphersuites", cipherSuite);
             props.put(prefix + ".ssl.socketFactory",
-                    BouncyCastle139ImapSocketFactory.create(config.imapHost()));
+                    BouncyCastle139ImapSocketFactory.create(settings.imapHost()));
             props.put(prefix + ".ssl.checkserveridentity", "true");
         }
     }
 
-    private String storeProtocol() {
-        return config.imapSsl() ? "imaps" : "imap";
+    private String storeProtocol(EmailSyncSettings settings) {
+        return settings.imapSsl() ? "imaps" : "imap";
     }
 
     private String javaMailCipherSuite() {
-        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider())
+        return javaMailCipherSuite(resolveSettings());
+    }
+
+    private String javaMailCipherSuite(EmailSyncSettings settings) {
+        return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider(settings))
                 ? BouncyCastle139ImapSocketFactory.CIPHER_SUITE : "";
     }
 
     private String effectiveMailProvider() {
-        String configured = config.mailProvider();
+        return effectiveMailProvider(resolveSettings());
+    }
+
+    private String effectiveMailProvider(EmailSyncSettings settings) {
+        String configured = settings.mailProvider();
         if (configured == null || configured.isBlank() || "auto".equalsIgnoreCase(configured)) {
-            String host = config.imapHost();
+            String host = settings.imapHost();
             if (host != null && (host.equals("139.com") || host.endsWith(".139.com"))) {
                 return PROVIDER_139;
             }
@@ -317,24 +446,41 @@ public class EmailSyncService {
         return configured;
     }
 
-    private int imapPort() {
-        String port = config.imapPort();
+    private int imapPort(EmailSyncSettings settings) {
+        String port = settings.imapPort();
         return port != null && !port.isBlank() ? Integer.parseInt(port) : 993;
     }
 
     private int receiveLimit() {
-        return config.receiveLimit();
+        return resolveSettings().receiveLimit();
     }
 
-    private void requireConfig(String key) {
-        String value = switch (key) {
-            case "imapHost" -> config.imapHost();
-            case "imapUser" -> config.imapUser();
-            case "imapPassword" -> config.imapPassword();
-            default -> "";
-        };
+    private void requireConfig(String value, String key) {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Missing config: " + key);
+        }
+    }
+
+    EmailSyncSettings resolveSettings() {
+        return EmailSyncSettings.from(config, resolveEmailAccount(), credentialCipher, log);
+    }
+
+    private void logSettings(EmailSyncSettings settings) {
+        String user = settings.imapUser() == null ? "" : settings.imapUser().trim();
+        String password = settings.imapPassword() == null ? "" : settings.imapPassword();
+        log.info("event=email.imap_settings_resolved host={} port={} userSha256={} passwordLength={} ssl={} provider={} openssl={} inbox={} sent={}",
+                settings.imapHost(), settings.imapPort(), sha256(user), password.length(),
+                settings.imapSsl(), effectiveMailProvider(settings), settings.imap139UseOpenssl(),
+                settings.inboxFolder(), settings.sentFolder());
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("EMAIL_DIAGNOSTIC_HASH_FAILED", exception);
         }
     }
 

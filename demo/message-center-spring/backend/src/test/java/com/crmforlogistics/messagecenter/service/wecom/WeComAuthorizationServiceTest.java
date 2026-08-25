@@ -246,6 +246,7 @@ class WeComAuthorizationServiceTest {
         assertThat(begin.attempt().eventId()).startsWith("sha256:").hasSize(71);
         assertThat(begin.attempt().attempt()).isEqualTo(3);
         assertThat(accepted.getResult()).isEqualTo("accepted");
+        assertThat(accepted.getId()).isNotNull();
         assertThat(accepted.getEventId()).doesNotContain("ticket-secret");
         assertThat(trail.eventId(callback)).isEqualTo(begin.attempt().eventId());
     }
@@ -395,7 +396,7 @@ class WeComAuthorizationServiceTest {
         var mapper = mock(com.crmforlogistics.messagecenter.mapper.WeComInstallationMapper.class);
         var gateway = mock(WeComAuthorizationGateway.class);
         var protector = mock(WeComCredentialProtector.class);
-        var installations = new WeComInstallationService(mapper, gateway, protector);
+        var installations = new WeComInstallationService(mapper, protector);
         var current = installation("wwcorp", 4L, "sha256:" + "b".repeat(64));
         current.setAuthStatus("REVOKED");
         current.setLastAuthorizationEventAt(NOW);

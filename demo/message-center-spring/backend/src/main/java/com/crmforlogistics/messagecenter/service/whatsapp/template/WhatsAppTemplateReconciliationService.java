@@ -148,6 +148,9 @@ public class WhatsAppTemplateReconciliationService {
                 Objects.requireNonNull(workerId), now, now.plus(LEASE_DURATION), CLAIM_LIMIT);
         int resolved = 0;
         for (TemplateOperationEntity operation : claimed) {
+            if ("RETIRED".equals(operation.getOperationType())) {
+                continue;
+            }
             if (expired(operation, now)) {
                 fail(operation, "RECONCILIATION_WINDOW_EXPIRED", "Reconciliation exceeded the 24 hour window", now);
                 continue;
@@ -173,6 +176,7 @@ public class WhatsAppTemplateReconciliationService {
             case "CREATE" -> reconcileCreate(operation, summaries, now);
             case "MODIFY", "SET_SEND_PERMISSION" -> reconcileExisting(operation, summaries, now);
             case "DELETE" -> reconcileDelete(operation, summaries, now);
+            case "RETIRED" -> false;
             default -> {
                 retry(operation, "RECONCILIATION_NOT_CONFIRMED", "Unsupported operation type", now);
                 yield false;

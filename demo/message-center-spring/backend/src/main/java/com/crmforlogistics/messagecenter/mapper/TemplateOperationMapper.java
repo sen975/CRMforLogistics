@@ -62,6 +62,7 @@ public interface TemplateOperationMapper extends BaseMapper<TemplateOperationEnt
 
     @Select("with picked as ("
             + "select id from template_operations where operation_status = 'SUBMISSION_UNKNOWN' "
+            + "and operation_type <> 'RETIRED' "
             + "and next_reconcile_at <= #{now} and reconcile_attempt_count < 10 "
             + "and (lease_until is null or lease_until < #{now}) "
             + "order by next_reconcile_at, started_at for update skip locked limit #{limit}"

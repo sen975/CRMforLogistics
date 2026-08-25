@@ -104,6 +104,7 @@ public class WeComAuthorizationGateway {
         JsonNode authCorpInfo = body.has("auth_corp_info") && body.get("auth_corp_info").isObject()
                 ? body.get("auth_corp_info") : null;
         String corpId = authCorpInfo != null ? string(authCorpInfo, "corpid") : "";
+        String corpName = authCorpInfo != null ? string(authCorpInfo, "corp_name") : "";
         JsonNode authInfoNode = body.has("auth_info") && body.get("auth_info").isObject()
                 ? body.get("auth_info") : null;
         require(corpId, "authCorpId", 128);
@@ -118,20 +119,7 @@ public class WeComAuthorizationGateway {
         }
         if (agents.isEmpty()) throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 500,
                 "企业微信授权信息缺少 AgentID");
-        return new AuthorizationInfo(corpId, List.copyOf(agents));
-    }
-
-    public CorpTokenResponse getCorpToken(String authCorpId, String permanentCode)
-            throws WeComException {
-        require(authCorpId, "authCorpId", 128);
-        require(permanentCode, "permanentCode", 512);
-        String path = "/cgi-bin/service/get_corp_token";
-        JsonNode body = postJson(path + "?suite_access_token="
-                + encode(suiteAccessToken(config.wecomSuiteId())), path, Map.of(
-                "auth_corpid", authCorpId,
-                "permanent_code", permanentCode));
-        return new CorpTokenResponse(successString(body, "access_token", path),
-                positiveInt(body, "expires_in", 7200));
+        return new AuthorizationInfo(corpId, corpName, List.copyOf(agents));
     }
 
     public CorpTokenResponse getDevelopedAppToken(String authCorpId, String developedAppSecret,
@@ -145,25 +133,23 @@ public class WeComAuthorizationGateway {
                 positiveInt(body, "expires_in", 7200));
     }
 
-    public LoginIdentity getLoginIdentity(String code, Duration timeout) throws WeComException {
+    public LoginIdentity getLoginIdentity(String authCorpId, String accessToken,
+                                          String code, Duration timeout) throws WeComException {
+        require(authCorpId, "authCorpId", 128);
+        require(accessToken, "accessToken", 4096);
         require(code, "code", 512);
-        if (config.wecomLoginSuiteId().isBlank() || config.wecomLoginSuiteSecret().isBlank()) {
-            throw new WeComException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
-                    "企业微信登录授权 Suite 尚未配置");
-        }
-        String diagnosticPath = "/cgi-bin/service/auth/getuserinfo3rd";
-        String path = diagnosticPath + "?suite_access_token="
-                + encode(suiteAccessToken(config.wecomLoginSuiteId())) + "&code=" + encode(code);
+        String diagnosticPath = "/cgi-bin/auth/getuserinfo";
+        String path = diagnosticPath + "?access_token=" + encode(accessToken)
+                + "&code=" + encode(code);
         JsonNode body = getJson(path, diagnosticPath, timeout);
-        String corpId = string(body, "corpid");
         String userId = string(body, "userid");
-        if (corpId.isBlank() || userId.isBlank()) {
+        if (userId.isBlank()) {
             throw new WeComException("WECOM_LOGIN_IDENTITY_UNAVAILABLE", 403,
-                    "企业微信登录未返回企业成员身份");
+                    "企业微信登录未返回企业成员身份", null, diagnosticPath, 200, null);
         }
-        require(corpId, "corpId", 128);
+        require(authCorpId, "authCorpId", 128);
         require(userId, "userId", 128);
-        return new LoginIdentity(corpId, userId);
+        return new LoginIdentity(authCorpId, userId);
     }
 
     private JsonNode getJson(String requestPath, String diagnosticPath, Duration timeout)
@@ -179,11 +165,26 @@ public class WeComAuthorizationGateway {
                         "企业微信上游响应异常", null, diagnosticPath, 200, null);
             }
             JsonNode body = objectMapper.readTree(response);
-            int errcode = body.has("errcode") ? body.get("errcode").asInt(-1) : -1;
-            if (errcode != 0) {
+            if (!body.isObject()) {
+                throw new WeComException("WECOM_UPSTREAM_INVALID_RESPONSE", 503,
+                        "企业微信上游响应格式无效: " + diagnosticPath,
+                        null, diagnosticPath, 200, null);
+            }
+            JsonNode errcodeNode = body.get("errcode");
+            if (errcodeNode != null && !errcodeNode.canConvertToInt()) {
+                throw new WeComException("WECOM_UPSTREAM_INVALID_RESPONSE", 503,
+                        "企业微信上游 errcode 格式无效: " + diagnosticPath,
+                        null, diagnosticPath, 200, null);
+            }
+            if (errcodeNode != null && errcodeNode.asInt() != 0) {
+                int errcode = errcodeNode.asInt();
                 String errmsg = string(body, "errmsg");
+                String diagnosticMessage = errmsg.isBlank()
+                        ? "errcode=" + errcode
+                        : "errcode=" + errcode + ": " + errmsg;
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游返回错误: " + errmsg, errcode, diagnosticPath, 200, extractHint(errmsg));
+                        "企业微信上游返回错误: " + diagnosticMessage,
+                        errcode, diagnosticPath, 200, extractHint(errmsg));
             }
             return body;
         } catch (WeComException e) {
@@ -195,15 +196,11 @@ public class WeComAuthorizationGateway {
     }
 
     private boolean isKnownSuite(String suiteId) {
-        return suiteId.equals(config.wecomSuiteId())
-                || (!config.wecomLoginSuiteId().isBlank() && suiteId.equals(config.wecomLoginSuiteId()));
+        return suiteId.equals(config.wecomSuiteId());
     }
 
     private String suiteSecret(String suiteId) throws WeComException {
         if (suiteId.equals(config.wecomSuiteId())) return config.wecomSuiteSecret();
-        if (!config.wecomLoginSuiteId().isBlank() && suiteId.equals(config.wecomLoginSuiteId())) {
-            return config.wecomLoginSuiteSecret();
-        }
         throw new WeComException("WECOM_CALLBACK_SUITE_MISMATCH", 403, "企业微信 SuiteId 不匹配");
     }
 
@@ -238,11 +235,26 @@ public class WeComAuthorizationGateway {
                         "企业微信上游响应异常", null, diagnosticPath, 200, null);
             }
             JsonNode body = objectMapper.readTree(response);
-            int errcode = body.has("errcode") ? body.get("errcode").asInt(-1) : -1;
-            if (errcode != 0) {
+            if (!body.isObject()) {
+                throw new WeComException("WECOM_UPSTREAM_INVALID_RESPONSE", 503,
+                        "企业微信上游响应格式无效: " + diagnosticPath,
+                        null, diagnosticPath, 200, null);
+            }
+            JsonNode errcodeNode = body.get("errcode");
+            if (errcodeNode != null && !errcodeNode.canConvertToInt()) {
+                throw new WeComException("WECOM_UPSTREAM_INVALID_RESPONSE", 503,
+                        "企业微信上游 errcode 格式无效: " + diagnosticPath,
+                        null, diagnosticPath, 200, null);
+            }
+            if (errcodeNode != null && errcodeNode.asInt() != 0) {
+                int errcode = errcodeNode.asInt();
                 String errmsg = string(body, "errmsg");
+                String diagnosticMessage = errmsg.isBlank()
+                        ? "errcode=" + errcode
+                        : "errcode=" + errcode + ": " + errmsg;
                 throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                        "企业微信上游返回错误: " + errmsg, errcode, diagnosticPath, 200, extractHint(errmsg));
+                        "企业微信上游返回错误: " + diagnosticMessage,
+                        errcode, diagnosticPath, 200, extractHint(errmsg));
             }
             return body;
         } catch (WeComException e) {
@@ -295,7 +307,11 @@ public class WeComAuthorizationGateway {
     }
 
     public record PermanentCodeResponse(String authCorpId, String permanentCode) {}
-    public record AuthorizationInfo(String authCorpId, List<AuthorizedAgent> agents) {}
+    public record AuthorizationInfo(String authCorpId, String corpName, List<AuthorizedAgent> agents) {
+        public AuthorizationInfo(String authCorpId, List<AuthorizedAgent> agents) {
+            this(authCorpId, "", agents);
+        }
+    }
     public record AuthorizedAgent(String agentId) {}
     public record CorpTokenResponse(String accessToken, int expiresIn) {}
     public record LoginIdentity(String corpId, String userId) {}

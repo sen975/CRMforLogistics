@@ -5,11 +5,11 @@ import com.crmforlogistics.messagecenter.dto.request.RetryCallRecordRequest;
 import com.crmforlogistics.messagecenter.dto.request.ReviseNoteRequest;
 import com.crmforlogistics.messagecenter.dto.request.ReviseTranscriptRequest;
 import com.crmforlogistics.messagecenter.dto.response.CallRecordResponse;
+import com.crmforlogistics.messagecenter.dto.response.PhoneContactBindingResponse;
 import com.crmforlogistics.messagecenter.dto.response.PhoneRecordResponse;
 import com.crmforlogistics.messagecenter.dto.response.TimelineResponse;
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
 import com.crmforlogistics.messagecenter.entity.CallTranscriptRevisionEntity;
-import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
 import com.crmforlogistics.messagecenter.mapper.CallTranscriptRevisionMapper;
@@ -18,6 +18,7 @@ import com.crmforlogistics.messagecenter.service.callrecord.CallAudioSessionServ
 import com.crmforlogistics.messagecenter.service.callrecord.CallRecordService;
 import com.crmforlogistics.messagecenter.service.callrecord.ContactTimelineService;
 import com.crmforlogistics.messagecenter.service.callrecord.MinioAudioStore;
+import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,6 +56,7 @@ public class CallRecordController {
     private final CallRecordMapper callRecordMapper;
     private final CallTranscriptRevisionMapper revisionMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final ContactService contactService;
 
     public CallRecordController(CallRecordService callRecordService,
                                  ContactTimelineService timelineService,
@@ -62,7 +64,8 @@ public class CallRecordController {
                                  MinioAudioStore audioStore,
                                  CallRecordMapper callRecordMapper,
                                  CallTranscriptRevisionMapper revisionMapper,
-                                 ContactIdentityMapper contactIdentityMapper) {
+                                 ContactIdentityMapper contactIdentityMapper,
+                                 ContactService contactService) {
         this.callRecordService = callRecordService;
         this.timelineService = timelineService;
         this.sessionService = sessionService;
@@ -70,6 +73,7 @@ public class CallRecordController {
         this.callRecordMapper = callRecordMapper;
         this.revisionMapper = revisionMapper;
         this.contactIdentityMapper = contactIdentityMapper;
+        this.contactService = contactService;
     }
 
     @GetMapping("/api/v1/contacts/{contactId}/timeline")
@@ -184,38 +188,12 @@ public class CallRecordController {
     @PostMapping("/api/v1/phone-contacts")
     public ResponseEntity<Map<String, String>> bindPhoneContact(
             @RequestBody BindPhoneContactRequest request) {
-        UUID userId = SecurityUtil.currentUserId();
-        String phoneNumber = request.phoneNumber();
-        if (phoneNumber == null || phoneNumber.isBlank()) {
-            throw new IllegalArgumentException("phoneNumber is required");
-        }
-        String digits = phoneNumber.replaceAll("[^0-9+]", "");
-        if (digits.startsWith("+")) digits = digits.substring(1);
-        String phonePoint = "phone:" + digits;
-        UUID contactId = null;
-        if (request.contactId() != null && !request.contactId().isBlank()) {
-            contactId = UUID.fromString(request.contactId());
-        }
-        if (contactId == null) {
-            throw new IllegalArgumentException("contactId is required for phone binding");
-        }
-        ContactIdentityEntity identity = new ContactIdentityEntity();
-        identity.setId(UUID.randomUUID());
-        identity.setContactId(contactId);
-        identity.setChannelType("phone");
-        identity.setIdentityValue(phonePoint);
-        identity.setNormalizedValue(digits);
-        identity.setDisplayName(request.contactName() != null ? request.contactName() : phoneNumber);
-        identity.setIsPrimary(false);
-        identity.setVerifyStatus("unverified");
-        identity.setCreatedAt(Instant.now());
-        identity.setUpdatedAt(Instant.now());
-        identity.setVersion(1L);
-        contactIdentityMapper.insert(identity);
+        PhoneContactBindingResponse binding = contactService.bindPhone(
+                request.contactId(), request.contactName(), request.phoneNumber());
         return ResponseEntity.ok(Map.of(
-                "contactId", contactId.toString(),
-                "phonePointId", phonePoint,
-                "displayName", identity.getDisplayName()));
+                "contactId", binding.contactId(),
+                "phonePointId", binding.phonePointId(),
+                "displayName", binding.displayName()));
     }
 
     @GetMapping("/api/v1/phone-repository")

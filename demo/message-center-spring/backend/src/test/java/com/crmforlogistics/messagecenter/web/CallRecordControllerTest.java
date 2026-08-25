@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.service.callrecord.CallRecordException;
 import com.crmforlogistics.messagecenter.service.callrecord.CallRecordService;
 import com.crmforlogistics.messagecenter.service.callrecord.ContactTimelineService;
 import com.crmforlogistics.messagecenter.service.callrecord.MinioAudioStore;
+import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -40,7 +41,8 @@ class CallRecordControllerTest {
                 audioStore,
                 mock(CallRecordMapper.class),
                 mock(CallTranscriptRevisionMapper.class),
-                mock(ContactIdentityMapper.class));
+                mock(ContactIdentityMapper.class),
+                mock(ContactService.class));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         assertThrows(CallRecordException.class, () -> controller.streamAudio(

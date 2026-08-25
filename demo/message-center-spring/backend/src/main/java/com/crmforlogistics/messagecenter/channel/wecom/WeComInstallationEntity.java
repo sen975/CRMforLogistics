@@ -13,6 +13,7 @@ public class WeComInstallationEntity {
     private UUID id;
     private String suiteId;
     private String authCorpId;
+    private String corpName;
     private String agentId;
     private String permanentCode;
     private String authStatus;
@@ -33,6 +34,9 @@ public class WeComInstallationEntity {
 
     public String getAuthCorpId() { return authCorpId; }
     public void setAuthCorpId(String authCorpId) { this.authCorpId = authCorpId; }
+
+    public String getCorpName() { return corpName; }
+    public void setCorpName(String corpName) { this.corpName = corpName; }
 
     public String getAgentId() { return agentId; }
     public void setAgentId(String agentId) { this.agentId = agentId; }

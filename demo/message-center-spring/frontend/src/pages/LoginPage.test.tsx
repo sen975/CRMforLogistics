@@ -51,6 +51,13 @@ beforeEach(() => {
   });
 });
 
+it('keeps viewport padding inside the mobile login page height', () => {
+  renderPage();
+  const card = screen.getByRole('heading', { name: '统一消息中心' }).closest('.ant-card');
+
+  expect(card?.parentElement).toHaveStyle({ boxSizing: 'border-box' });
+});
+
 it('keeps password login and exposes the official WeCom option', async () => {
   const user = userEvent.setup();
   renderPage();

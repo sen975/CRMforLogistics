@@ -37,6 +37,27 @@ public interface ChatAppBroadcastRecipientMapper extends BaseMapper<ChatAppBroad
             @Param("broadcastId") UUID broadcastId,
             @Param("number") String number);
 
+    @Select("select * from chatapp_broadcast_recipients "
+            + "where broadcast_id = #{broadcastId}::uuid "
+            + "and provider_message_id = #{providerMessageId} "
+            + "order by created_at, id limit #{limit}")
+    List<ChatAppBroadcastRecipientEntity> findAllByProviderMessageId(
+            @Param("broadcastId") UUID broadcastId,
+            @Param("providerMessageId") String providerMessageId,
+            @Param("limit") int limit);
+
+    @Select("select r.* from chatapp_broadcast_recipients r "
+            + "join chatapp_broadcasts b on b.id = r.broadcast_id "
+            + "where b.channel_account_id = #{channelAccountId}::uuid "
+            + "and b.provider_group_message_id = #{groupMessageId} "
+            + "and r.recipient_number_snapshot = #{normalizedNumber} "
+            + "order by r.updated_at desc, r.id limit #{limit}")
+    List<ChatAppBroadcastRecipientEntity> findByGroupMessageIdAndNumber(
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("groupMessageId") String groupMessageId,
+            @Param("normalizedNumber") String normalizedNumber,
+            @Param("limit") int limit);
+
     @Select("select * from chatapp_broadcast_recipients where id = #{id}::uuid for update")
     Optional<ChatAppBroadcastRecipientEntity> findByIdForUpdate(@Param("id") UUID id);
 
@@ -60,8 +81,9 @@ public interface ChatAppBroadcastRecipientMapper extends BaseMapper<ChatAppBroad
             + "and b.language_code = #{languageCode} "
             + "and r.provider_message_id is null "
             + "and r.status = 'PROCESSING' "
-            + "and (#{providerSentAt} is null or b.submitted_at between "
-            + "#{providerSentAt} - interval '24 hours' and #{providerSentAt} + interval '5 minutes') "
+            + "and (cast(#{providerSentAt} as timestamptz) is null or b.submitted_at between "
+            + "cast(#{providerSentAt} as timestamptz) - interval '24 hours' and "
+            + "cast(#{providerSentAt} as timestamptz) + interval '5 minutes') "
             + "order by b.submitted_at desc, r.id limit 2")
     List<ChatAppBroadcastRecipientEntity> findPendingCandidates(
             @Param("channelAccountId") UUID channelAccountId,
@@ -73,7 +95,7 @@ public interface ChatAppBroadcastRecipientMapper extends BaseMapper<ChatAppBroad
 
     @Update("update chatapp_broadcast_recipients set provider_message_id = #{providerMessageId}, "
             + "provider_unique_message_id = #{providerUniqueMessageId}, status = #{status}, "
-            + "failure_reason = #{failureReason}, provider_sent_at = #{providerSentAt}, "
+            + "failure_reason = #{failureReason}, provider_sent_at = coalesce(#{providerSentAt}, provider_sent_at), "
             + "last_reconciled_at = #{reconciledAt}, updated_at = #{reconciledAt}, "
             + "version = version + 1 where id = #{id}::uuid")
     int updateProviderStatus(@Param("id") UUID id,

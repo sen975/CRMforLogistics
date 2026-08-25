@@ -1,52 +1,37 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
-import com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
-import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
-import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
-import com.crmforlogistics.messagecenter.mapper.ContactMapper;
-import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
-import com.crmforlogistics.messagecenter.mapper.MessageMapper;
-import com.crmforlogistics.messagecenter.mapper.WeComChatDataCursorMapper;
-import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
-import org.apache.ibatis.session.SqlSessionFactory;
+import com.crmforlogistics.messagecentertest.wecom.WeComChatDataTransactionTestConfiguration;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mybatis.spring.mapper.MapperFactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
-import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 
-@SpringBootTest(classes = WeComChatDataTransactionIntegrationTest.TestConfig.class)
-@Testcontainers
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(classes = WeComChatDataTransactionTestConfiguration.class)
+@Testcontainers(disabledWithoutDocker = true)
 class WeComChatDataTransactionIntegrationTest {
 
     @Container
@@ -60,85 +45,9 @@ class WeComChatDataTransactionIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @ImportAutoConfiguration({
-            DataSourceAutoConfiguration.class,
-            DataSourceTransactionManagerAutoConfiguration.class,
-            JdbcTemplateAutoConfiguration.class,
-            MybatisPlusAutoConfiguration.class
-    })
-    static class TestConfig {
-        @Bean
-        MapperFactoryBean<WeComChatDataMessageMapper> chatDataMessageMapper(SqlSessionFactory factory) {
-            return mapper(factory, WeComChatDataMessageMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<WeComChatDataCursorMapper> chatDataCursorMapper(SqlSessionFactory factory) {
-            return mapper(factory, WeComChatDataCursorMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<ChannelAccountMapper> channelAccountMapper(SqlSessionFactory factory) {
-            return mapper(factory, ChannelAccountMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<ContactIdentityMapper> contactIdentityMapper(SqlSessionFactory factory) {
-            return mapper(factory, ContactIdentityMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<ContactMapper> contactMapper(SqlSessionFactory factory) {
-            return mapper(factory, ContactMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<ConversationMapper> conversationMapper(SqlSessionFactory factory) {
-            return mapper(factory, ConversationMapper.class);
-        }
-
-        @Bean
-        MapperFactoryBean<MessageMapper> messageMapper(SqlSessionFactory factory) {
-            return mapper(factory, MessageMapper.class);
-        }
-
-        @Bean
-        WeComCredentialProtector credentialProtector() {
-            String key = Base64.getEncoder().encodeToString(new byte[32]);
-            return new WeComCredentialProtector(CredentialCipher.fromBase64Key(key));
-        }
-
-        @Bean
-        EventHub eventHub() {
-            return mock(EventHub.class);
-        }
-
-        @Bean
-        WeComMessageProjector projector(ChannelAccountMapper accounts,
-                                        ContactIdentityMapper identities,
-                                        ContactMapper contacts,
-                                        ConversationMapper conversations,
-                                        MessageMapper messages) {
-            return new WeComMessageProjector(accounts, identities, contacts, conversations, messages);
-        }
-
-        @Bean
-        WeComChatDataStore store(WeComChatDataMessageMapper messages,
-                                 WeComChatDataCursorMapper cursors,
-                                 WeComCredentialProtector protector,
-                                 WeComMessageProjector projector,
-                                 EventHub events) {
-            return new WeComChatDataStore(messages, cursors, protector, projector, events);
-        }
-
-        private static <T> MapperFactoryBean<T> mapper(SqlSessionFactory factory, Class<T> type) {
-            MapperFactoryBean<T> mapper = new MapperFactoryBean<>(type);
-            mapper.setSqlSessionFactory(factory);
-            return mapper;
-        }
+        registry.add("mybatis-plus.type-handlers-package",
+                () -> "com.crmforlogistics.messagecenter.typehandler");
+        registry.add("app.wecom-enabled", () -> "true");
     }
 
     @BeforeAll

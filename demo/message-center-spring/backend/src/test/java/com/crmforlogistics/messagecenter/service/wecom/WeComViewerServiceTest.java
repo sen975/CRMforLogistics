@@ -15,6 +15,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -117,14 +118,136 @@ class WeComViewerServiceTest {
     }
 
     @Test
-    void replacingSessionForSameTokenReleasesPreviousReferences() {
+    void migratedDirectMessageUsesSourceParticipantWhenLegacyUseridIsNull() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+        WeComChatDataMessageEntity migrated = message("migrated-1", "contact-a", null);
+        migrated.setSourceConversationId(UUID.randomUUID());
+        when(fixture.mapper.findByExternalUserid("contact-a")).thenReturn(List.of(migrated));
+        when(fixture.mapper.findViewableByExternalUserid("contact-a", "wecom-user"))
+                .thenReturn(List.of(migrated));
+        when(fixture.mapper.findViewableByContactParty("contact-a", "wecom-user"))
+                .thenReturn(List.of(migrated));
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+
+        String sessionId = fixture.service.createViewerSession(
+                "wecom:contact-a", token, List.of("migrated-1")).viewerSessionId();
+
+        assertThat(fixture.service.viewerSession(sessionId, token).messages())
+                .extracting(WeComViewerService.ViewerMessage::msgid)
+                .containsExactly("migrated-1");
+    }
+
+    @Test
+    void employeeDirectMessageResolvesBySourceConversationParticipant() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+        WeComChatDataMessageEntity migrated = message("employee-direct-1", null, null);
+        migrated.setSourceConversationId(UUID.randomUUID());
+        when(fixture.mapper.findByExternalUserid("employee-contact")).thenReturn(List.of());
+        when(fixture.mapper.findViewableByContactParty("employee-contact", "wecom-user"))
+                .thenReturn(List.of(migrated));
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+
+        String sessionId = fixture.service.createViewerSession(
+                "wecom:employee-contact", token, List.of("employee-direct-1")).viewerSessionId();
+
+        assertThat(fixture.service.viewerSession(sessionId, token).messages())
+                .extracting(WeComViewerService.ViewerMessage::msgid)
+                .containsExactly("employee-direct-1");
+    }
+
+    @Test
+    void sessionsForSeparateContactsRemainReadableAndConsumeIndependently() {
         ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
         String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
 
-        fixture.service.createViewerSession("wecom:contact-1", token, List.of("message-1"));
-        fixture.service.createViewerSession("wecom:contact-1", token, List.of("message-2"));
+        String sessionA = fixture.service.createViewerSession("wecom:contact-a", token, List.of("a-1"))
+                .viewerSessionId();
+        String sessionB = fixture.service.createViewerSession("wecom:contact-b", token, List.of("b-1"))
+                .viewerSessionId();
 
-        assertThat(fixture.service.leasedMessageIds()).containsExactly("message-2");
+        assertThat(fixture.service.leasedMessageIds()).containsExactlyInAnyOrder("a-1", "b-1");
+        assertThat(fixture.service.viewerSession(sessionA, token).messages())
+                .extracting(WeComViewerService.ViewerMessage::msgid)
+                .containsExactly("a-1");
+        assertThat(fixture.service.leasedMessageIds()).containsExactly("b-1");
+        assertThat(fixture.service.viewerSession(sessionB, token).messages())
+                .extracting(WeComViewerService.ViewerMessage::msgid)
+                .containsExactly("b-1");
+    }
+
+    @Test
+    void sessionCanOnlyBeConsumedByItsViewerTokenWithoutInvalidatingTheOwner() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+        String ownerToken = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+        String sessionId = fixture.service.createViewerSession("wecom:contact-a", ownerToken, List.of("a-1"))
+                .viewerSessionId();
+        when(fixture.gateway.exchangeLoginCode("second-code")).thenReturn("wecom-user");
+        String otherToken = fixture.service.exchangeLoginCode("second-code").viewerAuthToken();
+
+        assertThatThrownBy(() -> fixture.service.viewerSession(sessionId, otherToken))
+                .isInstanceOf(SecurityException.class);
+        assertThat(fixture.service.viewerSession(sessionId, ownerToken).viewerSessionId()).isEqualTo(sessionId);
+    }
+
+    @Test
+    void componentEventsAreIndependentForConcurrentViewedSessions() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+        String sessionA = fixture.service.createViewerSession("wecom:contact-a", token, List.of("a-1"))
+                .viewerSessionId();
+        String sessionB = fixture.service.createViewerSession("wecom:contact-b", token, List.of("b-1"))
+                .viewerSessionId();
+
+        fixture.service.viewerSession(sessionA, token);
+        fixture.service.viewerSession(sessionB, token);
+
+        fixture.service.recordClientEvent("component_error", sessionA, token);
+        fixture.service.recordClientEvent("component_error", sessionB, token);
+    }
+
+    @Test
+    void sessionCreationKeepsTheBoundWeComUserDataBoundary() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 10);
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+
+        assertThatThrownBy(() -> fixture.service.createViewerSession(
+                "wecom:contact-other-user", token, List.of("other-1")))
+                .isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void expiryInvalidatesOnlyTheExpiredSessionForTheViewerToken() {
+        MutableClock clock = new MutableClock(Instant.EPOCH);
+        ViewerFixture fixture = viewerFixture(clock, 10, 120, 60);
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+        String sessionA = fixture.service.createViewerSession("wecom:contact-a", token, List.of("a-1"))
+                .viewerSessionId();
+        clock.advanceSeconds(30);
+        String sessionB = fixture.service.createViewerSession("wecom:contact-b", token, List.of("b-1"))
+                .viewerSessionId();
+        clock.advanceSeconds(31);
+
+        assertThatThrownBy(() -> fixture.service.viewerSession(sessionA, token))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(fixture.service.viewerSession(sessionB, token).viewerSessionId()).isEqualTo(sessionB);
+    }
+
+    @Test
+    void perViewerTokenCapacityEvictsTheOldestSessionButKeepsTheNewSession() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 64);
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+        List<String> sessionIds = new java.util.ArrayList<>();
+        for (int index = 0; index <= 32; index++) {
+            sessionIds.add(fixture.service.createViewerSession("wecom:contact-a", token, List.of("a-1"))
+                    .viewerSessionId());
+        }
+
+        assertThatThrownBy(() -> fixture.service.viewerSession(sessionIds.get(0), token))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(fixture.service.viewerSession(sessionIds.get(1), token).viewerSessionId())
+                .isEqualTo(sessionIds.get(1));
+        assertThat(fixture.service.viewerSession(sessionIds.get(sessionIds.size() - 1), token).viewerSessionId())
+                .isEqualTo(sessionIds.get(sessionIds.size() - 1));
     }
 
     @Test
@@ -178,6 +301,20 @@ class WeComViewerServiceTest {
         assertThatThrownBy(() -> fixture.service.createViewerSession(
                 "wecom:contact-1", token, List.of("message-2")))
                 .isInstanceOf(WeComViewerService.RateLimitException.class);
+    }
+
+    @Test
+    void rejectedMessageSetDoesNotConsumeSessionRateLimit() {
+        ViewerFixture fixture = viewerFixture(Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 1);
+        String token = fixture.service.exchangeLoginCode("code").viewerAuthToken();
+
+        assertThatThrownBy(() -> fixture.service.createViewerSession(
+                "wecom:contact-other-user", token, List.of("other-1")))
+                .isInstanceOf(SecurityException.class);
+
+        assertThat(fixture.service.createViewerSession(
+                "wecom:contact-1", token, List.of("message-1")).viewerSessionId())
+                .isNotBlank();
     }
 
     @Test
@@ -249,25 +386,42 @@ class WeComViewerServiceTest {
     }
 
     private static ViewerFixture viewerFixture(Clock clock, int rateLimit) {
+        return viewerFixture(clock, rateLimit, 60, 60);
+    }
+
+    private static ViewerFixture viewerFixture(Clock clock, int rateLimit,
+                                               int viewerAuthTtlSeconds, int viewerSessionTtlSeconds) {
         AppConfig config = viewerConfig();
         when(config.wecomViewerSessionRateLimit()).thenReturn(rateLimit);
+        when(config.wecomViewerAuthTtlSeconds()).thenReturn(viewerAuthTtlSeconds);
+        when(config.wecomViewerSessionTtlSeconds()).thenReturn(viewerSessionTtlSeconds);
         WeComViewerHttpGateway gateway = mock(WeComViewerHttpGateway.class);
         when(gateway.exchangeLoginCode("code")).thenReturn("wecom-user");
         WeComChatDataMessageMapper mapper = mock(WeComChatDataMessageMapper.class);
         when(mapper.findByExternalUserid("contact-1")).thenReturn(List.of(
                 message("message-1"), message("message-2"), message("message-3")));
+        when(mapper.findByExternalUserid("contact-a")).thenReturn(List.of(
+                message("a-1", "contact-a", "wecom-user")));
+        when(mapper.findByExternalUserid("contact-b")).thenReturn(List.of(
+                message("b-1", "contact-b", "wecom-user")));
+        when(mapper.findByExternalUserid("contact-other-user")).thenReturn(List.of(
+                message("other-1", "contact-other-user", "other-wecom-user")));
         WeComCredentialProtector protector = mock(WeComCredentialProtector.class);
         when(protector.revealSecretKey(any())).thenReturn("plain");
         WeComViewerService service = WeComViewerService.forTests(config, clock, () -> "nonce", gateway,
                 mock(WeComInstallationService.class), noOpAudit(), mapper, protector, openGate());
-        return new ViewerFixture(service);
+        return new ViewerFixture(service, gateway, mapper);
     }
 
     private static WeComChatDataMessageEntity message(String messageId) {
+        return message(messageId, "contact-1", "wecom-user");
+    }
+
+    private static WeComChatDataMessageEntity message(String messageId, String externalUserid, String userid) {
         WeComChatDataMessageEntity entity = new WeComChatDataMessageEntity();
         entity.setMsgid(messageId);
-        entity.setExternalUserid("contact-1");
-        entity.setUserid("wecom-user");
+        entity.setExternalUserid(externalUserid);
+        entity.setUserid(userid);
         entity.setSendTime(1L);
         entity.setSecretKey("encrypted-" + messageId);
         return entity;
@@ -302,7 +456,8 @@ class WeComViewerServiceTest {
         };
     }
 
-    private record ViewerFixture(WeComViewerService service) {}
+    private record ViewerFixture(WeComViewerService service, WeComViewerHttpGateway gateway,
+                                 WeComChatDataMessageMapper mapper) {}
 
     private static final class MutableClock extends Clock {
         private Instant instant;

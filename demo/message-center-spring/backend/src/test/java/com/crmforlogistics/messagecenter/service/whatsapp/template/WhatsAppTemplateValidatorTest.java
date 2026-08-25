@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 
 import java.util.List;
 import java.util.ArrayList;
@@ -19,6 +20,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class WhatsAppTemplateValidatorTest {
 
     private final WhatsAppTemplateValidator validator = new WhatsAppTemplateValidator();
+
+    @Test
+    void validatorIsDiscoverableBySpringComponentScan() {
+        var scanner = new ClassPathScanningCandidateComponentProvider(true);
+
+        assertThat(scanner.findCandidateComponents(
+                        WhatsAppTemplateValidator.class.getPackageName()))
+                .extracting(org.springframework.beans.factory.config.BeanDefinition::getBeanClassName)
+                .contains(WhatsAppTemplateValidator.class.getName());
+    }
 
     @Test
     void acceptsExactlyOneBodyAtTheMaximumLength() {
@@ -46,7 +57,7 @@ class WhatsAppTemplateValidatorTest {
     void acceptsTextHeaderAndFooterAt60Characters() {
         TemplateCommand command = command(List.of(
                 headerText("h".repeat(60)),
-                body("Hello {{customer}}"),
+                body("Hello $(customer)"),
                 footer("f".repeat(60))), Map.of("customer", List.of("Alice")));
 
         assertThat(validator.validate(command)).isEqualTo(command);
@@ -121,15 +132,23 @@ class WhatsAppTemplateValidatorTest {
     @Test
     void requiresExamplesWithExactlyTheVariablesUsedByBodyAndTextHeader() {
         TemplateCommand valid = command(List.of(
-                headerText("Hi {{salesRep}}"), body("Hello {{customer}}")),
+                headerText("Hi $(salesRep)"), body("Hello $(customer)")),
                 Map.of("customer", List.of("Alice"), "salesRep", List.of("Sam")));
         assertThat(validator.validate(valid)).isEqualTo(valid);
 
-        assertValidationError(command(List.of(body("Hello {{customer}}")), Map.of()),
+        assertValidationError(command(List.of(body("Hello $(customer)")), Map.of()),
                 "examples", "must contain exactly the variables used by BODY and text HEADER");
-        assertValidationError(command(List.of(body("Hello {{customer}}")),
+        assertValidationError(command(List.of(body("Hello $(customer)")),
                 Map.of("customer", List.of("Alice"), "extra", List.of("value"))),
                 "examples", "must contain exactly the variables used by BODY and text HEADER");
+    }
+
+    @Test
+    void rejectsUnsupportedVariableSyntaxInNewCommandsEvenWithoutExamples() {
+        assertValidationError(command(List.of(body("Hello {{customer}}")), Map.of()),
+                "body.text", "variables must use $(name) syntax");
+        assertValidationError(command(List.of(body("Hello ${customer}")), Map.of()),
+                "body.text", "variables must use $(name) syntax");
     }
 
     @Test
@@ -138,7 +157,7 @@ class WhatsAppTemplateValidatorTest {
         Map<String, List<String>> examples = new LinkedHashMap<>();
         examples.put("customer", customerExamples);
 
-        TemplateCommand command = command(List.of(body("Hello {{customer}}")), examples);
+        TemplateCommand command = command(List.of(body("Hello $(customer)")), examples);
         customerExamples.add("Bob");
 
         assertThat(command.examples().get("customer")).containsExactly("Alice");

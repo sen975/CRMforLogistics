@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastJobMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
+import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastReconciliationEvidenceMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
@@ -22,6 +23,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientPage;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientView;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.ReconciliationSummary;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -44,6 +46,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -57,6 +60,7 @@ public class ChatAppBroadcastApplicationService {
     private final ChatAppBroadcastMapper broadcastMapper;
     private final ChatAppBroadcastRecipientMapper recipientMapper;
     private final ChatAppBroadcastJobMapper jobMapper;
+    private final ChatAppBroadcastReconciliationEvidenceMapper evidenceMapper;
     private final ContactIdentityMapper identityMapper;
     private final TemplateMapper templateMapper;
     private final ChatAppAccountResolver accountResolver;
@@ -68,6 +72,7 @@ public class ChatAppBroadcastApplicationService {
             ChatAppBroadcastMapper broadcastMapper,
             ChatAppBroadcastRecipientMapper recipientMapper,
             ChatAppBroadcastJobMapper jobMapper,
+            ChatAppBroadcastReconciliationEvidenceMapper evidenceMapper,
             ContactIdentityMapper identityMapper,
             TemplateMapper templateMapper,
             ChatAppAccountResolver accountResolver,
@@ -77,6 +82,7 @@ public class ChatAppBroadcastApplicationService {
         this.broadcastMapper = Objects.requireNonNull(broadcastMapper);
         this.recipientMapper = Objects.requireNonNull(recipientMapper);
         this.jobMapper = Objects.requireNonNull(jobMapper);
+        this.evidenceMapper = Objects.requireNonNull(evidenceMapper);
         this.identityMapper = Objects.requireNonNull(identityMapper);
         this.templateMapper = Objects.requireNonNull(templateMapper);
         this.accountResolver = Objects.requireNonNull(accountResolver);
@@ -254,7 +260,42 @@ public class ChatAppBroadcastApplicationService {
         accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
         List<RecipientView> recipients = recipientMapper.findByBroadcastId(broadcastId).stream()
                 .map(this::recipientView).toList();
-        return new BroadcastDetail(view(broadcast), recipients);
+        String diagnostic = evidenceMapper.findLatestDiagnostic(broadcastId)
+                .map(item -> item.getDiagnosticCode()).orElse(null);
+        ReconciliationSummary reconciliation = new ReconciliationSummary(
+                evidenceMapper.countByBroadcastId(broadcastId),
+                evidenceMapper.countMatched(broadcastId),
+                evidenceMapper.countUnmatched(broadcastId),
+                number(broadcast.getProcessingCount()), diagnostic);
+        return new BroadcastDetail(view(broadcast), recipients, reconciliation);
+    }
+
+    @Transactional
+    public BroadcastView requestReconciliation(UUID broadcastId, UUID actorUserId) {
+        ChatAppBroadcastEntity broadcast = broadcastMapper.findByIdForUpdate(broadcastId)
+                .orElseThrow(() -> error("CHATAPP_BROADCAST_NOT_FOUND", HttpStatus.NOT_FOUND));
+        requireBroadcastAccess(broadcast, actorUserId);
+        accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        if (!Set.of(BroadcastStatus.SUBMITTED, BroadcastStatus.RECONCILING,
+                BroadcastStatus.STATUS_UNKNOWN).contains(BroadcastStatus.valueOf(broadcast.getStatus()))) {
+            throw error("CHATAPP_BROADCAST_RECONCILIATION_NOT_ALLOWED", HttpStatus.CONFLICT);
+        }
+        if (trimmed(broadcast.getProviderGroupMessageId()).isBlank()) {
+            throw error("CHATAPP_BROADCAST_GROUP_ID_MISSING", HttpStatus.CONFLICT);
+        }
+        Instant now = clock.instant();
+        ChatAppBroadcastJobEntity job = new ChatAppBroadcastJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setBroadcastId(broadcastId);
+        job.setJobType(ChatAppBroadcastModels.JobType.RECONCILE.name());
+        job.setStatus(ChatAppBroadcastModels.JobStatus.PENDING.name());
+        job.setAttemptCount(0);
+        job.setMaxAttempts(10);
+        job.setNextAttemptAt(now);
+        job.setCreatedAt(now);
+        job.setUpdatedAt(now);
+        jobMapper.insertReconcileIfAbsent(job);
+        return view(broadcast);
     }
 
     @Transactional(readOnly = true)
@@ -308,7 +349,8 @@ public class ChatAppBroadcastApplicationService {
         return new RecipientView(
                 recipient.getId(), recipient.getContactId(), recipient.getContactIdentityId(),
                 recipient.getRecipientNameSnapshot(), mask(recipient.getRecipientNumberSnapshot()),
-                parseParams(recipient.getTemplateParamsJsonb()), recipient.getProviderMessageId(),
+                parseParams(recipient.getTemplateParamsJsonb()), recipient.getMessageId(),
+                recipient.getProviderMessageId(),
                 recipient.getProviderUniqueMessageId(), RecipientStatus.valueOf(recipient.getStatus()),
                 recipient.getFailureReason(), recipient.getProviderSentAt(), recipient.getLastReconciledAt());
     }
@@ -432,6 +474,8 @@ public class ChatAppBroadcastApplicationService {
                 number(entity.getRecipientCount()), number(entity.getSuccessCount()),
                 number(entity.getFailedCount()), number(entity.getProcessingCount()),
                 BroadcastStatus.valueOf(entity.getStatus()), entity.getProviderGroupMessageId(),
+                entity.getProviderRequestId(), entity.getProviderCode(),
+                entity.getLastReconciliationRequestId(), entity.getLastReconciliationProviderCode(),
                 entity.getErrorCode(), entity.getErrorMessage(), entity.getRetriesBroadcastId(),
                 entity.getCreatedByUserId(), entity.getSubmittedAt(), entity.getReconciledAt(),
                 entity.getCreatedAt(), entity.getUpdatedAt());

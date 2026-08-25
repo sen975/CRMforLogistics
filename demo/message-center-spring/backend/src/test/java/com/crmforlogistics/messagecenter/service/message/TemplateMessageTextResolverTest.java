@@ -37,10 +37,10 @@ class TemplateMessageTextResolverTest {
         message.setMetadataJsonb(new ObjectMapper().writeValueAsString(Map.of(
                 "templateCode", "order_ready",
                 "languageCode", "en_US",
-                "templateParams", Map.of("customer", "Alice", "orderNo", "A-17"))));
+                "templateParams", Map.of("customer", "Alice", "orderNo", "A-17", "status", "ready"))));
 
         TemplateEntity template = new TemplateEntity();
-        template.setBody("Hello {{customer}}, your order $(orderNo) is ready.");
+        template.setBody("Hello $(customer), your order ${orderNo} is {{status}}.");
         template.setStatus("REJECTED");
         when(templateMapper.findForDisplay(eq(accountId), eq("order_ready"), eq("en_US")))
                 .thenReturn(Optional.of(template));
@@ -75,8 +75,20 @@ class TemplateMessageTextResolverTest {
         TemplateMessageTextResolver resolver = new TemplateMessageTextResolver(
                 templateMapper, new ObjectMapper());
 
-        assertThat(resolver.placeholders("Hi {{customer}}, order $(orderNo), owner (sales)."))
-                .isEqualTo(List.of("customer", "orderNo", "sales"));
+        assertThat(resolver.placeholders(
+                "Hi $(customer), order $(orderNo), legacy {{legacy}}, old ${old}."))
+                .isEqualTo(List.of("customer", "orderNo"));
+    }
+
+    @Test
+    void rendersAnOwnedTemplateSnapshotWithoutReadingTheTemplateTable() {
+        TemplateMessageTextResolver resolver = new TemplateMessageTextResolver(
+                templateMapper, new ObjectMapper());
+
+        assertThat(resolver.renderSnapshot("订单 $(order) 已发货", Map.of("order", "SO-1")))
+                .isEqualTo("订单 SO-1 已发货");
+        assertThat(resolver.renderSnapshot(" ", Map.of()))
+                .isEqualTo("模板内容不可用");
     }
 
     @ParameterizedTest
@@ -84,7 +96,7 @@ class TemplateMessageTextResolverTest {
     void rejectsTemplateThatDoesNotSatisfyTheSendContract(TemplateState state) {
         UUID accountId = UUID.randomUUID();
         TemplateEntity template = new TemplateEntity();
-        template.setBody("Hello {{customer}}");
+        template.setBody("Hello $(customer)");
         template.setStatus(state.status());
         template.setAllowSend(state.allowSend());
         template.setDeletedAt(state.deleted() ? Instant.now() : null);
@@ -105,7 +117,7 @@ class TemplateMessageTextResolverTest {
         UUID accountId = UUID.randomUUID();
         TemplateEntity template = new TemplateEntity();
         template.setChannelAccountId(accountId);
-        template.setBody("Hello {{customer}}, order {{orderNo}} is ready.");
+        template.setBody("Hello $(customer), order $(orderNo) is ready.");
         template.setExamplesJsonb("{\"customer\":[\"Alice\"],\"orderNo\":[\"A-17\"]}");
         template.setStatus("APPROVED");
         template.setAllowSend(true);

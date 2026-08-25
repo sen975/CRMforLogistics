@@ -86,7 +86,7 @@ public class LocalWeComDevelopmentService {
         String state = randomToken();
         attempts.put(state, loginAttemptExpiresAt());
         return new WeComLoginAttemptService.LoginAttemptResponse(
-                "Local", "local-development", "http://localhost:8080/", state,
+                "Local", "local-development", "local-agent", "http://localhost:8080/", state,
                 config.wecomLoginAttemptTtlSeconds());
     }
 
@@ -276,6 +276,7 @@ public class LocalWeComDevelopmentService {
     private void writeTarget(List<JsonNode> rows) {
         for (JsonNode row : rows) {
             WeComChatDataMessageEntity entity = new WeComChatDataMessageEntity();
+            entity.setId(UUID.randomUUID());
             entity.setMsgid(text(row, "msgid"));
             entity.setSecretKey(credentialProtector.protectSecretKey(
                     firstNonBlank(text(row, "secret_key"), text(row, "secretKey"))));

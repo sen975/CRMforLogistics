@@ -1,6 +1,5 @@
 package com.crmforlogistics.messagecenter.channel.email;
 
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
 
@@ -21,10 +20,10 @@ final class OpenSslImapClient {
     private static final Pattern LITERAL_SIZE = Pattern.compile("\\{(\\d+)}\\s*$");
     private static final String CIPHER = "AES256-GCM-SHA384";
 
-    private final AppConfig config;
+    private final EmailSyncSettings settings;
 
-    OpenSslImapClient(AppConfig config) {
-        this.config = config;
+    OpenSslImapClient(EmailSyncSettings settings) {
+        this.settings = settings;
     }
 
     List<MimeMessage> fetchLatest(String folderName, int limit) throws Exception {
@@ -35,10 +34,11 @@ final class OpenSslImapClient {
             BufferedOutputStream output = new BufferedOutputStream(process.getOutputStream());
             readLine(input);
             command(input, output, "A001 CAPABILITY");
-            String login = command(input, output, "A002 LOGIN \"" + escape(config.imapUser()) + "\" \""
-                    + escape(config.imapPassword()) + "\"");
+            String login = command(input, output, "A002 LOGIN \"" + escape(settings.imapUser()) + "\" \""
+                    + escape(settings.imapPassword()) + "\"");
             if (!login.contains("A002 OK")) {
-                throw new IllegalStateException(cleanLoginFailure(login));
+                throw new EmailException("EMAIL_IMAP_AUTHENTICATION_FAILED",
+                        cleanLoginFailure(login));
             }
             String select = command(input, output, "A003 SELECT \"" + escape(folderName) + "\"");
             if (!select.contains("A003 OK")) return List.of();
@@ -62,10 +62,10 @@ final class OpenSslImapClient {
     }
 
     private Process startOpenSsl() throws IOException {
-        String host = config.imapHost();
-        String port = config.imapPort();
+        String host = settings.imapHost();
+        String port = settings.imapPort();
         List<String> command = List.of(
-                config.opensslBin(), "s_client", "-quiet", "-crlf",
+                settings.opensslBin(), "s_client", "-quiet", "-crlf",
                 "-servername", host != null ? host : "",
                 "-connect", (host != null ? host : "") + ":" + (port != null ? port : "993"),
                 "-tls1_2", "-cipher", CIPHER);

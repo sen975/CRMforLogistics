@@ -33,6 +33,10 @@ export function useSse(onMessage: () => void) {
         onMessageRef.current();
       });
 
+      es.addEventListener('broadcast-updated', () => {
+        onMessageRef.current();
+      });
+
       es.onerror = () => {
         es.close();
         const delay = Math.min(1000 * Math.pow(2, Math.min(retries, 5)), maxBackoff);

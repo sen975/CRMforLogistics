@@ -8,6 +8,7 @@ import java.util.Map;
 public record TemplateResponse(
         String templateCode,
         String templateName,
+        String displayName,
         String languageCode,
         String body,
         List<String> placeholders,

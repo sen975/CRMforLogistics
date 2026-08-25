@@ -1,27 +1,21 @@
 package com.crmforlogistics.messagecenter.mapper;
 
-import com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration;
+import com.crmforlogistics.messagecentertest.mapper.ChatAppBroadcastPersistenceTestConfiguration;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastJobEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastReconciliationEvidenceEntity;
-import org.apache.ibatis.session.SqlSessionFactory;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mybatis.spring.mapper.MapperFactoryBean;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -38,7 +32,8 @@ import java.util.concurrent.Executors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest(classes = ChatAppBroadcastPersistenceIntegrationTest.TestConfig.class)
+@ExtendWith(SpringExtension.class)
+@ContextConfiguration(classes = ChatAppBroadcastPersistenceTestConfiguration.class)
 @Testcontainers
 class ChatAppBroadcastPersistenceIntegrationTest {
 
@@ -53,63 +48,8 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @ImportAutoConfiguration({
-            DataSourceAutoConfiguration.class,
-            DataSourceTransactionManagerAutoConfiguration.class,
-            JdbcTemplateAutoConfiguration.class,
-            MybatisPlusAutoConfiguration.class
-    })
-    static class TestConfig {
-        @Bean
-        MapperFactoryBean<ChatAppBroadcastMapper> broadcastMapper(SqlSessionFactory factory) {
-            MapperFactoryBean<ChatAppBroadcastMapper> bean =
-                    new MapperFactoryBean<>(ChatAppBroadcastMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
-
-        @Bean
-        MapperFactoryBean<ChatAppBroadcastJobMapper> jobMapper(SqlSessionFactory factory) {
-            MapperFactoryBean<ChatAppBroadcastJobMapper> bean =
-                    new MapperFactoryBean<>(ChatAppBroadcastJobMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
-
-        @Bean
-        MapperFactoryBean<ChatAppBroadcastRecipientMapper> recipientMapper(SqlSessionFactory factory) {
-            MapperFactoryBean<ChatAppBroadcastRecipientMapper> bean =
-                    new MapperFactoryBean<>(ChatAppBroadcastRecipientMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
-
-        @Bean
-        MapperFactoryBean<ChatAppBroadcastReconciliationEvidenceMapper> evidenceMapper(
-                SqlSessionFactory factory) {
-            MapperFactoryBean<ChatAppBroadcastReconciliationEvidenceMapper> bean =
-                    new MapperFactoryBean<>(ChatAppBroadcastReconciliationEvidenceMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
-
-        @Bean
-        MapperFactoryBean<ContactIdentityMapper> contactIdentityMapper(SqlSessionFactory factory) {
-            MapperFactoryBean<ContactIdentityMapper> bean =
-                    new MapperFactoryBean<>(ContactIdentityMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
-
-        @Bean
-        MapperFactoryBean<MessageMapper> messageMapper(SqlSessionFactory factory) {
-            MapperFactoryBean<MessageMapper> bean = new MapperFactoryBean<>(MessageMapper.class);
-            bean.setSqlSessionFactory(factory);
-            return bean;
-        }
+        registry.add("mybatis-plus.type-handlers-package",
+                () -> "com.crmforlogistics.messagecenter.typehandler");
     }
 
     @BeforeAll

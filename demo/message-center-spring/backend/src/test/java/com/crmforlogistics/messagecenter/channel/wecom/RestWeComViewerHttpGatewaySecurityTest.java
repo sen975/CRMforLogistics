@@ -12,10 +12,25 @@ import java.io.StringWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class RestWeComViewerHttpGatewaySecurityTest {
+
+    @Test
+    void rejectsTicketRequestsWithoutAnInstallationBinding() {
+        RestWeComViewerHttpGateway gateway = new RestWeComViewerHttpGateway(
+                mock(AppConfig.class), new ObjectMapper(), mock(WeComAccessTokenService.class),
+                mock(WeComAuthorizationGateway.class), mock(WeComRestClientFactory.class));
+
+        assertThatThrownBy(gateway::fetchCorpJsapiTicket)
+                .isInstanceOf(WeComException.class)
+                .hasMessage("企业微信展示凭证必须绑定授权安装实例");
+        assertThatThrownBy(gateway::fetchAgentJsapiTicket)
+                .isInstanceOf(WeComException.class)
+                .hasMessage("企业微信展示凭证必须绑定授权安装实例");
+    }
 
     @Test
     void transportFailureDoesNotRetainAccessTokenInExceptionChain() {

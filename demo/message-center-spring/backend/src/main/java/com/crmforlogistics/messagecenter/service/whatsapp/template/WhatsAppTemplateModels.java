@@ -21,7 +21,7 @@ public final class WhatsAppTemplateModels {
     }
 
     public enum OperationType {
-        CREATE, MODIFY, SET_SEND_PERMISSION, DELETE, RECONCILE
+        CREATE, MODIFY, SET_SEND_PERMISSION, DELETE, RECONCILE, RETIRED
     }
 
     public enum MediaAssetStatus {

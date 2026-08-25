@@ -79,6 +79,23 @@ class AuthControllerSecurityTest {
     }
 
     @Test
+    void loginAllowsTheProductionFrontendOrigin() throws Exception {
+        UUID userId = UUID.randomUUID();
+        AuthenticationManager manager = mock(AuthenticationManager.class);
+        when(authenticationConfiguration.getAuthenticationManager()).thenReturn(manager);
+        when(manager.authenticate(any())).thenReturn(new UsernamePasswordAuthenticationToken(
+                userId.toString(), "", List.of()));
+        when(authSessionService.issue(any(), any(), any())).thenReturn("opaque-token");
+
+        mvc.perform(post("/api/auth/login")
+                        .header("Origin", "https://www.blindac.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"sales\",\"password\":\"secret\"}"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "https://www.blindac.com"));
+    }
+
+    @Test
     void transcriptPatchPreflightIsAllowedForTheFrontend() throws Exception {
         mvc.perform(options("/api/v1/call-records/{id}/transcript", UUID.randomUUID())
                         .header("Origin", "http://127.0.0.1:5173")

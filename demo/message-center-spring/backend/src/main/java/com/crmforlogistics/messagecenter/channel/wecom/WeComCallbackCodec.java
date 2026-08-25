@@ -36,7 +36,7 @@ public final class WeComCallbackCodec {
     private final Clock clock;
 
     public WeComCallbackCodec(AppConfig config) {
-        this(config.wecomSuiteId(), config.wecomLoginSuiteId(),
+        this(config.wecomSuiteId(), "",
                 !config.wecomCallbackReceiveId().isBlank() ? config.wecomCallbackReceiveId() : config.wecomSuiteId(),
                 config.wecomToken(), config.wecomEncodingAesKey(), Clock.systemUTC());
     }
@@ -88,15 +88,24 @@ public final class WeComCallbackCodec {
             require(timestamp, "timestamp", 32);
             require(nonce, "nonce", 128);
             require(encryptXml, "encrypt", MAX_XML_BYTES);
-            String encrypted = encryptedValue(encryptXml);
-            long epoch = verifySignature(msgSignature, timestamp, nonce, encrypted);
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.INPUT, exception);
+        }
+        String encrypted;
+        try {
+            encrypted = encryptedValue(encryptXml);
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.ENVELOPE_XML, exception);
+        }
+        try {
+            long epoch = verifyTimestamp(timestamp);
+            verifySignature(msgSignature, timestamp, nonce, encrypted);
             DecryptedPayload payload = decrypt(encrypted, allowedSuiteIds);
             return parse(payload.xml(), payload.receiveId(), epoch);
-        } catch (WeComException exception) {
+        } catch (WeComCallbackFailure exception) {
             throw exception;
         } catch (Exception exception) {
-            throw new WeComException("WECOM_CALLBACK_SIGNATURE_INVALID", 403,
-                    "企业微信授权回调验签或解密失败", exception);
+            throw failure(WeComCallbackFailure.Stage.PAYLOAD_XML, exception);
         }
     }
 
@@ -107,28 +116,42 @@ public final class WeComCallbackCodec {
             require(timestamp, "timestamp", 32);
             require(nonce, "nonce", 128);
             require(encryptedEcho, "echostr", MAX_XML_BYTES);
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.INPUT, exception);
+        }
+        try {
+            verifyTimestamp(timestamp);
             verifySignature(msgSignature, timestamp, nonce, encryptedEcho);
             return decrypt(encryptedEcho, allowedEchoReceiveIds).xml();
-        } catch (WeComException exception) {
+        } catch (WeComCallbackFailure exception) {
             throw exception;
         } catch (Exception exception) {
-            throw new WeComException("WECOM_CALLBACK_SIGNATURE_INVALID", 403,
-                    "企业微信授权回调验签或解密失败", exception);
+            throw failure(WeComCallbackFailure.Stage.PLAINTEXT, exception);
         }
     }
 
-    private long verifySignature(String msgSignature, String timestamp, String nonce, String encrypted)
-            throws Exception {
-        long epoch = Long.parseLong(timestamp);
-        if (Math.abs(clock.instant().getEpochSecond() - epoch) > 900) {
-            throw new SecurityException("callback timestamp is outside the accepted window");
+    private long verifyTimestamp(String timestamp) {
+        try {
+            long epoch = Long.parseLong(timestamp);
+            if (Math.abs(clock.instant().getEpochSecond() - epoch) > 900) {
+                throw new SecurityException("callback timestamp is outside the accepted window");
+            }
+            return epoch;
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.TIMESTAMP, exception);
         }
-        String expected = sha1(token, timestamp, nonce, encrypted);
-        if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),
-                msgSignature.getBytes(StandardCharsets.US_ASCII))) {
-            throw new SecurityException("callback signature is invalid");
+    }
+
+    private void verifySignature(String msgSignature, String timestamp, String nonce, String encrypted) {
+        try {
+            String expected = sha1(token, timestamp, nonce, encrypted);
+            if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),
+                    msgSignature.getBytes(StandardCharsets.US_ASCII))) {
+                throw new SecurityException("callback signature is invalid");
+            }
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.SIGNATURE, exception);
         }
-        return epoch;
     }
 
     private static String encryptedValue(String body) throws Exception {
@@ -151,31 +174,55 @@ public final class WeComCallbackCodec {
     }
 
     private DecryptedPayload decrypt(String encrypted, Set<String> expectedReceiveIds) throws Exception {
-        byte[] ciphertext = Base64.getDecoder().decode(encrypted);
-        if (ciphertext.length == 0 || ciphertext.length % 16 != 0 || ciphertext.length > MAX_XML_BYTES) {
-            throw new IllegalArgumentException("encrypted callback has invalid dimensions");
+        byte[] ciphertext;
+        try {
+            ciphertext = Base64.getDecoder().decode(encrypted);
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.CIPHERTEXT, exception);
         }
-        Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(aesKey, "AES"), new IvParameterSpec(aesKey, 0, 16));
-        byte[] padded = cipher.doFinal(ciphertext);
+        if (ciphertext.length == 0 || ciphertext.length % 16 != 0 || ciphertext.length > MAX_XML_BYTES) {
+            throw failure(WeComCallbackFailure.Stage.CIPHERTEXT,
+                    new IllegalArgumentException("encrypted callback has invalid dimensions"));
+        }
+        byte[] padded;
+        try {
+            Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(aesKey, "AES"),
+                    new IvParameterSpec(aesKey, 0, 16));
+            padded = cipher.doFinal(ciphertext);
+        } catch (Exception exception) {
+            java.util.Arrays.fill(ciphertext, (byte) 0);
+            throw failure(WeComCallbackFailure.Stage.AES, exception);
+        }
         try {
             int padding = padded[padded.length - 1] & 0xff;
-            if (padding < 1 || padding > 32 || padding > padded.length) throw new IllegalArgumentException("padding");
+            if (padding < 1 || padding > 32 || padding > padded.length) {
+                throw failure(WeComCallbackFailure.Stage.PADDING,
+                        new IllegalArgumentException("padding"));
+            }
             for (int i = padded.length - padding; i < padded.length; i++) {
-                if ((padded[i] & 0xff) != padding) throw new IllegalArgumentException("padding");
+                if ((padded[i] & 0xff) != padding) {
+                    throw failure(WeComCallbackFailure.Stage.PADDING,
+                            new IllegalArgumentException("padding"));
+                }
             }
             byte[] plain = java.util.Arrays.copyOf(padded, padded.length - padding);
             try {
-                if (plain.length < 20) throw new IllegalArgumentException("callback plaintext is too short");
+                if (plain.length < 20) {
+                    throw failure(WeComCallbackFailure.Stage.PLAINTEXT,
+                            new IllegalArgumentException("callback plaintext is too short"));
+                }
                 int xmlLength = ByteBuffer.wrap(plain, 16, 4).getInt();
                 if (xmlLength < 1 || xmlLength > MAX_XML_BYTES || 20L + xmlLength > plain.length) {
-                    throw new IllegalArgumentException("callback XML length is invalid");
+                    throw failure(WeComCallbackFailure.Stage.PLAINTEXT,
+                            new IllegalArgumentException("callback XML length is invalid"));
                 }
                 String xml = new String(plain, 20, xmlLength, StandardCharsets.UTF_8);
                 String receiveId = new String(plain, 20 + xmlLength, plain.length - 20 - xmlLength,
                         StandardCharsets.UTF_8);
                 if (!expectedReceiveIds.contains(receiveId)) {
-                    throw new SecurityException("callback receive id is invalid");
+                    throw new WeComCallbackFailure(WeComCallbackFailure.Stage.RECEIVE_ID,
+                            new SecurityException("callback receive id is invalid"), receiveId);
                 }
                 return new DecryptedPayload(xml, receiveId);
             } finally {
@@ -188,34 +235,52 @@ public final class WeComCallbackCodec {
     }
 
     private DecodedCallback parse(String xml, String receiveId, long epoch) throws Exception {
-        if (xml.getBytes(StandardCharsets.UTF_8).length > MAX_XML_BYTES) throw new IllegalArgumentException("XML too large");
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
-        factory.setXIncludeAware(false);
-        factory.setExpandEntityReferences(false);
-        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
-        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-        var builder = factory.newDocumentBuilder();
-        builder.setErrorHandler(new DefaultHandler());
-        Document document = builder.parse(new InputSource(new StringReader(xml)));
+        Document document;
+        try {
+            if (xml.getBytes(StandardCharsets.UTF_8).length > MAX_XML_BYTES) {
+                throw new IllegalArgumentException("XML too large");
+            }
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            var builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new DefaultHandler());
+            document = builder.parse(new InputSource(new StringReader(xml)));
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.PAYLOAD_XML, exception);
+        }
         String callbackSuiteId = field(document, "SuiteId");
         if (callbackSuiteId.isBlank() || !allowedSuiteIds.contains(callbackSuiteId)
                 || !callbackSuiteId.equals(receiveId)) {
-            throw new SecurityException("callback suite id is invalid");
+            throw failure(WeComCallbackFailure.Stage.SUITE_ID,
+                    new SecurityException("callback suite id is invalid"));
         }
-        String infoType = require(field(document, "InfoType"), "InfoType", 64);
-        String authCorpId = field(document, "AuthCorpId");
-        String authCode = field(document, "AuthCode");
-        String suiteTicket = field(document, "SuiteTicket");
-        String state = field(document, "State");
-        for (String value : List.of(authCorpId, authCode, suiteTicket, state)) {
-            if (value.length() > MAX_FIELD) throw new IllegalArgumentException("callback field is too long");
+        try {
+            String infoType = require(field(document, "InfoType"), "InfoType", 64);
+            String authCorpId = field(document, "AuthCorpId");
+            String authCode = field(document, "AuthCode");
+            String suiteTicket = field(document, "SuiteTicket");
+            String state = field(document, "State");
+            for (String value : List.of(authCorpId, authCode, suiteTicket, state)) {
+                if (value.length() > MAX_FIELD) {
+                    throw new IllegalArgumentException("callback field is too long");
+                }
+            }
+            return new DecodedCallback(callbackSuiteId, infoType, authCorpId, authCode, suiteTicket, state,
+                    Instant.ofEpochSecond(epoch));
+        } catch (Exception exception) {
+            throw failure(WeComCallbackFailure.Stage.PAYLOAD_XML, exception);
         }
-        return new DecodedCallback(callbackSuiteId, infoType, authCorpId, authCode, suiteTicket, state,
-                Instant.ofEpochSecond(epoch));
+    }
+
+    private static WeComCallbackFailure failure(WeComCallbackFailure.Stage stage, Throwable cause) {
+        return new WeComCallbackFailure(stage, cause);
     }
 
     private static String field(Document document, String name) {

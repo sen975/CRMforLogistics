@@ -14,6 +14,7 @@ public class ConversationEntity {
 
     private UUID channelAccountId;
     private UUID contactIdentityId;
+    private UUID sourceConversationId;
     private String status;
     private UUID assignedTeamId;
     private UUID assignedUserId;
@@ -48,6 +49,9 @@ public class ConversationEntity {
     public void setContactIdentityId(UUID contactIdentityId) {
         this.contactIdentityId = contactIdentityId;
     }
+
+    public UUID getSourceConversationId() { return sourceConversationId; }
+    public void setSourceConversationId(UUID sourceConversationId) { this.sourceConversationId = sourceConversationId; }
 
     public String getStatus() {
         return status;

@@ -1,16 +1,28 @@
-import { useState, useMemo } from 'react';
-import { Form, Input, Select, Button, Tabs, App, Upload } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Form, Input, Select, Button, Tabs, App, Upload, Spin } from 'antd';
 import { SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
-import { sendEmail, sendChatApp, sendWeCom, sendChatAppMedia, fetchTemplates } from '../api/endpoints';
-import type { ContactResponse } from '../api/types';
+import {
+  sendEmail,
+  sendChatApp,
+  sendWeCom,
+  sendChatAppMedia,
+  fetchTemplates,
+  fetchChannelCapabilities,
+} from '../api/endpoints';
+import type { ContactIdentityResponse, ContactResponse } from '../api/types';
 import CallRecordUploadForm from './CallRecordUploadForm';
 
 const { TextArea } = Input;
+const EMAIL_ATTACHMENT_MAX_COUNT = 16;
+const EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
 interface SendFormProps {
   contact?: ContactResponse;
   onCallRecordCreated?: () => void;
+  selectedChannelAccountId?: string;
+  activeChannel?: string;
+  onChannelChange?: (channel: string) => void;
 }
 
 function identityOptions(contact: ContactResponse, channelType: string) {
@@ -27,8 +39,72 @@ function firstIdentityValue(contact: ContactResponse, channelType: string): stri
   return identity?.identityValue ?? '';
 }
 
-export default function SendForm({ contact, onCallRecordCreated }: SendFormProps) {
+function identityLabel(identity: ContactIdentityResponse): string {
+  return identity.displayName
+    ? `${identity.displayName} (${identity.identityValue})`
+    : identity.identityValue;
+}
+
+interface ChatAppRecipientFieldProps {
+  identities: ContactIdentityResponse[];
+  selectedIdentityId?: string;
+  requiresExplicitSelection?: boolean;
+  onChange: (identityId: string) => void;
+}
+
+function ChatAppRecipientField({
+  identities,
+  selectedIdentityId,
+  requiresExplicitSelection = false,
+  onChange,
+}: ChatAppRecipientFieldProps) {
+  if (identities.length === 0) {
+    return (
+      <Form.Item label="收件人" htmlFor="chatapp-recipient">
+        <Input id="chatapp-recipient" value="无可用 ChatApp 账号" disabled />
+      </Form.Item>
+    );
+  }
+  if (identities.length === 1 && !requiresExplicitSelection) {
+    return (
+      <Form.Item label="收件人" htmlFor="chatapp-recipient" required>
+        <Input
+          id="chatapp-recipient"
+          value={identityLabel(identities[0])}
+          readOnly
+        />
+      </Form.Item>
+    );
+  }
+  return (
+    <Form.Item label="收件人" htmlFor="chatapp-recipient" required>
+      <Select
+        id="chatapp-recipient"
+        value={selectedIdentityId}
+        onChange={onChange}
+        options={identities.map((identity) => ({
+          label: identityLabel(identity),
+          value: identity.id,
+        }))}
+      />
+    </Form.Item>
+  );
+}
+
+export default function SendForm({
+  contact,
+  onCallRecordCreated,
+  selectedChannelAccountId,
+  activeChannel,
+  onChannelChange,
+}: SendFormProps) {
   const [sending, setSending] = useState(false);
+  const [emailForm] = Form.useForm();
+  const [selectedChatAppAccountId, setSelectedChatAppAccountId] = useState<string>();
+  const [selectedChatAppIdentityId, setSelectedChatAppIdentityId] = useState<string>();
+  const [chatAppRecipientConfirmationRequired, setChatAppRecipientConfirmationRequired] = useState(false);
+  const previousFixedChannelAccountId = useRef(selectedChannelAccountId);
+  const hasInitializedChatAppAccount = useRef(false);
   const [templateCode, setTemplateCode] = useState<string | undefined>(undefined);
   const [mediaMode, setMediaMode] = useState<string>('image');
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
@@ -38,16 +114,96 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
     queryKey: ['templates'],
     queryFn: fetchTemplates,
   });
+  const { data: channelCapabilities, isPending: channelCapabilitiesPending } = useQuery({
+    queryKey: ['channelCapabilities'],
+    queryFn: fetchChannelCapabilities,
+  });
 
   const selectedTemplate = useMemo(
     () => templates?.find((t) => t.templateCode === templateCode),
     [templates, templateCode],
   );
 
+  const activeChatAppCapabilities = useMemo(
+    () => (channelCapabilities ?? []).filter((channel) => (
+      (channel.channelType === 'chatapp' || channel.channelType === 'whatsapp')
+      && channel.authStatus === 'active'
+    )),
+    [channelCapabilities],
+  );
+  const activeContactChatAppAccounts = useMemo(
+    () => activeChatAppCapabilities.filter((channel) => (
+      (contact?.identities ?? []).some((identity) => (
+        identity.channelType === 'chatapp'
+        && identity.identityScope === channel.channelAccountId
+      ))
+    )),
+    [activeChatAppCapabilities, contact?.identities],
+  );
+  useEffect(() => {
+    if (previousFixedChannelAccountId.current !== selectedChannelAccountId) {
+      previousFixedChannelAccountId.current = selectedChannelAccountId;
+      setSelectedChatAppIdentityId(undefined);
+      setChatAppRecipientConfirmationRequired(true);
+    }
+
+    if (selectedChannelAccountId) {
+      if (selectedChatAppAccountId !== undefined) {
+        setSelectedChatAppAccountId(undefined);
+      }
+      return;
+    }
+
+    if (activeContactChatAppAccounts.some(
+      (channel) => channel.channelAccountId === selectedChatAppAccountId,
+    )) {
+      return;
+    }
+
+    const replacementChannelAccountId = activeContactChatAppAccounts[0]?.channelAccountId;
+    if (selectedChatAppAccountId !== replacementChannelAccountId) {
+      setSelectedChatAppAccountId(replacementChannelAccountId);
+      setSelectedChatAppIdentityId(undefined);
+      if (hasInitializedChatAppAccount.current) {
+        setChatAppRecipientConfirmationRequired(true);
+      } else {
+        hasInitializedChatAppAccount.current = true;
+      }
+    }
+  }, [
+    activeContactChatAppAccounts,
+    selectedChannelAccountId,
+    selectedChatAppAccountId,
+  ]);
+  const effectiveChatAppAccountId = selectedChannelAccountId ?? selectedChatAppAccountId;
+  const chatAppIdentities = useMemo(
+    () => (contact?.identities ?? []).filter((identity) => (
+      identity.channelType === 'chatapp'
+      && identity.identityScope === effectiveChatAppAccountId
+    )),
+    [contact?.identities, effectiveChatAppAccountId],
+  );
+  useEffect(() => {
+    if (selectedChatAppIdentityId && !chatAppIdentities.some(
+      (identity) => identity.id === selectedChatAppIdentityId,
+    )) {
+      setSelectedChatAppIdentityId(undefined);
+      setChatAppRecipientConfirmationRequired(true);
+    }
+  }, [chatAppIdentities, selectedChatAppIdentityId]);
+  const effectiveChatAppIdentityId = chatAppIdentities.some(
+    (identity) => identity.id === selectedChatAppIdentityId,
+  )
+    ? selectedChatAppIdentityId
+    : !chatAppRecipientConfirmationRequired && chatAppIdentities.length === 1
+      ? chatAppIdentities[0].id
+      : undefined;
+
   const channels = contact?.channelTypes ?? [];
+  const chatAppChannelAvailable = activeChatAppCapabilities.length > 0;
   const defaultChannel = channels[0] ?? 'email';
 
-  const handleEmail = async (values: Record<string, string>) => {
+  const handleEmail = async (values: Record<string, string>, form?: any) => {
     setSending(true);
     try {
       await sendEmail({
@@ -58,6 +214,7 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
       });
       message.success('邮件已发送');
       setAttachmentFiles([]);
+      form?.resetFields();
     } catch {
       message.error('发送失败');
     } finally {
@@ -66,11 +223,16 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
   };
 
   const handleChatApp = async (values: Record<string, string>) => {
+    if (!contact || !effectiveChatAppIdentityId) {
+      message.error('当前联系人没有可用的 ChatApp 账号');
+      return;
+    }
     setSending(true);
     try {
       await sendChatApp({
         mode: 'text',
-        to: values.to,
+        contactId: contact.id,
+        recipientIdentityId: effectiveChatAppIdentityId,
         text: values.text,
         clientRequestId: crypto.randomUUID(),
       });
@@ -83,6 +245,10 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
   };
 
   const handleTemplate = async (values: Record<string, string>) => {
+    if (!contact || !effectiveChatAppIdentityId) {
+      message.error('当前联系人没有可用的 ChatApp 账号');
+      return;
+    }
     const tpl = templates?.find((t) => t.templateCode === values.templateCode);
     const params: Record<string, string> = {};
     if (tpl?.placeholders) {
@@ -96,7 +262,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
     try {
       await sendChatApp({
         mode: 'template',
-        to: values.to,
+        contactId: contact.id,
+        recipientIdentityId: effectiveChatAppIdentityId,
         templateCode: values.templateCode,
         templateName: tpl?.templateName,
         languageCode: tpl?.languageCode,
@@ -112,6 +279,10 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
   };
 
   const handleMedia = async (values: Record<string, string>) => {
+    if (!contact || !effectiveChatAppIdentityId) {
+      message.error('当前联系人没有可用的 ChatApp 账号');
+      return;
+    }
     if (!mediaFile) {
       message.error('请选择文件');
       return;
@@ -119,7 +290,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
     setSending(true);
     try {
       await sendChatAppMedia({
-        to: values.to,
+        contactId: contact.id,
+        recipientIdentityId: effectiveChatAppIdentityId,
         mediaType: mediaMode,
         caption: values.caption,
         file: mediaFile,
@@ -153,6 +325,9 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
   if (!contact) {
     return <div style={{ padding: 16, color: '#999' }}>选择一个联系人开始发送消息</div>;
   }
+  if (channelCapabilitiesPending) {
+    return <div style={{ padding: 16 }}><Spin size="small" /></div>;
+  }
 
   const toSelect = (channel: string) => {
     const options = identityOptions(contact, channel);
@@ -162,6 +337,36 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
     return <Select placeholder={channel === 'email' ? '选择收件人' : '选择收件人'} options={options} />;
   };
 
+  const chatAppRecipientField = () => (
+    <ChatAppRecipientField
+      identities={chatAppIdentities}
+      selectedIdentityId={effectiveChatAppIdentityId}
+      requiresExplicitSelection={chatAppRecipientConfirmationRequired}
+      onChange={(identityId) => {
+        setSelectedChatAppIdentityId(identityId);
+        setChatAppRecipientConfirmationRequired(false);
+      }}
+    />
+  );
+
+  const chatAppAccountField = !selectedChannelAccountId && activeContactChatAppAccounts.length > 1 ? (
+    <Form.Item label="ChatApp 账号" htmlFor="chatapp-account">
+      <Select
+        id="chatapp-account"
+        value={effectiveChatAppAccountId}
+        onChange={(channelAccountId) => {
+          setSelectedChatAppAccountId(channelAccountId);
+          setSelectedChatAppIdentityId(undefined);
+          setChatAppRecipientConfirmationRequired(false);
+        }}
+        options={activeContactChatAppAccounts.map((channel) => ({
+          label: channel.displayName,
+          value: channel.channelAccountId,
+        }))}
+      />
+    </Form.Item>
+  ) : null;
+
   const channelTabs = [
     ...(channels.includes('email')
       ? [{
@@ -169,7 +374,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
           label: '邮件',
           children: (
             <Form
-              onFinish={handleEmail}
+              form={emailForm}
+              onFinish={(values) => handleEmail(values, emailForm)}
               layout="vertical"
               size="small"
               initialValues={{ to: firstIdentityValue(contact, 'email') }}
@@ -192,6 +398,16 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                     status: 'done' as const,
                   }))}
                   beforeUpload={(file) => {
+                    const nextCount = attachmentFiles.length + 1;
+                    const nextSize = attachmentFiles.reduce((sum, item) => sum + item.size, 0) + file.size;
+                    if (nextCount > EMAIL_ATTACHMENT_MAX_COUNT) {
+                      message.error('最多添加 16 个附件');
+                      return Upload.LIST_IGNORE;
+                    }
+                    if (nextSize > EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+                      message.error('附件总大小不能超过 20 MiB');
+                      return Upload.LIST_IGNORE;
+                    }
                     setAttachmentFiles((prev) => [...prev, file]);
                     return false;
                   }}
@@ -209,7 +425,7 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
           ),
         }]
       : []),
-    ...(channels.includes('chatapp')
+    ...(chatAppChannelAvailable
       ? [{
           key: 'chatapp',
           label: 'ChatApp',
@@ -225,15 +441,14 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       onFinish={handleChatApp}
                       layout="vertical"
                       size="small"
-                      initialValues={{ to: firstIdentityValue(contact, 'chatapp') }}
                     >
-                      <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                        {toSelect('chatapp')}
-                      </Form.Item>
+                      {chatAppAccountField}
+                      {chatAppRecipientField()}
                       <Form.Item name="text" label="消息" rules={[{ required: true }]}>
                         <TextArea rows={4} placeholder="消息内容" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                      <Button type="primary" htmlType="submit" loading={sending}
+                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
                         发送
                       </Button>
                     </Form>
@@ -247,19 +462,17 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       onFinish={handleTemplate}
                       layout="vertical"
                       size="small"
-                      initialValues={{ to: firstIdentityValue(contact, 'chatapp') }}
                       onValuesChange={(changed) => {
                         if (changed.templateCode) setTemplateCode(changed.templateCode);
                       }}
                     >
-                      <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                        {toSelect('chatapp')}
-                      </Form.Item>
+                      {chatAppAccountField}
+                      {chatAppRecipientField()}
                       <Form.Item name="templateCode" label="模板" rules={[{ required: true }]}>
                         <Select
                           placeholder="选择模板"
                           options={templates?.map((t) => ({
-                            label: `${t.templateName} (${t.languageCode})`,
+                            label: `${t.displayName} (${t.languageCode})`,
                             value: t.templateCode,
                           }))}
                         />
@@ -274,7 +487,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                           <Input placeholder={`模板参数: ${key}`} />
                         </Form.Item>
                       ))}
-                      <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                      <Button type="primary" htmlType="submit" loading={sending}
+                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
                         发送模板
                       </Button>
                     </Form>
@@ -288,11 +502,9 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       onFinish={handleMedia}
                       layout="vertical"
                       size="small"
-                      initialValues={{ to: firstIdentityValue(contact, 'chatapp') }}
                     >
-                      <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                        {toSelect('chatapp')}
-                      </Form.Item>
+                      {chatAppAccountField}
+                      {chatAppRecipientField()}
                       <Form.Item label="图片">
                         <Upload
                           accept="image/*"
@@ -306,7 +518,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="图片说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                      <Button type="primary" htmlType="submit" loading={sending}
+                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
                         发送图片
                       </Button>
                     </Form>
@@ -320,11 +533,9 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       onFinish={handleMedia}
                       layout="vertical"
                       size="small"
-                      initialValues={{ to: firstIdentityValue(contact, 'chatapp') }}
                     >
-                      <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                        {toSelect('chatapp')}
-                      </Form.Item>
+                      {chatAppAccountField}
+                      {chatAppRecipientField()}
                       <Form.Item label="视频">
                         <Upload
                           accept="video/*"
@@ -338,7 +549,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="视频说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                      <Button type="primary" htmlType="submit" loading={sending}
+                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
                         发送视频
                       </Button>
                     </Form>
@@ -352,11 +564,9 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       onFinish={handleMedia}
                       layout="vertical"
                       size="small"
-                      initialValues={{ to: firstIdentityValue(contact, 'chatapp') }}
                     >
-                      <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                        {toSelect('chatapp')}
-                      </Form.Item>
+                      {chatAppAccountField}
+                      {chatAppRecipientField()}
                       <Form.Item label="文件">
                         <Upload
                           fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
@@ -369,7 +579,8 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="文件说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                      <Button type="primary" htmlType="submit" loading={sending}
+                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
                         发送文件
                       </Button>
                     </Form>
@@ -416,10 +627,22 @@ export default function SendForm({ contact, onCallRecordCreated }: SendFormProps
       children: <CallRecordUploadForm contact={contact} onSuccess={onCallRecordCreated} />,
     },
   ];
+  const channelKeys = channelTabs.map((tab) => tab.key);
+  const effectiveActiveChannel = activeChannel && channelKeys.includes(activeChannel)
+    ? activeChannel
+    : channelKeys.includes(defaultChannel)
+      ? defaultChannel
+      : channelKeys[0];
 
   return (
     <div style={{ padding: 16 }}>
-      <Tabs defaultActiveKey={defaultChannel} items={channelTabs} />
+      <Tabs
+        {...(activeChannel !== undefined
+          ? { activeKey: effectiveActiveChannel }
+          : { defaultActiveKey: effectiveActiveChannel })}
+        onChange={onChannelChange}
+        items={channelTabs}
+      />
     </div>
   );
 }

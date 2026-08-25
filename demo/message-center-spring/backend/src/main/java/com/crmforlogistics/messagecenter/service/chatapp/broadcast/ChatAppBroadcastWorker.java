@@ -234,6 +234,17 @@ public class ChatAppBroadcastWorker {
             markStatusUnknown(job, broadcast, "CHATAPP_BROADCAST_GROUP_ID_MISSING");
             return;
         }
+        if (broadcast.getSubmittedAt() == null) {
+            markStatusUnknown(job, broadcast, "CHATAPP_BROADCAST_SUBMITTED_AT_MISSING");
+            return;
+        }
+        Instant queryStart = broadcast.getSubmittedAt().minus(Duration.ofMinutes(5));
+        Instant queryEnd = now.isBefore(queryStart.plus(Duration.ofDays(90)))
+                ? now : queryStart.plus(Duration.ofDays(90));
+        if (!queryEnd.isAfter(queryStart)) {
+            markStatusUnknown(job, broadcast, "CHATAPP_BROADCAST_RECONCILIATION_TIME_RANGE_INVALID");
+            return;
+        }
         ChannelAccountEntity account = accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
         if (!backfillProcessingMessages(broadcast)) {
             retryReconciliation(
@@ -251,7 +262,8 @@ public class ChatAppBroadcastWorker {
             while (hasNext && currentPage <= MAX_RECONCILE_PAGES) {
                 var result = gateway.reconcile(new BroadcastQuery(
                         broadcast.getChannelAccountId(), account.getAccountIdentifier(),
-                        broadcast.getProviderGroupMessageId(), currentPage, RECONCILE_PAGE_SIZE));
+                        broadcast.getProviderGroupMessageId(), queryStart, queryEnd,
+                        currentPage, RECONCILE_PAGE_SIZE));
                 unmatched |= persistReconciliationPage(job, broadcast, result);
                 hasNext = result.hasNext();
                 currentPage++;
@@ -261,7 +273,11 @@ public class ChatAppBroadcastWorker {
             publish(broadcast.getId());
         } catch (ChatAppBroadcastException error) {
             persistProviderFailure(job, broadcast, currentPage, error);
-            retryReconciliation(job, broadcast, error.getMessage());
+            if (error.retryable()) {
+                retryReconciliation(job, broadcast, error.getMessage());
+            } else {
+                markStatusUnknown(job, broadcast, error.getMessage());
+            }
         }
     }
 
@@ -274,20 +290,28 @@ public class ChatAppBroadcastWorker {
             assertLease(job);
             boolean pageUnmatched = false;
             evidenceMapper.upsert(evidence(job, broadcast, page, 0, null, null, ""));
+            ChatAppBroadcastGateway.ProviderDiagnostic diagnostic = page.diagnostic();
+            broadcastMapper.updateReconciliationDiagnostic(
+                    broadcast.getId(), diagnostic == null ? "" : bounded(diagnostic.providerRequestId(), 255),
+                    diagnostic == null ? "" : bounded(diagnostic.providerCode(), 100), "", "", now);
             for (ReconciliationItem item : page.items()) {
-                List<ChatAppBroadcastRecipientEntity> candidates =
-                        item.recipientNumber() == null || item.recipientNumber().isBlank()
-                                ? List.of()
-                                : recipientMapper.findAllByNumber(
-                                        broadcast.getId(), item.recipientNumber());
+                List<ChatAppBroadcastRecipientEntity> candidates;
+                if (item.recipientNumber() != null && !item.recipientNumber().isBlank()) {
+                    candidates = recipientMapper.findAllByNumber(
+                            broadcast.getId(), item.recipientNumber());
+                } else if (item.providerMessageId() != null && !item.providerMessageId().isBlank()) {
+                    candidates = recipientMapper.findAllByProviderMessageId(
+                            broadcast.getId(), item.providerMessageId(), 2);
+                } else {
+                    candidates = List.of();
+                }
                 String matchDiagnostic = candidates.size() > 1
                         ? "CHATAPP_BROADCAST_RECIPIENT_AMBIGUOUS" : item.diagnosticCode();
                 ChatAppBroadcastRecipientEntity matched = candidates.size() == 1
                         ? candidates.get(0) : null;
                 evidenceMapper.upsert(evidence(job, broadcast, page, item.rowNumber(),
                         matched, item, matchDiagnostic));
-                if (matched == null || (item.diagnosticCode() != null
-                        && !item.diagnosticCode().isBlank())) {
+                if (matched == null) {
                     pageUnmatched = true;
                     continue;
                 }
@@ -375,9 +399,9 @@ public class ChatAppBroadcastWorker {
         evidence.setProviderStatus(bounded(item == null
                 ? diagnostic == null ? "" : diagnostic.providerCode()
                 : item.rawProviderStatus(), 100));
-        evidence.setFailureReason(bounded(item == null
+        evidence.setFailureReason(ChatAppBroadcastDiagnosticSanitizer.sanitize(item == null
                 ? diagnostic == null ? "" : diagnostic.providerMessage()
-                : item.failureReason(), 1000));
+                : item.failureReason()));
         evidence.setMatchedRecipientId(matched == null ? null : matched.getId());
         String diagnosticCode = diagnosticOverride == null || diagnosticOverride.isBlank()
                 ? item == null ? (diagnostic == null ? "" : diagnostic.diagnosticCode()) : item.diagnosticCode()
@@ -414,6 +438,7 @@ public class ChatAppBroadcastWorker {
             assertLease(job);
             retryReconciliationOwned(job, broadcast, errorCode, now);
         });
+        publish(broadcast.getId());
     }
 
     private void retryReconciliationOwned(
@@ -454,8 +479,21 @@ public class ChatAppBroadcastWorker {
                 errorCode, errorCode, now) != 1) {
             throw leaseLost();
         }
-        broadcastMapper.markError(
-                broadcast.getId(), BroadcastStatus.STATUS_UNKNOWN.name(), errorCode, errorCode, now);
+        List<RecipientStatus> statuses = recipientMapper.findByBroadcastId(broadcast.getId()).stream()
+                .map(recipient -> RecipientStatus.valueOf(recipient.getStatus())).toList();
+        int successCount = value(broadcast.getSuccessCount());
+        int failedCount = value(broadcast.getFailedCount());
+        int processingCount = value(broadcast.getProcessingCount());
+        if (!statuses.isEmpty()) {
+            AggregateResult aggregate = ChatAppBroadcastStateMachine.aggregate(statuses);
+            successCount = aggregate.successCount();
+            failedCount = aggregate.failedCount();
+            processingCount = aggregate.processingCount();
+        }
+        broadcastMapper.updateAggregate(
+                broadcast.getId(), BroadcastStatus.STATUS_UNKNOWN.name(),
+                successCount, failedCount, processingCount,
+                now, errorCode, errorCode, now);
     }
 
     private void failUnexpected(ChatAppBroadcastJobEntity job, RuntimeException error) {

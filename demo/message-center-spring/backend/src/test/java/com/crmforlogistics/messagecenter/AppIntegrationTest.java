@@ -1,20 +1,22 @@
 package com.crmforlogistics.messagecenter;
 
 import io.minio.MinioClient;
+import com.crmforlogistics.messagecentertest.ApplicationIntegrationTestConfiguration;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSyncScheduler;
 import com.crmforlogistics.messagecenter.entity.AuditLogEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
 import com.crmforlogistics.messagecenter.mapper.AuditLogMapper;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
 import com.crmforlogistics.messagecenter.service.auth.BootstrapService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookRetryWorker;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastScheduler;
+import com.crmforlogistics.messagecenter.service.message.MessageOutboxScheduler;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.ApplicationContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -34,9 +36,15 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(
+        classes = {App.class, ApplicationIntegrationTestConfiguration.class},
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "spring.profiles.active=test"
+                "spring.profiles.active=test",
+                "app.chatapp-sync-enabled=false",
+                "app.chatapp-outbox-enabled=false",
+                "app.chatapp-webhook-worker-enabled=false",
+                "app.chatapp-broadcast-worker-enabled=false",
+                "app.chatapp-template-reconcile-enabled=false"
         }
 )
 @Testcontainers
@@ -62,19 +70,6 @@ public class AppIntegrationTest {
                 java.util.Base64.getEncoder().encodeToString(new byte[32]));
     }
 
-    /**
-     * Provides a mock MinioClient so MinioStorage does not attempt real
-     * network calls during context initialization.
-     */
-    @TestConfiguration
-    static class TestConfig {
-        @Bean
-        @Primary
-        public MinioClient testMinioClient() {
-            return Mockito.mock(MinioClient.class);
-        }
-    }
-
     @Autowired
     TestRestTemplate rest;
 
@@ -93,9 +88,20 @@ public class AppIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    ApplicationContext applicationContext;
+
     @Test
     void contextLoads() {
         // Verify Spring context starts successfully
+    }
+
+    @Test
+    void integrationContextDoesNotStartChatAppBackgroundWorkers() {
+        assertThat(applicationContext.getBeansOfType(ChatAppSyncScheduler.class)).isEmpty();
+        assertThat(applicationContext.getBeansOfType(ChatAppWebhookRetryWorker.class)).isEmpty();
+        assertThat(applicationContext.getBeansOfType(ChatAppBroadcastScheduler.class)).isEmpty();
+        assertThat(applicationContext.getBeansOfType(MessageOutboxScheduler.class)).isEmpty();
     }
 
     @Test
@@ -109,7 +115,7 @@ public class AppIntegrationTest {
                 """, channelAccountId, channelAccountId.toString(), channelAccountId.toString());
 
         templateMapper.upsert(
-                channelAccountId, "welcome_001", "en_US", "welcome", "Hello {{name}}",
+                channelAccountId, "welcome_001", "en_US", "welcome", "Hello $(name)",
                 "APPROVED", Instant.parse("2026-08-09T10:15:30Z"),
                 "{\"auditStatus\":\"pass\"}",
                 Instant.parse("2026-08-09T10:16:00Z"));
@@ -124,7 +130,7 @@ public class AppIntegrationTest {
                 FROM message_templates
                 WHERE channel_account_id = ? AND provider_template_id = ? AND language_code = ?
                 """, channelAccountId, "welcome_001", "en_US");
-        assertThat(stored.get("body")).isEqualTo("Hello {{name}}");
+        assertThat(stored.get("body")).isEqualTo("Hello $(name)");
         assertThat(stored.get("status")).isEqualTo("REJECTED");
         assertThat((String) stored.get("metadata"))
                 .contains("\"auditStatus\": \"fail\"")
@@ -188,7 +194,7 @@ public class AppIntegrationTest {
                 INSERT INTO message_templates
                     (id, channel_account_id, provider_template_id, language_code, name, body, status,
                      metadata_jsonb, components_jsonb, allow_send, created_at, updated_at)
-                VALUES (gen_random_uuid(), ?, 'welcome_001', 'en_US', 'welcome', 'Hello {{name}}',
+                VALUES (gen_random_uuid(), ?, 'welcome_001', 'en_US', 'welcome', 'Hello $(name)',
                         'APPROVED', '{}'::jsonb, '[{"type":"BODY"}]'::jsonb, false, now(), now())
                 """, channelAccountId);
 

@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(WeComViewerController.class)
+@WebMvcTest(value = WeComViewerController.class, properties = "app.wecom-enabled=true")
 @Import(SecurityConfig.class)
 class WeComViewerControllerTest {
     private static final UUID AUTHENTICATED_USER_ID = UUID.randomUUID();

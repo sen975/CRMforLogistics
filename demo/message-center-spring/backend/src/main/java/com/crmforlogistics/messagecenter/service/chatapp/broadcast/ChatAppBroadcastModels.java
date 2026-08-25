@@ -99,6 +99,10 @@ public final class ChatAppBroadcastModels {
             int processingCount,
             BroadcastStatus status,
             String providerGroupMessageId,
+            String providerRequestId,
+            String providerCode,
+            String lastReconciliationRequestId,
+            String lastReconciliationProviderCode,
             String errorCode,
             String errorMessage,
             UUID retriesBroadcastId,
@@ -122,6 +126,7 @@ public final class ChatAppBroadcastModels {
             String recipientName,
             String maskedNumber,
             Map<String, String> templateParams,
+            UUID messageId,
             String providerMessageId,
             String providerUniqueMessageId,
             RecipientStatus status,
@@ -133,9 +138,18 @@ public final class ChatAppBroadcastModels {
         }
     }
 
+    public record ReconciliationSummary(
+            long evidenceRows,
+            long matchedRows,
+            long unmatchedRows,
+            int processingRecipients,
+            String latestDiagnosticCode) {
+    }
+
     public record BroadcastDetail(
             BroadcastView broadcast,
-            List<RecipientView> recipients) {
+            List<RecipientView> recipients,
+            ReconciliationSummary reconciliation) {
         public BroadcastDetail {
             recipients = recipients == null ? List.of() : List.copyOf(recipients);
         }

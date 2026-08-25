@@ -1,13 +1,16 @@
 package com.crmforlogistics.messagecenter.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.crmforlogistics.messagecenter.typehandler.JsonbStringTypeHandler;
+import org.apache.ibatis.type.JdbcType;
 
 import java.time.Instant;
 import java.util.UUID;
 
-@TableName("message_templates")
+@TableName(value = "message_templates", autoResultMap = true)
 public class TemplateEntity {
 
     @TableId(type = IdType.ASSIGN_UUID)
@@ -17,18 +20,31 @@ public class TemplateEntity {
     private String providerTemplateId;
     private String languageCode;
     private String name;
+    private String remark;
     private String body;
     private String status;
     private String category;
     private String templateType;
+    @TableField(value = "components_jsonb", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonbStringTypeHandler.class)
     private String componentsJsonb;
+    @TableField(value = "examples_jsonb", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonbStringTypeHandler.class)
     private String examplesJsonb;
     private Integer messageSendTtlSeconds;
     private Boolean allowSend;
+    private Boolean desiredAllowSend;
+    private String permissionSyncStatus;
+    private Integer permissionSyncAttemptCount;
+    private Instant permissionSyncNextAttemptAt;
+    private String permissionSyncErrorCode;
+    private String permissionSyncErrorMessage;
     private String providerAuditStatus;
     private String rejectionReason;
     private String qualityScore;
     private Instant providerUpdatedAt;
+    @TableField(value = "metadata_jsonb", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonbStringTypeHandler.class)
     private String metadataJsonb;
     private Instant lastSyncedAt;
     private Instant createdAt;
@@ -74,6 +90,14 @@ public class TemplateEntity {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getRemark() {
+        return remark;
+    }
+
+    public void setRemark(String remark) {
+        this.remark = remark;
     }
 
     public String getBody() {
@@ -138,6 +162,54 @@ public class TemplateEntity {
 
     public void setAllowSend(Boolean allowSend) {
         this.allowSend = allowSend;
+    }
+
+    public Boolean getDesiredAllowSend() {
+        return desiredAllowSend;
+    }
+
+    public void setDesiredAllowSend(Boolean desiredAllowSend) {
+        this.desiredAllowSend = desiredAllowSend;
+    }
+
+    public String getPermissionSyncStatus() {
+        return permissionSyncStatus;
+    }
+
+    public void setPermissionSyncStatus(String permissionSyncStatus) {
+        this.permissionSyncStatus = permissionSyncStatus;
+    }
+
+    public Integer getPermissionSyncAttemptCount() {
+        return permissionSyncAttemptCount;
+    }
+
+    public void setPermissionSyncAttemptCount(Integer permissionSyncAttemptCount) {
+        this.permissionSyncAttemptCount = permissionSyncAttemptCount;
+    }
+
+    public Instant getPermissionSyncNextAttemptAt() {
+        return permissionSyncNextAttemptAt;
+    }
+
+    public void setPermissionSyncNextAttemptAt(Instant permissionSyncNextAttemptAt) {
+        this.permissionSyncNextAttemptAt = permissionSyncNextAttemptAt;
+    }
+
+    public String getPermissionSyncErrorCode() {
+        return permissionSyncErrorCode;
+    }
+
+    public void setPermissionSyncErrorCode(String permissionSyncErrorCode) {
+        this.permissionSyncErrorCode = permissionSyncErrorCode;
+    }
+
+    public String getPermissionSyncErrorMessage() {
+        return permissionSyncErrorMessage;
+    }
+
+    public void setPermissionSyncErrorMessage(String permissionSyncErrorMessage) {
+        this.permissionSyncErrorMessage = permissionSyncErrorMessage;
     }
 
     public String getProviderAuditStatus() {

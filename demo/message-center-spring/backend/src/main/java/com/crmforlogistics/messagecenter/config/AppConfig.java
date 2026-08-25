@@ -47,6 +47,8 @@ public record AppConfig(
         @DefaultValue("false") boolean emailSyncEnabled,
         @DefaultValue("INBOX") String inboxFolder,
         @DefaultValue("Sent") String sentFolder,
+        @DefaultValue("16") int emailAttachmentMaxCount,
+        @DefaultValue("20971520") long emailAttachmentMaxTotalBytes,
         // WeCom
         String wecomSuiteId,
         String wecomSuiteSecret,
@@ -56,8 +58,6 @@ public record AppConfig(
         @DefaultValue("https://qyapi.weixin.qq.com") String wecomApiBaseUrl,
         @DefaultValue("10") int wecomApiTimeoutSeconds,
         @DefaultValue("300") int wecomTokenRefreshSkewSeconds,
-        @DefaultValue("") String wecomLoginSuiteId,
-        @DefaultValue("") String wecomLoginSuiteSecret,
         @DefaultValue("") String wecomCorpId,
         @DefaultValue("") String wecomAgentId,
         @DefaultValue("") String wecomSecret,
@@ -79,12 +79,16 @@ public record AppConfig(
         @DefaultValue("1") int wecomChatDataPublicKeyVersion,
         @DefaultValue("false") boolean wecomChatDataPublicKeyAutoRegister,
         @DefaultValue("200") int wecomChatDataSyncLimit,
-        @DefaultValue("5") int wecomChatDataSyncMaxPages,
+        @DefaultValue("100") int wecomChatDataSyncMaxPages,
         @DefaultValue("15") int wecomChatDataSyncTimeoutSeconds,
         @DefaultValue("true") boolean wecomChatDataAutoSyncEnabled,
         @DefaultValue("60") int wecomChatDataAutoSyncIntervalSeconds,
         @DefaultValue("5000") int wecomChatDataStoreMaxMessages,
         @DefaultValue("8388608") long wecomChatDataStoreMaxBytes,
+        @DefaultValue("7") int wecomAuditRetentionDays,
+        @DefaultValue("3600") int wecomAuditCleanupIntervalSeconds,
+        @DefaultValue("500") int wecomAuditCleanupBatchSize,
+        @DefaultValue("32") int wecomAuditCleanupMaxBatches,
         @DefaultValue("false") boolean wecomDailySummaryEnabled,
         @DefaultValue("conversation_daily_summary") String wecomDailySummaryAbilityId,
         @DefaultValue("0") int wecomDailySummaryHour,
@@ -98,4 +102,14 @@ public record AppConfig(
         @DefaultValue("local-wecom-source.jsonl") String localWeComDataFile,
         @DefaultValue("") String chatappWebhookSecret,
         @DefaultValue("300") int chatappWebhookMaxSkewSeconds
-) {}
+) {
+    public AppConfig {
+        imapHost = defaultIfBlank(imapHost, "imap.139.com");
+        imapPort = defaultIfBlank(imapPort, "993");
+        mailProvider = defaultIfBlank(mailProvider, "139");
+    }
+
+    private static String defaultIfBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+}

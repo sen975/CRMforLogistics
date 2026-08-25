@@ -1,10 +1,12 @@
 package com.crmforlogistics.messagecenter.service.message;
 
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookRetryWorker;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationScheduler;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplatePermissionReconciliationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
@@ -15,9 +17,12 @@ class ChatAppWorkerSchedulingTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withBean(MessageOutboxWorker.class, () -> mock(MessageOutboxWorker.class))
             .withBean(ChannelEventMapper.class, () -> mock(ChannelEventMapper.class))
+            .withBean(ChannelAccountMapper.class, () -> mock(ChannelAccountMapper.class))
             .withBean(ChatAppWebhookProjector.class, () -> mock(ChatAppWebhookProjector.class))
             .withBean(WhatsAppTemplateReconciliationService.class,
                     () -> mock(WhatsAppTemplateReconciliationService.class))
+            .withBean(WhatsAppTemplatePermissionReconciliationService.class,
+                    () -> mock(WhatsAppTemplatePermissionReconciliationService.class))
             .withUserConfiguration(MessageOutboxScheduler.class, ChatAppWebhookRetryWorker.class,
                     WhatsAppTemplateReconciliationScheduler.class);
 

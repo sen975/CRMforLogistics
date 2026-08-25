@@ -1,17 +1,21 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.request.TemplateCreateRequest;
+import com.crmforlogistics.messagecenter.dto.request.TemplateRemarkRequest;
 import com.crmforlogistics.messagecenter.dto.request.TemplateSendPermissionRequest;
 import com.crmforlogistics.messagecenter.dto.request.TemplateUpdateRequest;
 import com.crmforlogistics.messagecenter.dto.response.TemplateAdminResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateOperationResponse;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateRemarkService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -40,15 +44,21 @@ public class WhatsAppTemplateController {
     static final String TRACE_ID_ATTRIBUTE = WhatsAppTemplateController.class.getName() + ".traceId";
 
     private final WhatsAppTemplateApplicationService templateService;
+    private final PublicTemplateApplicationService publicTemplateService;
     private final WhatsAppTemplateReconciliationService reconciliationService;
     private final WhatsAppTemplateMediaUploadService mediaUploadService;
+    private final WhatsAppTemplateRemarkService remarkService;
 
     public WhatsAppTemplateController(WhatsAppTemplateApplicationService templateService,
+                                      PublicTemplateApplicationService publicTemplateService,
                                       WhatsAppTemplateReconciliationService reconciliationService,
-                                      WhatsAppTemplateMediaUploadService mediaUploadService) {
+                                      WhatsAppTemplateMediaUploadService mediaUploadService,
+                                      WhatsAppTemplateRemarkService remarkService) {
         this.templateService = templateService;
+        this.publicTemplateService = publicTemplateService;
         this.reconciliationService = reconciliationService;
         this.mediaUploadService = mediaUploadService;
+        this.remarkService = remarkService;
     }
 
     @GetMapping("/templates")
@@ -64,6 +74,20 @@ public class WhatsAppTemplateController {
             @RequestParam(required = false) Boolean deleted) {
         return TemplateAdminResponse.Page.from(templateService.list(accountId, page, size, search,
                 status, category, language, allowSend, deleted));
+    }
+
+    @GetMapping("/public-templates")
+    public PublicTemplateModels.Page listPublicTemplates(
+            @PathVariable UUID accountId,
+            @RequestParam(required = false) String name,
+            @RequestParam(defaultValue = "zh_CN") String language,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) List<String> industries,
+            @RequestParam(required = false) List<String> usecases,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return publicTemplateService.list(accountId,
+                new PublicTemplateModels.Query(name, language, category, industries, usecases, page, size));
     }
 
     @GetMapping("/templates/{templateCode}")
@@ -94,6 +118,18 @@ public class WhatsAppTemplateController {
         String traceId = traceId(servletRequest);
         return TemplateOperationResponse.from(templateService.modify(accountId, templateCode, language,
                 request.toCommand(language), actorUserId(authentication), traceId), traceId);
+    }
+
+    @PutMapping("/templates/{templateCode}/remark")
+    public TemplateAdminResponse updateRemark(@PathVariable UUID accountId,
+                                              @PathVariable String templateCode,
+                                              @RequestParam String language,
+                                              @RequestBody TemplateRemarkRequest request,
+                                              Authentication authentication,
+                                              HttpServletRequest servletRequest) {
+        String traceId = traceId(servletRequest);
+        return TemplateAdminResponse.from(remarkService.update(accountId, templateCode, language, request.remark(),
+                actorUserId(authentication), traceId));
     }
 
     @PutMapping("/templates/{templateCode}/send-permission")
@@ -185,4 +221,5 @@ public class WhatsAppTemplateController {
         request.setAttribute(TRACE_ID_ATTRIBUTE, generated);
         return generated;
     }
+
 }

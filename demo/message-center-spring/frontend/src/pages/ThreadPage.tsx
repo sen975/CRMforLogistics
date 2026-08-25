@@ -3,35 +3,22 @@ import { useParams } from 'react-router-dom';
 import { Spin, Typography, Empty, Button, Tag } from 'antd';
 import { ReloadOutlined, PhoneOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchThread, fetchTimeline, fetchContact, markContactRead } from '../api/endpoints';
+import { fetchThread, fetchContact, markContactRead } from '../api/endpoints';
 import { useSse } from '../hooks/useSse';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import MessageBubble from '../components/MessageBubble';
 import SendForm from '../components/SendForm';
 import type { MessageResponse } from '../api/types';
-import {
-  CALL_RECORD_POLL_INTERVAL_MS,
-  callRecordPlacement,
-  hasActiveCallRecord,
-} from '../utils/callRecordTimeline';
+import { useCallRecordTimeline } from '../hooks/useCallRecordTimeline';
+import type { CallRecordItem } from '../hooks/useCallRecordTimeline';
+import { callRecordPlacement } from '../utils/callRecordTimeline';
+import { segmentWeComTimeline, type WeComTimelineMode } from '../wecom/segmentWeComTimeline';
+import { useWeComViewer } from '../hooks/useWeComViewer';
+import { WeComConversationPanel } from '../components/wecom/WeComConversationPanel';
 
 const { Text, Title } = Typography;
 
 const PAGE_SIZE = 20;
-
-interface CallRecordItem {
-  kind: 'callRecord';
-  id: string;
-  occurredAt: string;
-  direction: string;
-  phonePointId: string;
-  durationSeconds: number;
-  state: string;
-  errorCode: string;
-  errorMessage: string;
-  errorRetryable: boolean;
-  attempts: number;
-}
 
 function formatSeconds(s: number) {
   const m = Math.floor(s / 60);
@@ -51,18 +38,25 @@ export default function ThreadPage() {
   const qc = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
+  const weComViewer = useWeComViewer();
+  const timelineScrollTopRef = useRef(0);
+  const contactRequestGenerationRef = useRef(0);
+  const activeContactIdRef = useRef<string | undefined>(contactId);
 
   const [allItems, setAllItems] = useState<MessageResponse[]>([]);
+  const [itemsContactId, setItemsContactId] = useState<string | undefined>();
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [hasMore, setHasMore] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [callRecords, setCallRecords] = useState<CallRecordItem[]>([]);
   const {
     selectedDetail,
     selectMessage,
     selectCallRecord,
     clearSelection,
+    selectedChannel,
+    selectChannel,
+    clearChannel,
   } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
   const selectedCallRecordId = selectedDetail?.kind === 'callRecord' ? selectedDetail.id : null;
@@ -72,86 +66,73 @@ export default function ThreadPage() {
     queryFn: () => fetchContact(contactId!),
     enabled: !!contactId,
   });
+  const {
+    records: callRecords,
+    refresh: refreshCallRecords,
+  } = useCallRecordTimeline(contactId);
+  const weComContactPointId = useMemo(() => {
+    const identity = contact?.identities.find((item) => item.channelType === 'wecom');
+    return identity ? `wecom:${identity.identityValue}` : '';
+  }, [contact]);
 
   const fetchPage = useCallback(async (cursor?: string) => {
     const result = await fetchThread(contactId!, { cursor, limit: PAGE_SIZE });
     return result;
   }, [contactId]);
 
-  const loadCallRecords = useCallback(async (cid: string) => {
-    try {
-      const timeline = await fetchTimeline(cid, { limit: 100 });
-      const items: CallRecordItem[] = timeline.items
-        .filter((t) => t.type === 'callRecord')
-        .map((t) => ({
-          kind: 'callRecord' as const,
-          id: t.payload.id as string,
-          occurredAt: t.occurredAt,
-          direction: t.payload.direction as string,
-          phonePointId: t.payload.phonePointId as string,
-          durationSeconds: t.payload.durationSeconds as number,
-          state: t.payload.state as string,
-          errorCode: (t.payload.errorCode as string) || '',
-          errorMessage: (t.payload.errorMessage as string) || '',
-          errorRetryable: (t.payload.errorRetryable as boolean) || false,
-          attempts: (t.payload.attempts as number) || 0,
-        }));
-      setCallRecords(items);
-    } catch {
-      // timeline may not be available yet; keep existing call records
-    }
-  }, []);
-
-  const refreshCallRecords = useCallback(() => {
-    if (!contactId) {
-      return Promise.resolve();
-    }
-    return loadCallRecords(contactId);
-  }, [contactId, loadCallRecords]);
-
-  useEffect(() => {
-    if (!hasActiveCallRecord(callRecords)) {
-      return;
-    }
-
-    let cancelled = false;
-    let timer: number | undefined;
-    const poll = async () => {
-      await refreshCallRecords();
-      if (!cancelled) {
-        timer = window.setTimeout(poll, CALL_RECORD_POLL_INTERVAL_MS);
-      }
-    };
-    timer = window.setTimeout(poll, CALL_RECORD_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [callRecords, refreshCallRecords]);
-
   // Load initial page and reset on contact change
   useEffect(() => {
     if (!contactId) return;
+    const generation = ++contactRequestGenerationRef.current;
+    activeContactIdRef.current = contactId;
     setAllItems([]);
-    setCallRecords([]);
+    setItemsContactId(undefined);
     setNextCursor(undefined);
     setHasMore(false);
     setInitialLoadDone(false);
+    setLoadingOlder(false);
+    timelineScrollTopRef.current = 0;
+    clearChannel();
     clearSelection();
 
-    Promise.all([fetchPage(undefined), loadCallRecords(contactId)]).then(([result]) => {
+    fetchPage(undefined).then((result) => {
+      if (generation !== contactRequestGenerationRef.current) return;
       setAllItems(result.items);
+      setItemsContactId(contactId);
       setNextCursor(result.nextCursor ?? undefined);
       setHasMore(!!result.nextCursor);
       setInitialLoadDone(true);
       markContactRead(contactId).then(() => {
+        if (generation !== contactRequestGenerationRef.current) return;
         qc.invalidateQueries({ queryKey: ['contacts'] });
       });
     });
+    return () => {
+      if (contactRequestGenerationRef.current === generation) {
+        contactRequestGenerationRef.current += 1;
+      }
+    };
   }, [contactId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!contact || !weComContactPointId) return;
+    const channels = new Set(contact.channelTypes ?? []);
+    if (channels.size === 1 && channels.has('wecom') && selectedChannel !== 'wecom') {
+      selectChannel('wecom');
+    }
+  }, [contact, selectedChannel, selectChannel, weComContactPointId]);
+
+  const handleChannelChange = useCallback((channel: string) => {
+    if (channel === 'wecom' && weComContactPointId) {
+      timelineScrollTopRef.current = containerRef.current?.scrollTop ?? 0;
+    }
+    selectChannel(channel);
+    if (channel !== 'wecom') {
+      requestAnimationFrame(() => {
+        if (containerRef.current) containerRef.current.scrollTop = timelineScrollTopRef.current;
+      });
+    }
+  }, [selectChannel, weComContactPointId]);
 
   // Auto-scroll to bottom only after initial load
   useEffect(() => {
@@ -167,11 +148,14 @@ export default function ThreadPage() {
     if (!el || !hasMore || loadingOlder) return;
 
     if (el.scrollTop < 80) {
+      const generation = contactRequestGenerationRef.current;
       setLoadingOlder(true);
       prevScrollHeightRef.current = el.scrollHeight;
 
       fetchPage(nextCursor).then((result) => {
+        if (generation !== contactRequestGenerationRef.current) return;
         setAllItems((prev) => [...result.items, ...prev]);
+        setItemsContactId(contactId);
         setNextCursor(result.nextCursor ?? undefined);
         setHasMore(!!result.nextCursor);
         setLoadingOlder(false);
@@ -190,20 +174,40 @@ export default function ThreadPage() {
   }, [loadingOlder]);
 
   useSse(() => {
-    qc.invalidateQueries({ queryKey: ['thread', contactId] });
-    qc.invalidateQueries({ queryKey: ['contact', contactId] });
-    Promise.all([fetchPage(undefined), loadCallRecords(contactId!)]).then(([result]) => {
+    const generation = contactRequestGenerationRef.current;
+    const activeContactId = activeContactIdRef.current;
+    if (!activeContactId) return;
+    qc.invalidateQueries({ queryKey: ['thread', activeContactId] });
+    qc.invalidateQueries({ queryKey: ['contact', activeContactId] });
+    void refreshCallRecords();
+    fetchThread(activeContactId, { limit: PAGE_SIZE }).then((result) => {
+      if (generation !== contactRequestGenerationRef.current) return;
       setAllItems(result.items);
+      setItemsContactId(activeContactId);
       setNextCursor(result.nextCursor ?? undefined);
       setHasMore(!!result.nextCursor);
     });
   });
 
+  const currentItems = itemsContactId === contactId ? allItems : [];
   const displayItems = useMemo(() => {
-    const merged = [...allItems, ...callRecords];
+    const merged = [...currentItems, ...callRecords];
     merged.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
     return merged;
-  }, [allItems, callRecords]);
+  }, [currentItems, callRecords]);
+  const weComMode: WeComTimelineMode = useMemo(() => {
+    const channels = new Set(contact?.channelTypes || []);
+    return channels.size === 1 && channels.has('wecom') ? 'standalone' : 'mixed';
+  }, [contact]);
+  const timelineBlocks = useMemo(
+    () => segmentWeComTimeline(displayItems, weComMode),
+    [displayItems, weComMode],
+  );
+  const weComItems = useMemo(
+    () => currentItems.filter((item) => item.channelType === 'wecom' && !!item.sourceId),
+    [currentItems],
+  );
+  const showWeComConversation = selectedChannel === 'wecom' && !!weComContactPointId;
 
   if (!contactId) {
     return (
@@ -228,23 +232,22 @@ export default function ThreadPage() {
           <Title level={5} style={{ margin: 0 }}>
             {contact?.displayName || contact?.remark || '加载中...'}
           </Title>
-          {contact?.channelTypes && (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {contact.channelTypes.join(' / ')}
-            </Text>
-          )}
         </div>
         <Button
           icon={<ReloadOutlined />}
           size="small"
           onClick={() => {
+            const generation = contactRequestGenerationRef.current;
             setAllItems([]);
-            setCallRecords([]);
+            setItemsContactId(undefined);
             setNextCursor(undefined);
             setHasMore(false);
             setInitialLoadDone(false);
-            Promise.all([fetchPage(undefined), loadCallRecords(contactId!)]).then(([result]) => {
+            void refreshCallRecords();
+            fetchPage(undefined).then((result) => {
+              if (generation !== contactRequestGenerationRef.current) return;
               setAllItems(result.items);
+              setItemsContactId(contactId);
               setNextCursor(result.nextCursor ?? undefined);
               setHasMore(!!result.nextCursor);
               setInitialLoadDone(true);
@@ -253,7 +256,17 @@ export default function ThreadPage() {
         />
       </div>
 
+      {showWeComConversation ? (
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, width: '100%', display: 'flex' }}>
+          <WeComConversationPanel
+            contactPointId={weComContactPointId}
+            items={weComItems}
+            viewer={weComViewer}
+          />
+        </div>
+      ) : (
       <div
+        data-testid="thread-timeline"
         ref={containerRef}
         onScroll={handleScroll}
         style={{
@@ -272,7 +285,11 @@ export default function ThreadPage() {
             <Spin size="small" />
           </div>
         )}
-        {displayItems.map((item) => {
+        {timelineBlocks.map((block) => {
+          if (block.kind === 'wecom') {
+            return null;
+          }
+          const item = block.item;
           if ('kind' in item && item.kind === 'callRecord') {
             const record = item as CallRecordItem;
             const st = stateTagMap[record.state] ?? { color: 'default', label: record.state };
@@ -336,7 +353,7 @@ export default function ThreadPage() {
           const msg = item as MessageResponse;
           return (
             <MessageBubble
-              key={msg.id}
+              key={block.id}
               message={msg}
               isActive={selectedMessageId === msg.id}
               onClick={() => {
@@ -345,12 +362,20 @@ export default function ThreadPage() {
             />
           );
         })}
-        {initialLoadDone && displayItems.length === 0 && <Empty description="暂无消息" />}
+        {initialLoadDone && timelineBlocks.length === 0 && <Empty description="暂无消息" />}
       </div>
+      )}
 
-      <div style={{ borderTop: '1px solid #f0f0f0', padding: 12, maxHeight: 260, overflow: 'auto' }}>
-        <SendForm contact={contact} onCallRecordCreated={refreshCallRecords} />
-      </div>
+      {!showWeComConversation && (
+        <div style={{ borderTop: '1px solid #f0f0f0', padding: 12, maxHeight: 260, overflow: 'auto' }}>
+          <SendForm
+            contact={contact}
+            onCallRecordCreated={refreshCallRecords}
+            activeChannel={selectedChannel ?? undefined}
+            onChannelChange={handleChannelChange}
+          />
+        </div>
+      )}
     </div>
   );
 }

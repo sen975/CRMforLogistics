@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
@@ -12,6 +14,29 @@ import java.util.UUID;
 
 @Mapper
 public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
+
+    @Insert("insert into channel_accounts (id, channel_type, name, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config) " +
+            "values (#{id}::uuid, 'wecom', #{name}, #{authCorpId}, #{authCorpId}, " +
+            "'active', 'idle', '{}'::jsonb) " +
+            "on conflict (channel_type, account_identifier_normalized) where deleted_at is null " +
+            "do update set auth_status = 'active', updated_at = now(), " +
+            "version = channel_accounts.version + 1")
+    int upsertWeComAccount(@Param("id") UUID id,
+                           @Param("authCorpId") String authCorpId,
+                           @Param("name") String name);
+
+    @Select("select id, channel_type, name, account_identifier, account_identifier_normalized, " +
+            "auth_status, sync_status, encrypted_config, last_synced_at, created_at, updated_at, " +
+            "deleted_at, version from channel_accounts where channel_type = 'wecom' " +
+            "and account_identifier_normalized = #{authCorpId} and auth_status = 'active' " +
+            "and deleted_at is null limit 1")
+    ChannelAccountEntity selectActiveWeComAccount(@Param("authCorpId") String authCorpId);
+
+    @Update("update channel_accounts set auth_status = 'disabled', sync_status = 'idle', " +
+            "updated_at = now(), version = version + 1 where channel_type = 'wecom' " +
+            "and account_identifier_normalized = #{authCorpId} and deleted_at is null")
+    int disableWeComAccount(@Param("authCorpId") String authCorpId);
 
     @Update("UPDATE channel_accounts SET name = #{name}, updated_at = now() WHERE id = #{id}::uuid")
     int updateName(@Param("id") UUID id, @Param("name") String name);
@@ -34,6 +59,15 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
                 .eq(ChannelAccountEntity::getAuthStatus, "active")
                 .isNull(ChannelAccountEntity::getDeletedAt)
                 .last("limit 2"));
+    }
+
+    default List<ChannelAccountEntity> selectActiveChatAppAccountsForSync() {
+        return selectList(new LambdaQueryWrapper<ChannelAccountEntity>()
+                .in(ChannelAccountEntity::getChannelType, List.of("chatapp", "whatsapp"))
+                .eq(ChannelAccountEntity::getAuthStatus, "active")
+                .isNull(ChannelAccountEntity::getDeletedAt)
+                .orderByAsc(ChannelAccountEntity::getCreatedAt)
+                .last("limit 100"));
     }
 
     default ChannelAccountEntity selectSingleActiveByChannelType(String channelType) {

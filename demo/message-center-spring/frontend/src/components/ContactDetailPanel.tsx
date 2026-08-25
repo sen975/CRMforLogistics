@@ -7,6 +7,7 @@ import { fetchContact, fetchMessage } from '../api/endpoints';
 import { useUpdateContactRemark, useSplitContact } from '../hooks/useContacts';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import type { ContactIdentityResponse } from '../api/types';
+import EmailAttachmentList from './EmailAttachmentList';
 
 const { Text, Title } = Typography;
 
@@ -27,7 +28,7 @@ export default function ContactDetailPanel() {
   const { message: appMessage } = App.useApp();
   const [editingRemark, setEditingRemark] = useState(false);
   const [remarkValue, setRemarkValue] = useState('');
-  const { selectedDetail } = useDetailPanel();
+  const { selectedDetail, selectChannel } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
 
   const { data: contact, isLoading } = useQuery({
@@ -178,6 +179,8 @@ export default function ContactDetailPanel() {
             dataSource={contact.identities}
             renderItem={(identity) => (
               <List.Item
+                onClick={() => selectChannel(identity.channelType)}
+                style={{ cursor: 'pointer' }}
                 actions={[
                   contact.identities.length > 1 ? (
                     <Popconfirm
@@ -212,7 +215,9 @@ export default function ContactDetailPanel() {
                   }
                   description={
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      {identity.identityScope}: {identity.identityValue}
+                      {identity.channelType === 'chatapp'
+                        ? identity.identityValue
+                        : `${identity.identityScope}: ${identity.identityValue}`}
                     </Text>
                   }
                 />
@@ -266,6 +271,9 @@ export default function ContactDetailPanel() {
                     <Text>{messageDetail.bodyText}</Text>
                   )}
                 </div>
+              </Descriptions.Item>
+              <Descriptions.Item label="附件">
+                <EmailAttachmentList attachments={messageDetail.attachments ?? []} />
               </Descriptions.Item>
             </Descriptions>
           ) : (

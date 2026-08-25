@@ -2,57 +2,58 @@ server:
   port: 8099
 
 spring:
+  config:
+    import: optional:file:.env[.properties]
   servlet:
     multipart:
       max-file-size: 100MB
       max-request-size: 100MB
-
   datasource:
-    url: jdbc:postgresql://localhost:5432/message_center
-    username: message_center
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/message_center}
+    username: ${SPRING_DATASOURCE_USERNAME:message_center}
     password: ${SPRING_DATASOURCE_PASSWORD:}
   flyway:
     enabled: true
     locations: classpath:db/migration
 
 minio:
-  endpoint: http://localhost:9000
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
   access-key: ${MINIO_ACCESS_KEY:}
   secret-key: ${MINIO_SECRET_KEY:}
-  bucket: message-center
+  bucket: ${MINIO_BUCKET:message-center}
 
 funasr:
-  base-url: http://127.0.0.1:8000
+  base-url: ${FUNASR_BASE_URL:http://127.0.0.1:8000}
 
 app:
-  data-dir: data-local
-  local-dev-mode: true
+  data-dir: ${APP_DATA_DIR:data-local}
+  local-dev-mode: ${APP_LOCAL_DEV_MODE:true}
   web-bind-address: 127.0.0.1
 
-  cust-space-id: cams-9dou6dubx2ww
-  chatapp-from: "8613266259485"
+  cust-space-id: ${CAMS_CUST_SPACE_ID:}
+  chatapp-from: ${CHATAPP_FROM:}
   chatapp-sync-enabled: true
 
   aliyun-access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
   aliyun-access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
-  cams-region: ap-southeast-1
-  cams-endpoint: cams.ap-southeast-1.aliyuncs.com
+  cams-region: ${CAMS_REGION:ap-southeast-1}
+  cams-endpoint: ${CAMS_ENDPOINT:cams.ap-southeast-1.aliyuncs.com}
 
-  email-sync-enabled: false
+  email-sync-enabled: ${APP_EMAIL_SYNC_ENABLED:false}
 
-  smtp-host: smtp.139.com
-  smtp-port: "465"
-  smtp-user: 13266259485@139.com
+  smtp-host: ${SMTP_HOST:smtp.139.com}
+  smtp-port: "${SMTP_PORT:465}"
+  smtp-user: ${SMTP_USER:}
   smtp-password: ${SMTP_PASSWORD:}
   smtp-ssl: true
   smtp-start-tls: false
   smtp-resolve-ipv4: true
-  mail-from: 13266259485@139.com
-  mail-from-name:
+  mail-from: ${MAIL_FROM:}
+  mail-from-name: ${MAIL_FROM_NAME:}
 
-  imap-host: imap.139.com
-  imap-port: "993"
-  imap-user: 13266259485@139.com
+  imap-host: ${IMAP_HOST:imap.139.com}
+  imap-port: "${IMAP_PORT:993}"
+  imap-user: ${IMAP_USER:}
   imap-password: ${IMAP_PASSWORD:}
   imap-ssl: true
   receive-limit: 10
@@ -61,14 +62,5 @@ app:
   inbox-folder: INBOX
   sent-folder: Sent
 
-  wecom-suite-id: ${WECOM_SUITE_ID:}
-  wecom-suite-secret: ${WECOM_SUITE_SECRET:}
-  wecom-token: krSo4BZhrz5Yhheziug9O8S4kccH
-  wecom-encoding-aes-key: OjKJYyKHMJYIUaOKVV9mvFHqeIxlXaF056btxhAvK9D
-  wecom-api-base-url: https://qyapi.weixin.qq.com
-  wecom-api-timeout-seconds: 10
-  wecom-token-refresh-skew-seconds: 300
-  wecom-login-suite-id: ${WECOM_LOGIN_SUITE_ID:}
-  wecom-login-suite-secret: ${WECOM_LOGIN_SUITE_SECRET:}
-
-
+  # 本地开发默认不轮询真实企业微信专区；生产默认值由 application.yml 统一拥有。
+  wecom-chatdata-auto-sync-enabled: ${WECOM_CHATDATA_AUTO_SYNC_ENABLED:false}

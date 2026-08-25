@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComInstallationMapper;
 import com.crmforlogistics.messagecenter.service.wecom.WeComCredentialProtector;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
@@ -14,14 +15,11 @@ import org.springframework.stereotype.Service;
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComInstallationService {
     private final WeComInstallationMapper mapper;
-    private final WeComAuthorizationGateway gateway;
     private final WeComCredentialProtector credentialProtector;
 
     public WeComInstallationService(WeComInstallationMapper mapper,
-                                    WeComAuthorizationGateway gateway,
                                     WeComCredentialProtector credentialProtector) {
         this.mapper = mapper;
-        this.gateway = gateway;
         this.credentialProtector = credentialProtector;
     }
 
@@ -38,6 +36,12 @@ public class WeComInstallationService {
     public void applyActiveForEvent(WeComCallbackCodec.DecodedCallback callback,
                                     String authCorpId, String agentId, String permanentCode,
                                     String eventId, long expectedVersion) {
+        applyActiveForEvent(callback, authCorpId, "", agentId, permanentCode, eventId, expectedVersion);
+    }
+
+    public void applyActiveForEvent(WeComCallbackCodec.DecodedCallback callback,
+                                    String authCorpId, String corpName, String agentId, String permanentCode,
+                                    String eventId, long expectedVersion) {
         requireMutation(callback, authCorpId, eventId, expectedVersion);
         WeComInstallationEntity current = find(callback.suiteId(), authCorpId);
         if (isReplay(current, eventId)) return;
@@ -50,6 +54,7 @@ public class WeComInstallationService {
             entity.setAuthCorpId(authCorpId);
             entity.setAgentId(required(agentId, "agentId", 32));
             entity.setPermanentCode(protectedCode);
+            entity.setCorpName(boundedOptional(corpName, 512));
             entity.setAuthStatus("ACTIVE");
             entity.setAuthorizedAt(Instant.now());
             entity.setLastAuthorizationEventId(eventId);
@@ -62,6 +67,10 @@ public class WeComInstallationService {
         if (version != expectedVersion || mapper.updateForEvent(current.getId(),
                 required(agentId, "agentId", 32), protectedCode, "ACTIVE", Instant.now(),
                 eventId, callback.timestamp(), expectedVersion) != 1) {
+            throw versionConflict();
+        }
+        String normalizedCorpName = boundedOptional(corpName, 512);
+        if (normalizedCorpName != null && mapper.updateCorpName(current.getId(), normalizedCorpName) != 1) {
             throw versionConflict();
         }
     }
@@ -91,13 +100,6 @@ public class WeComInstallationService {
         return entity;
     }
 
-    public String accessToken(String suiteId, String authCorpId) {
-        WeComInstallationEntity installation = resolveActive(suiteId, authCorpId);
-        var token = gateway.getCorpToken(authCorpId,
-                credentialProtector.revealPermanentCode(installation.getPermanentCode()));
-        return token.accessToken();
-    }
-
     public ResolvedInstallation resolveInstallation(String suiteId, String authCorpId) {
         WeComInstallationEntity entity = resolveActive(suiteId, authCorpId);
         return resolved(entity);
@@ -114,6 +116,21 @@ public class WeComInstallationService {
                     "企业微信授权安装已撤销或失效");
         }
         return resolved(entity);
+    }
+
+    public List<InstallationSummary> listInstallationSummaries(String suiteId) {
+        if (suiteId == null || suiteId.isBlank()) {
+            throw new IllegalArgumentException("suiteId is invalid");
+        }
+        return mapper.selectList(new LambdaQueryWrapper<WeComInstallationEntity>()
+                        .eq(WeComInstallationEntity::getSuiteId, suiteId)
+                        .isNull(WeComInstallationEntity::getDeletedAt)
+                        .orderByAsc(WeComInstallationEntity::getAuthCorpId))
+                .stream()
+                .limit(200)
+                .map(entity -> new InstallationSummary(entity.getAuthCorpId(), entity.getCorpName(), entity.getAgentId(),
+                        entity.getAuthStatus(), entity.getAuthorizedAt()))
+                .toList();
     }
 
     private ResolvedInstallation resolved(WeComInstallationEntity entity) {
@@ -160,8 +177,15 @@ public class WeComInstallationService {
         return value;
     }
 
+    private static String boundedOptional(String value, int maxLength) {
+        return value == null || value.isBlank() ? null : required(value, "corpName", maxLength);
+    }
+
     private static WeComException versionConflict() {
         return new WeComException("WECOM_AUTHORIZATION_VERSION_CONFLICT", 409,
                 "企业微信授权安装版本已变化，请重试");
     }
+
+    public record InstallationSummary(String authCorpId, String corpName, String agentId,
+                                      String authStatus, Instant authorizedAt) {}
 }

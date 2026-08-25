@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -46,6 +47,13 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "  <if test=\"search != null and search != ''\">" +
         "    and (c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark,'') ilike '%' || #{search} || '%') " +
         "  </if>" +
+        "  <if test=\"channelType != null and channelAccountId != null\">" +
+        "    and exists (select 1 from contact_identities filtered_ci " +
+        "      where filtered_ci.contact_id = c.id " +
+        "      and filtered_ci.channel_type = #{channelType} " +
+        "      and filtered_ci.identity_scope = #{channelAccountId}::text " +
+        "      and filtered_ci.deleted_at is null) " +
+        "  </if>" +
         ") visible " +
         "where 1 = 1 " +
         "<if test=\"beforeLastMessageAt != null and beforeId != null\">" +
@@ -59,7 +67,9 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                                      @Param("search") String search,
                                      @Param("beforeLastMessageAt") Instant beforeLastMessageAt,
                                      @Param("beforeId") UUID beforeId,
-                                     @Param("isAdmin") boolean isAdmin);
+                                     @Param("isAdmin") boolean isAdmin,
+                                     @Param("channelType") String channelType,
+                                     @Param("channelAccountId") UUID channelAccountId);
 
     @Select("<script>" +
         "select id, display_name, role_title, remark, status, merged_to_id, created_by, created_at, updated_at, deleted_at, version " +
@@ -75,4 +85,31 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
     Optional<ContactEntity> findAccessibleById(@Param("id") UUID id,
                                                @Param("userId") UUID userId,
                                                @Param("isAdmin") boolean isAdmin);
+
+    @Select("select c.id, c.display_name, c.role_title, c.remark, c.status, " +
+            "c.merged_to_id, c.created_by, c.created_at, c.updated_at, c.deleted_at, c.version " +
+            "from contacts c join contact_identities ci on ci.contact_id = c.id " +
+            "where c.id = #{contactId}::uuid and c.deleted_at is null and c.status != 'merged' " +
+            "and ci.id = #{identityId}::uuid and ci.channel_type = 'chatapp' " +
+            "and ci.identity_scope = #{channelAccountId}::text and ci.deleted_at is null " +
+            "and (c.created_by = #{userId}::uuid " +
+            "or exists (select 1 from contact_identities access_ci " +
+            "join conversations cv on cv.contact_identity_id = access_ci.id " +
+            "where access_ci.contact_id = c.id and access_ci.deleted_at is null " +
+            "and (cv.assigned_user_id = #{userId}::uuid " +
+            "or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id " +
+            "and tm.user_id = #{userId}::uuid) " +
+            "or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id " +
+            "and g.user_id = #{userId}::uuid and g.revoked_at is null " +
+            "and (g.expires_at is null or g.expires_at > now())))) " +
+            "or exists (select 1 from user_roles ur join roles r on r.id = ur.role_id " +
+            "where ur.user_id = #{userId}::uuid and r.code = 'admin')) limit 1")
+    Optional<ContactEntity> findAccessibleForChatAppSend(
+            @Param("contactId") UUID contactId,
+            @Param("identityId") UUID identityId,
+            @Param("channelAccountId") UUID channelAccountId,
+            @Param("userId") UUID userId);
+
+    @Update("update contacts set display_name = #{displayName}, updated_at = now(), version = version + 1 where id = #{id}::uuid")
+    int updateDisplayName(@Param("id") UUID id, @Param("displayName") String displayName);
 }

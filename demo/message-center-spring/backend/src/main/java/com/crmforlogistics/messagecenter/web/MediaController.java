@@ -27,17 +27,31 @@ public class MediaController {
 
     @GetMapping("/media/{id}")
     public ResponseEntity<InputStreamResource> getMedia(@PathVariable UUID id) throws Exception {
+        return respond(id, false);
+    }
+
+    @GetMapping("/media/{id}/download")
+    public ResponseEntity<InputStreamResource> download(@PathVariable UUID id) throws Exception {
+        return respond(id, true);
+    }
+
+    private ResponseEntity<InputStreamResource> respond(UUID id, boolean download) throws Exception {
         var attachment = attachmentMapper.findReadableById(id, SecurityUtil.currentUserId());
         if (attachment == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
         var stream = storage.get(attachment.getObjectKey());
-        return ResponseEntity.ok()
+        var builder = ResponseEntity.ok()
                 .contentType(mediaType(attachment.getMimeType()))
-                .header("Content-Disposition", ContentDisposition.inline()
+                .header("Cache-Control", "private, no-store")
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Content-Disposition", (download ? ContentDisposition.attachment() : ContentDisposition.inline())
                         .filename(attachment.getOriginalName(), StandardCharsets.UTF_8)
-                        .build().toString())
-                .body(new InputStreamResource(stream));
+                        .build().toString());
+        if (attachment.getSizeBytes() != null) {
+            builder.contentLength(attachment.getSizeBytes());
+        }
+        return builder.body(new InputStreamResource(stream));
     }
 
     private static MediaType mediaType(String value) {

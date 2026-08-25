@@ -26,7 +26,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(WeComController.class)
 @AutoConfigureMockMvc(addFilters = false)
-@TestPropertySource(properties = {"app.wecom-suite-id=test"})
+@TestPropertySource(properties = {
+        "app.wecom-enabled=true",
+        "app.wecom-suite-id=test"
+})
 class WeComControllerTest {
 
     @Autowired MockMvc mvc;

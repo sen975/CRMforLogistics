@@ -3,6 +3,8 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import org.springframework.stereotype.Component;
 import com.crmforlogistics.messagecenter.infrastructure.MinioStorage;
 import com.crmforlogistics.messagecenter.mapper.AttachmentMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 
 import java.io.InputStream;
 import java.net.SocketTimeoutException;
@@ -15,31 +17,37 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
     private final ChatAppSendService sendService;
     private final MinioStorage minioStorage;
     private final AttachmentMapper attachmentMapper;
+    private final ChannelAccountMapper channelAccountMapper;
 
     public AliyunChatAppOutboundGateway(ChatAppSendService sendService,
                                         MinioStorage minioStorage,
-                                        AttachmentMapper attachmentMapper) {
+                                        AttachmentMapper attachmentMapper,
+                                        ChannelAccountMapper channelAccountMapper) {
         this.sendService = sendService;
         this.minioStorage = minioStorage;
         this.attachmentMapper = attachmentMapper;
+        this.channelAccountMapper = channelAccountMapper;
     }
 
     @Override
     public Submission submit(Command command) throws Exception {
         try {
+            String from = requireActiveSender(command.channelAccountId());
             ChatAppSendService.SendResult result = switch (command.kind()) {
                 case "text" -> sendService.sendText(
+                        from,
                         required(command.content(), "to"),
                         stringValue(command.content().get("text")),
                         command.clientRequestId());
                 case "template" -> sendService.sendTemplate(
+                        from,
                         required(command.content(), "to"),
                         required(command.content(), "templateCode"),
                         stringValue(command.content().get("templateName")),
                         stringValue(command.content().get("languageCode")),
                         stringMap(command.content().get("templateParams")),
                         command.clientRequestId());
-                case "image", "video", "document" -> sendMedia(command);
+                case "image", "video", "document" -> sendMedia(from, command);
                 default -> throw new IllegalArgumentException(
                         "CHATAPP_OUTBOX_KIND_NOT_SUPPORTED: " + command.kind());
             };
@@ -59,7 +67,7 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
         }
     }
 
-    private ChatAppSendService.SendResult sendMedia(Command command) throws Exception {
+    private ChatAppSendService.SendResult sendMedia(String from, Command command) throws Exception {
         String objectKey = required(command.content(), "objectKey");
         if (!attachmentMapper.existsReadyForMessage(command.messageId(), objectKey)) {
             throw new IllegalArgumentException("CHATAPP_MEDIA_ATTACHMENT_NOT_READY");
@@ -72,6 +80,7 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
             throw new IllegalArgumentException("CHATAPP_MEDIA_TOO_LARGE");
         }
         return sendService.sendMedia(
+                from,
                 required(command.content(), "to"),
                 command.kind(),
                 bytes,
@@ -79,6 +88,21 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
                 stringValue(command.content().get("contentType")),
                 stringValue(command.content().get("caption")),
                 command.clientRequestId());
+    }
+
+    private String requireActiveSender(java.util.UUID channelAccountId) {
+        ChannelAccountEntity account = channelAccountMapper.selectById(channelAccountId);
+        if (account == null || account.getDeletedAt() != null
+                || !("chatapp".equalsIgnoreCase(account.getChannelType())
+                || "whatsapp".equalsIgnoreCase(account.getChannelType()))
+                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        String sender = account.getAccountIdentifier();
+        if (sender == null || sender.isBlank()) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_IDENTIFIER_REQUIRED");
+        }
+        return sender.trim();
     }
 
     private static String required(Map<String, Object> content, String key) {

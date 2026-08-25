@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -54,6 +56,24 @@ class WeComAccessTokenServiceTest {
 
         WeComException error = assertThrows(WeComException.class, () -> service.accessToken(null));
         assertEquals("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", error.code());
+    }
+
+    @Test
+    void invalidateForcesRefreshOfCurrentInstallationVersion() {
+        when(config.wecomTokenRefreshSkewSeconds()).thenReturn(300);
+        when(gateway.getDevelopedAppToken(eq("ww-corp"), eq("developed-secret"), any(Duration.class)))
+                .thenReturn(new WeComAuthorizationGateway.CorpTokenResponse("token-1", 7200))
+                .thenReturn(new WeComAuthorizationGateway.CorpTokenResponse("token-2", 7200));
+        WeComAccessTokenService service = new WeComAccessTokenService(config,
+                Clock.fixed(Instant.parse("2026-07-29T00:00:00Z"), ZoneOffset.UTC), gateway);
+        ResolvedInstallation installation = installation(1L);
+
+        assertEquals("token-1", service.accessToken(installation));
+        service.invalidate(installation);
+        assertEquals("token-2", service.accessToken(installation));
+
+        verify(gateway, times(2)).getDevelopedAppToken(
+                eq("ww-corp"), eq("developed-secret"), any(Duration.class));
     }
 
     private static ResolvedInstallation installation(long version) {

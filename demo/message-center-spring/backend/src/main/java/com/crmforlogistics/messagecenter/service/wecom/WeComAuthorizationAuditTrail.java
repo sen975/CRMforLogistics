@@ -11,6 +11,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -105,6 +106,7 @@ public class WeComAuthorizationAuditTrail {
             WeComCallbackCodec.DecodedCallback callback, Attempt attempt, String result,
             String authCorpId, String targetStatus, Long expectedVersion, WeComException failure) {
         WeComAuthorizationAuditEntity entity = new WeComAuthorizationAuditEntity();
+        entity.setId(UUID.randomUUID());
         entity.setOccurredAt(Instant.now());
         entity.setAction(attempt.action());
         entity.setResult(result);

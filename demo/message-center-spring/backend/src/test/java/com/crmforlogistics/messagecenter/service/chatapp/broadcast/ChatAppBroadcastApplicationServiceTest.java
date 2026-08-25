@@ -3,11 +3,13 @@ package com.crmforlogistics.messagecenter.service.chatapp.broadcast;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastJobEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
+import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastReconciliationEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastJobMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
+import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastReconciliationEvidenceMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
@@ -16,6 +18,8 @@ import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -48,6 +52,7 @@ class ChatAppBroadcastApplicationServiceTest {
     @Mock ChatAppBroadcastMapper broadcastMapper;
     @Mock ChatAppBroadcastRecipientMapper recipientMapper;
     @Mock ChatAppBroadcastJobMapper jobMapper;
+    @Mock ChatAppBroadcastReconciliationEvidenceMapper evidenceMapper;
     @Mock ContactIdentityMapper identityMapper;
     @Mock TemplateMapper templateMapper;
     @Mock ChatAppAccountResolver accountResolver;
@@ -58,10 +63,121 @@ class ChatAppBroadcastApplicationServiceTest {
     @BeforeEach
     void setUp() {
         service = new ChatAppBroadcastApplicationService(
-                broadcastMapper, recipientMapper, jobMapper, identityMapper,
+                broadcastMapper, recipientMapper, jobMapper, evidenceMapper, identityMapper,
                 templateMapper, accountResolver, chatAppTemplateService, new ObjectMapper(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         lenient().when(broadcastMapper.insertIfAbsent(any(ChatAppBroadcastEntity.class))).thenReturn(1);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ChatAppBroadcastModels.BroadcastStatus.class,
+            names = {"SUBMITTED", "RECONCILING", "STATUS_UNKNOWN"})
+    void reconciliationRequestAcceptsOnlyRecoverableStatuses(
+            ChatAppBroadcastModels.BroadcastStatus status) {
+        UUID broadcastId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        ChatAppBroadcastEntity broadcast = existingBroadcast(broadcastId, accountId, actorId);
+        broadcast.setStatus(status.name());
+        broadcast.setProviderGroupMessageId("group-1");
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(jobMapper.insertReconcileIfAbsent(any())).thenReturn(1);
+
+        assertThat(service.requestReconciliation(broadcastId, actorId).id()).isEqualTo(broadcastId);
+        verify(jobMapper).insertReconcileIfAbsent(argThat(job ->
+                "RECONCILE".equals(job.getJobType()) && "PENDING".equals(job.getStatus())
+                        && job.getAttemptCount() == 0 && job.getMaxAttempts() == 10
+                        && NOW.equals(job.getNextAttemptAt())));
+    }
+
+    @Test
+    void reconciliationRequestRejectsMissingGroupIdAndInvalidStatuses() {
+        UUID broadcastId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        ChatAppBroadcastEntity broadcast = existingBroadcast(broadcastId, accountId, actorId);
+        broadcast.setStatus("STATUS_UNKNOWN");
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+
+        assertThatThrownBy(() -> service.requestReconciliation(broadcastId, actorId))
+                .isInstanceOf(ChatAppBroadcastException.class)
+                .hasMessage("CHATAPP_BROADCAST_GROUP_ID_MISSING");
+
+        broadcast.setProviderGroupMessageId("group-1");
+        for (String status : List.of("FAILED", "SUBMISSION_UNKNOWN")) {
+            broadcast.setStatus(status);
+            assertThatThrownBy(() -> service.requestReconciliation(broadcastId, actorId))
+                    .isInstanceOfSatisfying(ChatAppBroadcastException.class,
+                            error -> assertThat(error.status()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT));
+        }
+        verify(jobMapper, never()).insertReconcileIfAbsent(any());
+    }
+
+    @Test
+    void activeReconciliationJobIsIdempotentAndUnauthorizedActorIsRejected() {
+        UUID broadcastId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID foreignActorId = UUID.randomUUID();
+        ChatAppBroadcastEntity broadcast = existingBroadcast(broadcastId, accountId, actorId);
+        broadcast.setStatus("STATUS_UNKNOWN");
+        broadcast.setProviderGroupMessageId("group-1");
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(jobMapper.insertReconcileIfAbsent(any())).thenReturn(0);
+
+        assertThat(service.requestReconciliation(broadcastId, actorId).id()).isEqualTo(broadcastId);
+        assertThatThrownBy(() -> service.requestReconciliation(broadcastId, foreignActorId))
+                .isInstanceOfSatisfying(ChatAppBroadcastException.class,
+                        error -> assertThat(error.status()).isEqualTo(org.springframework.http.HttpStatus.FORBIDDEN));
+        verify(jobMapper).insertReconcileIfAbsent(any());
+    }
+
+    @Test
+    void detailProjectsProviderAndReconciliationEvidenceWithoutExposingFullNumber() {
+        UUID broadcastId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
+        ChatAppBroadcastEntity broadcast = existingBroadcast(broadcastId, accountId, actorId);
+        broadcast.setProviderRequestId("submit-request-1");
+        broadcast.setProviderCode("OK");
+        broadcast.setLastReconciliationRequestId("reconcile-request-1");
+        broadcast.setLastReconciliationProviderCode("InvalidParameter");
+        broadcast.setProcessingCount(1);
+        ChatAppBroadcastRecipientEntity recipient = new ChatAppBroadcastRecipientEntity();
+        recipient.setId(UUID.randomUUID());
+        recipient.setContactId(UUID.randomUUID());
+        recipient.setContactIdentityId(UUID.randomUUID());
+        recipient.setRecipientNameSnapshot("Recipient");
+        recipient.setRecipientNumberSnapshot("60123456789");
+        recipient.setTemplateParamsJsonb("{}");
+        recipient.setMessageId(messageId);
+        recipient.setStatus("PROCESSING");
+        ChatAppBroadcastReconciliationEvidenceEntity diagnostic =
+                new ChatAppBroadcastReconciliationEvidenceEntity();
+        diagnostic.setDiagnosticCode("CHATAPP_PROVIDER_SUCCESS_FLAG_CONFLICT");
+        when(broadcastMapper.selectById(broadcastId)).thenReturn(broadcast);
+        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(recipient));
+        when(evidenceMapper.countByBroadcastId(broadcastId)).thenReturn(3L);
+        when(evidenceMapper.countMatched(broadcastId)).thenReturn(2L);
+        when(evidenceMapper.countUnmatched(broadcastId)).thenReturn(1L);
+        when(evidenceMapper.findLatestDiagnostic(broadcastId)).thenReturn(Optional.of(diagnostic));
+
+        var detail = service.detail(broadcastId, actorId);
+
+        assertThat(detail.broadcast().providerRequestId()).isEqualTo("submit-request-1");
+        assertThat(detail.broadcast().lastReconciliationProviderCode()).isEqualTo("InvalidParameter");
+        assertThat(detail.recipients()).singleElement().satisfies(view -> {
+            assertThat(view.messageId()).isEqualTo(messageId);
+            assertThat(view.maskedNumber()).endsWith("6789").doesNotContain("60123456789");
+        });
+        assertThat(detail.reconciliation()).isEqualTo(
+                new ChatAppBroadcastModels.ReconciliationSummary(
+                        3, 2, 1, 1, "CHATAPP_PROVIDER_SUCCESS_FLAG_CONFLICT"));
     }
 
     @Test

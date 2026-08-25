@@ -85,13 +85,22 @@ test('thread refreshes immediately after call upload and polls active transcript
     new URL('src/pages/ThreadPage.tsx', frontendRoot),
     'utf8',
   );
+  const callRecordTimelineSource = readFileSync(
+    new URL('src/hooks/useCallRecordTimeline.ts', frontendRoot),
+    'utf8',
+  );
   const sendFormSource = readFileSync(
     new URL('src/components/SendForm.tsx', frontendRoot),
     'utf8',
   );
 
   assert.match(threadPageSource, /onCallRecordCreated=\{refreshCallRecords\}/);
-  assert.match(threadPageSource, /hasActiveCallRecord\(callRecords\)/);
-  assert.match(threadPageSource, /CALL_RECORD_POLL_INTERVAL_MS/);
+  assert.match(callRecordTimelineSource, /queryKey:\s*\['call-records', contactId\]/);
+  assert.match(
+    callRecordTimelineSource,
+    /hasActiveCallRecord\(query\.state\.data \?\? \[\]\)/,
+  );
+  assert.match(callRecordTimelineSource, /CALL_RECORD_POLL_INTERVAL_MS/);
+  assert.match(callRecordTimelineSource, /retry:\s*2/);
   assert.match(sendFormSource, /onSuccess=\{onCallRecordCreated\}/);
 });

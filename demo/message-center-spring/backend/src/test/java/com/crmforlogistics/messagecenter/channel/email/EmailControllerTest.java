@@ -53,6 +53,19 @@ class EmailControllerTest {
     }
 
     @Test
+    void shouldExposeStructuredImapAuthenticationFailureWithoutCredentialDetails() throws Exception {
+        when(syncService.receiveLatest()).thenThrow(new EmailException(
+                "EMAIL_IMAP_AUTHENTICATION_FAILED", "IMAP authentication failed"));
+
+        mvc.perform(post("/api/email/sync"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("EMAIL_IMAP_AUTHENTICATION_FAILED"))
+                .andExpect(jsonPath("$.message").value("IMAP authentication failed"))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.stackTrace").doesNotExist());
+    }
+
+    @Test
     void shouldReturnBadRequestOnSendError() throws Exception {
         when(sendService.send(any(), any(), any()))
                 .thenThrow(new RuntimeException("SMTP connection failed"));

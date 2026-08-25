@@ -56,15 +56,20 @@ class ChatAppControllerTest {
 
     @Test
     void shouldSendText() throws Exception {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
         UUID messageId = UUID.randomUUID();
-        when(messageApplicationService.acceptRecipient(
-                eq("8612345678"), eq("text"), any(), any(), eq(actorId)))
+        when(messageApplicationService.acceptContactIdentity(
+                eq(contactId), eq(identityId), eq("text"), any(), any(), eq(actorId)))
                 .thenReturn(new MessageSendApplicationService.MessageAccepted(
                         messageId, "pending", false));
 
         mvc.perform(post("/api/chatapp/send/text")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("to", "8612345678", "text", "hello"))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "contactId", contactId,
+                                "recipientIdentityId", identityId,
+                                "text", "hello"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.messageId").value(messageId.toString()))
                 .andExpect(jsonPath("$.status").value("pending"));
@@ -73,16 +78,20 @@ class ChatAppControllerTest {
 
     @Test
     void shouldSendTemplate() throws Exception {
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
         UUID messageId = UUID.randomUUID();
-        when(messageApplicationService.acceptRecipient(
-                eq("8612345678"), eq("template"), any(), any(), eq(actorId)))
+        when(messageApplicationService.acceptContactIdentity(
+                eq(contactId), eq(identityId), eq("template"), any(), any(), eq(actorId)))
                 .thenReturn(new MessageSendApplicationService.MessageAccepted(
                         messageId, "pending", false));
 
         mvc.perform(post("/api/chatapp/send/template")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "to", "8612345678", "templateCode", "tpl-1",
+                                "contactId", contactId,
+                                "recipientIdentityId", identityId,
+                                "templateCode", "tpl-1",
                                 "templateName", "greeting", "languageCode", "en"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.messageId").value(messageId.toString()))
@@ -92,14 +101,16 @@ class ChatAppControllerTest {
 
     @Test
     void forbiddenTemplateSendRemainsForbidden() throws Exception {
-        when(messageApplicationService.acceptRecipient(
-                any(), any(), any(), any(), eq(actorId)))
+        when(messageApplicationService.acceptContactIdentity(
+                any(), any(), any(), any(), any(), eq(actorId)))
                 .thenThrow(new SecurityException("CHATAPP_CONVERSATION_FORBIDDEN"));
 
         mvc.perform(post("/api/chatapp/send/template")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
-                                "to", "8612345678", "templateCode", "tpl-1"))))
+                                "contactId", UUID.randomUUID(),
+                                "recipientIdentityId", UUID.randomUUID(),
+                                "templateCode", "tpl-1"))))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }

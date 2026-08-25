@@ -1,11 +1,17 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataGateway;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataMessageEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataCursorMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComChatDataIngestFailureMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceParticipantMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -49,6 +55,10 @@ class WeComChatDataStoreTest {
             order.verify(messages).insertIgnore(any());
             order.verify(projector).project(any());
             order.verify(cursors).upsert(anyString(), eq("next"));
+            ArgumentCaptor<WeComChatDataMessageEntity> storedReference =
+                    ArgumentCaptor.forClass(WeComChatDataMessageEntity.class);
+            verify(messages).insertIgnore(storedReference.capture());
+            assertThat(storedReference.getValue().getId()).isNotNull();
             verify(events, never()).publish(anyString(), any());
 
             for (TransactionSynchronization synchronization
@@ -85,8 +95,70 @@ class WeComChatDataStoreTest {
         verify(cursors, never()).upsert(anyString(), anyString());
     }
 
+    @Test
+    void recordsMalformedMessageBeforeAdvancingCursor() {
+        WeComChatDataIngestFailureMapper failures = mock(WeComChatDataIngestFailureMapper.class);
+        when(failures.insert(any(com.crmforlogistics.messagecenter.entity.WeComChatDataIngestFailureEntity.class))).thenReturn(1);
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
+        WeComChatDataStore failureAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention, failures);
+
+        WeComChatDataStore.PublishResult result = failureAware.publishPage(
+                new WeComChatDataStore.SyncKey("6f5a3e35-8d31-4f0a-9ed8-9f0cc8cc6e8e", 1,
+                        "program", "ability"), "next", List.of(
+                        new WeComChatDataStore.DecryptedMessage(null, "secret")));
+
+        assertThat(result.failed()).isEqualTo(1);
+        verify(failures).insert(any(com.crmforlogistics.messagecenter.entity.WeComChatDataIngestFailureEntity.class));
+        verify(cursors).upsert(anyString(), eq("next"));
+    }
+
+    @Test
+    void doesNotAdvanceCursorWhenFailureFactCannotBeSaved() {
+        WeComChatDataIngestFailureMapper failures = mock(WeComChatDataIngestFailureMapper.class);
+        when(failures.insert(any(com.crmforlogistics.messagecenter.entity.WeComChatDataIngestFailureEntity.class))).thenReturn(0);
+        WeComChatDataStore failureAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention, failures);
+
+        assertThatThrownBy(() -> failureAware.publishPage(
+                new WeComChatDataStore.SyncKey("6f5a3e35-8d31-4f0a-9ed8-9f0cc8cc6e8e", 1,
+                        "program", "ability"), "next", List.of(
+                        new WeComChatDataStore.DecryptedMessage(null, "secret"))))
+                .isInstanceOf(com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataException.class)
+                .extracting("code").isEqualTo("WECOM_CHATDATA_FAILURE_RECORD_FAILED");
+        verify(cursors, never()).upsert(anyString(), anyString());
+    }
+
+    @Test
+    void routesEmployeeToEmployeeDirectMessageThroughDirectProjector() {
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted");
+        when(messages.insertIgnore(any())).thenReturn(1);
+        when(projector.projectDirect(any())).thenReturn(new WeComMessageProjector.ProjectionResult(true));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
+        WeComPartyMapper parties = mock(WeComPartyMapper.class);
+        WeComSourceConversationMapper sourceConversations = mock(WeComSourceConversationMapper.class);
+        WeComSourceParticipantMapper participants = mock(WeComSourceParticipantMapper.class);
+        java.util.UUID installationId = java.util.UUID.randomUUID();
+        java.util.UUID sourceId = java.util.UUID.randomUUID();
+        when(sourceConversations.upsertObserved(eq(installationId), anyString(), eq("DIRECT")))
+                .thenReturn(sourceId);
+        when(parties.upsertObserved(eq(installationId), anyString(), anyString(), anyString()))
+                .thenReturn(java.util.UUID.randomUUID());
+
+        WeComChatDataStore directAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention,
+                null, new WeComChatDataNormalizer(), parties, sourceConversations, participants);
+
+        directAware.publishPage(new WeComChatDataStore.SyncKey(installationId.toString(), 1,
+                "program", "ability", "corp"), "next", List.of(decrypted("employee-direct", 1, 1)));
+
+        verify(projector).projectDirect(any(WeComMessageProjector.WeComProjectedDirectMessage.class));
+        verify(projector, never()).project(any(WeComMessageProjector.WeComProjectedMessage.class));
+    }
+
     private static WeComChatDataStore.SyncKey key() {
-        return new WeComChatDataStore.SyncKey("installation", 1, "program", "ability");
+        return new WeComChatDataStore.SyncKey(java.util.UUID.randomUUID().toString(), 1,
+                "program", "ability");
     }
 
     private static WeComChatDataStore.DecryptedMessage decrypted(

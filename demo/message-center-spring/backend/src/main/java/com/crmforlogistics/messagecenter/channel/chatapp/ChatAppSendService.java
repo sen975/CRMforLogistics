@@ -53,11 +53,16 @@ public class ChatAppSendService {
     }
 
     public SendResult sendText(String to, String text, String clientRequestId) throws Exception {
+        return sendText(chatappFrom(), to, text, clientRequestId);
+    }
+
+    public SendResult sendText(String from, String to, String text, String clientRequestId) throws Exception {
+        String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String cleanText = text == null ? "" : text;
         String content = MAPPER.writeValueAsString(Map.of("text", cleanText));
 
-        SendChatappMessageRequest.Builder builder = baseBuilder(cleanTo)
+        SendChatappMessageRequest.Builder builder = baseBuilder(cleanFrom, cleanTo)
                 .messageType("text")
                 .content(content);
         putIfNotBlank(clientRequestId, builder::taskId);
@@ -65,13 +70,21 @@ public class ChatAppSendService {
         try (AsyncClient client = createClient()) {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
-            return new SendResult(messageId, chatappFrom(), cleanTo, cleanText, "Submitted");
+            return new SendResult(messageId, cleanFrom, cleanTo, cleanText, "Submitted");
         }
     }
 
     public SendResult sendTemplate(String to, String templateCode, String templateName,
                                     String languageCode, Map<String, String> params,
                                     String clientRequestId) throws Exception {
+        return sendTemplate(chatappFrom(), to, templateCode, templateName, languageCode, params,
+                clientRequestId);
+    }
+
+    public SendResult sendTemplate(String from, String to, String templateCode, String templateName,
+                                   String languageCode, Map<String, String> params,
+                                   String clientRequestId) throws Exception {
+        String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String code = required(templateCode, "templateCode");
         String language = firstNonBlank(languageCode, "en_US");
@@ -79,7 +92,7 @@ public class ChatAppSendService {
 
         SendChatappMessageRequest.Builder builder = SendChatappMessageRequest.builder()
                 .custSpaceId(required(config.custSpaceId(), "custSpaceId"))
-                .from(required(config.chatappFrom(), "chatappFrom"))
+                .from(cleanFrom)
                 .to(cleanTo)
                 .channelType(defaulted(config.chatappChannelType(), "whatsapp"))
                 .type("template")
@@ -93,13 +106,21 @@ public class ChatAppSendService {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
             String text = templateRenderPreview(code, templateName, safeParams);
-            return new SendResult(messageId, chatappFrom(), cleanTo, text, "Submitted");
+            return new SendResult(messageId, cleanFrom, cleanTo, text, "Submitted");
         }
     }
 
     public SendResult sendMedia(String to, String mediaType, byte[] fileBytes,
                                  String fileName, String contentType, String caption,
                                  String clientRequestId) throws Exception {
+        return sendMedia(chatappFrom(), to, mediaType, fileBytes, fileName, contentType, caption,
+                clientRequestId);
+    }
+
+    public SendResult sendMedia(String from, String to, String mediaType, byte[] fileBytes,
+                                String fileName, String contentType, String caption,
+                                String clientRequestId) throws Exception {
+        String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String normalizedType = normalizeMediaType(mediaType);
         if (fileBytes == null || fileBytes.length == 0) {
@@ -125,7 +146,7 @@ public class ChatAppSendService {
             String mediaUrl = uploaded.url();
 
             String content = mediaContentJson(normalizedType, mediaUrl, caption, fileName);
-            SendChatappMessageRequest.Builder builder = baseBuilder(cleanTo)
+            SendChatappMessageRequest.Builder builder = baseBuilder(cleanFrom, cleanTo)
                     .messageType(normalizedType)
                     .content(content);
             putIfNotBlank(clientRequestId, builder::taskId);
@@ -133,7 +154,7 @@ public class ChatAppSendService {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
             String text = mediaDisplayText(normalizedType, caption, fileName);
-            return new SendResult(messageId, chatappFrom(), cleanTo, text, "Submitted");
+            return new SendResult(messageId, cleanFrom, cleanTo, text, "Submitted");
         }
     }
 
@@ -165,9 +186,13 @@ public class ChatAppSendService {
     // --- private helpers ---
 
     private SendChatappMessageRequest.Builder baseBuilder(String to) {
+        return baseBuilder(chatappFrom(), to);
+    }
+
+    private SendChatappMessageRequest.Builder baseBuilder(String from, String to) {
         return SendChatappMessageRequest.builder()
                 .custSpaceId(required(config.custSpaceId(), "custSpaceId"))
-                .from(chatappFrom())
+                .from(required(from, "from"))
                 .to(required(to, "to"))
                 .channelType(defaulted(config.chatappChannelType(), "whatsapp"))
                 .type("message");

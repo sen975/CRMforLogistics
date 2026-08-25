@@ -1,4 +1,29 @@
-import type { TemplateAdmin, TemplateButton, TemplateCommand, TemplateComponent, TemplateHeaderFormat } from '../../api/types';
+import type { TemplateAdmin, TemplateButton, TemplateCategory, TemplateCommand, TemplateComponent, TemplateHeaderFormat } from '../../api/types';
+import { isWhatsAppTemplateLanguage, type WhatsAppTemplateLanguageCode } from './whatsappLanguages';
+
+export const MAX_TEMPLATE_NAME_LENGTH = 512;
+export const MAX_TEMPLATE_BODY_LENGTH = 1024;
+
+export interface TemplateEditorInitialValue {
+  name: string;
+  language: string;
+  category: TemplateCategory | null;
+  body: string;
+  headerFormat: TemplateHeaderFormat | null;
+  headerText: string;
+  mediaAssetId: string | null;
+  footer: string;
+  buttons: TemplateButton[];
+  examples: Record<string, string[]>;
+}
+
+export function isTemplateCategory(value: string | null): value is TemplateCategory {
+  return value === 'UTILITY' || value === 'MARKETING';
+}
+
+export function isTemplateLanguage(value: string | null): value is WhatsAppTemplateLanguageCode {
+  return isWhatsAppTemplateLanguage(value);
+}
 
 export const statusLabels: Record<TemplateAdmin['reviewStatus'], string> = {
   PENDING: '审核中',
@@ -15,6 +40,39 @@ export const statusColors: Record<TemplateAdmin['reviewStatus'], string> = {
   SUSPENDED: 'warning',
   UNKNOWN: 'default',
 };
+
+export function templatePermissionState(template: TemplateAdmin): {
+  label: string;
+  color: string;
+  actionLabel: '暂停发送' | '恢复发送';
+  toggleDisabled: boolean;
+} {
+  const actionLabel = template.desiredAllowSend ? '暂停发送' : '恢复发送';
+  const toggleDisabled = template.permissionSyncStatus === 'PENDING'
+    || (!template.desiredAllowSend && template.reviewStatus !== 'APPROVED');
+  if (template.permissionSyncStatus === 'PENDING') {
+    return {
+      label: template.desiredAllowSend ? '启用同步中' : '停用同步中',
+      color: 'processing',
+      actionLabel,
+      toggleDisabled,
+    };
+  }
+  if (template.permissionSyncStatus === 'FAILED') {
+    return {
+      label: template.desiredAllowSend ? '启用失败' : '停用失败',
+      color: 'error',
+      actionLabel,
+      toggleDisabled,
+    };
+  }
+  return {
+    label: template.allowSend ? '已启用' : '已暂停',
+    color: template.allowSend ? 'green' : 'default',
+    actionLabel,
+    toggleDisabled,
+  };
+}
 
 export const headerFormatLabels: Record<TemplateHeaderFormat, string> = {
   TEXT: '文本',
@@ -37,6 +95,35 @@ export function bodyComponent(components: TemplateComponent[]): TemplateComponen
 
 export function componentForHeader(format: TemplateHeaderFormat, text: string | null, mediaAssetId: string | null): TemplateComponent {
   return { type: 'HEADER', headerFormat: format, text, mediaAssetId, buttons: [] };
+}
+
+export function initialValueForTemplate(template: TemplateAdmin | null): TemplateEditorInitialValue {
+  const header = template?.components.find((component) => component.type === 'HEADER');
+  const body = bodyComponent(template?.components ?? []);
+  const footer = template?.components.find((component) => component.type === 'FOOTER');
+  const buttonItem = template?.components.find((component) => component.type === 'BUTTONS');
+  const bodyText = body.text ?? '';
+  const headerFormat = header?.headerFormat ?? null;
+  const headerText = header?.text ?? '';
+  const variables = [...new Set([
+    ...variableNames(bodyText),
+    ...(headerFormat === 'TEXT' ? variableNames(headerText) : []),
+  ])];
+  const examples: Record<string, string[]> = {};
+  for (const variable of variables) examples[variable] = template?.examples[variable] ?? [''];
+
+  return {
+    name: template?.name ?? '',
+    language: template?.language ?? '',
+    category: template?.category === 'MARKETING' ? 'MARKETING' : 'UTILITY',
+    body: bodyText,
+    headerFormat,
+    headerText,
+    mediaAssetId: header?.mediaAssetId ?? null,
+    footer: footer?.text ?? '',
+    buttons: buttonItem?.buttons ?? [],
+    examples,
+  };
 }
 
 export function buildCommand(values: {
@@ -79,7 +166,10 @@ export function buildCommand(values: {
 
 export function variableNames(text: string): string[] {
   const names = new Set<string>();
-  for (const match of text.matchAll(/{{\s*([a-zA-Z0-9_]+)\s*}}/g)) names.add(match[1]);
+  for (const match of text.matchAll(/\$\(\s*([A-Za-z][A-Za-z0-9_]*)\s*\)/g)) names.add(match[1]);
   return [...names];
 }
 
+export function hasUnsupportedVariableSyntax(text: string): boolean {
+  return /\$\{\s*[A-Za-z][A-Za-z0-9_]*\s*}|\{\{\s*[A-Za-z][A-Za-z0-9_]*\s*}}/.test(text);
+}

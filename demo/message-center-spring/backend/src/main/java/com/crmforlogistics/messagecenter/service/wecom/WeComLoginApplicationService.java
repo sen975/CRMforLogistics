@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComAuthorizationGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.dto.response.WeComBindingResponse;
@@ -21,18 +22,23 @@ public class WeComLoginApplicationService {
     private final AppConfig config;
     private final WeComLoginAttemptService attempts;
     private final WeComAuthorizationGateway gateway;
+    private final WeComAccessTokenService accessTokens;
+    private final WeComInstallationService installations;
     private final WeComUserBindingService bindings;
     private final AuthSessionService sessions;
 
     public WeComLoginApplicationService(AppConfig config,
                                         WeComLoginAttemptService attempts,
                                         WeComAuthorizationGateway gateway,
+                                        WeComAccessTokenService accessTokens,
                                         WeComUserBindingService bindings,
                                         AuthSessionService sessions,
-                                        com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService ignored) {
+                                        WeComInstallationService installations) {
         this.config = config;
         this.attempts = attempts;
         this.gateway = gateway;
+        this.accessTokens = accessTokens;
+        this.installations = installations;
         this.bindings = bindings;
         this.sessions = sessions;
     }
@@ -47,8 +53,11 @@ public class WeComLoginApplicationService {
 
     private WeComLoginResponse exchangeLogin(WeComLoginAttemptService.AttemptContext context,
                                              String code, RequestMetadata metadata) {
+        Duration timeout = Duration.ofSeconds(config.wecomApiTimeoutSeconds());
+        var installation = installations.resolveInstallation(context.installationBinding().suiteId(),
+                context.installationBinding().authCorpId());
         WeComAuthorizationGateway.LoginIdentity upstream = gateway.getLoginIdentity(
-                code, Duration.ofSeconds(config.wecomApiTimeoutSeconds()));
+                installation.authCorpId(), accessTokens.accessToken(installation, timeout), code, timeout);
         validateCorp(context, upstream.corpId());
         var identity = new WeComUserBindingService.ResolvedIdentity(
                 context.installationBinding().suiteId(), upstream.corpId(), upstream.userId(),
@@ -71,8 +80,11 @@ public class WeComLoginApplicationService {
     private WeComBindingResponse exchangeBinding(UUID currentUserId,
                                                   WeComLoginAttemptService.AttemptContext context,
                                                   String code) {
+        Duration timeout = Duration.ofSeconds(config.wecomApiTimeoutSeconds());
+        var installation = installations.resolveInstallation(context.installationBinding().suiteId(),
+                context.installationBinding().authCorpId());
         WeComAuthorizationGateway.LoginIdentity upstream = gateway.getLoginIdentity(
-                code, Duration.ofSeconds(config.wecomApiTimeoutSeconds()));
+                installation.authCorpId(), accessTokens.accessToken(installation, timeout), code, timeout);
         validateCorp(context, upstream.corpId());
         var identity = new WeComUserBindingService.ResolvedIdentity(
                 context.installationBinding().suiteId(), upstream.corpId(), upstream.userId(),

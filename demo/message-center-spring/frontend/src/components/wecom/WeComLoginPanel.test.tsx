@@ -12,8 +12,9 @@ vi.mock('../../wecom/wecomSdk', () => sdk);
 beforeEach(() => {
   vi.clearAllMocks();
   api.createWeComAttempt.mockResolvedValue({
-    loginType: 'ServiceApp',
-    appId: 'suite-id',
+    loginType: 'CorpApp',
+    appId: 'corp-id',
+    agentId: '1000247',
     redirectUri: 'https://crm.example.com/login',
     state: 'state-1',
     expiresIn: 300,
@@ -32,8 +33,9 @@ it('mounts the official panel with the backend-issued attempt', async () => {
   expect(options).toEqual(expect.objectContaining({
     el: expect.stringMatching(/^#/),
     params: expect.objectContaining({
-      login_type: 'ServiceApp',
-      appid: 'suite-id',
+      login_type: 'CorpApp',
+      appid: 'corp-id',
+      agentid: '1000247',
       redirect_uri: 'https://crm.example.com/login',
       state: 'state-1',
       redirect_type: 'callback',

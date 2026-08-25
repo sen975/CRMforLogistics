@@ -38,6 +38,8 @@ class ChatAppTemplateServiceTest {
         fixedAccount.setAccountIdentifier("60111111111");
         TemplateEntity approved = template("delivery_ready", "APPROVED", true);
         approved.setChannelAccountId(fixedAccountId);
+        approved.setName("delivery_notice");
+        approved.setRemark("发货提醒");
         TemplateEntity rejected = template("delivery_rejected", "REJECTED", true);
         TemplateEntity pending = template("delivery_pending", "PENDING", true);
         TemplateEntity suspended = template("delivery_suspended", "SUSPENDED", true);
@@ -47,14 +49,14 @@ class ChatAppTemplateServiceTest {
         TemplateEntity wrongAccount = template("delivery_wrong_account", "APPROVED", true);
         wrongAccount.setChannelAccountId(UUID.randomUUID());
 
-        when(channelAccountMapper.selectList(any())).thenReturn(List.of(fixedAccount));
+        when(channelAccountMapper.selectActiveChatAppAccounts()).thenReturn(List.of(fixedAccount));
         when(config.chatappFrom()).thenReturn("60111111111");
         when(templateMapper.findSendableForChannelAccount(fixedAccountId)).thenReturn(List.of(
                 approved, rejected, pending, suspended, paused, deleted, wrongAccount));
         approved.setCategory("UTILITY");
         approved.setComponentsJsonb("[{\"type\":\"HEADER\",\"headerFormat\":\"TEXT\","
-                + "\"text\":\"Order {{orderNo}}\"},{\"type\":\"BODY\","
-                + "\"text\":\"Hello {{customer}}\"}]");
+                + "\"text\":\"Order $(orderNo)\"},{\"type\":\"BODY\","
+                + "\"text\":\"Hello $(customer)\"}]");
         approved.setExamplesJsonb("{\"orderNo\":[\"A-17\"],\"customer\":[\"Alice\"]}");
 
         ChatAppTemplateService service = new ChatAppTemplateService(
@@ -64,6 +66,8 @@ class ChatAppTemplateServiceTest {
 
         assertThat(response).extracting(TemplateResponse::templateCode)
                 .containsExactly("delivery_ready");
+        assertThat(response.get(0).templateName()).isEqualTo("delivery_notice");
+        assertThat(response.get(0).displayName()).isEqualTo("发货提醒（delivery_notice）");
         assertThat(response.get(0).category()).isEqualTo("UTILITY");
         assertThat(response.get(0).components().toString()).contains("BODY");
         assertThat(response.get(0).placeholders()).containsExactly("orderNo", "customer");
@@ -79,7 +83,7 @@ class ChatAppTemplateServiceTest {
         template.setProviderTemplateId(code);
         template.setName(code);
         template.setLanguageCode("en_US");
-        template.setBody("Hello {{customer}}");
+        template.setBody("Hello $(customer)");
         template.setStatus(status);
         template.setAllowSend(allowSend);
         return template;

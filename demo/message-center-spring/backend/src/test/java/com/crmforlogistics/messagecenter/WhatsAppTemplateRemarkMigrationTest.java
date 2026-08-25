@@ -12,6 +12,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.sql.DataSource;
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,16 +50,21 @@ class WhatsAppTemplateRemarkMigrationTest {
                         + "provider_updated_at, metadata_jsonb, last_synced_at) "
                         + "values (?, ?, 'shipping_notice', 'zh_CN', 'Shipping Notice', 'Old body', 'APPROVED', "
                         + "?, '{}'::jsonb, ?)",
-                templateId, accountId, providerUpdatedAt, lastSyncedAt);
+                templateId, accountId, Timestamp.from(providerUpdatedAt), Timestamp.from(lastSyncedAt));
 
         Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load().migrate();
 
         assertThat(jdbc.queryForObject("select remark from " + schema
                 + ".message_templates where id = ?", String.class, templateId)).isNull();
-        jdbc.update("update " + schema + ".message_templates set remark = ? where id = ?", "发货提醒", templateId);
+        String maxLengthRemark = "x".repeat(120);
+        jdbc.update("update " + schema + ".message_templates set remark = ? where id = ?",
+                maxLengthRemark, templateId);
+        assertThat(jdbc.queryForObject("select remark from " + schema
+                + ".message_templates where id = ?", String.class, templateId)).isEqualTo(maxLengthRemark);
         assertThatThrownBy(() -> jdbc.update("update " + schema
                         + ".message_templates set remark = ? where id = ?", "x".repeat(121), templateId))
                 .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("update " + schema + ".message_templates set remark = ? where id = ?", "发货提醒", templateId);
 
         jdbc.update("insert into " + schema + ".message_templates "
                         + "(id, channel_account_id, provider_template_id, language_code, name, body, status, "
@@ -71,7 +77,8 @@ class WhatsAppTemplateRemarkMigrationTest {
                         + "provider_updated_at = excluded.provider_updated_at, "
                         + "metadata_jsonb = excluded.metadata_jsonb, last_synced_at = excluded.last_synced_at, "
                         + "updated_at = now()",
-                accountId, providerUpdatedAt.plusSeconds(60), lastSyncedAt.plusSeconds(60));
+                accountId, Timestamp.from(providerUpdatedAt.plusSeconds(60)),
+                Timestamp.from(lastSyncedAt.plusSeconds(60)));
 
         assertThat(jdbc.queryForObject("select remark from " + schema
                 + ".message_templates where id = ?", String.class, templateId)).isEqualTo("发货提醒");

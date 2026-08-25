@@ -34,10 +34,16 @@ public class MinioStorage {
     }
 
     public String store(String objectKey, byte[] data, String contentType) throws Exception {
+        return store(objectKey, new ByteArrayInputStream(data), data.length, contentType);
+    }
+
+    public String store(String objectKey, InputStream input, long size, String contentType) throws Exception {
+        if (size < 0) throw new IllegalArgumentException("Object size cannot be negative");
         client.putObject(PutObjectArgs.builder()
                 .bucket(bucket).object(objectKey)
-                .stream(new ByteArrayInputStream(data), data.length, -1)
-                .contentType(contentType).build());
+                .stream(input, size, -1)
+                .contentType(contentType == null || contentType.isBlank()
+                        ? "application/octet-stream" : contentType).build());
         return objectKey;
     }
 

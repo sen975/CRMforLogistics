@@ -26,6 +26,7 @@ wechat-decrypt/
 **/data/inbox.jsonl
 **/data/contact-groups.jsonl
 **/data/media/
+demo/message-center-spring/data/
 **/data-local/
 **/media-cache/
 **/*.lock
@@ -62,4 +63,3 @@ Thumbs.db
 # Vendor SDK binaries are installed locally from the official package
 wecom-archive-app/sdk_win_v3/**/*.dll
 wecom-archive-app/sdk_win_v3/**/*.lib
-

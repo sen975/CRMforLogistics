@@ -1,1 +1,2 @@
 demo/wecom-chatdata-zone-program/patches/*.patch -whitespace
+*.md whitespace=-blank-at-eol

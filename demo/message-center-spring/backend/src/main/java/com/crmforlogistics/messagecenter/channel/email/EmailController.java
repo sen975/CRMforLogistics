@@ -7,6 +7,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.List;
 
 import java.util.Map;
 
@@ -32,10 +36,25 @@ public class EmailController {
             String emailBody = body.getOrDefault("body", "");
             EmailSendService.SendResult result = sendService.send(to, subject, emailBody);
             return ResponseEntity.ok(result);
+        } catch (EmailException exception) {
+            throw exception;
         } catch (Exception e) {
             log.error("Email send failed", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    @PostMapping(value = "/send", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> sendMultipart(@RequestParam String to,
+                                           @RequestParam(defaultValue = "") String subject,
+                                           @RequestParam(defaultValue = "") String body,
+                                           @RequestPart(value = "file", required = false) List<MultipartFile> files) throws Exception {
+        var inputs = (files == null ? List.<MultipartFile>of() : files).stream()
+                .map(file -> new EmailAttachmentInput(
+                        file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename(),
+                        file.getContentType(), file.getSize(), file::getInputStream))
+                .toList();
+        return ResponseEntity.ok(sendService.send(to, subject, body, inputs));
     }
 
     @PostMapping("/sync")
@@ -43,6 +62,8 @@ public class EmailController {
         try {
             EmailSyncService.SyncResult result = syncService.receiveLatest();
             return ResponseEntity.ok(result);
+        } catch (EmailException exception) {
+            throw exception;
         } catch (Exception e) {
             log.error("Email sync failed", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

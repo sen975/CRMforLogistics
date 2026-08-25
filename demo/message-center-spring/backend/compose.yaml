@@ -66,6 +66,34 @@ services:
       - minio_secret_key
     restart: "no"
 
+  funasr:
+    build:
+      context: ./funasr-runtime
+    image: crm-logistics-message-center-funasr:local
+    cpus: ${FUNASR_CPU_LIMIT:-1.0}
+    mem_limit: ${FUNASR_MEMORY_LIMIT:-4g}
+    environment:
+      FUNASR_PORT: "8000"
+      FUNASR_DEVICE: ${FUNASR_DEVICE:-cpu}
+      FUNASR_MODEL: ${FUNASR_MODEL:-sensevoice}
+      FUNASR_INTRAOP_THREADS: ${FUNASR_INTRAOP_THREADS:-1}
+      FUNASR_INTEROP_THREADS: ${FUNASR_INTEROP_THREADS:-1}
+      FUNASR_MAX_CONCURRENCY: ${FUNASR_MAX_CONCURRENCY:-1}
+    ports:
+      - "127.0.0.1:${FUNASR_HOST_PORT:-8000}:8000"
+    volumes:
+      - funasr_cache:/root/.cache
+    tmpfs:
+      - /tmp:size=${FUNASR_TMPFS_SIZE:-512m},mode=1777
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5m
+      retries: 3
+    restart: unless-stopped
+
 secrets:
   postgres_password:
     file: ./secrets/postgres_password
@@ -77,3 +105,4 @@ secrets:
 volumes:
   postgres_data:
   minio_data:
+  funasr_cache:

@@ -1,6 +1,5 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
@@ -9,6 +8,7 @@ import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateDisplayName;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,14 +54,13 @@ public class ChatAppTemplateService {
 
     private TemplateResponse toResponse(TemplateEntity entity) {
         Map<String, List<String>> examples = readExamples(entity.getExamplesJsonb());
-        List<String> placeholders = examples.isEmpty()
-                ? templateTextResolver.placeholders(entity.getBody())
-                : List.copyOf(examples.keySet());
+        List<String> placeholders = requiredPlaceholders(entity);
         Map<String, List<String>> variableDefinitions = new LinkedHashMap<>();
         placeholders.forEach(variable -> variableDefinitions.put(variable, examples.getOrDefault(variable, List.of())));
         return new TemplateResponse(
                 entity.getProviderTemplateId(),
                 entity.getName(),
+                TemplateDisplayName.format(entity.getName(), entity.getRemark()),
                 entity.getLanguageCode(),
                 entity.getBody(),
                 placeholders,
@@ -79,12 +78,7 @@ public class ChatAppTemplateService {
     }
 
     private ChannelAccountEntity fixedAccount() {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
-                new LambdaQueryWrapper<ChannelAccountEntity>()
-                        .in(ChannelAccountEntity::getChannelType, List.of("chatapp", "whatsapp"))
-                        .eq(ChannelAccountEntity::getAuthStatus, "active")
-                        .isNull(ChannelAccountEntity::getDeletedAt)
-                        .last("limit 2"));
+        List<ChannelAccountEntity> accounts = channelAccountMapper.selectActiveChatAppAccounts();
         if (accounts.isEmpty()) {
             throw new IllegalStateException("CHATAPP_CHANNEL_ACCOUNT_NOT_CONFIGURED");
         }

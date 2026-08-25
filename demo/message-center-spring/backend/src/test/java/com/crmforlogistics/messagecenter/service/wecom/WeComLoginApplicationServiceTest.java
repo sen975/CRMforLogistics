@@ -20,8 +20,6 @@ class WeComLoginApplicationServiceTest {
     void exchangeConsumesStateAndIssuesCrmSession() {
         AppConfig config = mock(AppConfig.class);
         when(config.wecomSuiteId()).thenReturn("suite");
-        when(config.wecomLoginSuiteId()).thenReturn("suite");
-        when(config.wecomLoginSuiteSecret()).thenReturn("secret");
         when(config.wecomLoginAuthCorpId()).thenReturn("corp");
         when(config.wecomLoginRedirectUri()).thenReturn("http://localhost/");
         when(config.wecomLoginAttemptTtlSeconds()).thenReturn(300);
@@ -30,6 +28,7 @@ class WeComLoginApplicationServiceTest {
         when(config.wecomApiTimeoutSeconds()).thenReturn(10);
         WeComInstallationService installations = mock(WeComInstallationService.class);
         WeComAuthorizationGateway gateway = mock(WeComAuthorizationGateway.class);
+        WeComAccessTokenService accessTokens = mock(WeComAccessTokenService.class);
         WeComUserBindingService bindings = mock(WeComUserBindingService.class);
         AuthSessionService sessions = mock(AuthSessionService.class);
         ViewerAuditSink audit = mock(ViewerAuditSink.class);
@@ -38,12 +37,14 @@ class WeComLoginApplicationServiceTest {
         when(installations.resolveInstallation(any(), any())).thenReturn(
                 new com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation("i", "suite", "corp", "agent", "pc", 1));
         WeComLoginApplicationService service = new WeComLoginApplicationService(
-                config, attempt, gateway, bindings, sessions, installations);
+                config, attempt, gateway, accessTokens, bindings, sessions, installations);
         when(bindings.resolveOrCreate(any())).thenReturn(new WeComUserBindingService.BoundIdentity(
                 java.util.UUID.randomUUID(), "suite", "corp", "user", "AUTO_CREATED", null, "wecom_user"));
         when(sessions.issue(any(), any(), any())).thenReturn("crm-token");
         var created = attempt.createAttempt();
-        when(gateway.getLoginIdentity(eq("code"), any())).thenReturn(new WeComAuthorizationGateway.LoginIdentity("corp", "user"));
+        when(accessTokens.accessToken(any(), any())).thenReturn("access-token");
+        when(gateway.getLoginIdentity(eq("corp"), eq("access-token"), eq("code"), any()))
+                .thenReturn(new WeComAuthorizationGateway.LoginIdentity("corp", "user"));
 
         var response = service.exchange(new WeComLoginApplicationService.ExchangeRequest("code", created.state()),
                 new WeComLoginApplicationService.RequestMetadata("127.0.0.1", "test"));
@@ -52,7 +53,7 @@ class WeComLoginApplicationServiceTest {
         assertThat(response.token()).isEqualTo("crm-token");
         assertThat(replay).isEqualTo(response);
         verify(sessions).issue(any(), eq("127.0.0.1"), eq("test"));
-        verify(gateway).getLoginIdentity(eq("code"), any());
+        verify(gateway).getLoginIdentity(eq("corp"), eq("access-token"), eq("code"), any());
         verify(bindings).resolveOrCreate(any());
     }
 }

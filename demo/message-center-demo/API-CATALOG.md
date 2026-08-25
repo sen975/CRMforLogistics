@@ -12,7 +12,7 @@
 |------|------|
 | SDK Maven 坐标 | 直接 import 到项目里 |
 | 官方文档链接 | 查每个 API 的完整字段定义 |
-| P0 核心 API 详细 spec | sync_msg / send_msg / SendChatappMessage 等高频调用 |
+| P0 核心 API 详细 spec | SendChatappMessage 等高频调用（微信客服 sync_msg/send_msg 已从本篇移除） |
 | 已知示例 | 你项目里已有代码的参考 |
 
 ---
@@ -85,7 +85,21 @@ SendChatappMessageResponse resp = client.sendChatappMessage(req);
 
 ---
 
-## 二、企业微信 — wecom-sdk + 官方文档
+## 二、企业微信 — 代开发应用（服务商代开发）
+
+> 定位：**代开发应用**（服务商代企业开发的自建应用）。企业授权后，服务商持 `suite_access_token`，用 `POST /cgi-bin/service/get_corp_token`（请求体 `auth_corpid` + `permanent_code`）换取企业 `access_token`，之后调用自建应用接口；登录身份再用 `GET /cgi-bin/auth/getuserinfo` 换成员 `userid`。
+> 代开发应用 ≈ 自建应用：内部群聊（appchat）、客户联系、通讯录读、应用消息、会话存档等都可用；唯一明确限制是**无通讯录编辑权限**、**不可调「设置应用」接口**。
+
+### 凭证模型（代开发应用）
+
+| 步骤 | 接口 | 说明 |
+|------|------|------|
+| 1. 企业授权 | — | 服务商生成授权二维码 → 企业管理员扫码 → 回调返回 `permanent_code`（永久授权码，一次有效） |
+| 2. 获取企业 access_token | `POST /cgi-bin/service/get_corp_token?suite_access_token=...`（body `auth_corpid`+`permanent_code`） | 服务商接口，返回 `access_token`（7200s） |
+| 3. 换取成员身份 | `GET /cgi-bin/auth/getuserinfo?access_token=...&code=...` | 登录 code 换真实 `userid` |
+
+- 后续所有业务接口都用这个企业 access_token；成员用**真实 `userid`**（不是 open_userid）。
+- 官方文档：获取企业凭证 https://developer.work.weixin.qq.com/document/path/90605 ｜ 获取访问用户身份 https://developer.work.weixin.qq.com/document/path/91023 ｜ Web 登录组件（CorpApp） https://developer.work.weixin.qq.com/document/path/98171
 
 ### Maven 坐标
 
@@ -105,268 +119,94 @@ SendChatappMessageResponse resp = client.sendChatappMessage(req);
 </dependency>
 ```
 
-### 已实现的 API（你项目代码）
+### 已实现
 
 | API | 你的代码位置 |
 |-----|------------|
-| gettoken | `JdkWeComApiTransport.java` |
-| sync_msg（微信客服消息轮询） | `WeComInboundAdapter.java` |
+| 企业 access_token（get_corp_token） | `WeComAuthorizationGateway#getCorpToken`（`/cgi-bin/service/get_corp_token`） |
+| 应用消息发送 | `channel/wecom/WeComSendService.java`（`/cgi-bin/message/send`） |
+| 会话内容存档 | `channel/wecom/WeComChatDataGateway.java` + `WeComChatDataPublicKeyGateway.java` + `service/wecom/WeComChatDataSyncService.java` |
+| JS-SDK 签名（jsapi_ticket） | `channel/wecom/RestWeComViewerHttpGateway.java` |
 
-### P0 — 微信客服（消息收发核心）
+### Spring P0 接入状态（2026-08）
 
-| API | HTTP | 官方文档 |
-|-----|------|---------|
-| sync_msg（拉取消息） | POST `/kf/sync_msg` | https://developer.work.weixin.qq.com/document/path/94670 |
-| send_msg（发送消息） | POST `/kf/send_msg` | https://developer.work.weixin.qq.com/document/path/94677 |
-| send_msg_on_event（事件响应） | POST `/kf/send_msg_on_event` | https://developer.work.weixin.qq.com/document/path/95122 |
-| 添加客服账号 | POST `/kf/account/add` | https://developer.work.weixin.qq.com/document/path/94662 |
-| 删除客服账号 | POST `/kf/account/del` | https://developer.work.weixin.qq.com/document/path/94663 |
-| 修改客服账号 | POST `/kf/account/update` | https://developer.work.weixin.qq.com/document/path/94664 |
-| 获取客服账号列表 | GET `/kf/account/list` | https://developer.work.weixin.qq.com/document/path/94661 |
-| 添加接待人员 | POST `/kf/servicer/add` | https://developer.work.weixin.qq.com/document/path/94646 |
-| 删除接待人员 | POST `/kf/servicer/del` | https://developer.work.weixin.qq.com/document/path/94647 |
-| 获取接待人员列表 | GET `/kf/servicer/list` | https://developer.work.weixin.qq.com/document/path/94645 |
-| 分配客服会话 | POST `/kf/service_state/trans` | https://developer.work.weixin.qq.com/document/path/94669 |
-| 获取客户基础信息 | POST `/kf/customer/batchget` | https://developer.work.weixin.qq.com/document/path/95159 |
+以下 P0 能力已在 `demo/message-center-spring` 闭合到服务端 API 和管理员工作台。生产凭证仍统一从
+`wecom_installations` 解析，经 `service/get_corp_token` 获取企业 token；前端不接触 token、secret 或
+`permanent_code`。
 
-### P1 — 客户联系
+| 能力 | Spring owner | 管理页 |
+|------|--------------|--------|
+| 共享上游调用、token 失效重试 | `channel/wecom/WeComApiClient.java` | — |
+| 应用群聊 create/get/update/send | `channel/wecom/WeComAppChatGateway.java` + `service/wecom/WeComAppChatService.java` | 应用群聊 |
+| 客户联系 list/get/batch-get/remark | `channel/wecom/WeComExternalContactGateway.java` + `service/wecom/WeComExternalContactService.java` | 客户联系 |
+| 客户群 list/get | `channel/wecom/WeComExternalContactGateway.java` + `service/wecom/WeComExternalContactService.java` | 客户群 |
+| 成员、部门、标签只读 | `channel/wecom/WeComDirectoryGateway.java` + `service/wecom/WeComDirectoryService.java` | 通讯录 |
+| 管理员 HTTP 合同 | `web/WeComP0Controller.java` | `/settings/wecom` |
+| API 审计和自清理 | `WeComApiAuditTrail` + `wecom_api_audit` | — |
+
+P0 HTTP 路由统一以 `/api/v1/wecom/installations/{authCorpId}` 开头，全部要求 `ROLE_ADMIN`。应用群聊
+没有官方列表接口，工作台只支持按真实 `chatId` 查询、创建、修改和发送，不伪造群聊列表。
+
+> ⚠️ `/cgi-bin/gettoken`（`getDevelopedAppToken`）只留给明确配置的自建应用，代开发安装记录一律走 `get_corp_token`；登录身份走 `getuserinfo`，不再有 `getuserinfo3rd` 分支。
+
+### P0 — 第一阶段
+
+#### 应用群聊会话（内部群聊）★
+
+| API | 说明 |
+|-----|------|
+| `POST /cgi-bin/appchat/create` | 创建群聊 |
+| `POST /cgi-bin/appchat/send` | 发送群消息 |
+| `GET /cgi-bin/appchat/get` | 获取群聊会话 |
+| `POST /cgi-bin/appchat/update` | 修改群聊会话 |
+
+> 内部群聊是自建应用（含代开发）专属，第三方应用不可调。完整字段见官方「应用群聊会话」文档。
+
+#### 客户联系（读客户 / 客户群，CRM 核心）
 
 | API | 官方文档 |
 |-----|---------|
+| 客户联系总入口 | https://developer.work.weixin.qq.com/document/path/92109 |
 | 获取客户列表 | https://developer.work.weixin.qq.com/document/path/92113 |
 | 获取客户详情 | https://developer.work.weixin.qq.com/document/path/92114 |
 | 批量获取客户详情 | https://developer.work.weixin.qq.com/document/path/92994 |
 | 修改客户备注 | https://developer.work.weixin.qq.com/document/path/92115 |
-| 客户联系总入口 | https://developer.work.weixin.qq.com/document/path/92109 |
+| 客户群列表 / 详情 | https://developer.work.weixin.qq.com/document/path/92116 |
 
-### P1 — 应用消息发送
-
-| API | 官方文档 |
-|-----|---------|
-| 发送应用消息 | https://developer.work.weixin.qq.com/document/path/90236 |
-| 撤回应用消息 | https://developer.work.weixin.qq.com/document/path/94867 |
-| 接收消息与事件 | https://developer.work.weixin.qq.com/document/path/90238 |
-
-### P2 — 通讯录
+#### 通讯录（读成员 / 部门）
 
 | API | 官方文档 |
 |-----|---------|
-| 成员管理入口 | https://developer.work.weixin.qq.com/document/path/90195 |
-| 部门管理入口 | https://developer.work.weixin.qq.com/document/path/90206 |
-| 标签管理入口 | https://developer.work.weixin.qq.com/document/path/90210 |
+| 成员管理（读） | https://developer.work.weixin.qq.com/document/path/90195 |
+| 部门管理（读） | https://developer.work.weixin.qq.com/document/path/90206 |
+| 标签管理 | https://developer.work.weixin.qq.com/document/path/90210 |
 
-### P2 — 其他模块
+> 代开发读通讯录返回真实 `userid`；但**无通讯录编辑权限**。
 
-| 模块 | 官方文档入口 |
-|------|------------|
-| 客户群管理 | https://developer.work.weixin.qq.com/document/path/92116 |
-| 企业支付 | https://developer.work.weixin.qq.com/document/path/90273 |
-| 审批 | https://developer.work.weixin.qq.com/document/path/91853 |
-| 打卡 | https://developer.work.weixin.qq.com/document/path/93386 |
-| 会议 | https://developer.work.weixin.qq.com/document/path/93627 |
-| 日程 | https://developer.work.weixin.qq.com/document/path/93624 |
-| 文档 | https://developer.work.weixin.qq.com/document/path/97392 |
-| 微盘 | https://developer.work.weixin.qq.com/document/path/93654 |
-| 素材管理 | https://developer.work.weixin.qq.com/document/path/90253 |
-| 上下游 | https://developer.work.weixin.qq.com/document/path/94205 |
+#### 身份验证（getuserinfo）
 
----
+| API | 说明 |
+|-----|------|
+| `GET /cgi-bin/auth/getuserinfo` | 用 access_token + code 换成员 `userid`（代开发/自建通用） |
 
-## 三、P0 核心 API 详细 Spec
+### P1 — 客户群发 + 素材管理
 
-### 3.1 WeCom: sync_msg（轮询消息 — 你的 WeComInboundAdapter 核心调用）
+| API | 官方文档 / 说明 |
+|-----|---------|
+| 客户群发 `add_msg_template` | 客户联系 → 群发（AI 话术建议 + 人工确认后触达客户） |
+| 素材上传 / 下载 | https://developer.work.weixin.qq.com/document/path/90253 |
 
-**HTTP:** `POST https://qyapi.weixin.qq.com/cgi-bin/kf/sync_msg?access_token=ACCESS_TOKEN`
+### P2 — 获客助手 / 客户朋友圈 / 审批打卡（可选）
 
-#### 请求参数
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| access_token | string(query) | 是 | 调用凭据 |
-| cursor | string | 否 | 上次返回的 next_cursor；首次不填则从 3 天内最早消息开始。≤64 字节 |
-| token | string | 否 | 回调事件返回的 token，10 分钟内有效；不填则有严格频率限制 |
-| limit | uint32 | 否 | 期望条数，默认/最大均为 1000 |
-| voice_format | uint32 | 否 | 0=Amr, 1=Silk, 默认 0 |
-| open_kfid | string | 是 | 指定拉取的客服账号 ID |
-
-#### 返回参数
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| errcode | int32 | 0=成功 |
-| errmsg | string | 错误描述 |
-| next_cursor | string | 下次调用带上此值继续拉取，需持久化保存 |
-| has_more | uint32 | 0=无更多, 1=有更多 |
-| msg_list | obj[] | 消息列表 |
-
-#### msg_list[] 通用字段
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| msgid | string | 消息 ID（event 类型不返回） |
-| open_kfid | string | 客服账号 ID |
-| external_userid | string | 客户 userid |
-| send_time | uint64 | 消息发送时间（unix 时间戳） |
-| origin | uint32 | 3=微信客户发, 4=系统事件, 5=接待人员在企微客户端发 |
-| servicer_userid | string | 仅 origin=5 时返回 |
-| msgtype | string | 消息类型，决定下面具体结构 |
-
-#### 按 msgtype 的消息结构
-
-**text — 文本消息**
-```json
-{ "text": { "content": "文本内容", "menu_id": "菜单ID(可选)" } }
-```
-
-**image — 图片**
-```json
-{ "image": { "media_id": "图片文件id" } }
-```
-
-**voice — 语音**
-```json
-{ "voice": { "media_id": "语音文件id" } }
-```
-
-**video — 视频**
-```json
-{ "video": { "media_id": "文件id" } }
-```
-
-**file — 文件**
-```json
-{ "file": { "media_id": "文件id" } }
-```
-
-**location — 位置**
-```json
-{ "location": { "latitude": 1.0, "longitude": 1.0, "name": "位置名", "address": "地址说明" } }
-```
-
-**link — 链接**
-```json
-{ "link": { "title": "标题", "desc": "描述", "url": "链接", "pic_url": "缩略图" } }
-```
-
-**business_card — 名片**
-```json
-{ "business_card": { "userid": "名片userid" } }
-```
-
-**miniprogram — 小程序**
-```json
-{ "miniprogram": { "title": "标题", "appid": "小程序appid", "pagepath": "路径", "thumb_media_id": "封面mediaid" } }
-```
-
-**msgmenu — 菜单消息**
-```json
-{
-  "msgmenu": {
-    "head_content": "起始文本",
-    "list": [{ "type": "click", "click": { "id": "菜单ID", "content": "显示内容" } }],
-    "tail_content": "结束文本"
-  }
-}
-```
-list[].type 可选: `click`(回复菜单), `view`(超链接), `miniprogram`(小程序)
-
-**merged_msg — 聊天记录**
-```json
-{ "merged_msg": { "title": "标题", "item": [{ "send_time": 0, "msgtype": 1, "sender_name": "发送者", "msg_content": "JSON消息内容" }] } }
-```
-
-**channels_shop_product — 视频号商品**
-```json
-{ "channels_shop_product": { "product_id": "商品ID", "head_image": "图片", "title": "标题", "sales_price": "价格(分)", "shop_nickname": "店铺名", "shop_head_image": "店铺头像" } }
-```
-
-**channels_shop_order — 视频号订单**
-```json
-{ "channels_shop_order": { "order_id": "订单号", "product_titles": "商品名", "price_wording": "价格描述", "state": "状态", "image_url": "缩略图", "shop_nickname": "店铺名" } }
-```
-
-#### 事件消息 (msgtype=event)
-
-| event.event_type | 含义 | 关键字段 |
-|------------------|------|---------|
-| enter_session | 用户进入会话 | scene, scene_param, welcome_code, wechat_channels |
-| msg_send_fail | 消息发送失败 | fail_msgid, fail_type(0-13 见下表) |
-| servicer_status_change | 接待人员状态变更 | status(1=接待中,2=停止), stop_type, open_kfid |
-| session_status_change | 会话状态变更 | change_type(1=接入,2=转接,3=结束,4=重新接入), msg_code |
-| user_recall_msg / servicer_recall_msg | 撤回消息 | recall_msgid |
-| reject_customer_msg_switch_change | 拒收变更 | reject_switch(0=取消拒收,1=拒收) |
-
-**fail_type 枚举：**
-0=未知, 1=客服账号已删, 2=应用已关闭, 4=会话过期(>48h), 5=会话已关闭, 6=超5条限制, 8=主体未验证, 10=用户拒收, 11=企业未有成员登录企微App, 12=消息类型被禁, 13=安全限制
-
-### 3.2 WeCom: send_msg（发送消息）
-
-**HTTP:** `POST https://qyapi.weixin.qq.com/cgi-bin/kf/send_msg?access_token=ACCESS_TOKEN`
-**完整文档:** https://developer.work.weixin.qq.com/document/path/94677
-
-#### 通用请求参数
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| touser | string | 是 | 客户 external_userid |
-| open_kfid | string | 是 | 客服账号 ID |
-| msgid | string | 否 | 关联的客户消息 ID，非必填可用于追踪来源 |
-| msgtype | string | 是 | 消息类型: text/image/voice/video/file/link/miniprogram/msgmenu/location |
-
-#### 各消息类型请求体
-
-```json
-// text
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "text", "text": { "content": "文本内容" } }
-
-// image
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "image", "image": { "media_id": "MEDIA_ID" } }
-
-// voice
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "voice", "voice": { "media_id": "MEDIA_ID" } }
-
-// video
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "video", "video": { "media_id": "MEDIA_ID", "thumb_media_id": "缩略图MEDIA_ID" } }
-
-// file
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "file", "file": { "media_id": "MEDIA_ID" } }
-
-// link
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "link", "link": { "title": "标题", "desc": "描述", "url": "https://...", "pic_url": "缩略图url", "thumb_media_id": "缩略图media_id" } }
-
-// miniprogram
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "miniprogram", "miniprogram": { "appid": "小程序appid", "title": "标题", "thumb_media_id": "封面media_id", "pagepath": "页面路径" } }
-
-// location
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "location", "location": { "name": "位置名", "address": "地址", "latitude": 22.5, "longitude": 114.0 } }
-
-// msgmenu
-{ "touser": "xxx", "open_kfid": "xxx", "msgtype": "msgmenu", "msgmenu": { "head_content": "头部", "tail_content": "尾部", "list": [{ "type": "click", "click": { "content": "选项1", "id": "menu_1" } }] } }
-```
-
-#### 返回参数
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| errcode | int32 | 0=成功 |
-| errmsg | string | 错误描述 |
-| msgid | string | 发送成功返回的消息 ID |
-
-### 3.3 WeCom: sync_msg 回调触发流程
-
-```
-企微服务器 → (POST XML 到你的回调 URL)
-  ↓
-你的回调服务收到: { "MsgType": "event", "Event": "kf_msg_or_event", "Token": "xxx", "OpenKfId": "xxx" }
-  ↓
-你的 InboundAdapter 调用 POST /kf/sync_msg { "cursor": "上次的next_cursor", "open_kfid": "xxx", "limit": 1000 }
-  ↓
-返回 msg_list[] → 转为 ChannelEventDraft → 写入 eventRepository
-```
+| 模块 | 说明 |
+|------|------|
+| 获客助手（数据专区） | 需管理员定期授权 |
+| 客户朋友圈 | 需专门权限 |
+| 审批 / 打卡 | 需单独申请权限 |
 
 ---
 
-## 四、核心 API 汇总速查
+## 三、核心 API 汇总速查
 
 ### ChatApp 89 个 API 分组
 
@@ -387,24 +227,18 @@ list[].type 可选: `click`(回复菜单), `view`(超链接), `miniprogram`(小�
 | Viber | 3 | AddAuditViberOpen |
 | 其他 | 2 | GetPreValidatePhoneId |
 
-### WeCom ~450 个 API 分组
+### WeCom 代开发应用可用范围
 
-| 分组 | 数量 | 核心场景 |
-|------|------|---------|
-| 通讯录管理 | ~40 | 成员/部门/标签/导入导出/异步 |
-| 身份验证 | ~6 | OAuth / Web 登录 / 二次验证 |
-| 消息推送 | ~12 | 应用消息 / 群聊 / Webhook / 智能机器人 |
-| **微信客服** | **~18** | **账号/接待/消息收发/统计 → 你的核心场景** |
-| **客户联系** | **~50** | **客户管理/标签/继承/客户群/朋友圈/获客 → CRM 核心** |
-| 上下游/企业互联 | ~15 | 企业间通讯录 |
-| 会话内容存档 | ~10 | 合规审计 |
-| 应用管理 | 6 | 菜单/工作台 |
-| 素材管理 | 5 | 上传/下载临时素材 |
-| 会议 | ~60 | 预约/Webinar/Rooms/录制/布局 |
-| 文档/智能表格 | ~40 | 文档管理/表格CRUD/收集表/权限 |
-| 微盘 | ~15 | 空间/文件管理 |
-| 邮件 | ~20 | 收发邮件/群组/公共邮箱 |
-| 审批 | ~10 | 模板/提交/查询/假期 |
-| 打卡 | ~12 | 规则/排班/数据/补卡 |
-| 日程 | 8 | 日历/日程管理 |
-| 其他(直播/支付/汇报/待办等) | ~100 | OA 场景 |
+> 代开发应用通过服务商 `get_corp_token`（`auth_corpid` + `permanent_code`）获取企业 access_token，登录身份走 `getuserinfo`，可用以下模块。
+
+| 分组 | 说明 |
+|------|------|
+| 基础（凭证） | 服务商 get_corp_token（auth_corpid + permanent_code） |
+| 应用群聊会话 | 内部群聊（创建 / 发送 / 获取 / 修改） |
+| 客户联系 | 客户 / 客户群 / 朋友圈 / 获客助手 → CRM 核心 |
+| 消息推送 | 应用消息发送 / 撤回 / 接收 |
+| 通讯录 | 读成员 / 部门（无编辑权限） |
+| 身份验证 | getuserinfo（access_token + code 换 userid） |
+| 会话内容存档 | 企业开通 + 服务商后台配置 |
+| 素材管理 | 上传 / 下载 |
+| 审批 / 打卡 | 需单独申请权限 |

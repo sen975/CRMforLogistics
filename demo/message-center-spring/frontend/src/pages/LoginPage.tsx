@@ -63,6 +63,7 @@ export default function LoginPage() {
         minHeight: '100dvh',
         background: '#f5f5f5',
         padding: 16,
+        boxSizing: 'border-box',
       }}
     >
       <Card style={{ width: 'min(400px, 100%)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>

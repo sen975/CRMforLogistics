@@ -1,5 +1,5 @@
 import { List, Badge, Typography, Space, Tag } from 'antd';
-import { MailOutlined, MessageOutlined, WechatOutlined } from '@ant-design/icons';
+import { MailOutlined, MessageOutlined, PhoneOutlined, WechatOutlined } from '@ant-design/icons';
 import type { ContactResponse } from '../api/types';
 
 const { Text } = Typography;
@@ -8,6 +8,8 @@ const channelIcons: Record<string, React.ReactNode> = {
   email: <MailOutlined />,
   chatapp: <MessageOutlined />,
   wecom: <WechatOutlined />,
+  phone: <PhoneOutlined />,
+  call: <PhoneOutlined />,
 };
 
 function formatTime(iso: string | null): string {

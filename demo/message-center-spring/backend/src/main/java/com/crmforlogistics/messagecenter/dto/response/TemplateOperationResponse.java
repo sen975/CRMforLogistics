@@ -30,4 +30,5 @@ public record TemplateOperationResponse(
                 view.templateCode(), view.language(), view.errorCode(), view.errorMessage(), view.traceId(),
                 view.actorUserId(), view.startedAt(), view.completedAt());
     }
+
 }

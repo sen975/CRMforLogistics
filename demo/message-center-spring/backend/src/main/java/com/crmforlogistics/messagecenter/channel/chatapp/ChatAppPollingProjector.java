@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
 import com.crmforlogistics.messagecenter.entity.ChannelEventEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector;
@@ -45,47 +46,63 @@ public class ChatAppPollingProjector {
     }
 
     @Transactional
-    public boolean project(ListChatappMessageResponseBody.Data row, UUID channelAccountId) {
+    public ProjectionResult project(ListChatappMessageResponseBody.Data row, UUID channelAccountId) {
+        boolean inbound = isInbound(row);
         String providerMessageId = firstNonBlank(row.getMessageId(), row.getUniqueMessageId());
         if (providerMessageId.isBlank()) {
-            return false;
+            return skipped("MISSING_PROVIDER_MESSAGE_ID");
         }
 
-        boolean inbound = isInbound(row);
+        String userNumber = value(row.getUserNumber());
+        boolean contactProjectionExpected = inbound;
+        if (inbound && ContactPointUtil.normalizePhone(userNumber).isBlank()) {
+            return skipped("INVALID_USER_NUMBER");
+        }
         String status = "";
         if (!inbound) {
             LinkResult link = outboundMessageLinker.resolve(channelAccountId, row);
             if (link.kind() == LinkResult.Kind.AMBIGUOUS_BROADCAST) {
-                return false;
+                return skipped("AMBIGUOUS_BROADCAST_RECIPIENT");
             }
             if (link.kind() == LinkResult.Kind.PROVIDER_CONFLICT) {
-                return false;
+                return skipped(link.reason());
             }
             if (link.kind() == LinkResult.Kind.UNIQUE_BROADCAST) {
-                return true;
+                return new ProjectionResult(true, false, "");
             }
             Optional<MessageEntity> local = link.messageResolved()
                     ? Optional.ofNullable(messageMapper.selectById(link.messageId()))
                     : Optional.empty();
             if (link.messageResolved() && local.isEmpty()) {
-                return false;
+                return skipped("CHATAPP_OUTBOUND_LINK_TARGET_MISSING");
             }
-            if (local.isEmpty() && value(row.getUserNumber()).isBlank()) {
-                return false;
+            if (local.isPresent()) {
+                String boundProviderMessageId = value(local.orElseThrow().getProviderMessageId());
+                if (!boundProviderMessageId.isBlank()) {
+                    providerMessageId = boundProviderMessageId;
+                }
             }
-            local.ifPresent(message -> {
+            if (local.isEmpty() && userNumber.isBlank()) {
+                return skipped("OUTBOUND_RECIPIENT_MISSING");
+            }
+            if (local.isEmpty() && ContactPointUtil.normalizePhone(userNumber).isBlank()) {
+                return skipped("INVALID_USER_NUMBER");
+            }
+            contactProjectionExpected = local.isEmpty();
+            if (local.isPresent()) {
+                MessageEntity message = local.orElseThrow();
                 if (message.getProviderMessageId() == null
                         || message.getProviderMessageId().isBlank()) {
                     message.setProviderMessageId(providerMessageId);
                     messageMapper.updateProviderMessageId(message.getId(), providerMessageId);
                 }
-            });
+            }
             status = firstRecognizedStatus(
                     row.getClientReadStatusName(), row.getMessageStatusName(),
                     row.getClientAcceptStatusName(), row.getMessageStatus(),
-                    row.getClientReadStatus());
+                    row.getClientReadStatus(), row.getEventActionName(), row.getEventAction());
             if (status.isBlank()) {
-                return false;
+                return skipped("UNRECOGNIZED_MESSAGE_STATUS");
             }
         }
 
@@ -122,10 +139,10 @@ public class ChatAppPollingProjector {
         event.setNextAttemptAt(now);
         event.setTraceId(UUID.randomUUID().toString());
         if (eventMapper.insertIgnore(event) == 0) {
-            return false;
+            return skipped("DUPLICATE_EVENT");
         }
         webhookProjector.project(event);
-        return true;
+        return new ProjectionResult(true, contactProjectionExpected, "");
     }
 
     private String messageText(String raw) {
@@ -189,6 +206,10 @@ public class ChatAppPollingProjector {
         return value == null ? "" : value.trim();
     }
 
+    private static ProjectionResult skipped(String reason) {
+        return new ProjectionResult(false, false, reason);
+    }
+
     private static String sha256(String value) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
@@ -198,4 +219,8 @@ public class ChatAppPollingProjector {
             throw new IllegalStateException("CHATAPP_POLL_EVENT_HASH_FAILED", e);
         }
     }
+
+    public record ProjectionResult(boolean messageSaved,
+                                   boolean contactProjected,
+                                   String skipReason) {}
 }

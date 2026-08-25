@@ -37,15 +37,14 @@ public class RestWeComViewerHttpGateway implements WeComViewerHttpGateway {
         this.restClient = restClients.create();
     }
 
-    @Override
+    /** Kept only as an explicit failure for callers compiled against the old API. */
     public TicketResponse fetchCorpJsapiTicket() {
-        return fetchTicket("/cgi-bin/get_jsapi_ticket?access_token=" + encode(corpAccessToken()));
+        throw installationRequired();
     }
 
-    @Override
+    /** Kept only as an explicit failure for callers compiled against the old API. */
     public TicketResponse fetchAgentJsapiTicket() {
-        return fetchTicket("/cgi-bin/ticket/get?access_token=" + encode(corpAccessToken())
-                + "&type=agent_config");
+        throw installationRequired();
     }
 
     @Override
@@ -63,21 +62,18 @@ public class RestWeComViewerHttpGateway implements WeComViewerHttpGateway {
     @Override
     public String exchangeLoginCode(String code) {
         throw new WeComException("WECOM_LOGIN_SUITE_NOT_CONFIGURED", 503,
-                "企业微信登录授权 Suite 网关不可用");
+                "企业微信登录必须绑定授权安装实例");
     }
 
     @Override
-    public WeComAuthorizationGateway.LoginIdentity exchangeLoginIdentity(String code) {
-        return authorizationGateway.getLoginIdentity(code, TIMEOUT);
-    }
-
-    private String corpAccessToken() {
-        if (config.wecomCorpId().isBlank() || config.wecomSecret().isBlank()) {
-            throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                    "企业微信 corp id 或 secret 未配置");
+    public WeComAuthorizationGateway.LoginIdentity exchangeLoginIdentity(ResolvedInstallation installation,
+                                                                          String code) {
+        if (installation == null) {
+            throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                    "企业微信授权安装凭证不可用");
         }
-        return authorizationGateway.getDevelopedAppToken(
-                config.wecomCorpId(), config.wecomSecret(), TIMEOUT).accessToken();
+        return authorizationGateway.getLoginIdentity(installation.authCorpId(),
+                accessTokens.accessToken(installation, TIMEOUT), code, TIMEOUT);
     }
 
     private TicketResponse fetchTicket(String path) {
@@ -87,6 +83,11 @@ public class RestWeComViewerHttpGateway implements WeComViewerHttpGateway {
         return new TicketResponse(errcode, string(body, "errmsg"), string(body, "ticket"),
                 body.has("expires_in") && body.get("expires_in").isNumber()
                         ? body.get("expires_in").asInt() : 7200);
+    }
+
+    private static WeComException installationRequired() {
+        return new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                "企业微信展示凭证必须绑定授权安装实例");
     }
 
     private JsonNode getJson(String path) {

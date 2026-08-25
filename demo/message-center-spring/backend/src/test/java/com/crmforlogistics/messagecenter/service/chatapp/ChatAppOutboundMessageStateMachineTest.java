@@ -16,7 +16,12 @@ class ChatAppOutboundMessageStateMachineTest {
             "delivered,read,read",
             "read,delivered,read",
             "delivered,failed,delivered",
-            "failed,delivered,delivered"
+            "failed,delivered,delivered",
+            "failed,read,read",
+            "failed,pending,failed",
+            "failed,processing,failed",
+            "failed,submitted,failed",
+            "failed,sent,failed"
     })
     void advancesWithoutRegressingConfirmedDelivery(
             String current, String next, String expected) {

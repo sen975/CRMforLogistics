@@ -7,7 +7,9 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import com.crmforlogistics.messagecenter.web.WeComAuthController;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
@@ -61,6 +63,15 @@ class WeComModuleIsolationTest {
         }
     }
 
+    @Test
+    void weComAuthControllerFollowsTheSuiteConfigurationCondition() {
+        ConditionalOnExpression condition =
+                WeComAuthController.class.getAnnotation(ConditionalOnExpression.class);
+
+        assertThat(condition).isNotNull();
+        assertThat(condition.value()).contains("app.wecom-suite-id");
+    }
+
     private static Set<String> scanWeComBeans() {
         var scanner = new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(Component.class, true));
@@ -69,6 +80,11 @@ class WeComModuleIsolationTest {
                 .forEach(bean -> classes.add(bean.getBeanClassName()));
         scanner.findCandidateComponents("com.crmforlogistics.messagecenter.service.wecom")
                 .forEach(bean -> classes.add(bean.getBeanClassName()));
+        scanner.findCandidateComponents("com.crmforlogistics.messagecenter.web").stream()
+                .map(bean -> bean.getBeanClassName())
+                .filter(name -> name != null && name.substring(name.lastIndexOf('.') + 1)
+                        .startsWith("WeCom"))
+                .forEach(classes::add);
         return classes;
     }
 }

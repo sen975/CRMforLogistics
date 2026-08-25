@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComViewerService {
     private static final int MAX_ACTIVE_VIEWER_SESSIONS = 512;
+    private static final int MAX_ACTIVE_VIEWER_SESSIONS_PER_TOKEN = 32;
 
     private final AppConfig config;
     private final Clock clock;
@@ -52,7 +54,7 @@ public class WeComViewerService {
     private final ConcurrentMap<String, CachedTicket> tickets = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerAuth> viewerAuthTokens = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ViewerSession> viewerSessions = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, ViewedSession> viewedSessionsByToken = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, ViewedSession> viewedSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, SessionRateWindow> viewerSessionRates = new ConcurrentHashMap<>();
     private final AtomicLong sessionOrder = new AtomicLong();
 
@@ -99,22 +101,8 @@ public class WeComViewerService {
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl) {
-        try {
-            startupGate.requireOpen();
-            requireBounded(config.wecomCorpId(), "WeCom corp id", 64);
-            requireBounded(config.wecomAgentId(), "WeCom agent id", 32);
-            String url = canonicalAllowedUrl(rawUrl);
-            SignatureBundle configSignature = signatureBundle("corp", url);
-            SignatureBundle agentSignature = signatureBundle("agent", url);
-            JsSdkConfig result = new JsSdkConfig(config.wecomCorpId(), config.wecomAgentId(),
-                    List.of("selectExternalContact", "shareAppMessage", "wwapp.invokeJsApiByCallInfo"),
-                    configSignature, agentSignature);
-            recordAudit("wecom.viewer.js_sdk_config", "success", "", "", "");
-            return result;
-        } catch (Exception exception) {
-            recordFailure("wecom.viewer.js_sdk_config", "failed", "", "", "", exception);
-            throw exception;
-        }
+        throw new WeComException("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE", 503,
+                "企业微信展示凭证必须绑定授权安装实例");
     }
 
     public JsSdkConfig jsSdkConfig(String rawUrl, String viewerAuthToken) {
@@ -165,7 +153,7 @@ public class WeComViewerService {
                 throw new WeComException("WECOM_INSTALLATION_CHANGED", 403,
                         "企业微信授权安装已变化，请重新扫码");
             }
-            WeComAuthorizationGateway.LoginIdentity identity = gateway.exchangeLoginIdentity(code);
+            WeComAuthorizationGateway.LoginIdentity identity = gateway.exchangeLoginIdentity(resolved, code);
             if (!identity.corpId().equals(binding.authCorpId())) {
                 throw new WeComException("WECOM_LOGIN_CORP_MISMATCH", 403,
                         "企业微信登录企业与当前授权企业不一致");
@@ -250,12 +238,12 @@ public class WeComViewerService {
             long now = clock.instant().getEpochSecond();
             ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, now);
             wecomUserId = auth.wecomUserId();
-            enforceViewerSessionRate(wecomUserId, now);
             List<String> messageIds = validateRequestedMessageIds(requestedMessageIds);
             List<ViewerMessage> messages = readViewerMessages(contactPointId, wecomUserId, messageIds);
             if (messages.isEmpty()) {
                 throw new SecurityException("WeCom conversation is not viewable by this session");
             }
+            enforceViewerSessionRate(wecomUserId, now);
             viewerSessionId = UUID.randomUUID().toString().replace("-", "");
             long expiresAt = now + config.wecomViewerSessionTtlSeconds();
             ViewerSession viewerSession = new ViewerSession(viewerSessionId, viewerAuthToken, contactPointId,
@@ -322,11 +310,12 @@ public class WeComViewerService {
             requireBounded(viewerSessionId, "WeCom viewer session id", 64);
             wecomUserId = resolveViewerAuth(viewerAuthToken, now);
             cleanupExpiredSessions(now);
-            ViewedSession viewed = viewedSessionsByToken.get(viewerAuthToken);
+            String viewedSessionKey = viewedSessionKey(viewerAuthToken, viewerSessionId);
+            ViewedSession viewed = viewedSessions.get(viewedSessionKey);
             if (viewed == null || !viewed.id().equals(viewerSessionId)) {
                 throw new SecurityException("WeCom viewer event does not match the viewed session");
             }
-            if (!viewedSessionsByToken.remove(viewerAuthToken, viewed)) {
+            if (!viewedSessions.remove(viewedSessionKey, viewed)) {
                 throw new SecurityException("WeCom viewer event does not match the viewed session");
             }
             recordAudit("wecom.viewer.component_error", "failed", wecomUserId, "", viewerSessionId);
@@ -420,14 +409,6 @@ public class WeComViewerService {
         return resolved;
     }
 
-    SignatureBundle signatureBundle(String ticketType, String rawUrl) {
-        String ticket = ticket(ticketType);
-        long timestamp = clock.instant().getEpochSecond();
-        String nonce = nonceSource.nextNonce();
-        return new SignatureBundle(Long.toString(timestamp), nonce,
-                makeSignature(ticket, canonicalAllowedUrl(rawUrl), timestamp, nonce));
-    }
-
     private SignatureBundle signatureBundle(String ticketType, String rawUrl,
                                             ResolvedInstallation installation) {
         String ticket = ticket(ticketType, installation);
@@ -450,22 +431,6 @@ public class WeComViewerService {
             throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503, "无法获取企业微信 jsapi_ticket");
         }
         tickets.put(cacheKey, new CachedTicket(response.ticket(), now + response.expiresIn()));
-        return response.ticket();
-    }
-
-    private String ticket(String ticketType) {
-        long now = clock.instant().getEpochSecond();
-        CachedTicket cached = tickets.get(ticketType);
-        if (cached != null && now < cached.expiresAtEpochSecond() - config.wecomTokenRefreshSkewSeconds()) {
-            return cached.ticket();
-        }
-        WeComViewerHttpGateway.TicketResponse response = "agent".equals(ticketType)
-                ? gateway.fetchAgentJsapiTicket() : gateway.fetchCorpJsapiTicket();
-        if (response.errcode() != 0 || response.ticket().isBlank()) {
-            throw new WeComException("WECOM_UPSTREAM_UNAVAILABLE", 503,
-                    "无法获取企业微信 " + ticketType + " jsapi_ticket: " + response.errmsg());
-        }
-        tickets.put(ticketType, new CachedTicket(response.ticket(), now + response.expiresIn()));
         return response.ticket();
     }
 
@@ -492,8 +457,13 @@ public class WeComViewerService {
         String expectedExternal = contactPointId.substring("wecom:".length());
         Set<String> requested = new HashSet<>(requestedMessageIds);
         Map<String, ViewerMessageCandidate> candidatesById = new LinkedHashMap<>();
+        List<WeComChatDataMessageEntity> rows = new ArrayList<>();
         for (WeComChatDataMessageEntity entity : messageMapper.findByExternalUserid(expectedExternal)) {
-            if (!wecomUserId.equals(entity.getUserid())) continue;
+            if (wecomUserId.equals(entity.getUserid())) rows.add(entity);
+        }
+        addRows(rows, messageMapper.findViewableByExternalUserid(expectedExternal, wecomUserId));
+        addRows(rows, messageMapper.findViewableByContactParty(expectedExternal, wecomUserId));
+        for (WeComChatDataMessageEntity entity : rows) {
             String msgid = entity.getMsgid();
             if (!requested.contains(msgid)) continue;
             String secret = credentialProtector.revealSecretKey(entity.getSecretKey());
@@ -519,6 +489,11 @@ public class WeComViewerService {
         return List.copyOf(result);
     }
 
+    private static void addRows(List<WeComChatDataMessageEntity> target,
+                                Collection<WeComChatDataMessageEntity> rows) {
+        if (rows != null) target.addAll(rows);
+    }
+
     private synchronized void enforceViewerSessionRate(String wecomUserId, long now) {
         viewerSessionRates.entrySet().removeIf(entry -> now - entry.getValue().windowStartedAt() >= 60);
         SessionRateWindow current = viewerSessionRates.get(wecomUserId);
@@ -540,8 +515,13 @@ public class WeComViewerService {
 
     private synchronized void storeViewerSession(ViewerSession session) {
         cleanupExpiredSessions(clock.instant().getEpochSecond());
-        removeViewerSessionsForToken(session.viewerAuthToken());
-        enforceViewerSessionLimit();
+        while (viewerSessions.size() >= MAX_ACTIVE_VIEWER_SESSIONS) {
+            removeOldestViewerSession();
+        }
+        while (activeViewerSessionCount(session.viewerAuthToken())
+                >= MAX_ACTIVE_VIEWER_SESSIONS_PER_TOKEN) {
+            removeOldestViewerSessionForToken(session.viewerAuthToken());
+        }
         viewerSessions.put(session.id(), session);
         try {
             referenceLeases.acquire(session.id(),
@@ -554,9 +534,8 @@ public class WeComViewerService {
     }
 
     private synchronized void storeViewedSession(String viewerAuthToken, ViewedSession session) {
-        removeViewedSessionsForToken(viewerAuthToken);
         enforceViewedSessionLimit();
-        viewedSessionsByToken.put(viewerAuthToken, session);
+        viewedSessions.put(viewedSessionKey(viewerAuthToken, session.id()), session);
     }
 
     private void cleanupExpiredViewerAuth(long now) {
@@ -576,7 +555,7 @@ public class WeComViewerService {
                 referenceLeases.release(entry.getKey());
             }
         }
-        viewedSessionsByToken.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
+        viewedSessions.entrySet().removeIf(entry -> now >= entry.getValue().expiresAtEpochSecond());
     }
 
     private void removeViewerSessionsForToken(String viewerAuthToken) {
@@ -589,7 +568,8 @@ public class WeComViewerService {
     }
 
     private void removeViewedSessionsForToken(String viewerAuthToken) {
-        viewedSessionsByToken.remove(viewerAuthToken);
+        String prefix = viewerAuthToken + '\u0000';
+        viewedSessions.keySet().removeIf(key -> key.startsWith(prefix));
     }
 
     private void enforceViewerAuthLimit() {
@@ -610,6 +590,10 @@ public class WeComViewerService {
         if (viewerSessions.size() < MAX_ACTIVE_VIEWER_SESSIONS) {
             return;
         }
+        removeOldestViewerSession();
+    }
+
+    private void removeOldestViewerSession() {
         viewerSessions.entrySet().stream()
                 .min(Comparator.comparingLong(entry -> entry.getValue().createdOrder()))
                 .ifPresent(entry -> {
@@ -619,14 +603,35 @@ public class WeComViewerService {
                 });
     }
 
+    private long activeViewerSessionCount(String viewerAuthToken) {
+        return viewerSessions.values().stream()
+                .filter(session -> session.viewerAuthToken().equals(viewerAuthToken))
+                .count();
+    }
+
+    private void removeOldestViewerSessionForToken(String viewerAuthToken) {
+        viewerSessions.entrySet().stream()
+                .filter(entry -> entry.getValue().viewerAuthToken().equals(viewerAuthToken))
+                .min(Comparator.comparingLong(entry -> entry.getValue().createdOrder()))
+                .ifPresent(entry -> {
+                    if (viewerSessions.remove(entry.getKey(), entry.getValue())) {
+                        referenceLeases.release(entry.getKey());
+                    }
+                });
+    }
+
     private void enforceViewedSessionLimit() {
-        if (viewedSessionsByToken.size() < MAX_ACTIVE_VIEWER_SESSIONS) {
+        if (viewedSessions.size() < MAX_ACTIVE_VIEWER_SESSIONS) {
             return;
         }
-        viewedSessionsByToken.entrySet().stream()
+        viewedSessions.entrySet().stream()
                 .min(Comparator.comparingLong(entry -> entry.getValue().createdOrder()))
                 .map(Map.Entry::getKey)
-                .ifPresent(viewedSessionsByToken::remove);
+                .ifPresent(viewedSessions::remove);
+    }
+
+    private static String viewedSessionKey(String viewerAuthToken, String viewerSessionId) {
+        return viewerAuthToken + '\u0000' + viewerSessionId;
     }
 
     private static void requireBounded(String value, String name, int maxLength) {

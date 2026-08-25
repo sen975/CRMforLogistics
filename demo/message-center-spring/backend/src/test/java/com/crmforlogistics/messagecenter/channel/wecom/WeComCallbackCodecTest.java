@@ -80,8 +80,9 @@ class WeComCallbackCodecTest {
         String nonce = "testNonce";
         String sig = WeComCallbackCodec.sha1(TOKEN, String.valueOf(oldTimestamp), nonce, rawCiphertext);
 
-        assertThrows(WeComException.class,
+        WeComCallbackFailure failure = assertThrows(WeComCallbackFailure.class,
                 () -> codec.decode(sig, String.valueOf(oldTimestamp), nonce, xmlBody));
+        assertEquals(WeComCallbackFailure.Stage.TIMESTAMP, failure.stage());
     }
 
     @Test
@@ -96,8 +97,28 @@ class WeComCallbackCodecTest {
         String nonce = "testNonce";
         String badSig = "bad" + WeComCallbackCodec.sha1(TOKEN, timestamp, nonce, rawCiphertext);
 
-        assertThrows(WeComException.class,
+        WeComCallbackFailure failure = assertThrows(WeComCallbackFailure.class,
                 () -> codec.decode(badSig, timestamp, nonce, xmlBody));
+        assertEquals(WeComCallbackFailure.Stage.SIGNATURE, failure.stage());
+    }
+
+    @Test
+    void shouldIdentifyReceiveIdMismatch() throws Exception {
+        var codec = new WeComCallbackCodec(SUITE_ID, SUITE_ID, TOKEN, AES_KEY_B64,
+                java.time.Clock.systemUTC());
+
+        String xml = "<xml><SuiteId>" + SUITE_ID
+                + "</SuiteId><InfoType>suite_ticket</InfoType><SuiteTicket>ticket123</SuiteTicket></xml>";
+        String rawCiphertext = encrypt(aesKeyBytes(), "unexpected-receive-id", xml);
+        String timestamp = String.valueOf(java.time.Instant.now().getEpochSecond());
+        String nonce = "testNonce";
+        String sig = WeComCallbackCodec.sha1(TOKEN, timestamp, nonce, rawCiphertext);
+
+        WeComCallbackFailure failure = assertThrows(WeComCallbackFailure.class,
+                () -> codec.decode(sig, timestamp, nonce, wrapEncryptXml(rawCiphertext)));
+        assertEquals(WeComCallbackFailure.Stage.RECEIVE_ID, failure.stage());
+        assertEquals("afbcd54ff66de5df018ac5353e223ca4bb5b8a1b5b17f2d5bfc8751255ce5258",
+                failure.receiveIdSha256());
     }
 
     @Test

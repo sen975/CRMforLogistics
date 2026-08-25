@@ -162,10 +162,7 @@ public class WeComAuthorizationService {
             WeComCallbackCodec.DecodedCallback callback,
             WeComAuthorizationAuditTrail.Attempt attempt) {
         boolean delegatedSuite = callback.suiteId().equals(config.wecomSuiteId());
-        String loginSuiteId = config.wecomLoginSuiteId();
-        boolean loginSuite = loginSuiteId != null && !loginSuiteId.isBlank()
-                && callback.suiteId().equals(loginSuiteId);
-        if ((!delegatedSuite && !loginSuite) || callback.suiteTicket().isBlank()) {
+        if (!delegatedSuite || callback.suiteTicket().isBlank()) {
             closeFailed(attempt, callback.authCorpId(), invalidCallback());
             return CallbackAck.retry();
         }
@@ -224,8 +221,13 @@ public class WeComAuthorizationService {
             long expectedVersion = current == null ? 0L : version(current);
             startupGate.requireOpen();
             audit.pending(event.attempt(), authCorpId[0], "ACTIVE", expectedVersion);
-            mutations.applyActive(event.attempt(), callback, authCorpId[0], prepared.agentId(),
-                    prepared.permanentCode(), expectedVersion);
+            if (prepared.corpName().isBlank()) {
+                mutations.applyActive(event.attempt(), callback, authCorpId[0], prepared.agentId(),
+                        prepared.permanentCode(), expectedVersion);
+            } else {
+                mutations.applyActive(event.attempt(), callback, authCorpId[0], prepared.corpName(),
+                        prepared.agentId(), prepared.permanentCode(), expectedVersion);
+            }
             requestPublicKeyRegistration();
         } catch (RuntimeException failure) {
             closeFailed(event.attempt(), authCorpId[0], authorizationFailure(failure));
@@ -256,7 +258,7 @@ public class WeComAuthorizationService {
                 callback.suiteId(), callback.authCorpId());
         var info = gateway.getAuthInfo(callback.authCorpId(), resolved.permanentCode());
         requireSameCorp(callback.authCorpId(), info.authCorpId());
-        return new PreparedMutation(callback.authCorpId(), firstAgent(info), resolved.permanentCode());
+        return new PreparedMutation(callback.authCorpId(), info.corpName(), firstAgent(info), resolved.permanentCode());
     }
 
     private PreparedMutation fromAuthCode(WeComCallbackCodec.DecodedCallback callback,
@@ -266,7 +268,7 @@ public class WeComAuthorizationService {
         resolvedCorpId.accept(permanent.authCorpId());
         var info = gateway.getAuthInfo(permanent.authCorpId(), permanent.permanentCode());
         requireSameCorp(permanent.authCorpId(), info.authCorpId());
-        return new PreparedMutation(permanent.authCorpId(), firstAgent(info), permanent.permanentCode());
+        return new PreparedMutation(permanent.authCorpId(), info.corpName(), firstAgent(info), permanent.permanentCode());
     }
 
     private PreparedMutation fromResetAuthCode(WeComCallbackCodec.DecodedCallback callback,
@@ -284,7 +286,7 @@ public class WeComAuthorizationService {
         }
         var info = gateway.getAuthInfo(permanent.authCorpId(), permanent.permanentCode());
         requireSameCorp(permanent.authCorpId(), info.authCorpId());
-        return new PreparedMutation(permanent.authCorpId(), firstAgent(info), permanent.permanentCode());
+        return new PreparedMutation(permanent.authCorpId(), info.corpName(), firstAgent(info), permanent.permanentCode());
     }
 
     private void runWorker() {
@@ -425,5 +427,5 @@ public class WeComAuthorizationService {
         public static CallbackAck retry() { return new CallbackAck(false); }
     }
 
-    private record PreparedMutation(String authCorpId, String agentId, String permanentCode) {}
+    private record PreparedMutation(String authCorpId, String corpName, String agentId, String permanentCode) {}
 }
