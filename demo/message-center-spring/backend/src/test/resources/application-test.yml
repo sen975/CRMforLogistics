@@ -1,0 +1,6 @@
+app:
+  chatapp-sync-enabled: false
+  chatapp-outbox-enabled: false
+  chatapp-webhook-worker-enabled: false
+  chatapp-broadcast-worker-enabled: false
+  chatapp-template-reconcile-enabled: false

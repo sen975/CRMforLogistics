@@ -1,0 +1,53 @@
+{
+  "Code": "OK",
+  "Message": "",
+  "RequestId": "fixture-request-id",
+  "Success": true,
+  "Total": 1,
+  "Data": [
+    {
+      "Name": "account_creation_confirmation_3",
+      "Code": "1174248293003616256",
+      "Language": "zh_CN",
+      "Category": "UTILITY",
+      "Industry": ["E_COMMERCE", "FINANCIAL_SERVICES"],
+      "Usecase": "ACCOUNT_CREATION_CONFIRMATION",
+      "Topic": "ACCOUNT_UPDATES",
+      "BaseTemplateName": "account_creation_confirmation_3",
+      "Content": {
+        "templateType": "WHATSAPP",
+        "templateName": "account_creation_confirmation_3",
+        "sceneTemplateName": "account_creation_confirmation_3",
+        "externalTemplateCode": "7571675172916510",
+        "languageCode": "zh_CN",
+        "whatsappCatagory": "UTILITY",
+        "quality": "",
+        "pageDTOList": [
+          {
+            "pageName": "page1",
+            "pageCode": "",
+            "rcsTitle": {
+              "elementType": "TITLE",
+              "realContent": "$(text)，您好：您的新帐号已成功创建。"
+            },
+            "pageLinkList": [
+              {
+                "linkName": "验证帐号",
+                "linkType": "visitWebsite",
+                "action": {"eventType": "visitWebsite", "url": "https://www.example.com"}
+              }
+            ]
+          }
+        ],
+        "variablesDTOList": [
+          {
+            "variableCode": "text",
+            "variableName": "text",
+            "defaultValue": "John",
+            "format": "string"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -14,6 +14,35 @@ import java.util.UUID;
 @Mapper
 public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMessageEntity> {
 
+    @Select("""
+            SELECT CASE
+                     WHEN sender.party_type = 'EMPLOYEE'
+                          AND sender.provider_party_id = binding.wecom_user_id THEN 'outbound'
+                     WHEN EXISTS (
+                       SELECT 1
+                       FROM wecom_source_conversation_participants participant
+                       JOIN wecom_parties viewer_party ON viewer_party.id = participant.party_id
+                       WHERE participant.source_conversation_id = message.source_conversation_id
+                         AND participant.participant_status = 'OBSERVED'
+                         AND viewer_party.party_type = 'EMPLOYEE'
+                         AND viewer_party.provider_party_id = binding.wecom_user_id
+                     ) THEN 'inbound'
+                     ELSE NULL
+                   END
+            FROM wecom_chatdata_messages message
+            JOIN wecom_parties sender ON sender.id = message.sender_party_id
+            JOIN wecom_installations installation ON installation.id = message.installation_id
+            JOIN wecom_user_bindings binding
+              ON binding.user_id = #{userId}::uuid
+             AND binding.suite_id = installation.suite_id
+             AND binding.auth_corp_id = installation.auth_corp_id
+            WHERE message.msgid = #{msgid}
+            ORDER BY message.created_at DESC
+            LIMIT 1
+            """)
+    String resolveDirectionForViewer(@Param("msgid") String msgid,
+                                     @Param("userId") UUID userId);
+
     @Insert("INSERT INTO wecom_chatdata_messages (id, installation_id, source_conversation_id, sender_party_id, "
             + "receiver_party_ids, msgid, secret_key, external_userid, userid, send_time, msgtype, direction, ingest_status) "
             + "VALUES (#{id}, #{installationId}, #{sourceConversationId}, #{senderPartyId}, "

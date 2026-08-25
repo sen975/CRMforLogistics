@@ -14,6 +14,11 @@ import org.apache.ibatis.annotations.Update;
 public interface WeComUserBindingMapper extends BaseMapper<WeComUserBindingEntity> {
 
     @Select("SELECT * FROM wecom_user_bindings WHERE suite_id = #{suiteId} "
+            + "AND auth_corp_id = #{authCorpId} ORDER BY last_login_at DESC NULLS LAST, updated_at DESC LIMIT 1")
+    Optional<WeComUserBindingEntity> findLatestByInstallation(@Param("suiteId") String suiteId,
+                                                                @Param("authCorpId") String authCorpId);
+
+    @Select("SELECT * FROM wecom_user_bindings WHERE suite_id = #{suiteId} "
             + "AND auth_corp_id = #{authCorpId} AND wecom_user_id = #{wecomUserId}")
     Optional<WeComUserBindingEntity> findByIdentity(@Param("suiteId") String suiteId,
                                                     @Param("authCorpId") String authCorpId,

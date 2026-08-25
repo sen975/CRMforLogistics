@@ -15,6 +15,7 @@ import { callRecordPlacement } from '../utils/callRecordTimeline';
 import { segmentWeComTimeline, type WeComTimelineMode } from '../wecom/segmentWeComTimeline';
 import { useWeComViewer } from '../hooks/useWeComViewer';
 import { WeComConversationPanel } from '../components/wecom/WeComConversationPanel';
+import type { WeComConversationOption } from '../components/wecom/WeComConversationSelector';
 
 const { Text, Title } = Typography;
 
@@ -207,6 +208,25 @@ export default function ThreadPage() {
     () => currentItems.filter((item) => item.channelType === 'wecom' && !!item.sourceId),
     [currentItems],
   );
+  const weComConversations = useMemo(() => {
+    const groups = new Map<string, WeComConversationOption & { contactPointId: string; items: MessageResponse[] }>();
+    for (const item of weComItems) {
+      const id = item.sourceConversationId || `direct:${weComContactPointId}`;
+      const existing = groups.get(id);
+      if (existing) {
+        existing.items.push(item);
+        continue;
+      }
+      groups.set(id, {
+        id,
+        type: item.conversationType || 'DIRECT',
+        displayName: item.conversationDisplayName || (item.conversationType === 'GROUP' ? '企业微信群' : '企业微信会话'),
+        contactPointId: weComContactPointId,
+        items: [item],
+      });
+    }
+    return [...groups.values()];
+  }, [weComItems, weComContactPointId]);
   const showWeComConversation = selectedChannel === 'wecom' && !!weComContactPointId;
 
   if (!contactId) {
@@ -261,6 +281,7 @@ export default function ThreadPage() {
           <WeComConversationPanel
             contactPointId={weComContactPointId}
             items={weComItems}
+            conversations={weComConversations}
             viewer={weComViewer}
           />
         </div>

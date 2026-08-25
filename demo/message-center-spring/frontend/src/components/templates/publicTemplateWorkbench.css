@@ -1,0 +1,242 @@
+.public-template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.public-template-card,
+.owned-template-card,
+.public-template-card-skeleton {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 360px;
+}
+
+.owned-template-card {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.owned-template-card:hover {
+  border-color: #1677ff;
+}
+
+.owned-template-card__preview {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.owned-template-card__preview:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: -2px;
+}
+
+.owned-template-card__preview .template-message-canvas--compact {
+  min-height: 260px;
+}
+
+.owned-template-card__summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.owned-template-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 4px 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.owned-template-operations {
+  margin-top: 20px;
+}
+
+.public-template-card {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.public-template-card:hover {
+  border-color: #1677ff;
+}
+
+.public-template-card:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 2px;
+}
+
+.public-template-card .template-message-canvas--compact {
+  min-height: 260px;
+}
+
+.public-template-card__footer {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.public-template-card-skeleton {
+  padding: 20px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.template-message-canvas {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 320px;
+  padding: 28px;
+  background: #f0f2f5;
+}
+
+.template-message-bubble {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 560px;
+  margin: 0 auto;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  color: #262626;
+}
+
+.template-message-text {
+  min-width: 0;
+  padding: 16px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.template-variable {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0 8px;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  background: #e6f4ff;
+  color: #1677ff;
+  vertical-align: baseline;
+}
+
+.template-message-actions {
+  display: grid;
+  border-top: 1px solid #f0f0f0;
+}
+
+.template-message-action {
+  display: block;
+  min-width: 0;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid #f0f0f0;
+  color: #1677ff;
+  text-align: center;
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.template-message-action:last-child {
+  border-bottom: 0;
+}
+
+a.template-message-action:hover {
+  background: #f5f5f5;
+  text-decoration: underline;
+}
+
+a.template-message-action:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: -2px;
+}
+
+.template-message-canvas--compact {
+  min-height: 260px;
+  max-height: 260px;
+  overflow: hidden;
+}
+
+.public-template-detail-preview {
+  position: sticky;
+  top: 16px;
+}
+
+.public-template-detail-fields {
+  min-width: 0;
+}
+
+.public-template-detail-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.public-template-workbench-modal-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.template-editor-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.7fr);
+  gap: 24px;
+}
+
+.template-editor-workbench__form,
+.template-editor-workbench__source {
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .public-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .public-template-grid,
+  .public-template-workbench-modal-body,
+  .template-editor-workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .template-message-canvas {
+    min-height: 260px;
+    padding: 16px;
+  }
+
+  .public-template-detail-preview {
+    position: static;
+  }
+}

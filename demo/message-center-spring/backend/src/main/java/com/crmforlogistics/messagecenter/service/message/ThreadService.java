@@ -15,9 +15,13 @@ import com.crmforlogistics.messagecenter.mapper.AttachmentMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
+import com.crmforlogistics.messagecenter.entity.WeComSourceConversationEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -41,6 +45,27 @@ public class ThreadService {
     private final ChannelAccountMapper channelAccountMapper;
     private final TemplateMessageTextResolver templateMessageTextResolver;
     private final AttachmentMapper attachmentMapper;
+    private final WeComSourceConversationMapper weComSourceConversationMapper;
+    private final WeComChatDataMessageMapper weComChatDataMessageMapper;
+
+    @Autowired
+    public ThreadService(ConversationMapper conversationMapper,
+                         MessageMapper messageMapper,
+                         ContactIdentityMapper contactIdentityMapper,
+                         ChannelAccountMapper channelAccountMapper,
+                         TemplateMessageTextResolver templateMessageTextResolver,
+                         AttachmentMapper attachmentMapper,
+                         WeComSourceConversationMapper weComSourceConversationMapper,
+                         WeComChatDataMessageMapper weComChatDataMessageMapper) {
+        this.conversationMapper = conversationMapper;
+        this.messageMapper = messageMapper;
+        this.contactIdentityMapper = contactIdentityMapper;
+        this.channelAccountMapper = channelAccountMapper;
+        this.templateMessageTextResolver = templateMessageTextResolver;
+        this.attachmentMapper = attachmentMapper;
+        this.weComSourceConversationMapper = weComSourceConversationMapper;
+        this.weComChatDataMessageMapper = weComChatDataMessageMapper;
+    }
 
     public ThreadService(ConversationMapper conversationMapper,
                          MessageMapper messageMapper,
@@ -48,12 +73,8 @@ public class ThreadService {
                          ChannelAccountMapper channelAccountMapper,
                          TemplateMessageTextResolver templateMessageTextResolver,
                          AttachmentMapper attachmentMapper) {
-        this.conversationMapper = conversationMapper;
-        this.messageMapper = messageMapper;
-        this.contactIdentityMapper = contactIdentityMapper;
-        this.channelAccountMapper = channelAccountMapper;
-        this.templateMessageTextResolver = templateMessageTextResolver;
-        this.attachmentMapper = attachmentMapper;
+        this(conversationMapper, messageMapper, contactIdentityMapper, channelAccountMapper,
+                templateMessageTextResolver, attachmentMapper, null, null);
     }
 
     public ThreadResponse threadPage(UUID userId, UUID contactId, String channelType,
@@ -130,12 +151,12 @@ public class ThreadService {
         for (MessageEntity entity : items) {
             IdentityChannelPair pair = identityByConv.get(entity.getConversationId());
             if (pair != null) {
-                messageResponses.add(toMessageResponse(entity, pair.channelAccount(), pair.identity(),
+                messageResponses.add(toMessageResponse(entity, pair.channelAccount(), pair.identity(), userId,
                         attachmentsByMessageId.getOrDefault(entity.getId(), List.of())));
             } else {
                 ChannelAccountEntity account = channelAccountMapper.selectById(entity.getChannelAccountId());
                 if (account != null && "wecom".equalsIgnoreCase(account.getChannelType())) {
-                    messageResponses.add(toSourceMessageResponse(entity, account,
+                    messageResponses.add(toSourceMessageResponse(entity, account, userId,
                             attachmentsByMessageId.getOrDefault(entity.getId(), List.of())));
                 }
             }
@@ -185,9 +206,10 @@ public class ThreadService {
     private MessageResponse toMessageResponse(MessageEntity entity,
                                               ChannelAccountEntity channelAccount,
                                               ContactIdentityEntity identity,
+                                              UUID userId,
                                               List<MessageAttachmentResponse> attachments) {
         String channelType = channelAccount.getChannelType();
-        String direction = entity.getDirection();
+        String direction = directionForViewer(entity, channelType, userId);
         boolean isInbound = "inbound".equals(direction);
         String from = isInbound ? identityValue(identity) : channelAccountName(channelAccount);
         String to = isInbound ? channelAccountName(channelAccount) : identityValue(identity);
@@ -212,13 +234,41 @@ public class ThreadService {
 
     private MessageResponse toSourceMessageResponse(MessageEntity entity,
                                                      ChannelAccountEntity account,
+                                                     UUID userId,
                                                      List<MessageAttachmentResponse> attachments) {
         String display = channelAccountName(account);
-        return new MessageResponse(entity.getId(), entity.getProviderMessageId(), entity.getDirection(),
+        UUID sourceConversationId = null;
+        String conversationType = null;
+        String conversationDisplayName = null;
+        if (weComSourceConversationMapper != null && entity.getConversationId() != null) {
+            ConversationEntity conversation = conversationMapper.selectById(entity.getConversationId());
+            if (conversation != null && conversation.getSourceConversationId() != null) {
+                sourceConversationId = conversation.getSourceConversationId();
+                WeComSourceConversationEntity source = weComSourceConversationMapper.selectById(sourceConversationId);
+                if (source != null) {
+                    conversationType = source.getConversationType();
+                    conversationDisplayName = source.getDisplayName();
+                }
+            }
+        }
+        String direction = directionForViewer(entity, account.getChannelType(), userId);
+        return new MessageResponse(entity.getId(), entity.getProviderMessageId(), direction,
                 entity.getMessageKind(), entity.getSubject(), templateMessageTextResolver.resolve(entity),
                 entity.getBodyHtml(), account.getChannelType(), display, display, entity.getOccurredAt(),
                 entity.getCurrentStatus(), entity.getIngestSequence() != null
-                ? entity.getIngestSequence().intValue() : 0, attachments);
+                ? entity.getIngestSequence().intValue() : 0, attachments,
+                sourceConversationId, conversationType, conversationDisplayName);
+    }
+
+    private String directionForViewer(MessageEntity entity, String channelType, UUID userId) {
+        if (!"wecom".equalsIgnoreCase(channelType) || weComChatDataMessageMapper == null
+                || entity.getProviderMessageId() == null || userId == null) {
+            return entity.getDirection();
+        }
+        String resolved = weComChatDataMessageMapper.resolveDirectionForViewer(
+                entity.getProviderMessageId(), userId);
+        return "inbound".equals(resolved) || "outbound".equals(resolved)
+                ? resolved : entity.getDirection();
     }
 
     private static String identityValue(ContactIdentityEntity identity) {

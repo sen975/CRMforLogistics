@@ -205,7 +205,7 @@ public class WeComChatDataStore {
                 ? normalized.sender().providerPartyId() : null);
         entity.setSendTime(normalized.sendTime());
         entity.setMsgtype(Integer.toString(normalized.msgType()));
-        entity.setDirection(normalized.sender().partyType().equals("EMPLOYEE") ? "outbound" : "inbound");
+        entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("group");
         if (messageMapper.insertIgnore(entity) == 0) return false;
         if ("GROUP".equals(normalized.conversationType())) {
@@ -255,7 +255,7 @@ public class WeComChatDataStore {
                 ? normalized.contactParty().providerPartyId() : null);
         entity.setSendTime(normalized.sendTime());
         entity.setMsgtype(Integer.toString(normalized.msgType()));
-        entity.setDirection(normalized.sender().partyType().equals("EMPLOYEE") ? "outbound" : "inbound");
+        entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("direct");
         if (messageMapper.insertIgnore(entity) == 0) return false;
         projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
@@ -387,6 +387,17 @@ public class WeComChatDataStore {
         return value != null && !value.isBlank() && value.length() <= maximum;
     }
 
+    private static String directionFor(WeComChatDataNormalizer.NormalizedWeComMessage message,
+                                      String viewerWecomUserId) {
+        String resolved = WeComDirectionResolver.resolve(viewerWecomUserId,
+                message.sender(), message.receivers());
+        if (!"unknown".equals(resolved)) return resolved;
+        // Automatic backfills may not have a logged-in viewer. Preserve the
+        // historical provider-level direction until an interactive sync can
+        // recompute it from the bound member.
+        return "EMPLOYEE".equals(message.sender().partyType()) ? "outbound" : "inbound";
+    }
+
     private static void requireKey(SyncKey key) {
         if (key == null || !bounded(key.installationId(), 128) || key.version() < 1
                 || !bounded(key.programId(), 128) || !bounded(key.abilityId(), 128)) {
@@ -408,9 +419,14 @@ public class WeComChatDataStore {
     }
 
     public record SyncKey(String installationId, long version, String programId, String abilityId,
-                          String authCorpId) {
+                          String authCorpId, String viewerWecomUserId) {
         public SyncKey(String installationId, long version, String programId, String abilityId) {
-            this(installationId, version, programId, abilityId, "");
+            this(installationId, version, programId, abilityId, "", "");
+        }
+
+        public SyncKey(String installationId, long version, String programId, String abilityId,
+                       String authCorpId) {
+            this(installationId, version, programId, abilityId, authCorpId, "");
         }
     }
     public record DecryptedMessage(WeComChatDataGateway.EncryptedMessage message, String secretKey) {}

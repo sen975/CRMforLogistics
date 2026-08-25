@@ -76,7 +76,7 @@ public class WeComChatDataSyncService {
             WeComChatDataStore.SyncKey key = new WeComChatDataStore.SyncKey(
                     installation.installationId(), installation.version(),
                     config.wecomChatDataProgramId(), config.wecomChatDataAbilityId(),
-                    installation.authCorpId());
+                    installation.authCorpId(), context.wecomUserId());
             String cursor = store.cursor(key);
             ensureRemaining(deadline);
             int stored = 0;

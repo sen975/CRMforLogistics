@@ -61,12 +61,19 @@ export function WeComConversationFrame({
         if (!frameRef.current) {
           const factory = prepared.sdk.createOpenDataFrameFactory?.();
           if (!factory) throw new WeComViewerError('frame-create', '企业微信会话组件不可用');
-          frameRef.current = factory.createOpenDataFrame(frameOptions(
+          const frame = factory.createOpenDataFrame(frameOptions(
             hostRef.current,
             token,
             () => { if (isCurrent()) setStatus('mounted'); },
             (error) => fail(error, prepared),
           ));
+          frame.el.style.setProperty('display', 'block');
+          frame.el.style.setProperty('width', '100%');
+          frame.el.style.setProperty('height', '100%');
+          frame.el.style.setProperty('min-width', '0');
+          frame.el.style.setProperty('min-height', '0');
+          frame.el.style.setProperty('border', '0');
+          frameRef.current = frame;
         }
 
         const messageById = new Map(prepared.messages.map((message) => [message.msgid, message]));
@@ -86,7 +93,9 @@ export function WeComConversationFrame({
         if (prepared.missingMessageIds?.length) {
           setFailureMessage(`部分消息暂时无法读取（${prepared.missingMessageIds.length} 条）`);
         }
-        await queueUpdate(frameRef.current, generationRef, generation, { msgList });
+        const frame = frameRef.current;
+        if (!frame) throw new WeComViewerError('frame-create', '企业微信会话组件不可用');
+        await queueUpdate(frame, generationRef, generation, { msgList });
         if (isCurrent()) setStatus('mounted');
       } catch (error) {
         if (isAbortError(error) || !isCurrent()) return;
@@ -181,26 +190,41 @@ async function queueUpdate(
   data: Record<string, unknown>,
 ): Promise<void> {
   if (!frame.setData) throw new WeComViewerError('frame-update', '当前企业微信 SDK 不支持更新会话内容');
-  const next = updateQueueRefFor(frame, () => updateWithTimeout(frame, data));
-  await next;
+  const state = frameUpdateStates.get(frame) ?? { version: 0, latestData: data };
+  state.version += 1;
+  const version = state.version;
+  state.latestData = data;
+  frameUpdateStates.set(frame, state);
+  const operation = frame.setData(data);
+  void operation.then(() => {
+    if (version !== state.version && frame.setData) {
+      void frame.setData(state.latestData);
+    }
+  }, () => undefined);
+  try {
+    await withTimeout(operation);
+  } catch (error) {
+    if (version !== state.version) return;
+    throw error;
+  }
+  if (version !== state.version) {
+    await withTimeout(frame.setData(state.latestData));
+  }
   if (generationRef.current !== generation) throw new DOMException('企业微信消息请求已取消', 'AbortError');
 }
 
-const frameQueues = new WeakMap<WeComOpenDataFrame, Promise<void>>();
-function updateQueueRefFor(frame: WeComOpenDataFrame, operation: () => Promise<void>): Promise<void> {
-  const previous = frameQueues.get(frame) ?? Promise.resolve();
-  const next = previous.catch(() => undefined).then(operation);
-  frameQueues.set(frame, next);
-  return next;
-}
+const frameUpdateStates = new WeakMap<WeComOpenDataFrame, {
+  version: number;
+  latestData: Record<string, unknown>;
+}>();
 
-function updateWithTimeout(frame: WeComOpenDataFrame, data: Record<string, unknown>): Promise<void> {
+function withTimeout(operation: Promise<void>): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const timer = window.setTimeout(
       () => reject(new WeComViewerError('frame-update', '企业微信组件更新超时')),
       FRAME_UPDATE_TIMEOUT_MS,
     );
-    frame.setData!(data).then(
+    operation.then(
       () => { window.clearTimeout(timer); resolve(); },
       (error) => { window.clearTimeout(timer); reject(error); },
     );

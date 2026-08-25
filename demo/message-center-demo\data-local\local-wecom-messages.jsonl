@@ -1,3 +1,0 @@
-{"msgid":"local-msg-001","external_userid":"local-contact-001","userid":"local-wecom-user","send_time":1735689600,"msgtype":"text","origin":3,"secret_key":"local-secret-001","text":{"content":"本地企业微信样例消息"}}
-{"msgid":"local-msg-002","external_userid":"local-contact-001","userid":"local-wecom-user","send_time":1735689660,"msgtype":"text","origin":3,"secret_key":"local-secret-002","text":{"content":"用于验证会话展示流程"}}
-{"msgid":"local-msg-003","external_userid":"local-contact-002","userid":"local-wecom-user","send_time":1735689720,"msgtype":"text","origin":3,"secret_key":"local-secret-003","text":{"content":"第二个本地联系人"}}

@@ -1,0 +1,28 @@
+[Unit]
+Description=CRM Logistics Spring Message Center
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=message-center
+Group=message-center
+WorkingDirectory=/var/lib/message-center
+EnvironmentFile=/etc/message-center/message-center.env
+Environment=TZ=Asia/Shanghai
+ExecStart=/usr/bin/java -jar /opt/crm-logistics-message-center/current/backend/message-center.jar
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180
+TimeoutStopSec=30
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/message-center
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

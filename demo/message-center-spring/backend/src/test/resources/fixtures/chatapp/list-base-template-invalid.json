@@ -1,0 +1,7 @@
+{
+  "Code": "INVALID_ENVELOPE",
+  "Message": "provider fixture secret must never be returned",
+  "RequestId": "invalid-request-id",
+  "Success": false,
+  "Data": []
+}

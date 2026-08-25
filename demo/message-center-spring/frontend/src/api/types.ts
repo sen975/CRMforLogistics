@@ -21,6 +21,9 @@ export interface ContactResponse {
 export interface MessageResponse {
   id: string;
   sourceId?: string | null;
+  sourceConversationId?: string | null;
+  conversationType?: 'DIRECT' | 'GROUP' | null;
+  conversationDisplayName?: string | null;
   direction: string;
   kind: string;
   subject: string;
