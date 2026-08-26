@@ -124,13 +124,15 @@ public class WeComExternalContactService {
     public GroupMemberSnapshot groupMembersForSync(ResolvedInstallation installation, String chatId) {
         String group = required(chatId, "chatId", 128);
         if (installation == null || installation.authCorpId() == null || installation.authCorpId().isBlank()) {
-            return new GroupMemberSnapshot(false, List.of(), "INSTALLATION_INVALID");
+            return new GroupMemberSnapshot(false, "", List.of(), "INSTALLATION_INVALID");
         }
         try {
             JsonNode response = gateway.groupGet(installation, group, true, timeout());
-            JsonNode members = response.path("group_chat").path("member_list");
+            JsonNode groupChat = response.path("group_chat");
+            String displayName = firstText(groupChat, "name");
+            JsonNode members = groupChat.path("member_list");
             if (!members.isArray()) {
-                return new GroupMemberSnapshot(false, List.of(), "GROUP_MEMBER_LIST_MISSING");
+                return new GroupMemberSnapshot(false, displayName, List.of(), "GROUP_MEMBER_LIST_MISSING");
             }
             List<GroupMember> result = new java.util.ArrayList<>();
             int maximum = Math.min(members.size(), 200);
@@ -142,16 +144,16 @@ public class WeComExternalContactService {
                         ? member.path("userid").asText("")
                         : member.path("external_userid").asText("");
                 if (partyType.isBlank() || providerId.isBlank() || providerId.length() > 128) continue;
-                String displayName = firstText(member, "name", "group_nickname", "nickname");
+                String memberDisplayName = firstText(member, "name", "group_nickname", "nickname");
                 String avatarUrl = firstText(member, "avatar");
-                result.add(new GroupMember(partyType, providerId, displayName, avatarUrl));
+                result.add(new GroupMember(partyType, providerId, memberDisplayName, avatarUrl));
             }
-            return new GroupMemberSnapshot(true, List.copyOf(result), "");
+            return new GroupMemberSnapshot(true, displayName, List.copyOf(result), "");
         } catch (RuntimeException failure) {
             log.warn("event=wecom.external_contact.group_members_sync_failed code={} chatIdDigest={}",
                     failure instanceof WeComException exception ? exception.code() : "UNEXPECTED",
                     Integer.toHexString(group.hashCode()));
-            return new GroupMemberSnapshot(false, List.of(),
+            return new GroupMemberSnapshot(false, "", List.of(),
                     failure instanceof WeComException exception ? exception.code() : "GROUP_MEMBER_LOOKUP_FAILED");
         }
     }
@@ -269,5 +271,6 @@ public class WeComExternalContactService {
     public record GroupMember(String partyType, String providerPartyId,
                               String displayName, String avatarUrl) {}
 
-    public record GroupMemberSnapshot(boolean available, List<GroupMember> members, String errorCode) {}
+    public record GroupMemberSnapshot(boolean available, String displayName, List<GroupMember> members,
+                                      String errorCode) {}
 }

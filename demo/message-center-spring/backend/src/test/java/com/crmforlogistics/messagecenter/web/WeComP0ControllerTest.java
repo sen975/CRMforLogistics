@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,7 @@ class WeComP0ControllerTest {
     @MockitoBean WeComAppChatService appChats;
     @MockitoBean WeComExternalContactService externalContacts;
     @MockitoBean WeComDirectoryService directory;
+    @MockitoBean WeComProfileBackfillService profileBackfill;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -188,6 +190,28 @@ class WeComP0ControllerTest {
                 new WeComApiActor(ADMIN_ID, "trace-departments"));
         verify(directory).listTags("corp-1", new WeComApiActor(ADMIN_ID, "trace-tags"));
         verify(directory).getTag("corp-1", 9, new WeComApiActor(ADMIN_ID, "trace-tag"));
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void adminCanTriggerBoundedProfileBackfill() throws Exception {
+        when(profileBackfill.backfill("corp-1", 100)).thenReturn(
+                new WeComProfileBackfillService.BackfillResult(2, 1, 1, 0));
+
+        mvc.perform(post("/api/v1/wecom/installations/corp-1/profile-backfill")
+                        .param("limit", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.partiesAttempted").value(2))
+                .andExpect(jsonPath("$.groupsNamed").value(1));
+
+        verify(profileBackfill).backfill("corp-1", 100);
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "AGENT")
+    void nonAdminCannotTriggerProfileBackfill() throws Exception {
+        mvc.perform(post("/api/v1/wecom/installations/corp-1/profile-backfill"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

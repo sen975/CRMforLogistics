@@ -9,11 +9,14 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,16 +39,19 @@ public class WeComP0Controller {
     private final WeComAppChatService appChats;
     private final WeComExternalContactService externalContacts;
     private final WeComDirectoryService directory;
+    private final WeComProfileBackfillService profileBackfill;
 
     public WeComP0Controller(AppConfig config, WeComInstallationService installations,
                              WeComAppChatService appChats,
                              WeComExternalContactService externalContacts,
-                             WeComDirectoryService directory) {
+                             WeComDirectoryService directory,
+                             WeComProfileBackfillService profileBackfill) {
         this.config = config;
         this.installations = installations;
         this.appChats = appChats;
         this.externalContacts = externalContacts;
         this.directory = directory;
+        this.profileBackfill = profileBackfill;
     }
 
     @GetMapping("/installations")
@@ -167,6 +173,14 @@ public class WeComP0Controller {
         return directory.syncProfiles(authCorpId, actor(servletRequest));
     }
 
+    @PostMapping("/installations/{authCorpId}/profile-backfill")
+    public WeComProfileBackfillService.BackfillResult backfillProfiles(
+            @PathVariable String authCorpId,
+            @RequestParam(required = false) Integer limit) {
+        requireAdmin();
+        return profileBackfill.backfill(authCorpId, limit);
+    }
+
     @GetMapping("/installations/{authCorpId}/directory/tags")
     public JsonNode listTags(@PathVariable String authCorpId, HttpServletRequest servletRequest) {
         return directory.listTags(authCorpId, actor(servletRequest));
@@ -193,6 +207,16 @@ public class WeComP0Controller {
         if (length > MAX_REQUEST_BODY_BYTES) {
             throw new WeComException("WECOM_REQUEST_TOO_LARGE", 413,
                     "企业微信请求体超过大小限制");
+        }
+    }
+
+    private static void requireAdmin() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        boolean isAdmin = authentication != null && authentication.getAuthorities().stream()
+                .map(authority -> authority.getAuthority())
+                .anyMatch("ROLE_ADMIN"::equals);
+        if (!isAdmin) {
+            throw new WeComException("FORBIDDEN", 403, "仅管理员可以回填企业微信资料");
         }
     }
 

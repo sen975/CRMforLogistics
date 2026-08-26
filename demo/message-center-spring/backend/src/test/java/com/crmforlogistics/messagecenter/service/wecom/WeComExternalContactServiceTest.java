@@ -66,7 +66,7 @@ class WeComExternalContactServiceTest {
         Fixture fixture = fixture();
         when(fixture.gateway.groupGet(eq(INSTALLATION), eq("wr-group"), eq(true), any()))
                 .thenReturn(new ObjectMapper().readTree("""
-                        {"errcode":0,"group_chat":{"chat_id":"wr-group","member_list":[
+                        {"errcode":0,"group_chat":{"chat_id":"wr-group","name":"客户群 A","member_list":[
                           {"type":1,"userid":"employee-1","name":"员工一","avatar":"https://img/1"},
                           {"type":2,"external_userid":"external-1","name":"客户一"}]}}
                         """));
@@ -74,6 +74,7 @@ class WeComExternalContactServiceTest {
         var result = fixture.service.groupMembersForSync(INSTALLATION, "wr-group");
 
         assertThat(result.available()).isTrue();
+        assertThat(result.displayName()).isEqualTo("客户群 A");
         assertThat(result.members()).extracting(WeComExternalContactService.GroupMember::partyType)
                 .containsExactly("EMPLOYEE", "EXTERNAL_CONTACT");
         assertThat(result.members().get(0).displayName()).isEqualTo("员工一");

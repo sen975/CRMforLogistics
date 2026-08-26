@@ -19,4 +19,12 @@ public interface WeComPartyMapper extends BaseMapper<WeComPartyEntity> {
                         @Param("partyType") String partyType,
                         @Param("providerPartyId") String providerPartyId,
                         @Param("displayName") String displayName);
+
+    @Select("select * from wecom_parties where installation_id = #{installationId}::uuid "
+            + "and party_type in ('EMPLOYEE', 'EXTERNAL_CONTACT') "
+            + "and (profile_status <> 'READY' or coalesce(display_name, '') = '' "
+            + "or coalesce(avatar_url, '') = '') "
+            + "order by last_seen_at desc, id limit #{limit}")
+    java.util.List<WeComPartyEntity> listProfileBackfillCandidates(
+            @Param("installationId") UUID installationId, @Param("limit") int limit);
 }
