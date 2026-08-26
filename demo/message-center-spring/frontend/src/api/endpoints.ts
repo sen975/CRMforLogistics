@@ -145,12 +145,18 @@ export async function fetchWeComViewerSession(
 }
 
 export async function recordWeComViewerEvent(
-  viewerSessionId: string,
+  event: {
+    eventKey: string;
+    stage: string;
+    generation: number;
+    viewerSessionId?: string;
+    errorCategory: string;
+  },
   viewerAuthToken: string,
 ): Promise<void> {
   await client.post(
     `${weComViewerBase}/events`,
-    { eventType: 'component_error', viewerSessionId },
+    { eventType: 'component_error', ...event },
     { headers: weComViewerHeaders(viewerAuthToken) },
   );
 }

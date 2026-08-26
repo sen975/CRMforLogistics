@@ -44,8 +44,12 @@ export function WeComConversationFrame({
         : asWeComViewerError(error, 'frame-update');
       setFailureMessage(formatWeComViewerError(viewerError));
       setStatus('failed');
-      if (prepared?.viewerSessionId) {
-        void viewer.reportComponentError(prepared.viewerSessionId, prepared.viewerAuthToken);
+      if (prepared) {
+        void viewer.reportComponentError(prepared.viewerSessionId, prepared.viewerAuthToken, {
+          stage: viewerError.stage,
+          generation,
+          errorCategory: viewerError.code || 'SDK_RESULT_FAILURE',
+        });
       }
     };
 

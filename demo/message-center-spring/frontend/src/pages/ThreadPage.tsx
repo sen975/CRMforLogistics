@@ -160,6 +160,8 @@ export default function ThreadPage() {
         setNextCursor(result.nextCursor ?? undefined);
         setHasMore(!!result.nextCursor);
         setLoadingOlder(false);
+      }).catch(() => {
+        if (generation === contactRequestGenerationRef.current) setLoadingOlder(false);
       });
     }
   }, [hasMore, loadingOlder, nextCursor, fetchPage]);

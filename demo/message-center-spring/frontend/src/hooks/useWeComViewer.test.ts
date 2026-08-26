@@ -6,6 +6,7 @@ import {
   fetchWeComBinding,
   fetchWeComJsSdkConfig,
   fetchWeComViewerSession,
+  recordWeComViewerEvent,
 } from '../api/endpoints';
 import { useWeComViewer } from './useWeComViewer';
 
@@ -33,6 +34,7 @@ vi.mock('../wecom/wecomSdk', () => ({
 const mockedCreateSession = vi.mocked(createWeComViewerSession);
 const mockedFetchSession = vi.mocked(fetchWeComViewerSession);
 const mockedFetchConfig = vi.mocked(fetchWeComJsSdkConfig);
+const mockedRecordEvent = vi.mocked(recordWeComViewerEvent);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -91,5 +93,26 @@ describe('useWeComViewer message preparation', () => {
       ['wecom:contact-a', ids.slice(15)],
     ]);
     expect(prepared?.messages.map((message) => message.msgid)).toEqual(ids);
+  });
+
+  it('同一 generation 的组件错误只上报一次且保留原始分类', async () => {
+    mockedRecordEvent.mockRejectedValue(new Error('403'));
+    const { result } = renderHook(() => useWeComViewer());
+    await act(async () => {
+      await result.current.reportComponentError('session-1', 'viewer-token', {
+        stage: 'frame-update', generation: 7, errorCategory: 'SDK_RESULT_FAILURE',
+      });
+      await result.current.reportComponentError('session-1', 'viewer-token', {
+        stage: 'frame-update', generation: 7, errorCategory: 'SDK_RESULT_FAILURE',
+      });
+    });
+    expect(mockedRecordEvent).toHaveBeenCalledTimes(1);
+    expect(mockedRecordEvent).toHaveBeenCalledWith({
+      eventKey: '7:session-1:frame-update:SDK_RESULT_FAILURE',
+      stage: 'frame-update',
+      generation: 7,
+      viewerSessionId: 'session-1',
+      errorCategory: 'SDK_RESULT_FAILURE',
+    }, 'viewer-token');
   });
 });

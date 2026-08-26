@@ -38,7 +38,11 @@ export interface WeComViewerHandle {
     messageIds: string[],
     signal?: AbortSignal,
   ) => Promise<PreparedWeComSegment>;
-  reportComponentError: (viewerSessionId: string, viewerAuthToken: string) => Promise<void>;
+  reportComponentError: (
+    viewerSessionId: string | undefined,
+    viewerAuthToken: string,
+    context?: { stage?: string; generation?: number; errorCategory?: string },
+  ) => Promise<void>;
 }
 
 export function useWeComViewer(): WeComViewerHandle {
@@ -47,12 +51,14 @@ export function useWeComViewer(): WeComViewerHandle {
   const bootstrapRef = useRef<Promise<string> | null>(null);
   const sdkRef = useRef<Promise<WeComViewerSdk> | null>(null);
   const messageCacheRef = useRef(new WeComViewerMessageCache());
+  const reportedEventKeysRef = useRef(new Set<string>());
 
   useEffect(() => {
     viewerTokenRef.current = wecomViewerAuthToken;
     bootstrapRef.current = null;
     sdkRef.current = null;
     messageCacheRef.current.clearAll();
+    reportedEventKeysRef.current.clear();
   }, [crmToken, wecomViewerAuthToken]);
 
   const requireViewerToken = useCallback(async () => {
@@ -157,11 +163,18 @@ export function useWeComViewer(): WeComViewerHandle {
     prepareForTarget(target, messageIds, signal), [prepareForTarget]);
 
   const reportComponentError = useCallback(async (
-    viewerSessionId: string,
+    viewerSessionId: string | undefined,
     viewerAuthToken: string,
+    context?: { stage?: string; generation?: number; errorCategory?: string },
   ) => {
+    const stage = context?.stage || 'frame-update';
+    const generation = context?.generation ?? -1;
+    const errorCategory = context?.errorCategory || 'SDK_RESULT_FAILURE';
+    const eventKey = `${generation}:${viewerSessionId || 'none'}:${stage}:${errorCategory}`;
+    if (reportedEventKeysRef.current.has(eventKey)) return;
+    reportedEventKeysRef.current.add(eventKey);
     try {
-      await recordWeComViewerEvent(viewerSessionId, viewerAuthToken);
+      await recordWeComViewerEvent({ eventKey, stage, generation, viewerSessionId, errorCategory }, viewerAuthToken);
     } catch {
       // Viewer audit is best effort and must not replace the component error shown to the user.
     }
