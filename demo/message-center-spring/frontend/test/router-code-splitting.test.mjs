@@ -106,7 +106,7 @@ test('路由级代码拆分：既有路由、鉴权和错误出口保持完整',
   const compactRouter = compactSource(routerSource);
   const childRoutes = [
     ["index: true", 'HomePage'],
-    ["path: 'thread/:contactId'", 'ThreadPage'],
+    ["path: 'conversations/contact/:contactId'", 'ConversationWorkspace'],
     ["path: 'send'", 'SendPage'],
     ["path: 'templates'", 'TemplatesPage'],
     ["path: 'settings/channels'", 'ChannelSettingsPage'],
@@ -121,4 +121,5 @@ test('路由级代码拆分：既有路由、鉴权和错误出口保持完整',
       new RegExp(`\\{ ${routeProperty.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, element: <RouteBoundary><${component} \\/><\\/RouteBoundary> \\}`),
     );
   }
+  assert.match(compactRouter, /\{ path: 'thread\/:contactId', element: <LegacyThreadRedirect \/> \}/);
 });
