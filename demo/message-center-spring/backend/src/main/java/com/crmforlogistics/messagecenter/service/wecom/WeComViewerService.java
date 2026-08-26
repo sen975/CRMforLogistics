@@ -57,6 +57,7 @@ public class WeComViewerService {
     private final ConcurrentMap<String, ViewedSession> viewedSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, SessionRateWindow> viewerSessionRates = new ConcurrentHashMap<>();
     private final AtomicLong sessionOrder = new AtomicLong();
+    private final ConcurrentMap<String, Long> clientEventKeys = new ConcurrentHashMap<>();
 
     @Autowired
     public WeComViewerService(AppConfig config, WeComInstallationService installationService,
@@ -261,6 +262,37 @@ public class WeComViewerService {
         }
     }
 
+    public ViewerSessionResponse createViewerSession(UUID crmUserId, String targetType, UUID targetId,
+                                                     String viewerAuthToken, List<String> requestedMessageIds) {
+        if (crmUserId == null || targetId == null || targetType == null) {
+            throw new IllegalArgumentException("WeCom viewer target is required");
+        }
+        String contactPointId = "wecom-target:" + targetType + ":" + targetId;
+        long now = clock.instant().getEpochSecond();
+        ViewerAuth auth = resolveViewerAuthRecord(viewerAuthToken, now);
+        List<WeComChatDataMessageEntity> rows = "WECOM_GROUP".equals(targetType)
+                ? messageMapper.findViewableByGroupTarget(targetId, crmUserId)
+                : "CONTACT".equals(targetType)
+                    ? messageMapper.findViewableByContactTarget(targetId, crmUserId)
+                    : List.of();
+        Set<String> requested = new HashSet<>(validateRequestedMessageIds(requestedMessageIds));
+        List<ViewerMessage> messages = rows.stream()
+                .filter(row -> requested.contains(row.getMsgid()))
+                .map(row -> new ViewerMessage(row.getMsgid(), credentialProtector.revealSecretKey(row.getSecretKey())))
+                .filter(item -> item.secretKey() != null && !item.secretKey().isBlank())
+                .toList();
+        if (messages.size() != requested.size()) {
+            throw new SecurityException("WeCom conversation is not viewable by this session");
+        }
+        enforceViewerSessionRate(auth.wecomUserId(), now);
+        String sessionId = UUID.randomUUID().toString().replace("-", "");
+        ViewerSession session = new ViewerSession(sessionId, viewerAuthToken, contactPointId,
+                now + config.wecomViewerSessionTtlSeconds(), sessionOrder.incrementAndGet(), messages);
+        storeViewerSession(session);
+        recordAudit("wecom.viewer.session_create", "success", auth.wecomUserId(), contactPointId, sessionId);
+        return new ViewerSessionResponse(sessionId, config.wecomViewerSessionTtlSeconds());
+    }
+
     public ViewerSessionDetail viewerSession(String viewerSessionId, String viewerAuthToken) {
         String wecomUserId = "";
         ViewerSession session = null;
@@ -300,12 +332,25 @@ public class WeComViewerService {
     }
 
     public void recordClientEvent(String eventType, String viewerSessionId, String viewerAuthToken) {
+        recordClientEvent(eventType, "legacy", "legacy", 0L, viewerSessionId, "component_error", viewerAuthToken);
+    }
+
+    public void recordClientEvent(String eventType, String eventKey, String stage, long generation,
+                                  String viewerSessionId, String errorCategory, String viewerAuthToken) {
         startupGate.requireOpen();
         if (!"component_error".equals(eventType)) {
             throw new IllegalArgumentException("WeCom viewer event type is invalid");
         }
+        if (eventKey == null || eventKey.isBlank() || stage == null || stage.isBlank()
+                || errorCategory == null || errorCategory.isBlank() || generation < 0) {
+            throw new IllegalArgumentException("WeCom viewer event metadata is invalid");
+        }
         String wecomUserId = "";
         try {
+            cleanupClientEventKeys(clock.instant().getEpochSecond());
+            String dedupeKey = viewerAuthToken + "\u0000" + eventKey;
+            if (clientEventKeys.putIfAbsent(dedupeKey, clock.instant().getEpochSecond() + 300) != null) return;
+            if (viewerSessionId == null || viewerSessionId.isBlank()) return;
             long now = clock.instant().getEpochSecond();
             requireBounded(viewerSessionId, "WeCom viewer session id", 64);
             wecomUserId = resolveViewerAuth(viewerAuthToken, now);
@@ -323,6 +368,10 @@ public class WeComViewerService {
             recordFailure("wecom.viewer.component_error", "failed", wecomUserId, "", viewerSessionId, exception);
             throw exception;
         }
+    }
+
+    private void cleanupClientEventKeys(long now) {
+        clientEventKeys.entrySet().removeIf(entry -> entry.getValue() <= now);
     }
 
     public void recordAccessDenied(String contactPointId, String viewerAuthToken) {

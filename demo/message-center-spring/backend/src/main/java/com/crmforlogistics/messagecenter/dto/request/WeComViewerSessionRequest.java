@@ -3,14 +3,19 @@ package com.crmforlogistics.messagecenter.dto.request;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 
 import java.util.List;
+import java.util.UUID;
 
 public final class WeComViewerSessionRequest {
-    @NotBlank
+    @Size(max = 32)
+    private final String targetType;
+
+    private final UUID targetId;
+
     @Size(max = 256)
     private final String contactPointId;
 
@@ -19,8 +24,12 @@ public final class WeComViewerSessionRequest {
     private final List<@NotBlank @Size(max = 256) String> messageIds;
 
     @JsonCreator
-    public WeComViewerSessionRequest(@JsonProperty("contactPointId") String contactPointId,
+    public WeComViewerSessionRequest(@JsonProperty("targetType") String targetType,
+                                     @JsonProperty("targetId") UUID targetId,
+                                     @JsonProperty("contactPointId") String contactPointId,
                                      @JsonProperty("messageIds") List<String> messageIds) {
+        this.targetType = targetType;
+        this.targetId = targetId;
         this.contactPointId = contactPointId;
         this.messageIds = messageIds == null ? null : List.copyOf(messageIds);
     }
@@ -30,11 +39,12 @@ public final class WeComViewerSessionRequest {
         throw new IllegalArgumentException("Unknown WeCom viewer session field: " + name);
     }
 
-    public String contactPointId() {
-        return contactPointId;
-    }
+    public String targetType() { return targetType; }
+    public UUID targetId() { return targetId; }
+    public String contactPointId() { return contactPointId; }
 
     public List<String> messageIds() {
         return messageIds;
     }
+
 }

@@ -108,9 +108,22 @@ public class WeComViewerController {
             @RequestHeader(VIEWER_TOKEN_HEADER) String viewerToken,
             @Valid @RequestBody WeComViewerSessionRequest request) {
         requireBoundActor(viewerToken);
+        if (request.targetType() == null || request.targetType().isBlank() || request.targetId() == null) {
+            if (request.contactPointId() == null || request.contactPointId().isBlank()) {
+                throw new WeComException("WECOM_VIEWER_REQUEST_INVALID", 400, "企业微信展示目标不能为空");
+            }
+            return config.localDevMode()
+                    ? requireLocal().createSession(request.contactPointId(), viewerToken, request.messageIds())
+                    : requireViewer().createViewerSession(request.contactPointId(), viewerToken, request.messageIds());
+        }
+        String targetType = request.targetType().trim().toUpperCase(Locale.ROOT);
+        if (!targetType.equals("CONTACT") && !targetType.equals("WECOM_GROUP")) {
+            throw new WeComException("WECOM_VIEWER_REQUEST_INVALID", 400, "企业微信展示目标类型无效");
+        }
         return config.localDevMode()
-                ? requireLocal().createSession(request.contactPointId(), viewerToken, request.messageIds())
-                : requireViewer().createViewerSession(request.contactPointId(), viewerToken, request.messageIds());
+                ? requireLocal().createSession("wecom:" + request.targetId(), viewerToken, request.messageIds())
+                : requireViewer().createViewerSession(SecurityUtil.currentUserId(), targetType,
+                request.targetId(), viewerToken, request.messageIds());
     }
 
     @GetMapping("/conversation-view/sessions/{viewerSessionId}")
@@ -130,7 +143,12 @@ public class WeComViewerController {
         if (config.localDevMode()) {
             requireLocal().recordClientEvent(request.eventType(), request.viewerSessionId(), viewerToken);
         } else {
-            requireViewer().recordClientEvent(request.eventType(), request.viewerSessionId(), viewerToken);
+            if (request.eventKey() == null) {
+                requireViewer().recordClientEvent(request.eventType(), request.viewerSessionId(), viewerToken);
+            } else {
+                requireViewer().recordClientEvent(request.eventType(), request.eventKey(), request.stage(),
+                        request.generation(), request.viewerSessionId(), request.errorCategory(), viewerToken);
+            }
         }
     }
 

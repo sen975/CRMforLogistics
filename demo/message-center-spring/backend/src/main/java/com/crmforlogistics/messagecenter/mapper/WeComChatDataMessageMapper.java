@@ -139,6 +139,49 @@ public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMess
             @Param("wecomUserId") String wecomUserId);
 
     @Select("""
+            SELECT DISTINCT m.*
+            FROM wecom_chatdata_messages m
+            JOIN wecom_source_conversations sc ON sc.id = m.source_conversation_id
+            JOIN wecom_installations wi ON wi.id = sc.installation_id
+            JOIN wecom_user_bindings binding ON binding.user_id = #{crmUserId}::uuid
+              AND binding.suite_id = wi.suite_id AND binding.auth_corp_id = wi.auth_corp_id
+            JOIN wecom_source_conversation_participants viewer_sp ON viewer_sp.source_conversation_id = sc.id
+              AND viewer_sp.participant_status = 'OBSERVED'
+            JOIN wecom_parties viewer_party ON viewer_party.id = viewer_sp.party_id
+              AND viewer_party.party_type = 'EMPLOYEE'
+              AND viewer_party.provider_party_id = binding.wecom_user_id
+            JOIN contact_identities ci ON ci.contact_id = #{contactId}::uuid
+              AND ci.channel_type = 'wecom' AND ci.deleted_at IS NULL
+            JOIN wecom_source_conversation_participants contact_sp ON contact_sp.source_conversation_id = sc.id
+              AND contact_sp.participant_status = 'OBSERVED'
+            JOIN wecom_parties contact_party ON contact_party.id = contact_sp.party_id
+              AND contact_party.provider_party_id = ci.identity_value
+            WHERE sc.conversation_type = 'DIRECT'
+            ORDER BY m.send_time, m.msgid
+            """)
+    List<WeComChatDataMessageEntity> findViewableByContactTarget(
+            @Param("contactId") UUID contactId, @Param("crmUserId") UUID crmUserId);
+
+    @Select("""
+            SELECT DISTINCT m.*
+            FROM wecom_chatdata_messages m
+            JOIN wecom_source_conversations sc ON sc.id = m.source_conversation_id
+            JOIN wecom_installations wi ON wi.id = sc.installation_id
+            JOIN wecom_user_bindings binding ON binding.user_id = #{crmUserId}::uuid
+              AND binding.suite_id = wi.suite_id AND binding.auth_corp_id = wi.auth_corp_id
+            JOIN wecom_source_conversation_participants viewer_sp ON viewer_sp.source_conversation_id = sc.id
+              AND viewer_sp.participant_status = 'OBSERVED'
+            JOIN wecom_parties viewer_party ON viewer_party.id = viewer_sp.party_id
+              AND viewer_party.party_type = 'EMPLOYEE'
+              AND viewer_party.provider_party_id = binding.wecom_user_id
+            WHERE sc.id = #{sourceConversationId}::uuid AND sc.conversation_type = 'GROUP'
+            ORDER BY m.send_time, m.msgid
+            """)
+    List<WeComChatDataMessageEntity> findViewableByGroupTarget(
+            @Param("sourceConversationId") UUID sourceConversationId,
+            @Param("crmUserId") UUID crmUserId);
+
+    @Select("""
             SELECT count(*) AS message_count,
                    COALESCE(sum(
                        octet_length(COALESCE(msgid, ''))
