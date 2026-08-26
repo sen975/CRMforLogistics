@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceParticipantMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.mockito.ArgumentCaptor;
@@ -16,6 +17,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -156,6 +158,94 @@ class WeComChatDataStoreTest {
         verify(projector, never()).project(any(WeComMessageProjector.WeComProjectedMessage.class));
     }
 
+    @Test
+    void refreshesEmployeeAndExternalProfilesWhenAChatDataMessageCreatesParties() {
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted");
+        when(messages.insertIgnore(any())).thenReturn(1);
+        when(projector.projectDirect(any())).thenReturn(new WeComMessageProjector.ProjectionResult(true));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
+        WeComPartyMapper parties = mock(WeComPartyMapper.class);
+        WeComSourceConversationMapper sourceConversations = mock(WeComSourceConversationMapper.class);
+        WeComSourceParticipantMapper participants = mock(WeComSourceParticipantMapper.class);
+        WeComPartyProfileService profiles = mock(WeComPartyProfileService.class);
+        UUID installationId = UUID.randomUUID();
+        ResolvedInstallation installation = installation(installationId);
+        when(sourceConversations.upsertObserved(eq(installationId), anyString(), eq("DIRECT")))
+                .thenReturn(java.util.UUID.randomUUID());
+        when(parties.upsertObserved(eq(installationId), anyString(), anyString(), anyString()))
+                .thenReturn(java.util.UUID.randomUUID());
+
+        WeComChatDataStore profileAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention,
+                null, new WeComChatDataNormalizer(), parties, sourceConversations, participants, profiles);
+
+        profileAware.publishPage(installation, new WeComChatDataStore.SyncKey(installationId.toString(), 1,
+                "program", "ability", "corp"), "next", List.of(decrypted("profiled", 1, 2)));
+
+        verify(profiles).syncEmployee(eq(installation), eq("employee"), any());
+        verify(profiles).syncExternalContact(eq(installation), eq("external"), any());
+    }
+
+    @Test
+    void refreshesEachObservedPartyOnlyOncePerPage() {
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted");
+        when(messages.insertIgnore(any())).thenReturn(1);
+        when(projector.projectDirect(any())).thenReturn(new WeComMessageProjector.ProjectionResult(true));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
+        WeComPartyMapper parties = mock(WeComPartyMapper.class);
+        WeComSourceConversationMapper sourceConversations = mock(WeComSourceConversationMapper.class);
+        WeComSourceParticipantMapper participants = mock(WeComSourceParticipantMapper.class);
+        WeComPartyProfileService profiles = mock(WeComPartyProfileService.class);
+        UUID installationId = UUID.randomUUID();
+        ResolvedInstallation installation = installation(installationId);
+        when(sourceConversations.upsertObserved(eq(installationId), anyString(), eq("DIRECT")))
+                .thenReturn(UUID.randomUUID());
+        when(parties.upsertObserved(eq(installationId), anyString(), anyString(), anyString()))
+                .thenReturn(UUID.randomUUID());
+        WeComChatDataStore profileAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention,
+                null, new WeComChatDataNormalizer(), parties, sourceConversations, participants, profiles);
+
+        profileAware.publishPage(installation, new WeComChatDataStore.SyncKey(installationId.toString(), 1,
+                "program", "ability", "corp"), "next", List.of(
+                decrypted("first", 1, 2), decrypted("second", 1, 2)));
+
+        verify(profiles).syncEmployee(eq(installation), eq("employee"), any());
+        verify(profiles).syncExternalContact(eq(installation), eq("external"), any());
+        verify(profiles, org.mockito.Mockito.times(1)).syncEmployee(any(), anyString(), any());
+        verify(profiles, org.mockito.Mockito.times(1)).syncExternalContact(any(), anyString(), any());
+    }
+
+    @Test
+    void skipsRobotProfileRefreshAndAdvancesCursorWhenProfileRefreshFails() {
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted");
+        when(messages.insertIgnore(any())).thenReturn(1);
+        when(projector.projectGroup(any())).thenReturn(new WeComMessageProjector.ProjectionResult(true));
+        when(retention.enforce()).thenReturn(new WeComChatDataRetention.RetentionResult(0, true));
+        WeComPartyMapper parties = mock(WeComPartyMapper.class);
+        WeComSourceConversationMapper sourceConversations = mock(WeComSourceConversationMapper.class);
+        WeComSourceParticipantMapper participants = mock(WeComSourceParticipantMapper.class);
+        WeComPartyProfileService profiles = mock(WeComPartyProfileService.class);
+        UUID installationId = UUID.randomUUID();
+        ResolvedInstallation installation = installation(installationId);
+        when(sourceConversations.upsertObserved(eq(installationId), anyString(), eq("GROUP")))
+                .thenReturn(UUID.randomUUID());
+        when(parties.upsertObserved(eq(installationId), anyString(), anyString(), anyString()))
+                .thenReturn(UUID.randomUUID());
+        doThrow(new IllegalStateException("directory unavailable"))
+                .when(profiles).syncEmployee(eq(installation), eq("employee"), any());
+        WeComChatDataStore profileAware = new WeComChatDataStore(
+                messages, cursors, protector, projector, events, retention,
+                null, new WeComChatDataNormalizer(), parties, sourceConversations, participants, profiles);
+
+        profileAware.publishPage(installation, new WeComChatDataStore.SyncKey(installationId.toString(), 1,
+                "program", "ability", "corp"), "next", List.of(groupMessage("robot-group", 3, "robot")));
+
+        verify(profiles, never()).syncEmployee(any(), eq("robot"), any());
+        verify(profiles, never()).syncExternalContact(any(), eq("robot"), any());
+        verify(cursors).upsert(anyString(), eq("next"));
+    }
+
 
     private static WeComChatDataStore.SyncKey key() {
         return new WeComChatDataStore.SyncKey(java.util.UUID.randomUUID().toString(), 1,
@@ -170,5 +260,17 @@ class WeComChatDataStoreTest {
                 List.of(new WeComChatDataGateway.Party(
                         receiverType, receiverType == 1 ? "employee" : "external")),
                 "", 100L, 1, "encrypted-key", 1), "secret");
+    }
+
+    private static WeComChatDataStore.DecryptedMessage groupMessage(String messageId, int senderType,
+                                                                      String senderId) {
+        return new WeComChatDataStore.DecryptedMessage(new WeComChatDataGateway.EncryptedMessage(
+                messageId, new WeComChatDataGateway.Party(senderType, senderId),
+                List.of(new WeComChatDataGateway.Party(1, "employee")), "chat-1", 100L, 1,
+                "encrypted-key", 1), "secret");
+    }
+
+    private static ResolvedInstallation installation(UUID installationId) {
+        return new ResolvedInstallation(installationId.toString(), "suite", "corp", "agent", "permanent", 1L);
     }
 }

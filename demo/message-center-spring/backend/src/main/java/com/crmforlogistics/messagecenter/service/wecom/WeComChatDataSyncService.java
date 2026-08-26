@@ -93,7 +93,7 @@ public class WeComChatDataSyncService {
                     ensureRemaining(deadline);
                 }
                 ensureRemaining(deadline);
-                WeComChatDataStore.PublishResult published = store.publishPage(key, page.nextCursor(),
+                WeComChatDataStore.PublishResult published = store.publishPage(installation, key, page.nextCursor(),
                         List.copyOf(decrypted));
                 ensureRemaining(deadline);
                 stored += published.stored();

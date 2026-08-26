@@ -18,16 +18,21 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -46,6 +51,8 @@ public class WeComChatDataStore {
     private final WeComPartyMapper partyMapper;
     private final WeComSourceConversationMapper sourceConversationMapper;
     private final WeComSourceParticipantMapper participantMapper;
+    private final WeComPartyProfileService profiles;
+    private final PlatformTransactionManager transactionManager;
 
     @Autowired
     public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -58,7 +65,9 @@ public class WeComChatDataStore {
                               WeComChatDataNormalizer normalizer,
                               WeComPartyMapper partyMapper,
                               WeComSourceConversationMapper sourceConversationMapper,
-                              WeComSourceParticipantMapper participantMapper) {
+                              WeComSourceParticipantMapper participantMapper,
+                              WeComPartyProfileService profiles,
+                              PlatformTransactionManager transactionManager) {
         this.messageMapper = messageMapper;
         this.cursorMapper = cursorMapper;
         this.credentialProtector = credentialProtector;
@@ -70,6 +79,8 @@ public class WeComChatDataStore {
         this.partyMapper = partyMapper;
         this.sourceConversationMapper = sourceConversationMapper;
         this.participantMapper = participantMapper;
+        this.profiles = profiles;
+        this.transactionManager = transactionManager;
     }
 
     WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -78,7 +89,22 @@ public class WeComChatDataStore {
                        WeComMessageProjector projector,
                        EventHub eventHub) {
         this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, null, null,
-                null, null, null, null);
+                null, null, null, null, null);
+    }
+
+    WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
+                       WeComChatDataCursorMapper cursorMapper,
+                       WeComCredentialProtector credentialProtector,
+                       WeComMessageProjector projector,
+                       EventHub eventHub,
+                       WeComChatDataRetention retention,
+                       WeComChatDataIngestFailureMapper failureMapper,
+                       WeComChatDataNormalizer normalizer,
+                       WeComPartyMapper partyMapper,
+                       WeComSourceConversationMapper sourceConversationMapper,
+                       WeComSourceParticipantMapper participantMapper) {
+        this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, retention, failureMapper,
+                normalizer, partyMapper, sourceConversationMapper, participantMapper, null, null);
     }
 
     WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -88,7 +114,7 @@ public class WeComChatDataStore {
                        EventHub eventHub,
                        WeComChatDataRetention retention) {
         this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, retention, null,
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -99,7 +125,23 @@ public class WeComChatDataStore {
                        WeComChatDataRetention retention,
                        WeComChatDataIngestFailureMapper failureMapper) {
         this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, retention, failureMapper,
-                null, null, null, null);
+                null, null, null, null, null);
+    }
+
+    WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
+                       WeComChatDataCursorMapper cursorMapper,
+                       WeComCredentialProtector credentialProtector,
+                       WeComMessageProjector projector,
+                       EventHub eventHub,
+                       WeComChatDataRetention retention,
+                       WeComChatDataIngestFailureMapper failureMapper,
+                       WeComChatDataNormalizer normalizer,
+                       WeComPartyMapper partyMapper,
+                       WeComSourceConversationMapper sourceConversationMapper,
+                       WeComSourceParticipantMapper participantMapper,
+                       WeComPartyProfileService profiles) {
+        this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, retention, failureMapper,
+                normalizer, partyMapper, sourceConversationMapper, participantMapper, profiles, null);
     }
 
     public String cursor(SyncKey key) throws WeComChatDataException {
@@ -117,8 +159,21 @@ public class WeComChatDataStore {
     public PublishResult publishPage(SyncKey key, String nextCursor,
                                      List<DecryptedMessage> decrypted)
             throws WeComChatDataException {
+        return publishPage(null, key, nextCursor, decrypted);
+    }
+
+    /**
+     * Stores ChatData with the resolved installation that owns its upstream credentials. The
+     * installation is deliberately passed from the sync boundary instead of reconstructed from a
+     * cursor key, because suite, agent and permanent-code fields are required by profile APIs.
+     */
+    @Transactional
+    public PublishResult publishPage(ResolvedInstallation installation, SyncKey key, String nextCursor,
+                                     List<DecryptedMessage> decrypted)
+            throws WeComChatDataException {
         try {
             requireKey(key);
+            requireInstallationMatchesKey(installation, key);
             if (nextCursor == null || nextCursor.length() > 128 || decrypted == null || decrypted.size() > 200) {
                 throw new IllegalArgumentException("page invalid");
             }
@@ -126,13 +181,14 @@ public class WeComChatDataStore {
             int duplicates = 0;
             int failed = 0;
             boolean projected = false;
+            Set<WeComChatDataNormalizer.PartyRef> profileTargets = new LinkedHashSet<>();
             for (DecryptedMessage item : decrypted) {
-                if (publishNormalizedGroup(key, item)) {
+                if (publishNormalizedGroup(installation, key, item, profileTargets)) {
                     stored++;
                     projected = true;
                     continue;
                 }
-                if (publishNormalizedDirect(key, item)) {
+                if (publishNormalizedDirect(installation, key, item, profileTargets)) {
                     stored++;
                     projected = true;
                     continue;
@@ -166,7 +222,7 @@ public class WeComChatDataStore {
                 projected |= result.inserted();
             }
             cursorMapper.upsert(keyField(key), nextCursor);
-            runAfterCommit(projected);
+            runAfterCommit(projected, installation, profileTargets);
             return new PublishResult(stored, duplicates + failed, failed, duplicates);
         } catch (WeComChatDataException exception) {
             throw exception;
@@ -175,15 +231,16 @@ public class WeComChatDataStore {
         }
     }
 
-    private boolean publishNormalizedGroup(SyncKey key, DecryptedMessage item) {
+    private boolean publishNormalizedGroup(ResolvedInstallation installation, SyncKey key, DecryptedMessage item,
+                                           Set<WeComChatDataNormalizer.PartyRef> profileTargets) {
         if (normalizer == null || partyMapper == null || sourceConversationMapper == null
                 || participantMapper == null || item == null || item.message() == null
                 || item.message().chatId() == null || item.message().chatId().isBlank()) return false;
         UUID installationId = parseUuid(key.installationId());
         if (installationId == null) return false;
-        ResolvedInstallation installation = new ResolvedInstallation(key.installationId(), "", key.authCorpId(), "", "", key.version());
+        ResolvedInstallation normalizedInstallation = installationForNormalization(installation, key);
         WeComChatDataNormalizer.NormalizedWeComMessage normalized = normalizer.normalize(
-                installation, item.message(), item.secretKey());
+                normalizedInstallation, item.message(), item.secretKey());
         UUID sourceId = sourceConversationMapper.upsertObserved(installationId,
                 normalized.providerConversationKey(), normalized.conversationType());
         UUID senderId = partyMapper.upsertObserved(installationId, normalized.sender().partyType(),
@@ -207,6 +264,8 @@ public class WeComChatDataStore {
         entity.setMsgtype(Integer.toString(normalized.msgType()));
         entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("group");
+        profileTargets.add(normalized.sender());
+        profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
         if ("GROUP".equals(normalized.conversationType())) {
             projector.projectGroup(new WeComMessageProjector.WeComProjectedGroupMessage(
@@ -221,16 +280,16 @@ public class WeComChatDataStore {
         return true;
     }
 
-    private boolean publishNormalizedDirect(SyncKey key, DecryptedMessage item) {
+    private boolean publishNormalizedDirect(ResolvedInstallation installation, SyncKey key, DecryptedMessage item,
+                                            Set<WeComChatDataNormalizer.PartyRef> profileTargets) {
         if (normalizer == null || partyMapper == null || sourceConversationMapper == null
                 || participantMapper == null || item == null || item.message() == null
                 || item.message().chatId() != null && !item.message().chatId().isBlank()) return false;
         UUID installationId = parseUuid(key.installationId());
         if (installationId == null) return false;
-        ResolvedInstallation installation = new ResolvedInstallation(key.installationId(), "",
-                key.authCorpId(), "", "", key.version());
+        ResolvedInstallation normalizedInstallation = installationForNormalization(installation, key);
         WeComChatDataNormalizer.NormalizedWeComMessage normalized = normalizer.normalize(
-                installation, item.message(), item.secretKey());
+                normalizedInstallation, item.message(), item.secretKey());
         if (!"DIRECT".equals(normalized.conversationType()) || normalized.contactParty() == null) return false;
         UUID sourceId = sourceConversationMapper.upsertObserved(installationId,
                 normalized.providerConversationKey(), normalized.conversationType());
@@ -257,6 +316,8 @@ public class WeComChatDataStore {
         entity.setMsgtype(Integer.toString(normalized.msgType()));
         entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("direct");
+        profileTargets.add(normalized.sender());
+        profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
         projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
                 normalized.msgid(), sourceId, installationId, normalized.authCorpId(),
@@ -265,20 +326,23 @@ public class WeComChatDataStore {
         return true;
     }
 
-    private void runAfterCommit(boolean publishMessageEvent) {
+    private void runAfterCommit(boolean publishMessageEvent, ResolvedInstallation installation,
+                                Set<WeComChatDataNormalizer.PartyRef> profileTargets) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            afterCommit(publishMessageEvent);
+            afterCommit(publishMessageEvent, installation, profileTargets);
             return;
         }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                WeComChatDataStore.this.afterCommit(publishMessageEvent);
+                WeComChatDataStore.this.afterCommit(publishMessageEvent, installation, profileTargets);
             }
         });
     }
 
-    private void afterCommit(boolean publishMessageEvent) {
+    private void afterCommit(boolean publishMessageEvent, ResolvedInstallation installation,
+                             Set<WeComChatDataNormalizer.PartyRef> profileTargets) {
+        refreshProfiles(installation, profileTargets);
         if (retention != null) {
             try {
                 WeComChatDataRetention.RetentionResult result = retention.enforce();
@@ -290,6 +354,36 @@ public class WeComChatDataStore {
             }
         }
         if (publishMessageEvent) eventHub.publish("message-new", "{}");
+    }
+
+    private void refreshProfiles(ResolvedInstallation installation,
+                                 Set<WeComChatDataNormalizer.PartyRef> profileTargets) {
+        if (installation == null || profiles == null || profileTargets == null || profileTargets.isEmpty()) return;
+        Runnable refresh = () -> profileTargets.forEach(target -> refreshProfile(installation, target));
+        if (transactionManager == null) {
+            refresh.run();
+            return;
+        }
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(ignored -> refresh.run());
+        } catch (RuntimeException failure) {
+            log.warn("WeCom chatdata profile refresh transaction failed after page commit: {}",
+                    failure.getClass().getSimpleName());
+        }
+    }
+
+    private void refreshProfile(ResolvedInstallation installation, WeComChatDataNormalizer.PartyRef target) {
+        if (target == null) return;
+        try {
+            if ("EMPLOYEE".equals(target.partyType())) {
+                profiles.syncEmployee(installation, target.providerPartyId(), Duration.ofSeconds(2));
+            } else if ("EXTERNAL_CONTACT".equals(target.partyType())) {
+                profiles.syncExternalContact(installation, target.providerPartyId(), Duration.ofSeconds(2));
+            }
+        } catch (RuntimeException failure) {
+            log.warn("WeCom chatdata profile refresh failed after page commit: type={}, error={}",
+                    target.partyType(), failure.getClass().getSimpleName());
+        }
     }
 
     public List<StoredMessageReference> load(Instant fromInclusive, Instant toExclusive)
@@ -305,7 +399,8 @@ public class WeComChatDataStore {
                 result.add(new StoredMessageReference(entity.getMsgid(),
                         credentialProtector.revealSecretKey(entity.getSecretKey()),
                         entity.getExternalUserid(), entity.getUserid(), entity.getSendTime(),
-                        entity.getMsgtype()));
+                        entity.getMsgtype(), entity.getSourceConversationId(),
+                        entity.getConversationType()));
             }
             return List.copyOf(result);
         } catch (WeComChatDataException exception) {
@@ -337,6 +432,22 @@ public class WeComChatDataStore {
         String direction = message.sender().type() == 1 ? "outbound" : "inbound";
         return new Candidate(message.msgid(), decrypted.secretKey(), externalUserId, userId,
                 message.sendTime(), Integer.toString(message.msgType()), direction);
+    }
+
+    private static ResolvedInstallation installationForNormalization(ResolvedInstallation installation,
+                                                                      SyncKey key) {
+        return installation != null ? installation
+                : new ResolvedInstallation(key.installationId(), "", key.authCorpId(), "", "", key.version());
+    }
+
+    private static void requireInstallationMatchesKey(ResolvedInstallation installation, SyncKey key) {
+        if (installation == null) return;
+        if (!key.installationId().equals(installation.installationId()) || key.version() != installation.version()
+                || !bounded(installation.suiteId(), 256) || !bounded(installation.agentId(), 256)
+                || !bounded(installation.permanentCode(), 4096)
+                || !key.authCorpId().isBlank() && !key.authCorpId().equals(installation.authCorpId())) {
+            throw new IllegalArgumentException("resolved installation does not match sync key");
+        }
     }
 
     private void persistFailure(SyncKey key, String nextCursor, DecryptedMessage item,
@@ -436,7 +547,8 @@ public class WeComChatDataStore {
         }
     }
     public record StoredMessageReference(String msgid, String secretKey, String externalUserId,
-                                         String userId, long sendTime, String msgType) {}
+                                         String userId, long sendTime, String msgType,
+                                         UUID sourceConversationId, String conversationType) {}
 
     private record Candidate(String msgid, String secretKey, String externalUserId, String userId,
                              long sendTime, String msgType, String direction) {}

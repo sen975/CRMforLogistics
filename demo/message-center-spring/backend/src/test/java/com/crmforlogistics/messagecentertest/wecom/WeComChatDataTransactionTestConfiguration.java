@@ -101,7 +101,7 @@ public class WeComChatDataTransactionTestConfiguration {
                              WeComMessageProjector projector,
                              EventHub events) {
         return new WeComChatDataStore(
-                messages, cursors, protector, projector, events, null, null, null, null, null, null);
+                messages, cursors, protector, projector, events, null, null, null, null, null, null, null, null);
     }
 
     private static <T> MapperFactoryBean<T> mapper(SqlSessionFactory factory, Class<T> type) {
