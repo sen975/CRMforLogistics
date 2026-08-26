@@ -52,7 +52,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
             or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))
           )
           left join messages m on m.conversation_id = cv.id
-          where c.deleted_at is null and c.status <> 'merged'
+          where c.deleted_at is null and c.status &lt;&gt; 'merged'
             and (
               exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = #{userId}::uuid and r.code = 'admin')
               or c.created_by = #{userId}::uuid
