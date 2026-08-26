@@ -130,6 +130,33 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         }
     }
 
+    @Select("""
+        select sc.id as source_conversation_id, sc.installation_id, sc.provider_conversation_key,
+               sc.display_name, sc.avatar_url, sc.conversation_type, cv.id as conversation_id
+        from wecom_source_conversations sc
+        join conversations cv on cv.source_conversation_id = sc.id
+        join wecom_installations wi on wi.id = sc.installation_id
+        join wecom_user_bindings binding on binding.user_id = #{userId}::uuid
+          and binding.suite_id = wi.suite_id and binding.auth_corp_id = wi.auth_corp_id
+        join wecom_source_conversation_participants viewer_sp
+          on viewer_sp.source_conversation_id = sc.id and viewer_sp.participant_status = 'OBSERVED'
+        join wecom_parties viewer_party on viewer_party.id = viewer_sp.party_id
+          and viewer_party.party_type = 'EMPLOYEE' and viewer_party.provider_party_id = binding.wecom_user_id
+        where sc.id = #{sourceConversationId}::uuid and sc.conversation_type = 'GROUP'
+          and (cv.assigned_user_id is null and cv.assigned_team_id is null
+            or cv.assigned_user_id = #{userId}::uuid
+            or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid)
+            or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())))
+        limit 1
+        """)
+    WeComSourceConversationAccessRow findAccessibleWeComGroup(@Param("userId") UUID userId,
+                                                               @Param("sourceConversationId") UUID sourceConversationId);
+
+    record WeComSourceConversationAccessRow(UUID sourceConversationId, UUID installationId,
+                                            String providerConversationKey, String displayName,
+                                            String avatarUrl, String conversationType,
+                                            UUID conversationId) {}
+
     @Select("insert into conversations (id, channel_account_id, contact_identity_id, source_conversation_id) "
         + "values (gen_random_uuid(), #{channelAccountId}::uuid, null, #{sourceConversationId}::uuid) "
         + "on conflict (channel_account_id, source_conversation_id) "

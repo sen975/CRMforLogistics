@@ -1,6 +1,8 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.response.ThreadResponse;
+import com.crmforlogistics.messagecenter.dto.response.WeComGroupThreadResponse;
+import com.crmforlogistics.messagecenter.dto.response.WeComThreadResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.message.ThreadService;
 import org.springframework.web.bind.annotation.*;
@@ -24,5 +26,23 @@ public class ThreadController {
             @RequestParam(defaultValue = "10") int limit) {
         return threadService.threadPage(
                 SecurityUtil.currentUserId(), contactId, channelType, cursor, limit);
+    }
+
+    @GetMapping("/threads/wecom/contact/{contactId}")
+    public WeComThreadResponse listWeComContactThread(
+            @PathVariable UUID contactId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int limit) {
+        return threadService.getContactWeComThread(
+                SecurityUtil.currentUserId(), contactId, cursor, limit);
+    }
+
+    @GetMapping("/threads/wecom/group/{sourceConversationId}")
+    public WeComGroupThreadResponse listWeComGroupThread(
+            @PathVariable UUID sourceConversationId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "20") int limit) {
+        return threadService.getWeComGroupThread(
+                SecurityUtil.currentUserId(), sourceConversationId, cursor, limit);
     }
 }

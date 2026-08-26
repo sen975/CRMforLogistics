@@ -10,9 +10,31 @@ import org.apache.ibatis.annotations.Delete;
 
 import java.util.List;
 import java.util.UUID;
+import com.crmforlogistics.messagecenter.dto.response.WeComPartyView;
 
 @Mapper
 public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMessageEntity> {
+
+    @Select("""
+        select p.id as party_id, p.party_type, p.provider_party_id, p.display_name, p.avatar_url,
+               c.id as contact_id,
+               case when c.id is not null and (c.created_by = #{userId}::uuid
+                 or exists (select 1 from contact_identities ci2 join conversations cv on cv.contact_identity_id = ci2.id
+                   where ci2.contact_id = c.id and (cv.assigned_user_id = #{userId}::uuid
+                     or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid)
+                     or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())))))
+               then true else false end as contact_accessible,
+               case when p.party_type = 'EMPLOYEE' and p.provider_party_id = binding.wecom_user_id then true else false end as current_viewer
+        from wecom_chatdata_messages m
+        join wecom_parties p on p.id = m.sender_party_id
+        join wecom_installations wi on wi.id = m.installation_id
+        join wecom_user_bindings binding on binding.user_id = #{userId}::uuid
+          and binding.suite_id = wi.suite_id and binding.auth_corp_id = wi.auth_corp_id
+        left join contact_identities ci on ci.channel_type = 'wecom' and ci.identity_value = p.provider_party_id and ci.deleted_at is null
+        left join contacts c on c.id = ci.contact_id and c.deleted_at is null and c.status <> 'merged'
+        where m.msgid = #{msgid} limit 1
+        """)
+    WeComPartyView findMessageSenderView(@Param("msgid") String msgid, @Param("userId") UUID userId);
 
     @Select("""
             SELECT CASE

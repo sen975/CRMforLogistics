@@ -21,7 +21,8 @@ public record MessageResponse(
         List<MessageAttachmentResponse> attachments,
         UUID sourceConversationId,
         String conversationType,
-        String conversationDisplayName
+        String conversationDisplayName,
+        WeComPartyView sender
 ) {
     public MessageResponse(UUID id,
                            String sourceId,
@@ -38,7 +39,7 @@ public record MessageResponse(
                            int ingestSequence,
                            List<MessageAttachmentResponse> attachments) {
         this(id, sourceId, direction, kind, subject, bodyText, bodyHtml, channelType, from, to,
-                occurredAt, status, ingestSequence, attachments, null, null, null);
+                occurredAt, status, ingestSequence, attachments, null, null, null, null);
     }
 
     public MessageResponse(UUID id,
@@ -55,6 +56,28 @@ public record MessageResponse(
                            int ingestSequence,
                            List<MessageAttachmentResponse> attachments) {
         this(id, null, direction, kind, subject, bodyText, bodyHtml, channelType, from, to,
-                occurredAt, status, ingestSequence, attachments, null, null, null);
+                occurredAt, status, ingestSequence, attachments, null, null, null, null);
+    }
+
+    public MessageResponse(UUID id,
+                           String sourceId,
+                           String direction,
+                           String kind,
+                           String subject,
+                           String bodyText,
+                           String bodyHtml,
+                           String channelType,
+                           String from,
+                           String to,
+                           Instant occurredAt,
+                           String status,
+                           int ingestSequence,
+                           List<MessageAttachmentResponse> attachments,
+                           UUID sourceConversationId,
+                           String conversationType,
+                           String conversationDisplayName) {
+        this(id, sourceId, direction, kind, subject, bodyText, bodyHtml, channelType, from, to,
+                occurredAt, status, ingestSequence, attachments, sourceConversationId,
+                conversationType, conversationDisplayName, null);
     }
 }

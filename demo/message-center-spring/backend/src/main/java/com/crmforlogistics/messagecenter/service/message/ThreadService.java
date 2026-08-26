@@ -6,6 +6,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.crmforlogistics.messagecenter.dto.response.MessageResponse;
 import com.crmforlogistics.messagecenter.dto.response.MessageAttachmentResponse;
 import com.crmforlogistics.messagecenter.dto.response.ThreadResponse;
+import com.crmforlogistics.messagecenter.dto.response.WeComGroupThreadResponse;
+import com.crmforlogistics.messagecenter.dto.response.WeComPartyView;
+import com.crmforlogistics.messagecenter.dto.response.WeComThreadResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
@@ -17,6 +20,8 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceParticipantMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
 import com.crmforlogistics.messagecenter.entity.WeComSourceConversationEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -47,6 +52,8 @@ public class ThreadService {
     private final AttachmentMapper attachmentMapper;
     private final WeComSourceConversationMapper weComSourceConversationMapper;
     private final WeComChatDataMessageMapper weComChatDataMessageMapper;
+    private final WeComSourceParticipantMapper weComSourceParticipantMapper;
+    private final WeComPartyMapper weComPartyMapper;
 
     @Autowired
     public ThreadService(ConversationMapper conversationMapper,
@@ -56,7 +63,9 @@ public class ThreadService {
                          TemplateMessageTextResolver templateMessageTextResolver,
                          AttachmentMapper attachmentMapper,
                          WeComSourceConversationMapper weComSourceConversationMapper,
-                         WeComChatDataMessageMapper weComChatDataMessageMapper) {
+                         WeComChatDataMessageMapper weComChatDataMessageMapper,
+                         WeComSourceParticipantMapper weComSourceParticipantMapper,
+                         WeComPartyMapper weComPartyMapper) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.contactIdentityMapper = contactIdentityMapper;
@@ -65,6 +74,8 @@ public class ThreadService {
         this.attachmentMapper = attachmentMapper;
         this.weComSourceConversationMapper = weComSourceConversationMapper;
         this.weComChatDataMessageMapper = weComChatDataMessageMapper;
+        this.weComSourceParticipantMapper = weComSourceParticipantMapper;
+        this.weComPartyMapper = weComPartyMapper;
     }
 
     public ThreadService(ConversationMapper conversationMapper,
@@ -75,6 +86,58 @@ public class ThreadService {
                          AttachmentMapper attachmentMapper) {
         this(conversationMapper, messageMapper, contactIdentityMapper, channelAccountMapper,
                 templateMessageTextResolver, attachmentMapper, null, null);
+    }
+
+    public ThreadService(ConversationMapper conversationMapper,
+                         MessageMapper messageMapper,
+                         ContactIdentityMapper contactIdentityMapper,
+                         ChannelAccountMapper channelAccountMapper,
+                         TemplateMessageTextResolver templateMessageTextResolver,
+                         AttachmentMapper attachmentMapper,
+                         WeComSourceConversationMapper sourceConversations,
+                         WeComChatDataMessageMapper chatDataMessages) {
+        this(conversationMapper, messageMapper, contactIdentityMapper, channelAccountMapper,
+                templateMessageTextResolver, attachmentMapper, sourceConversations, chatDataMessages,
+                null, null);
+    }
+
+    public WeComThreadResponse getContactWeComThread(UUID userId, UUID contactId, String cursor, int limit) {
+        ThreadResponse response = threadPage(userId, contactId, "wecom", cursor, limit);
+        List<UUID> sourceIds = response.items().stream()
+                .map(MessageResponse::sourceConversationId).filter(java.util.Objects::nonNull).distinct().toList();
+        return new WeComThreadResponse(contactId, sourceIds,
+                response.items(), response.nextCursor(), response.messageCount(), response.threadRevision());
+    }
+
+    public WeComGroupThreadResponse getWeComGroupThread(UUID userId, UUID sourceConversationId,
+                                                         String cursor, int limit) {
+        if (weComSourceParticipantMapper == null || weComChatDataMessageMapper == null) {
+            throw new IllegalStateException("WECOM_THREAD_PROJECTION_UNAVAILABLE");
+        }
+        ConversationMapper.WeComSourceConversationAccessRow source =
+                conversationMapper.findAccessibleWeComGroup(userId, sourceConversationId);
+        if (source == null) throw new IllegalArgumentException("WECOM_GROUP_NOT_ACCESSIBLE");
+        Page<MessageEntity> page = new Page<>(1, clampLimit(limit) + 1, false);
+        IPage<MessageEntity> result = messageMapper.listMessagesByConversations(
+                page, List.of(source.conversationId()), userId, decodeCursor(cursor).beforeCursor,
+                decodeCursor(cursor).beforeId, true);
+        List<MessageEntity> fetched = result.getRecords();
+        boolean hasMore = fetched.size() > clampLimit(limit);
+        List<MessageEntity> items = new ArrayList<>(fetched.subList(0, Math.min(clampLimit(limit), fetched.size())));
+        java.util.Collections.reverse(items);
+        ChannelAccountEntity account = channelAccountMapper.selectOne(
+                new LambdaQueryWrapper<ChannelAccountEntity>().eq(ChannelAccountEntity::getChannelType, "wecom")
+                        .eq(ChannelAccountEntity::getAuthStatus, "active").isNull(ChannelAccountEntity::getDeletedAt));
+        List<MessageResponse> responses = items.stream()
+                .map(item -> toSourceMessageResponse(item, account, userId, attachmentMapper.listReadyByMessageId(item.getId()).stream()
+                        .map(MessageAttachmentResponse::from).toList()))
+                .toList();
+        String next = hasMore && !items.isEmpty()
+                ? encodeCursor(items.get(0).getOccurredAt(), items.get(0).getId()) : null;
+        List<WeComPartyView> participants = weComSourceParticipantMapper.listPartyViews(sourceConversationId, userId);
+        return new WeComGroupThreadResponse(sourceConversationId, source.providerConversationKey(),
+                source.displayName(), source.avatarUrl(), null, participants, responses, next,
+                responses.size(), "");
     }
 
     public ThreadResponse threadPage(UUID userId, UUID contactId, String channelType,
@@ -228,7 +291,13 @@ public class ThreadService {
                 entity.getOccurredAt(),
                 entity.getCurrentStatus(),
                 entity.getIngestSequence() != null ? entity.getIngestSequence().intValue() : 0,
-                attachments
+                attachments,
+                null,
+                null,
+                null,
+                "wecom".equalsIgnoreCase(channelType) && weComChatDataMessageMapper != null
+                        ? weComChatDataMessageMapper.findMessageSenderView(entity.getProviderMessageId(), userId)
+                        : null
         );
     }
 
@@ -252,12 +321,14 @@ public class ThreadService {
             }
         }
         String direction = directionForViewer(entity, account.getChannelType(), userId);
+        WeComPartyView sender = weComChatDataMessageMapper == null ? null
+                : weComChatDataMessageMapper.findMessageSenderView(entity.getProviderMessageId(), userId);
         return new MessageResponse(entity.getId(), entity.getProviderMessageId(), direction,
                 entity.getMessageKind(), entity.getSubject(), templateMessageTextResolver.resolve(entity),
                 entity.getBodyHtml(), account.getChannelType(), display, display, entity.getOccurredAt(),
                 entity.getCurrentStatus(), entity.getIngestSequence() != null
                 ? entity.getIngestSequence().intValue() : 0, attachments,
-                sourceConversationId, conversationType, conversationDisplayName);
+                sourceConversationId, conversationType, conversationDisplayName, sender);
     }
 
     private String directionForViewer(MessageEntity entity, String channelType, UUID userId) {
@@ -277,6 +348,7 @@ public class ThreadService {
     }
 
     private static String channelAccountName(ChannelAccountEntity channelAccount) {
+        if (channelAccount == null) return "企业微信";
         String name = channelAccount.getName();
         return name != null && !name.isBlank() ? name : channelAccount.getAccountIdentifier();
     }
