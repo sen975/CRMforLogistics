@@ -1,6 +1,7 @@
 import client from './client';
 import type {
   ContactResponse,
+  ConversationPage,
   LoginRequest,
   LoginResponse,
   MyBatisPage,
@@ -313,6 +314,15 @@ export async function fetchContacts(params?: {
   channelAccountId?: string;
 }): Promise<MyBatisPage<ContactResponse>> {
   const res = await client.get<MyBatisPage<ContactResponse>>('/contacts', { params });
+  return res.data;
+}
+
+export async function listConversations(params?: {
+  search?: string;
+  cursor?: string;
+  limit?: number;
+}): Promise<ConversationPage> {
+  const res = await client.get<ConversationPage>('/conversations', { params });
   return res.data;
 }
 

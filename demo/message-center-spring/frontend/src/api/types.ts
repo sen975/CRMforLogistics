@@ -18,6 +18,42 @@ export interface ContactResponse {
   identities: ContactIdentityResponse[];
 }
 
+export interface ContactConversationItem {
+  type: 'CONTACT';
+  id: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  channelTypes: string[];
+  lastMessageAt: string | null;
+  lastText: string;
+  messageCount: number;
+  unreadCount: number;
+}
+
+export interface WeComGroupConversationItem {
+  type: 'WECOM_GROUP';
+  id: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  channelTypes: string[];
+  lastMessageAt: string | null;
+  lastText: string;
+  messageCount: number;
+  unreadCount: number;
+  providerConversationKey: string | null;
+  participantCount: number;
+}
+
+export type ConversationListItem = ContactConversationItem | WeComGroupConversationItem;
+
+export interface ConversationPage {
+  records: ConversationListItem[];
+  total: number;
+  size: number;
+  current: number;
+  pages: number;
+}
+
 export interface MessageResponse {
   id: string;
   sourceId?: string | null;

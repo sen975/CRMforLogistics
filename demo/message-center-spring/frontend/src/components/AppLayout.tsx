@@ -42,9 +42,10 @@ function AppLayoutInner() {
   const [contactsOpen, setContactsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
 
-  const isThreadPage = location.pathname.startsWith('/thread/');
+  const isThreadPage = location.pathname.startsWith('/thread/') || location.pathname.startsWith('/conversations/contact/');
+  const isWeComGroupPage = location.pathname.startsWith('/conversations/wecom-group/');
   const isPhoneRepositoryPage = location.pathname === '/phone-repository';
-  const supportsDetailPanel = isThreadPage || isPhoneRepositoryPage;
+  const supportsDetailPanel = isThreadPage || isWeComGroupPage || isPhoneRepositoryPage;
   const detailScope = isThreadPage ? 'thread' : isPhoneRepositoryPage ? 'phone-repository' : 'none';
   const selectedCallRecordId = selectedDetail?.kind === 'callRecord' ? selectedDetail.id : null;
 

@@ -5,6 +5,8 @@ import {
   mergeContacts,
   splitContact,
 } from '../api/endpoints';
+import { listConversations } from '../api/endpoints';
+import type { ConversationListItem } from '../api/types';
 
 interface ContactFilters {
   channelType?: string;
@@ -30,6 +32,17 @@ export function useContacts(
     placeholderData: channelAccountId ? undefined : (prev) => prev,
   });
 }
+
+export function useUnifiedConversations(search?: string, options?: ContactsQueryOptions) {
+  return useQuery({
+    queryKey: ['conversations', search],
+    queryFn: () => listConversations({ search: search || undefined, limit: 50 }),
+    enabled: options?.enabled ?? true,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export type { ConversationListItem };
 
 export function useUpdateContactRemark() {
   const qc = useQueryClient();

@@ -6,12 +6,14 @@ import ContactsPage from './ContactsPage';
 
 const hooks = vi.hoisted(() => ({
   useContacts: vi.fn(),
+  useUnifiedConversations: vi.fn(),
   useMergeContacts: vi.fn(),
   useSse: vi.fn(),
 }));
 
 vi.mock('../hooks/useContacts', () => ({
   useContacts: hooks.useContacts,
+  useUnifiedConversations: hooks.useUnifiedConversations,
   useMergeContacts: hooks.useMergeContacts,
 }));
 vi.mock('../hooks/useSse', () => ({ useSse: hooks.useSse }));
@@ -20,11 +22,12 @@ vi.mock('../components/ContactDetailPanel', () => ({ default: () => <div>详情<
 
 beforeEach(() => {
   hooks.useContacts.mockReturnValue({ data: { records: [], total: 0, current: 1, pages: 1 }, isLoading: false });
+  hooks.useUnifiedConversations.mockReturnValue({ data: { records: [], total: 0, current: 1, pages: 1 }, isLoading: false });
   hooks.useMergeContacts.mockReturnValue({ mutate: vi.fn() });
 });
 
 describe('ContactsPage', () => {
-  it('keeps the normal CRM contacts view unfiltered', () => {
+  it('loads the unified conversation list', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
@@ -35,6 +38,6 @@ describe('ContactsPage', () => {
     );
 
     expect(screen.getByPlaceholderText('搜索联系人、邮箱、号码')).toBeInTheDocument();
-    expect(hooks.useContacts).toHaveBeenCalledWith(undefined);
+    expect(hooks.useUnifiedConversations).toHaveBeenCalledWith(undefined);
   });
 });

@@ -24,7 +24,7 @@ function formatTime(iso: string | null): string {
 }
 
 interface ContactCardProps {
-  contact: ContactResponse;
+  contact: Pick<ContactResponse, 'id' | 'displayName' | 'channelTypes' | 'lastMessageAt' | 'lastText' | 'messageCount' | 'unreadCount'> & { remark?: string };
   isActive: boolean;
   onClick: () => void;
 }

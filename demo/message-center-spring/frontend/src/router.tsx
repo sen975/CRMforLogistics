@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 import { Button, Result, Spin } from 'antd';
 import { AuthProvider } from './hooks/useAuth';
 
@@ -7,6 +7,7 @@ const AppLayout = lazy(() => import('./components/AppLayout'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ThreadPage = lazy(() => import('./pages/ThreadPage'));
+const ConversationWorkspace = lazy(() => import('./pages/ConversationWorkspace'));
 const SendPage = lazy(() => import('./pages/SendPage'));
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage'));
 const ChannelSettingsPage = lazy(() => import('./pages/ChannelSettingsPage'));
@@ -61,6 +62,11 @@ function RouteLoadError() {
   );
 }
 
+function LegacyThreadRedirect() {
+  const { contactId } = useParams();
+  return <Navigate to={`/conversations/contact/${contactId ?? ''}`} replace />;
+}
+
 export const router = createBrowserRouter([
   {
     path: '/login',
@@ -87,7 +93,9 @@ export const router = createBrowserRouter([
     errorElement: <RouteLoadError />,
     children: [
       { index: true, element: <RouteBoundary><HomePage /></RouteBoundary> },
-      { path: 'thread/:contactId', element: <RouteBoundary><ThreadPage /></RouteBoundary> },
+      { path: 'conversations/contact/:contactId', element: <RouteBoundary><ConversationWorkspace /></RouteBoundary> },
+      { path: 'conversations/wecom-group/:sourceConversationId', element: <RouteBoundary><ConversationWorkspace /></RouteBoundary> },
+      { path: 'thread/:contactId', element: <LegacyThreadRedirect /> },
       { path: 'send', element: <RouteBoundary><SendPage /></RouteBoundary> },
       { path: 'broadcasts', element: <RouteBoundary><BroadcastsPage /></RouteBoundary> },
       { path: 'templates', element: <RouteBoundary><TemplatesPage /></RouteBoundary> },
