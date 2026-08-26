@@ -34,6 +34,8 @@ import type {
   WeComViewerSessionResponse,
   WeComInstallationSummary,
   WeComProviderData,
+  WeComThreadResponse,
+  WeComGroupThreadResponse,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -375,6 +377,22 @@ export async function fetchThread(
   const res = await client.get<ThreadResponse>('/threads', {
     params: { contactId, ...params },
   });
+  return res.data;
+}
+
+export async function fetchWeComContactThread(
+  contactId: string,
+  params?: { cursor?: string; limit?: number },
+): Promise<WeComThreadResponse> {
+  const res = await client.get<WeComThreadResponse>(`/threads/wecom/contact/${encodeURIComponent(contactId)}`, { params });
+  return res.data;
+}
+
+export async function fetchWeComGroupThread(
+  sourceConversationId: string,
+  params?: { cursor?: string; limit?: number },
+): Promise<WeComGroupThreadResponse> {
+  const res = await client.get<WeComGroupThreadResponse>(`/threads/wecom/group/${encodeURIComponent(sourceConversationId)}`, { params });
   return res.data;
 }
 

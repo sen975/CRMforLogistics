@@ -72,6 +72,40 @@ export interface MessageResponse {
   status: string;
   ingestSequence: number;
   attachments: MessageAttachmentResponse[];
+  sender?: WeComPartyView | null;
+}
+
+export interface WeComPartyView {
+  partyId: string;
+  partyType: 'EMPLOYEE' | 'EXTERNAL_CONTACT' | 'ROBOT' | string;
+  providerPartyId: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  contactId?: string | null;
+  contactAccessible: boolean;
+  isCurrentViewer: boolean;
+}
+
+export interface WeComThreadResponse {
+  contactId: string;
+  sourceConversationIds: string[];
+  items: MessageResponse[];
+  nextCursor: string | null;
+  messageCount: number;
+  threadRevision: string;
+}
+
+export interface WeComGroupThreadResponse {
+  sourceConversationId: string;
+  providerConversationKey: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  openClientUrl?: string | null;
+  participants: WeComPartyView[];
+  items: MessageResponse[];
+  nextCursor: string | null;
+  messageCount: number;
+  threadRevision: string;
 }
 
 export interface MessageAttachmentResponse {
