@@ -131,7 +131,7 @@ WeComGroupThread
 ```text
 WeComPartyView
   partyId: UUID
-  partyType: EMPLOYEE | EXTERNAL_CONTACT
+  partyType: EMPLOYEE | EXTERNAL_CONTACT | ROBOT
   providerPartyId: string
   displayName: string
   avatarUrl?: string
@@ -143,6 +143,8 @@ WeComPartyView
 群详情的 `participants` 使用同一结构。`displayName` 和 `avatarUrl` 来自 `wecom_parties` 的资料投影；资料不可用时返回结构化不可用状态，UI 可安全回退到脱敏 ID，不伪造昵称。
 
 `contactId` 只有在 party 已映射到真实 CRM 联系人且当前 CRM 用户可访问该联系人时才返回；同时 `contactAccessible=true`。内部员工没有对应 CRM 联系人时只返回姓名和头像，不提供跳转，也不创建联系人。当前登录成员与其他参与者遵守同一访问规则，不由前端增加特殊例外。
+
+群成员资料分为两种来源：客户群详情页可通过已准入的 `externalcontact/groupchat/get` 补全成员快照；该接口不得从通用 ChatData scheduler 对所有 `chatid` 无条件调用。企业内部群没有对应的客户群接口，只能以 ChatData 的 `sender` 和 `receiver_list` 观察到的参与者为准，不能把“未出现在存档消息中的成员”伪造成已知成员。ChatData `sender.type=3` 规范化为 `ROBOT`，机器人消息保留在群源会话中并按非当前成员消息处理，不创建 CRM 联系人。
 
 ## 路由与工作区
 

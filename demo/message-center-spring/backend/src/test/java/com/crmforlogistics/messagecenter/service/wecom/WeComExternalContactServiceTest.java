@@ -5,10 +5,12 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComExternalContactGatew
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import org.junit.jupiter.api.Test;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -57,6 +59,25 @@ class WeComExternalContactServiceTest {
         assertThatThrownBy(() -> fixture.service.groupList(new WeComExternalContactService.GroupListCommand(
                 "corp", 0, List.of("owner"), "", 1001), ACTOR))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void groupMemberSyncReturnsEmployeeAndExternalRosterFromGroupGet() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.gateway.groupGet(eq(INSTALLATION), eq("wr-group"), eq(true), any()))
+                .thenReturn(new ObjectMapper().readTree("""
+                        {"errcode":0,"group_chat":{"chat_id":"wr-group","member_list":[
+                          {"type":1,"userid":"employee-1","name":"员工一","avatar":"https://img/1"},
+                          {"type":2,"external_userid":"external-1","name":"客户一"}]}}
+                        """));
+
+        var result = fixture.service.groupMembersForSync(INSTALLATION, "wr-group");
+
+        assertThat(result.available()).isTrue();
+        assertThat(result.members()).extracting(WeComExternalContactService.GroupMember::partyType)
+                .containsExactly("EMPLOYEE", "EXTERNAL_CONTACT");
+        assertThat(result.members().get(0).displayName()).isEqualTo("员工一");
+        assertThat(result.members().get(0).avatarUrl()).isEqualTo("https://img/1");
     }
 
     private static Fixture fixture() {

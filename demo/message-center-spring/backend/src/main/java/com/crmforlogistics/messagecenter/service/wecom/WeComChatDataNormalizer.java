@@ -36,6 +36,9 @@ public class WeComChatDataNormalizer {
             conversationKey = "group:" + message.chatId();
         } else {
             if (receivers.size() != 1) throw invalid("WECOM_CHATDATA_DIRECT_PARTICIPANTS_INVALID");
+            if ("ROBOT".equals(sender.partyType()) || "ROBOT".equals(receivers.get(0).partyType())) {
+                throw invalid("WECOM_CHATDATA_ROBOT_DIRECT_UNSUPPORTED");
+            }
             type = "DIRECT";
             conversationKey = Stream.concat(Stream.of(sender), receivers.stream())
                     .sorted(Comparator.comparing(PartyRef::stableKey))
@@ -62,6 +65,7 @@ public class WeComChatDataNormalizer {
         String type = switch (party.type()) {
             case 1 -> "EMPLOYEE";
             case 2 -> "EXTERNAL_CONTACT";
+            case 3 -> "ROBOT";
             default -> throw invalid("WECOM_CHATDATA_PARTY_TYPE_UNSUPPORTED");
         };
         return new PartyRef(type, party.id());

@@ -156,6 +156,7 @@ class WeComChatDataStoreTest {
         verify(projector, never()).project(any(WeComMessageProjector.WeComProjectedMessage.class));
     }
 
+
     private static WeComChatDataStore.SyncKey key() {
         return new WeComChatDataStore.SyncKey(java.util.UUID.randomUUID().toString(), 1,
                 "program", "ability");

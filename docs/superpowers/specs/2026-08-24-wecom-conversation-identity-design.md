@@ -301,7 +301,7 @@ CRM 长期保存消息引用和结构化索引，不把企业微信内部消息�
 
 ### 9.1 实现复核结论
 
-- 当前数据库迁移以 `V23__wecom_conversation_identity.sql` 为实现真源，参与者类型使用 `EMPLOYEE`、`EXTERNAL_CONTACT`、`GROUP`；旧文档中的 `MEMBER`/`EXTERNAL` 仅为概念称呼，不得作为 SQL 值。
+- 当前数据库迁移以 `V23__wecom_conversation_identity.sql` 和后续机器人类型迁移为实现真源，参与者类型使用 `EMPLOYEE`、`EXTERNAL_CONTACT`、`ROBOT`、`GROUP`；旧文档中的 `MEMBER`/`EXTERNAL` 仅为概念称呼，不得作为 SQL 值。`ROBOT` 只允许作为 ChatData 群参与者，不得投影为 CRM 联系人。
 - 成员发现入口已经固定为 `department/list -> user/simplelist -> user/get`，并提供管理员触发的资料同步入口；生产代码不得重新引入 `user/list_id`。
 - 企业微信 JSAPI ticket 只允许接收 `ResolvedInstallation` 的 gateway 方法；无安装实例的旧 ticket/login 接口不再作为运行时回退。
 - 受限群消息先写入源会话和失败事实，再决定是否推进游标；群会话不创建 `contact_identity_id`。
@@ -369,7 +369,7 @@ viewer session 创建请求改为：
 - 群名不可得：根据已知成员昵称生成“张三、李四等 5 人”，并标记来源为 `DERIVED`。
 - 成员资料不可得：显示成员 ID，消息同步和引用保存继续执行。
 - 企业名称不可得：绑定保持有效，显示“企业名称待同步”。
-- 未知参与者类型或异常接收者结构：写入 ingest failure；错误事实保存失败时回滚当前页事务，游标不得推进。
+- 未知参与者类型或异常接收者结构：写入 ingest failure；ChatData `sender.type=3` 已规范化为 `ROBOT`，不再作为未知类型丢弃。错误事实保存失败时回滚当前页事务，游标不得推进。
 
 ## 13. 测试与验收门禁
 

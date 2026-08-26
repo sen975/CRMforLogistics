@@ -56,6 +56,18 @@ class WeComChatDataNormalizerTest {
     }
 
     @Test
+    void normalizesRobotPartyAsGroupParticipantInsteadOfRejectingTheMessage() {
+        var result = normalizer.normalize(installation,
+                new WeComChatDataGateway.EncryptedMessage("m-robot",
+                        new WeComChatDataGateway.Party(3, "robot-id"),
+                        List.of(new WeComChatDataGateway.Party(1, "employee")),
+                        "wr-group", 10L, 1, "key", 1), "secret");
+
+        assertThat(result.sender().partyType()).isEqualTo("ROBOT");
+        assertThat(result.conversationType()).isEqualTo("GROUP");
+    }
+
+    @Test
     void rejectsMissingReceiverAndUnsupportedPartyTypeAsStructuredErrors() {
         assertThatThrownBy(() -> normalizer.normalize(installation,
                 new WeComChatDataGateway.EncryptedMessage("m3",
@@ -67,5 +79,11 @@ class WeComChatDataNormalizerTest {
                         new WeComChatDataGateway.Party(9, "unknown"), List.of(new WeComChatDataGateway.Party(1, "member")), "", 10L, 1, "key", 1), "secret"))
                 .isInstanceOf(WeComChatDataException.class)
                 .extracting("code").isEqualTo("WECOM_CHATDATA_PARTY_TYPE_UNSUPPORTED");
+        assertThatThrownBy(() -> normalizer.normalize(installation,
+                new WeComChatDataGateway.EncryptedMessage("m-robot-direct",
+                        new WeComChatDataGateway.Party(3, "robot"),
+                        List.of(new WeComChatDataGateway.Party(1, "employee")), "", 10L, 1, "key", 1), "secret"))
+                .isInstanceOf(WeComChatDataException.class)
+                .extracting("code").isEqualTo("WECOM_CHATDATA_ROBOT_DIRECT_UNSUPPORTED");
     }
 }
