@@ -2,6 +2,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { Button, Empty, Flex, Typography, theme } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import type { MessageResponse } from '../../api/types';
+import type { WeComViewerTarget } from '../../api/types';
 import type { WeComViewerHandle } from '../../hooks/useWeComViewer';
 import { WeComConversationFrame } from './WeComConversationFrame';
 import { WeComConversationSelector, type WeComConversationOption } from './WeComConversationSelector';
@@ -13,11 +14,15 @@ export function WeComConversationPanel({
   items,
   viewer,
   conversations,
+  target,
+  openClientUrl,
 }: {
   contactPointId: string;
   items: MessageResponse[];
   viewer: WeComViewerHandle;
   conversations?: Array<WeComConversationOption & { contactPointId: string; items: MessageResponse[] }>;
+  target?: WeComViewerTarget;
+  openClientUrl?: string | null;
 }) {
   const { token } = theme.useToken();
   const [reloadKey, setReloadKey] = useState(0);
@@ -38,7 +43,7 @@ export function WeComConversationPanel({
   const identityValue = contactPointId.startsWith('wecom:')
     ? contactPointId.slice('wecom:'.length)
     : contactPointId;
-  const openClientUrl = `wxwork://message?username=${encodeURIComponent(identityValue)}`;
+  const effectiveOpenClientUrl = openClientUrl ?? `wxwork://message?username=${encodeURIComponent(identityValue)}`;
   const handleOpenClient = () => {
     void navigator.clipboard?.writeText(identityValue);
   };
@@ -74,6 +79,7 @@ export function WeComConversationPanel({
         {activeItems.length > 0 ? (
           <WeComConversationFrame
             contactPointId={activeContactPointId}
+            target={target}
             items={activeItems}
             viewer={viewer}
             reloadKey={reloadKey}
@@ -89,7 +95,7 @@ export function WeComConversationPanel({
         <a
           role="button"
           className="ant-btn ant-btn-primary ant-btn-sm"
-          href={openClientUrl}
+          href={effectiveOpenClientUrl}
           data-testid="wecom-open-client-link"
           aria-label="在企业微信中打开"
           onClick={handleOpenClient}

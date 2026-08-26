@@ -2,6 +2,7 @@ import { ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import { Button, Flex, Spin, Typography, theme } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import type { MessageResponse } from '../../api/types';
+import type { WeComViewerTarget } from '../../api/types';
 import type { WeComViewerHandle, PreparedWeComSegment } from '../../hooks/useWeComViewer';
 import type { WeComOpenDataFrame, WeComOpenDataFrameOptions } from '../../wecom/wecomSdk';
 import { asWeComViewerError, formatWeComViewerError, WeComViewerError } from '../../wecom/wecomErrors';
@@ -11,11 +12,13 @@ const { Text } = Typography;
 
 export function WeComConversationFrame({
   contactPointId,
+  target,
   items,
   viewer,
   reloadKey = 0,
 }: {
   contactPointId: string;
+  target?: WeComViewerTarget;
   items: MessageResponse[];
   viewer: WeComViewerHandle;
   reloadKey?: number;
@@ -61,7 +64,9 @@ export function WeComConversationFrame({
         }
         const messageIds = items.map((item) => item.sourceId || '').filter(Boolean);
         if (!messageIds.length) throw new WeComViewerError('session-create', '企业微信消息段缺少展示引用');
-        const prepared = await viewer.prepareSegment(contactPointId, messageIds, controller.signal);
+        const prepared = target && viewer.prepareTargetSegment
+          ? await viewer.prepareTargetSegment(target, messageIds, controller.signal)
+          : await viewer.prepareSegment(contactPointId, messageIds, controller.signal);
         if (!isCurrent() || !hostRef.current) return;
 
         if (!frameRef.current) {
@@ -115,7 +120,7 @@ export function WeComConversationFrame({
       disposed = true;
       controller.abort();
     };
-  }, [contactPointId, items, reloadKey, retryKey, token, viewer]);
+  }, [contactPointId, target, items, reloadKey, retryKey, token, viewer]);
 
   useEffect(() => () => {
     frameRef.current?.dispose();
