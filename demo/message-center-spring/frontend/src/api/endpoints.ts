@@ -116,6 +116,20 @@ export async function createWeComViewerSession(
   return res.data;
 }
 
+export async function createWeComViewerTargetSession(
+  target: { targetType: 'CONTACT' | 'WECOM_GROUP'; targetId: string },
+  messageIds: string[],
+  viewerAuthToken: string,
+  options?: { signal?: AbortSignal },
+): Promise<WeComViewerSessionResponse> {
+  const res = await client.post<WeComViewerSessionResponse>(
+    `${weComViewerBase}/sessions`,
+    { ...target, messageIds },
+    { headers: weComViewerHeaders(viewerAuthToken), signal: options?.signal },
+  );
+  return res.data;
+}
+
 export async function fetchWeComViewerSession(
   viewerSessionId: string,
   viewerAuthToken: string,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   bootstrapWeComViewer,
   createWeComViewerSession,
+  createWeComViewerTargetSession,
   fetchWeComBinding,
   fetchWeComJsSdkConfig,
   fetchWeComViewerSession,
@@ -9,6 +10,7 @@ import {
 } from '../api/endpoints';
 import type {
   WeComViewerMessage,
+  WeComViewerTarget,
 } from '../api/types';
 import { useAuth } from './useAuth';
 import { loadWeComViewerSdk, type WeComViewerSdk } from '../wecom/wecomSdk';
@@ -28,6 +30,11 @@ export interface PreparedWeComSegment {
 export interface WeComViewerHandle {
   prepareSegment: (
     contactPointId: string,
+    messageIds: string[],
+    signal?: AbortSignal,
+  ) => Promise<PreparedWeComSegment>;
+  prepareTargetSegment?: (
+    target: WeComViewerTarget,
     messageIds: string[],
     signal?: AbortSignal,
   ) => Promise<PreparedWeComSegment>;
@@ -95,13 +102,14 @@ export function useWeComViewer(): WeComViewerHandle {
     return sdkRef.current;
   }, []);
 
-  const prepareSegment = useCallback(async (
-    contactPointId: string,
+  const prepareForTarget = useCallback(async (
+    target: string | WeComViewerTarget,
     messageIds: string[],
     signal?: AbortSignal,
   ) => {
     throwIfAborted(signal);
-    if (!contactPointId.startsWith('wecom:')) throw new Error('联系人缺少企业微信身份');
+    const cacheTarget = typeof target === 'string' ? target : `target:${target.targetType}:${target.targetId}`;
+    if (typeof target === 'string' && !target.startsWith('wecom:')) throw new Error('联系人缺少企业微信身份');
     if (messageIds.length === 0 || messageIds.some((id) => !id)) {
       throw new Error('企业微信消息段缺少展示引用');
     }
@@ -111,7 +119,7 @@ export function useWeComViewer(): WeComViewerHandle {
     const cachedMessages = new Map<string, WeComViewerMessage>();
     const missingMessageIds: string[] = [];
     for (const msgid of uniqueMessageIds) {
-      const cached = messageCacheRef.current.get(viewerAuthToken, contactPointId, msgid);
+      const cached = messageCacheRef.current.get(viewerAuthToken, cacheTarget, msgid);
       if (cached) cachedMessages.set(msgid, cached);
       else missingMessageIds.push(msgid);
     }
@@ -125,9 +133,9 @@ export function useWeComViewer(): WeComViewerHandle {
     let lastSessionId: string | undefined;
     for (const batch of chunk(missingMessageIds, WECOM_VIEWER_SESSION_BATCH_SIZE)) {
       throwIfAborted(signal);
-      const batchResult = await loadMessageBatch(contactPointId, batch, viewerAuthToken, signal);
+      const batchResult = await loadMessageBatch(target, batch, viewerAuthToken, signal);
       lastSessionId = batchResult.viewerSessionId ?? lastSessionId;
-      messageCacheRef.current.setMany(viewerAuthToken, contactPointId, batchResult.messages);
+      messageCacheRef.current.setMany(viewerAuthToken, cacheTarget, batchResult.messages);
       for (const message of batchResult.messages) cachedMessages.set(message.msgid, message);
     }
     throwIfAborted(signal);
@@ -143,6 +151,11 @@ export function useWeComViewer(): WeComViewerHandle {
     };
   }, [requireSdk, requireViewerToken]);
 
+  const prepareSegment = useCallback((contactPointId: string, messageIds: string[], signal?: AbortSignal) =>
+    prepareForTarget(contactPointId, messageIds, signal), [prepareForTarget]);
+  const prepareTargetSegment = useCallback((target: WeComViewerTarget, messageIds: string[], signal?: AbortSignal) =>
+    prepareForTarget(target, messageIds, signal), [prepareForTarget]);
+
   const reportComponentError = useCallback(async (
     viewerSessionId: string,
     viewerAuthToken: string,
@@ -154,17 +167,20 @@ export function useWeComViewer(): WeComViewerHandle {
     }
   }, []);
 
-  return useMemo(() => ({ prepareSegment, reportComponentError }), [prepareSegment, reportComponentError]);
+  return useMemo(() => ({ prepareSegment, prepareTargetSegment, reportComponentError }),
+    [prepareSegment, prepareTargetSegment, reportComponentError]);
 }
 
 async function loadMessageBatch(
-  contactPointId: string,
+  target: string | WeComViewerTarget,
   messageIds: string[],
   viewerAuthToken: string,
   signal?: AbortSignal,
 ): Promise<{ viewerSessionId?: string; messages: WeComViewerMessage[] }> {
   try {
-    const session = await createWeComViewerSession(contactPointId, messageIds, viewerAuthToken, { signal });
+    const session = typeof target === 'string'
+      ? await createWeComViewerSession(target, messageIds, viewerAuthToken, { signal })
+      : await createWeComViewerTargetSession(target, messageIds, viewerAuthToken, { signal });
     const detail = await fetchWeComViewerSession(session.viewerSessionId, viewerAuthToken, { signal });
     return { viewerSessionId: detail.viewerSessionId, messages: detail.messages };
   } catch (error) {
@@ -172,7 +188,7 @@ async function loadMessageBatch(
       throw error instanceof WeComViewerError ? error : asWeComViewerError(error, 'session-load');
     }
     const results = await Promise.allSettled(
-      messageIds.map((msgid) => loadMessageBatch(contactPointId, [msgid], viewerAuthToken, signal)),
+      messageIds.map((msgid) => loadMessageBatch(target, [msgid], viewerAuthToken, signal)),
     );
     const messages: WeComViewerMessage[] = [];
     let viewerSessionId: string | undefined;

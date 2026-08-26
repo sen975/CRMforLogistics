@@ -1,13 +1,13 @@
 import { ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import { Button, Flex, Spin, Typography, theme } from 'antd';
-import { useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MessageResponse } from '../../api/types';
 import type { WeComViewerHandle, PreparedWeComSegment } from '../../hooks/useWeComViewer';
 import type { WeComOpenDataFrame, WeComOpenDataFrameOptions } from '../../wecom/wecomSdk';
 import { asWeComViewerError, formatWeComViewerError, WeComViewerError } from '../../wecom/wecomErrors';
+import { WeComFrameController } from '../../wecom/WeComFrameController';
 
 const { Text } = Typography;
-const FRAME_UPDATE_TIMEOUT_MS = 15_000;
 
 export function WeComConversationFrame({
   contactPointId,
@@ -24,6 +24,7 @@ export function WeComConversationFrame({
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<WeComOpenDataFrame | null>(null);
   const generationRef = useRef(0);
+  const controllerRef = useRef(new WeComFrameController());
   const [status, setStatus] = useState<'loading' | 'mounted' | 'failed'>('loading');
   const [failureMessage, setFailureMessage] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
@@ -51,7 +52,8 @@ export function WeComConversationFrame({
     const run = async () => {
       try {
         if (frameRef.current) {
-          await queueUpdate(frameRef.current, generationRef, generation, { msgList: [] });
+          await controllerRef.current.update(frameRef.current, { msgList: [] }, generation,
+            () => generationRef.current, controller.signal);
         }
         const messageIds = items.map((item) => item.sourceId || '').filter(Boolean);
         if (!messageIds.length) throw new WeComViewerError('session-create', '企业微信消息段缺少展示引用');
@@ -95,7 +97,8 @@ export function WeComConversationFrame({
         }
         const frame = frameRef.current;
         if (!frame) throw new WeComViewerError('frame-create', '企业微信会话组件不可用');
-        await queueUpdate(frame, generationRef, generation, { msgList });
+        await controllerRef.current.update(frame, { msgList }, generation,
+          () => generationRef.current, controller.signal);
         if (isCurrent()) setStatus('mounted');
       } catch (error) {
         if (isAbortError(error) || !isCurrent()) return;
@@ -181,54 +184,6 @@ function frameOptions(
     error: handleError,
     handleError,
   };
-}
-
-async function queueUpdate(
-  frame: WeComOpenDataFrame,
-  generationRef: MutableRefObject<number>,
-  generation: number,
-  data: Record<string, unknown>,
-): Promise<void> {
-  if (!frame.setData) throw new WeComViewerError('frame-update', '当前企业微信 SDK 不支持更新会话内容');
-  const state = frameUpdateStates.get(frame) ?? { version: 0, latestData: data };
-  state.version += 1;
-  const version = state.version;
-  state.latestData = data;
-  frameUpdateStates.set(frame, state);
-  const operation = frame.setData(data);
-  void operation.then(() => {
-    if (version !== state.version && frame.setData) {
-      void frame.setData(state.latestData);
-    }
-  }, () => undefined);
-  try {
-    await withTimeout(operation);
-  } catch (error) {
-    if (version !== state.version) return;
-    throw error;
-  }
-  if (version !== state.version) {
-    await withTimeout(frame.setData(state.latestData));
-  }
-  if (generationRef.current !== generation) throw new DOMException('企业微信消息请求已取消', 'AbortError');
-}
-
-const frameUpdateStates = new WeakMap<WeComOpenDataFrame, {
-  version: number;
-  latestData: Record<string, unknown>;
-}>();
-
-function withTimeout(operation: Promise<void>): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(
-      () => reject(new WeComViewerError('frame-update', '企业微信组件更新超时')),
-      FRAME_UPDATE_TIMEOUT_MS,
-    );
-    operation.then(
-      () => { window.clearTimeout(timer); resolve(); },
-      (error) => { window.clearTimeout(timer); reject(error); },
-    );
-  });
 }
 
 function isAbortError(error: unknown): boolean {

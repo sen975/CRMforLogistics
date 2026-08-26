@@ -240,6 +240,10 @@ export interface WeComViewerSessionResponse {
   expiresIn: number;
 }
 
+export type WeComViewerTarget =
+  | { targetType: 'CONTACT'; targetId: string }
+  | { targetType: 'WECOM_GROUP'; targetId: string };
+
 export interface WeComViewerMessage {
   msgid: string;
   secretKey: string;

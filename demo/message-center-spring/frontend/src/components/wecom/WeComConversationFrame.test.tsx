@@ -131,12 +131,12 @@ describe('WeComConversationFrame', () => {
       </ConfigProvider>,
     );
 
+    resolveFirstSetData();
     await waitFor(() => expect(screen.getByTestId('wecom-conversation-frame-visible')).toBeVisible());
     const firstFrame = harness.createOpenDataFrame.mock.results[0]?.value;
     await waitFor(() => expect(firstFrame.setData).toHaveBeenCalledWith({
       msgList: [{ msgid: 'source-b', secretKey: 'secret-b', direction: 'inbound' }],
     }));
-    resolveFirstSetData();
     await waitFor(() => expect(firstFrame.setData.mock.calls.at(-1)?.[0]).toEqual({
       msgList: [{ msgid: 'source-b', secretKey: 'secret-b', direction: 'inbound' }],
     }));
