@@ -209,6 +209,32 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
                                                       @Param("beforeId") UUID beforeId,
                                                       @Param("isAdmin") boolean isAdmin);
 
+    @Select("<script>" +
+        "select m.id, m.provider_message_id, m.channel_account_id, m.conversation_id, " +
+        "m.source_event_id, m.client_request_id, m.direction, m.message_kind, " +
+        "m.subject, m.body_text, m.body_html, m.occurred_at, m.received_at, " +
+        "m.ingest_sequence, m.counts_as_unread, m.current_status, " +
+        "m.current_status_at, m.created_by_user_id, m.metadata_jsonb, m.created_at " +
+        "from messages m join conversations cv on cv.id = m.conversation_id " +
+        "where m.conversation_id in " +
+        "<foreach item='cid' collection='conversationIds' open='(' separator=',' close=')'>#{cid}::uuid</foreach> " +
+        "and not exists (select 1 from ai_topic_items assigned where assigned.message_id = m.id) " +
+        "<if test=\"!isAdmin\">" +
+        "and (cv.assigned_user_id = #{userId}::uuid " +
+        "  or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) " +
+        "  or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))) " +
+        "</if>" +
+        "<if test=\"beforeCursor != null and beforeId != null\">" +
+        "and (m.occurred_at &lt; #{beforeCursor} or (m.occurred_at = #{beforeCursor} and m.id &lt; #{beforeId}::uuid)) " +
+        "</if> order by m.occurred_at desc, m.id desc limit ${page.size}" +
+        "</script>")
+    IPage<MessageEntity> listUnassignedMessagesByConversations(IPage<MessageEntity> page,
+                                                                 @Param("conversationIds") List<UUID> conversationIds,
+                                                                 @Param("userId") UUID userId,
+                                                                 @Param("beforeCursor") Instant beforeCursor,
+                                                                 @Param("beforeId") UUID beforeId,
+                                                                 @Param("isAdmin") boolean isAdmin);
+
     /**
      * Mark all messages in the given conversations as read (counts_as_unread = false).
      */

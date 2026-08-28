@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public final class AiTopicModels {
@@ -16,6 +17,7 @@ public final class AiTopicModels {
                              String direction, String subject, String text) {}
 
     public record InputBatch(List<SourceItem> items, String fingerprint, boolean hasMore) {}
+    public record AssignedSourceIds(Set<UUID> messageIds, Set<UUID> callRecordIds) {}
 
     public record TopicAssignment(String topicKey, String title, String summary, double relevance,
                                   List<UUID> sourceIds) {}

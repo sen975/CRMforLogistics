@@ -24,6 +24,13 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "</script>")
     List<CallRecordEntity> listByAnchors(@Param("anchors") java.util.Set<String> anchors);
 
+    @Select("<script>"
+            + "SELECT cr.* FROM call_records cr WHERE cr.contact_anchor_point_id IN "
+            + "<foreach item='a' collection='anchors' open='(' separator=',' close=')'>#{a}</foreach> "
+            + "AND NOT EXISTS (SELECT 1 FROM ai_topic_items assigned WHERE assigned.call_record_id = cr.id)"
+            + "</script>")
+    List<CallRecordEntity> listUnassignedByAnchors(@Param("anchors") java.util.Set<String> anchors);
+
     @Select("SELECT count(*) FROM call_records WHERE transcription_state IN ('queued', 'processing')")
     int countPending();
 
