@@ -25,11 +25,61 @@ npm run dev
 - 后端：`http://127.0.0.1:8099`
 - 前端开发代理：`/api` 转发至后端 `8099`
 
+macOS 本机只启动企业微信客户端、不指定联系人或企业时，运行：
+
+```bash
+./demo/message-center-spring/scripts/start-wecom-client.sh
+```
+
 ## 邮件同步配置
 
 开启 `APP_EMAIL_SYNC_ENABLED=true` 后，邮件同步至少需要 `IMAP_USER` 和 `IMAP_PASSWORD`。139 邮箱在
 `IMAP_HOST`、`IMAP_PORT` 或 `MAIL_PROVIDER` 缺失、为空时分别使用 `imap.139.com`、`993` 和 `139`；也可用
 `APP_IMAP_HOST`、`APP_IMAP_PORT`、`APP_MAIL_PROVIDER` 显式覆盖。密码只通过环境变量或后端 `.env` 注入。
+
+## AI Topic 配置
+
+联系人右侧的 Topic 时间轴会在首次打开联系人时异步整理历史沟通，后续新消息触发增量关联。AI 仅读取
+ChatApp、邮件和电话转录/备注；企业微信不会进入 AI 输入。后端使用通用 OpenAI-compatible 接口，配置通过
+环境变量注入：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `AI_BASE_URL` | 空 | provider 根地址 |
+| `AI_API_KEY` | 空 | 服务端 API Key，不写入前端或日志 |
+| `AI_MODEL` | `gpt-4o-mini` | 模型名称 |
+| `AI_TIMEOUT_SECONDS` | `30` | 单次请求超时 |
+| `AI_MAX_INPUT_RECORDS` | `200` | 单批最大来源数 |
+| `AI_MAX_INPUT_BYTES` | `262144` | 单批最大输入字节数 |
+| `AI_TOPIC_MATCH_THRESHOLD` | `0.65` | 增量 Topic 关联阈值 |
+| `AI_TOPIC_WORKER_CONCURRENCY` | `1` | 后台 worker 并发数 |
+| `AI_TOPIC_MAX_ATTEMPTS` | `3` | 最大尝试次数 |
+| `AI_TOPIC_LEASE_SECONDS` | `120` | 任务租约时长 |
+| `AI_TOPIC_POLL_INTERVAL_SECONDS` | `30` | 任务轮询间隔 |
+
+未配置 `AI_BASE_URL` 时，Topic 任务会以 `AI_NOT_CONFIGURED` 失败，已有消息收发和时间线不受影响。
+
+`AI_PROVIDER_UNAVAILABLE` 表示请求已进入后台 worker，但 provider 网络调用不可用。服务日志中的
+`event=ai_topic_generation_failed` 会输出不含 API Key、请求正文和响应正文的 `diagnostic`；任务表的
+`last_error_message` 保存相同分类：`HTTP_5xx`、`DNS_ERROR`、`TIMEOUT`、`CONNECT_ERROR`、
+`TLS_ERROR` 或 `CLIENT_ERROR`。可用以下 SQL 查看最近任务：
+
+```sql
+select status, last_error_code, last_error_message, attempt_count, updated_at
+from ai_topic_generation_jobs
+order by updated_at desc
+limit 20;
+```
+
+发布前端时必须从当前源码重新生成 `frontend/dist`，服务器需要替换整个静态目录；只更新后端 Jar 或继续使用旧的 `frontend.zip` 不会出现 Topic 界面。构建后可用下面的命令确认产物已包含 Topic 代码：
+
+```bash
+cd demo/message-center-spring/frontend
+npm run build
+rg -l "Topic 时间轴|contact-topics" dist/assets
+```
+
+将新的 `dist/` 全量上传到 Web 服务器静态根目录后，执行强制刷新（或清理 CDN/反向代理缓存）。
 
 ## 企业微信 P0 管理工作台
 
@@ -211,3 +261,9 @@ npm run build
 rg -n 'wecom-(suite-secret|login-suite-secret|secret|token|encoding-aes-key): [^$]' \
   demo/message-center-spring/backend/src/main/resources
 ```
+
+### AI Topic 生命周期
+
+AI Topic 仅处理 ChatApp、邮件和电话来源，企业微信不会进入 AI 输入或 Topic 仓库。`AI_TOPIC_MATCH_THRESHOLD` 是模型返回的关联度分数接受阈值，不是本地标题相似度计算。首次打开联系人时创建异步生成任务；新增消息只会与 `READY` Topic 关联，已归入任意 Topic 的来源不会再次判断。
+
+Topic 编辑、合并、弃用和恢复均返回 `202 Accepted` 操作任务。弃用会保留 Topic、来源和版本记录，仅从联系人时间轴隐藏，并在 `/topic-repository` 跨联系人仓库中保留。前端只在收到一次 `topic-snapshot-completed` SSE 终态事件后重新读取快照，不轮询或乐观更新。

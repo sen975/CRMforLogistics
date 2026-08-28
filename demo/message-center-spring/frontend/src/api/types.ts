@@ -86,9 +86,17 @@ export interface WeComPartyView {
   isCurrentViewer: boolean;
 }
 
+export interface RelatedWeComGroupResponse {
+  sourceConversationId: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  participantCount: number;
+}
+
 export interface WeComThreadResponse {
   contactId: string;
   sourceConversationIds: string[];
+  relatedGroups: RelatedWeComGroupResponse[];
   items: MessageResponse[];
   nextCursor: string | null;
   messageCount: number;
@@ -441,6 +449,59 @@ export interface TimelineResponse {
   nextCursor: string;
   itemCount: number;
   threadRevision: string;
+}
+
+export type TopicGenerationStatus = 'NOT_STARTED' | 'GENERATING' | 'READY' | 'FAILED';
+export interface TopicSourceItem {
+  id: string;
+  sourceType: 'MESSAGE' | 'CALL_RECORD';
+  occurredAt: string;
+  channelType: 'chatapp' | 'email' | 'phone';
+}
+export interface TopicProjection {
+  id: string;
+  contactId?: string;
+  title: string;
+  summary: string;
+  summarySource: 'AI' | 'EMPLOYEE';
+  firstOccurredAt: string;
+  lastOccurredAt: string;
+  channels: string[];
+  sourceCount: number;
+  sourceItems: TopicSourceItem[];
+  version: number;
+}
+export type TopicOperationKind = 'EDIT' | 'MERGE' | 'DISCARD' | 'RESTORE';
+export interface TopicOperationProjection {
+  id: string;
+  kind: TopicOperationKind;
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  errorCode: string | null;
+  createdAt: string | null;
+  completedAt: string | null;
+}
+export interface TopicGenerationProjection {
+  status: TopicGenerationStatus;
+  jobId: string | null;
+  errorCode: string | null;
+  updatedAt: string | null;
+}
+export interface ContactTopicsResponse {
+  contactId: string;
+  generation: TopicGenerationProjection;
+  topics: TopicProjection[];
+  weComUnsupported: boolean;
+}
+export interface UpdateTopicRequest {
+  contactId: string;
+  title: string;
+  confirmedSummary: string;
+  expectedVersion: number;
+}
+export interface MergeTopicsRequest {
+  contactId: string;
+  topicIds: string[];
+  expectedVersions: Record<string, number>;
 }
 
 export interface PhoneRecordResponse {
