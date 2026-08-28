@@ -30,7 +30,7 @@ public final class AiTopicModels {
     public record TopicSourceItem(UUID id, SourceType sourceType, Instant occurredAt, String channelType) {}
     public record TopicProjection(UUID id, String title, String summary, String summarySource,
                                   Instant firstOccurredAt, Instant lastOccurredAt, List<String> channels,
-                                  int sourceCount, List<TopicSourceItem> sourceItems, long version) {}
+                                  int sourceCount, List<TopicSourceItem> sourceItems, long version, UUID contactId) {}
     public record GenerationProjection(GenerationStatus status, UUID jobId, String errorCode, Instant updatedAt) {}
     public record TopicOperationProjection(UUID id, TopicOperationKind kind, TopicOperationStatus status,
                                            String errorCode, Instant createdAt, Instant completedAt) {}

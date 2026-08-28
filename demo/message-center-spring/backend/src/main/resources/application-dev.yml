@@ -25,6 +25,19 @@ minio:
 funasr:
   base-url: ${FUNASR_BASE_URL:http://127.0.0.1:8000}
 
+ai-topic:
+  base-url: ${AI_BASE_URL:}
+  api-key: ${AI_API_KEY:}
+  model: ${AI_MODEL:gpt-4o-mini}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
+  max-input-records: ${AI_MAX_INPUT_RECORDS:200}
+  max-input-bytes: ${AI_MAX_INPUT_BYTES:262144}
+  match-threshold: ${AI_TOPIC_MATCH_THRESHOLD:0.65}
+  worker-concurrency: ${AI_TOPIC_WORKER_CONCURRENCY:1}
+  max-attempts: ${AI_TOPIC_MAX_ATTEMPTS:3}
+  lease-seconds: ${AI_TOPIC_LEASE_SECONDS:120}
+  poll-interval-seconds: ${AI_TOPIC_POLL_INTERVAL_SECONDS:30}
+
 app:
   data-dir: ${APP_DATA_DIR:data-local}
   local-dev-mode: ${APP_LOCAL_DEV_MODE:true}

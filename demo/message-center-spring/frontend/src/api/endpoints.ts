@@ -611,6 +611,41 @@ export async function fetchTimeline(
   return res.data;
 }
 
+export async function fetchContactTopics(contactId: string): Promise<import('./types').ContactTopicsResponse> {
+  const res = await client.get<import('./types').ContactTopicsResponse>(`/v1/contacts/${contactId}/topics`);
+  return res.data;
+}
+
+export async function updateTopic(topicId: string, data: import('./types').UpdateTopicRequest): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.patch<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}`, data, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  return res.data;
+}
+
+export async function mergeTopics(data: import('./types').MergeTopicsRequest): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>('/v1/topics/merge', data, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  return res.data;
+}
+
+export async function discardTopic(topicId: string, contactId: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/discard`, { contactId }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  return res.data;
+}
+
+export async function restoreTopic(topicId: string, contactId: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/restore`, { contactId }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  return res.data;
+}
+
+export async function fetchTopicRepository(params: { search?: string; page?: number; size?: number }): Promise<any> {
+  const res = await client.get('/v1/topic-repository', { params });
+  return res.data;
+}
+
+export async function retryTopicGeneration(contactId: string): Promise<import('./types').TopicGenerationProjection> {
+  const res = await client.post<import('./types').TopicGenerationProjection>(`/v1/contacts/${contactId}/topics/retry`);
+  return res.data;
+}
+
 export async function createCallRecord(
   contactId: string,
   formData: FormData,

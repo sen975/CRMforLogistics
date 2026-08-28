@@ -13,6 +13,7 @@ import {
   NotificationOutlined,
   UserOutlined,
   WechatOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../hooks/useAuth';
 import { DetailPanelProvider, useDetailPanel } from '../hooks/useDetailPanel';
@@ -120,6 +121,7 @@ function AppLayoutInner() {
             </>
           )}
           {navigationButton('电话仓库', <PhoneOutlined />, () => navigate('/phone-repository'))}
+          {navigationButton('Topic仓库', <FileSearchOutlined />, () => navigate('/topic-repository'))}
           {(isThreadPage || selectedCallRecordId) && (
             <Button
               icon={detailPanelOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}

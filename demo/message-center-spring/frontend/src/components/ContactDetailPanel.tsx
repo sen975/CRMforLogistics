@@ -8,6 +8,8 @@ import { useUpdateContactRemark, useSplitContact } from '../hooks/useContacts';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import type { ContactIdentityResponse } from '../api/types';
 import EmailAttachmentList from './EmailAttachmentList';
+import AiTopicTimeline from './AiTopicTimeline';
+import { useTopicTimeline } from '../hooks/useTopicTimeline';
 
 const { Text, Title } = Typography;
 
@@ -28,7 +30,7 @@ export default function ContactDetailPanel() {
   const { message: appMessage } = App.useApp();
   const [editingRemark, setEditingRemark] = useState(false);
   const [remarkValue, setRemarkValue] = useState('');
-  const { selectedDetail, selectChannel } = useDetailPanel();
+  const { selectedDetail, selectChannel, selectMessage, selectCallRecord } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
 
   const { data: contact, isLoading } = useQuery({
@@ -45,6 +47,7 @@ export default function ContactDetailPanel() {
 
   const updateRemark = useUpdateContactRemark();
   const splitMutation = useSplitContact();
+  const topicTimeline = useTopicTimeline(contactId);
 
   const handleSplit = async (identity: ContactIdentityResponse) => {
     try {
@@ -90,6 +93,13 @@ export default function ContactDetailPanel() {
 
   return (
     <div style={{ padding: 16 }}>
+      <AiTopicTimeline
+        contactId={contact.id}
+        timeline={topicTimeline.data}
+        actions={{ update: topicTimeline.update, merge: topicTimeline.merge, discard: topicTimeline.discard, retry: topicTimeline.retry }}
+        onSourceClick={(source) => source.sourceType === 'MESSAGE' ? selectMessage(source.id) : selectCallRecord(source.id)}
+      />
+      <Divider style={{ margin: '4px 0 16px' }} />
       <Title level={5} style={{ marginBottom: 16 }}>
         {contact.displayName || contact.remark || '未命名'}
       </Title>

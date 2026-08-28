@@ -14,6 +14,7 @@ const ChannelSettingsPage = lazy(() => import('./pages/ChannelSettingsPage'));
 const WeComManagementPage = lazy(() => import('./pages/WeComManagementPage'));
 const PhoneRepositoryPage = lazy(() => import('./pages/PhoneRepositoryPage'));
 const BroadcastsPage = lazy(() => import('./pages/BroadcastsPage'));
+const TopicRepositoryPage = lazy(() => import('./pages/TopicRepositoryPage'));
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const token = localStorage.getItem('token');
@@ -102,6 +103,7 @@ export const router = createBrowserRouter([
       { path: 'settings/channels', element: <RouteBoundary><ChannelSettingsPage /></RouteBoundary> },
       { path: 'settings/wecom', element: <RouteBoundary><WeComManagementPage /></RouteBoundary> },
       { path: 'phone-repository', element: <RouteBoundary><PhoneRepositoryPage /></RouteBoundary> },
+      { path: 'topic-repository', element: <RouteBoundary><TopicRepositoryPage /></RouteBoundary> },
     ],
   },
 ]);
