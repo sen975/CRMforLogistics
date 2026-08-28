@@ -81,6 +81,16 @@ public class WeComProfileBackfillService {
                 failures++;
                 continue;
             }
+            for (WeComExternalContactService.GroupMember member : snapshot.members()) {
+                try {
+                    profiles.syncObservedProfile(installation, member.partyType(), member.providerPartyId(),
+                            member.displayName(), member.avatarUrl());
+                } catch (RuntimeException failure) {
+                    failures++;
+                    log.warn("WeCom group member profile backfill failed: type={}, error={}",
+                            member.partyType(), failure.getClass().getSimpleName());
+                }
+            }
             if (!snapshot.displayName().isBlank()) {
                 conversations.updateDisplayName(group.getId(), snapshot.displayName());
                 groupsNamed++;

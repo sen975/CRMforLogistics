@@ -41,7 +41,10 @@ class WeComProfileBackfillServiceTest {
         WeComSourceConversationEntity group = group("group:wr-group");
         when(conversations.listGroupBackfillCandidates(installationId, 100)).thenReturn(List.of(group));
         when(externalContacts.groupMembersForSync(installation, "wr-group")).thenReturn(
-                new WeComExternalContactService.GroupMemberSnapshot(true, "客户群 A", List.of(), ""));
+                new WeComExternalContactService.GroupMemberSnapshot(true, "客户群 A", List.of(
+                        new WeComExternalContactService.GroupMember("EMPLOYEE", "employee-2", "员工二", "https://img/employee-2"),
+                        new WeComExternalContactService.GroupMember("EXTERNAL_CONTACT", "external-2", "客户二", "https://img/external-2")
+                ), ""));
         WeComProfileBackfillService service = new WeComProfileBackfillService(
                 config, installations, parties, conversations, profiles, externalContacts);
 
@@ -52,6 +55,8 @@ class WeComProfileBackfillServiceTest {
         assertThat(result.failures()).isZero();
         verify(profiles).syncEmployee(eq(installation), eq("employee-1"), any());
         verify(profiles).syncExternalContact(eq(installation), eq("external-1"), any());
+        verify(profiles).syncObservedProfile(installation, "EMPLOYEE", "employee-2", "员工二", "https://img/employee-2");
+        verify(profiles).syncObservedProfile(installation, "EXTERNAL_CONTACT", "external-2", "客户二", "https://img/external-2");
         verify(conversations).updateDisplayName(group.getId(), "客户群 A");
     }
 

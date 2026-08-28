@@ -82,6 +82,15 @@ public class WeComPartyProfileService {
         return result;
     }
 
+    /** Persists profile fields already returned by a customer-group snapshot without another API call. */
+    public ProfileResult syncObservedProfile(ResolvedInstallation installation, String partyType,
+                                             String providerPartyId, String displayName, String avatarUrl) {
+        if (!"EMPLOYEE".equals(partyType) && !"EXTERNAL_CONTACT".equals(partyType)) {
+            throw new IllegalArgumentException("unsupported observed party type");
+        }
+        return upsertProfile(installation, partyType, providerPartyId, displayName, avatarUrl, "");
+    }
+
     /**
      * Directory/profile sync must also repair identities created before the profile was available.
      * The CRM contact is changed only while it still contains the provider identifier (or the
