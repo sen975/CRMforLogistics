@@ -14,6 +14,7 @@ public class AiTopicItemEntity {
     private UUID topicId;
     private UUID messageId;
     private UUID callRecordId;
+    private UUID wecomMessageSummaryJobId;
     private Instant occurredAt;
     private String channelType;
     private Instant createdAt;
@@ -26,6 +27,8 @@ public class AiTopicItemEntity {
     public void setMessageId(UUID messageId) { this.messageId = messageId; }
     public UUID getCallRecordId() { return callRecordId; }
     public void setCallRecordId(UUID callRecordId) { this.callRecordId = callRecordId; }
+    public UUID getWecomMessageSummaryJobId() { return wecomMessageSummaryJobId; }
+    public void setWecomMessageSummaryJobId(UUID value) { this.wecomMessageSummaryJobId = value; }
     public Instant getOccurredAt() { return occurredAt; }
     public void setOccurredAt(Instant occurredAt) { this.occurredAt = occurredAt; }
     public String getChannelType() { return channelType; }

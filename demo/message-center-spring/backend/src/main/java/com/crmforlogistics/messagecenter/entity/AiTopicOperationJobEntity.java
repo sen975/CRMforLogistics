@@ -12,6 +12,8 @@ public class AiTopicOperationJobEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private UUID contactId;
+    private String ownerType;
+    private UUID ownerId;
     private UUID createdByUserId;
     private String operationKind;
     private String requestPayload;
@@ -32,6 +34,10 @@ public class AiTopicOperationJobEntity {
     public void setId(UUID id) { this.id = id; }
     public UUID getContactId() { return contactId; }
     public void setContactId(UUID contactId) { this.contactId = contactId; }
+    public String getOwnerType() { return ownerType; }
+    public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
+    public UUID getOwnerId() { return ownerId; }
+    public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
     public UUID getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(UUID createdByUserId) { this.createdByUserId = createdByUserId; }
     public String getOperationKind() { return operationKind; }

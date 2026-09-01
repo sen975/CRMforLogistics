@@ -12,6 +12,13 @@ public class AiTopicEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private UUID contactId;
+    private String ownerType;
+    private UUID ownerId;
+    private UUID wecomGroupSourceConversationId;
+    private String contactDisplayName;
+    private String contactRemark;
+    private String contactChannelType;
+    private String contactChannelNickname;
     private String title;
     private String aiSummary;
     private String confirmedSummary;
@@ -27,6 +34,20 @@ public class AiTopicEntity {
     public void setId(UUID id) { this.id = id; }
     public UUID getContactId() { return contactId; }
     public void setContactId(UUID contactId) { this.contactId = contactId; }
+    public String getOwnerType() { return ownerType; }
+    public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
+    public UUID getOwnerId() { return ownerId; }
+    public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
+    public UUID getWecomGroupSourceConversationId() { return wecomGroupSourceConversationId; }
+    public void setWecomGroupSourceConversationId(UUID value) { this.wecomGroupSourceConversationId = value; }
+    public String getContactDisplayName() { return contactDisplayName; }
+    public void setContactDisplayName(String contactDisplayName) { this.contactDisplayName = contactDisplayName; }
+    public String getContactRemark() { return contactRemark; }
+    public void setContactRemark(String contactRemark) { this.contactRemark = contactRemark; }
+    public String getContactChannelType() { return contactChannelType; }
+    public void setContactChannelType(String contactChannelType) { this.contactChannelType = contactChannelType; }
+    public String getContactChannelNickname() { return contactChannelNickname; }
+    public void setContactChannelNickname(String contactChannelNickname) { this.contactChannelNickname = contactChannelNickname; }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public String getAiSummary() { return aiSummary; }

@@ -12,7 +12,11 @@ public class AiTopicGenerationJobEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private UUID contactId;
+    private String ownerType;
+    private UUID ownerId;
+    private UUID wecomGroupSourceConversationId;
     private UUID createdByUserId;
+    private String triggerSource;
     private String jobKind;
     private String inputFingerprint;
     private String status;
@@ -30,8 +34,16 @@ public class AiTopicGenerationJobEntity {
     public void setId(UUID id) { this.id = id; }
     public UUID getContactId() { return contactId; }
     public void setContactId(UUID contactId) { this.contactId = contactId; }
+    public String getOwnerType() { return ownerType; }
+    public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
+    public UUID getOwnerId() { return ownerId; }
+    public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
+    public UUID getWecomGroupSourceConversationId() { return wecomGroupSourceConversationId; }
+    public void setWecomGroupSourceConversationId(UUID value) { this.wecomGroupSourceConversationId = value; }
     public UUID getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(UUID createdByUserId) { this.createdByUserId = createdByUserId; }
+    public String getTriggerSource() { return triggerSource; }
+    public void setTriggerSource(String triggerSource) { this.triggerSource = triggerSource; }
     public String getJobKind() { return jobKind; }
     public void setJobKind(String jobKind) { this.jobKind = jobKind; }
     public String getInputFingerprint() { return inputFingerprint; }
