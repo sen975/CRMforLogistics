@@ -63,4 +63,37 @@ class AiTopicInputServiceMergeReconciliationTest {
         assertThat(batch.items()).extracting(AiTopicModels.SourceItem::text)
                 .containsExactly("历史邮件", "历史电话", "历史企业微信");
     }
+
+    @Test
+    void archivedSourcesRemainCollectableUntilTheyAreMigrated() {
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        CallRecordMapper calls = mock(CallRecordMapper.class);
+        WeComMessageSummaryJobMapper summaries = mock(WeComMessageSummaryJobMapper.class);
+        AiTopicInputService input = new AiTopicInputService(conversations, messages, accounts, identities, calls,
+                summaries, new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30));
+        UUID target = UUID.randomUUID();
+
+        MessageEntity message = new MessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setChannelAccountId(UUID.randomUUID());
+        message.setOccurredAt(Instant.parse("2026-08-01T00:00:00Z"));
+        message.setDirection("inbound");
+        message.setBodyText("等待重关联");
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setChannelType("email");
+        when(messages.listArchivedMergedContactMessages(target, 200)).thenReturn(List.of(message));
+        when(accounts.selectById(message.getChannelAccountId())).thenReturn(account);
+
+        AiTopicModels.InputBatch first = input.collect(
+                AiTopicOwnerService.contact(target), null, java.util.Optional.empty());
+        AiTopicModels.InputBatch retry = input.collect(
+                AiTopicOwnerService.contact(target), null, java.util.Optional.empty());
+
+        assertThat(first.items()).extracting(AiTopicModels.SourceItem::id).containsExactly(message.getId());
+        assertThat(retry.items()).extracting(AiTopicModels.SourceItem::id).containsExactly(message.getId());
+        assertThat(retry.fingerprint()).isEqualTo(first.fingerprint());
+    }
 }

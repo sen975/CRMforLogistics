@@ -40,7 +40,6 @@ public class ContactGroupService {
         this(contactMapper, contactIdentityMapper, null, null, null);
     }
 
-    @Autowired
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper,
                                ContactTagMapper contactTagMapper) {

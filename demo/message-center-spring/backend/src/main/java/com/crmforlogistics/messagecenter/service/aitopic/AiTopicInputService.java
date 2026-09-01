@@ -68,6 +68,12 @@ public class AiTopicInputService {
 
     public InputBatch collect(UUID contactId, UUID userId, Optional<Instant> after) {
         List<SourceItem> items = new ArrayList<>();
+        collectContactCandidates(contactId, userId, after, items);
+        return bounded(items);
+    }
+
+    private void collectContactCandidates(UUID contactId, UUID userId, Optional<Instant> after,
+                                          List<SourceItem> items) {
         List<ConversationEntity> conversations = conversationMapper.listAccessibleForContact(contactId, userId);
         List<UUID> conversationIds = conversations.stream().map(ConversationEntity::getId).toList();
         if (!conversationIds.isEmpty()) {
@@ -108,25 +114,13 @@ public class AiTopicInputService {
                         "inbound", "", summary.getSummary()));
             }
         }
-        List<SourceItem> supported = new ArrayList<>(filterSupportedSources(items));
-        supported.sort(Comparator.comparing(SourceItem::occurredAt).thenComparing(SourceItem::id));
-        boolean hasMore = supported.size() > config.maxInputRecords();
-        if (supported.size() > config.maxInputRecords()) supported = new ArrayList<>(supported.subList(0, config.maxInputRecords()));
-        long bytes = 0;
-        List<SourceItem> bounded = new ArrayList<>();
-        for (SourceItem item : supported) {
-            long itemBytes = canonical(item).getBytes(StandardCharsets.UTF_8).length;
-            if (!bounded.isEmpty() && bytes + itemBytes > config.maxInputBytes()) { hasMore = true; break; }
-            bounded.add(item); bytes += itemBytes;
-        }
-        return new InputBatch(List.copyOf(bounded), fingerprint(bounded), hasMore);
     }
 
     public InputBatch collect(AiTopicOwnerService.OwnerRef owner, UUID userId, Optional<Instant> after) {
         Objects.requireNonNull(owner, "owner");
         if ("CONTACT".equals(owner.type())) {
-            InputBatch contactBatch = collect(owner.id(), userId, after);
-            List<SourceItem> merged = new ArrayList<>(contactBatch.items());
+            List<SourceItem> merged = new ArrayList<>();
+            collectContactCandidates(owner.id(), userId, after, merged);
             addArchivedMergedContactSources(owner.id(), merged, after);
             return bounded(owner, merged);
         }

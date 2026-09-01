@@ -190,3 +190,11 @@ git commit -m "test: verify topic reconciliation idempotency"
 - 任何迁移 SQL 无法区分目标 owner 与归档来源 owner 时停止，不用无条件 `UPDATE ai_topic_items`。
 - AI 输出不能表达来源类型或来源归属时，保持现有严格 assignment 合同，不用模糊匹配或前端补偿。
 - 数据库唯一约束与原位迁移发生冲突时先补事务级迁移测试，不删除约束、不复制来源。
+
+## 执行记录
+
+- Task 1-3 已在提交 `697c402` 完成。
+- Task 4 已补充 `AiTopicMergeReconciliationContractTest`，覆盖 owner/指纹幂等、归档来源归属、个人企业微信 DIRECT 隔离、原位迁移边界和 READY 时间轴过滤。
+- `AiTopicInputService` 已改为先汇总普通来源与合并来源，再统一应用 `maxInputRecords`/`maxInputBytes`，避免普通来源先占满上限导致合并历史被截断。
+- 后端专项测试通过；全量测试 `926` 个测试中 `0` 个断言失败，剩余 `10` 个错误均为当前环境无法提供有效 Docker daemon 的 Testcontainers 集成测试。
+- `mvn -q -DskipTests package` 已生成 `backend/target/message-center.jar`。
