@@ -13,6 +13,7 @@
 ## 当前实施
 
 - [AI Topic 企业微信混合归属与静默重构实施计划](plans/2026-09-01-ai-topic-wecom-mixed-scope.md)：落实个人/群 owner、企业微信单条摘要混合输入、6 分钟静默重构、群 Topic 入库审批和最终快照刷新。
+- [AI Topic 联系方式合并重关联实施计划](plans/2026-09-01-ai-topic-contact-merge-reconciliation.md)：联系方式或联系人合并后，重新关联全部历史来源与现有 Topic，并在 AI 成功后原位迁移来源。
 
 - [AI Topic 生命周期与弃用仓库实施计划](plans/2026-08-28-ai-topic-lifecycle-and-repository.md)：落实异步 Topic 操作、未归类来源增量聚合、弃用仓库和最终快照刷新。
 - [企业微信统一会话工作区实施计划](plans/2026-08-25-wecom-unified-conversation-workspace.md)：Task 1-7 已完成；Task 8 的 Docker/服务器实机门禁需在部署环境执行。
