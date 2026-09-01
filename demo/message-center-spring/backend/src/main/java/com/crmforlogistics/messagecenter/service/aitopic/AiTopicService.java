@@ -16,6 +16,7 @@ import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicCont
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicProjection;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicSourceItem;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicTimelineResponse;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GroupTopicTimelineResponse;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.SourceType;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicOperationKind;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicOperationProjection;
@@ -129,6 +130,27 @@ public class AiTopicService {
                 topics.stream().map(this::project).toList(), false);
     }
 
+    /** Reads the independent group owner timeline without creating generation work. */
+    public GroupTopicTimelineResponse getGroupTopics(UUID userId, UUID sourceConversationId) {
+        boolean admin = topicMapper.isAdmin(userId);
+        if (!admin && !topicMapper.canAccessGroupOwner(sourceConversationId, userId)) {
+            throw new AiTopicException("TOPIC_FORBIDDEN", false);
+        }
+        AiTopicOwnerService.OwnerRef owner = AiTopicOwnerService.group(sourceConversationId);
+        InputBatch batch = inputService.collect(owner, null, java.util.Optional.empty());
+        List<AiTopicEntity> topics = topicMapper.listReadyGroupTopics(sourceConversationId);
+        AiTopicGenerationJobEntity job = jobMapper.findByOwnerFingerprint(owner.type(), owner.id(), batch.fingerprint());
+        GenerationStatus status = topics.isEmpty() ? GenerationStatus.NOT_STARTED : GenerationStatus.READY;
+        if (job != null && ("PENDING".equals(job.getStatus()) || "PROCESSING".equals(job.getStatus()) || "RETRY_WAIT".equals(job.getStatus()))) {
+            status = GenerationStatus.GENERATING;
+        } else if (job != null && ("FAILED".equals(job.getStatus()) || ("COMPLETED".equals(job.getStatus()) && topics.isEmpty()))) {
+            status = GenerationStatus.FAILED;
+        }
+        return new GroupTopicTimelineResponse(sourceConversationId,
+                new GenerationProjection(status, job == null ? null : job.getId(), job == null ? null : job.getLastErrorCode(), job == null ? null : job.getUpdatedAt()),
+                topics.stream().map(this::project).toList(), false);
+    }
+
     /** Creates work only from the owner quiet-window worker, never from a timeline read. */
     public void enqueueAutomaticGeneration(AiTopicOwnerService.OwnerRef owner) {
         InputBatch batch = inputService.collect(owner, null, java.util.Optional.empty());
@@ -222,16 +244,17 @@ public class AiTopicService {
             boolean created = resolved.created();
             if (created) {
                 int claimed = insertFirstSource(topic, sources.get(0));
-                if (claimed == 0) {
+                if (claimed == 0 && !moveArchivedMergedSource(topic, owner, sources.get(0))) {
                     topicMapper.deleteById(topic.getId());
                     continue;
                 }
             }
             for (var source : sources.subList(created ? 1 : 0, sources.size())) {
-                itemMapper.insertIfAbsent(topic.getId(), source.sourceType() == SourceType.MESSAGE ? source.id() : null,
+                int inserted = itemMapper.insertIfAbsent(topic.getId(), source.sourceType() == SourceType.MESSAGE ? source.id() : null,
                         source.sourceType() == SourceType.CALL_RECORD ? source.id() : null,
                         source.sourceType() == SourceType.WECOM_SUMMARY ? source.id() : null,
                         source.occurredAt(), source.channelType());
+                if (inserted == 0) moveArchivedMergedSource(topic, owner, source);
             }
             topic.setLastOccurredAt(sources.stream().map(AiTopicModels.SourceItem::occurredAt).max(Instant::compareTo).orElse(topic.getLastOccurredAt())); topic.setInputFingerprint(job.getInputFingerprint()); topic.setVersion(topic.getVersion() == null ? 1 : topic.getVersion() + 1); topicMapper.updateById(topic); versionMapper.insertVersion(topic.getId(), topic.getVersion(), "AI_GENERATED", topic.getTitle(), topic.getAiSummary(), "[]", null);
           }
@@ -292,6 +315,14 @@ public class AiTopicService {
                 source.sourceType() == SourceType.CALL_RECORD ? source.id() : null,
                 source.sourceType() == SourceType.WECOM_SUMMARY ? source.id() : null,
                 source.occurredAt(), source.channelType());
+    }
+
+    private boolean moveArchivedMergedSource(AiTopicEntity targetTopic,
+                                             AiTopicOwnerService.OwnerRef owner,
+                                             AiTopicModels.SourceItem source) {
+        if (!"CONTACT".equals(owner.type())) return false;
+        return itemMapper.moveArchivedMergedSourceToTopic(targetTopic.getId(), owner.id(),
+                source.sourceType().name(), source.id()) > 0;
     }
 
     private ResolvedTopic resolveTopic(String key, AiTopicOwnerService.OwnerRef owner, List<AiTopicModels.SourceItem> sources, String title, String summary, double relevance, String inputFingerprint) {
@@ -568,6 +599,7 @@ public class AiTopicService {
                 .anyMatch(channel -> channel != null && (
                         "chatapp".equalsIgnoreCase(channel)
                                 || "email".equalsIgnoreCase(channel)
-                                || "phone".equalsIgnoreCase(channel)));
+                                || "phone".equalsIgnoreCase(channel)
+                                || "wecom".equalsIgnoreCase(channel)));
     }
 }

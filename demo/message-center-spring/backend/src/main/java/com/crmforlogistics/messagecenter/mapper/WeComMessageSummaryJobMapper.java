@@ -123,6 +123,17 @@ public interface WeComMessageSummaryJobMapper extends BaseMapper<WeComMessageSum
             @Param("contactId") UUID contactId, @Param("limit") int limit);
 
     @Select("SELECT j.* FROM wecom_message_summary_jobs j "
+            + "JOIN ai_topic_items i ON i.wecom_message_summary_job_id=j.id "
+            + "JOIN ai_topics t ON t.id=i.topic_id AND t.owner_type='CONTACT' AND t.status='ARCHIVED' "
+            + "JOIN contacts source_contact ON source_contact.id=t.owner_id "
+            + "JOIN wecom_source_conversations sc ON sc.id=j.source_conversation_id AND sc.conversation_type='DIRECT' "
+            + "WHERE source_contact.status='merged' AND source_contact.merged_to_id=#{targetContactId}::uuid "
+            + "AND j.status='COMPLETED' AND j.summary IS NOT NULL AND btrim(j.summary)<>'' "
+            + "ORDER BY j.send_time,j.id LIMIT #{limit}")
+    List<WeComMessageSummaryJobEntity> listArchivedMergedContactSummaries(
+            @Param("targetContactId") UUID targetContactId, @Param("limit") int limit);
+
+    @Select("SELECT j.* FROM wecom_message_summary_jobs j "
             + "JOIN wecom_source_conversations sc ON sc.id=j.source_conversation_id AND sc.conversation_type='GROUP' "
             + "WHERE j.source_conversation_id=#{sourceConversationId}::uuid AND j.status='COMPLETED' "
             + "AND j.summary IS NOT NULL AND btrim(j.summary)<>'' "

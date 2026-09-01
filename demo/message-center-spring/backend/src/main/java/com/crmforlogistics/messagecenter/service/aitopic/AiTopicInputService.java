@@ -28,6 +28,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.InputBatch;
@@ -125,7 +126,9 @@ public class AiTopicInputService {
         Objects.requireNonNull(owner, "owner");
         if ("CONTACT".equals(owner.type())) {
             InputBatch contactBatch = collect(owner.id(), userId, after);
-            return new InputBatch(contactBatch.items(), fingerprint(owner, contactBatch.items()), contactBatch.hasMore());
+            List<SourceItem> merged = new ArrayList<>(contactBatch.items());
+            addArchivedMergedContactSources(owner.id(), merged, after);
+            return bounded(owner, merged);
         }
         if (weComSummaryMapper == null) return bounded(owner, List.of());
         List<SourceItem> items = new ArrayList<>();
@@ -139,6 +142,40 @@ public class AiTopicInputService {
                     "inbound", "", summary.getSummary()));
         }
         return bounded(owner, items);
+    }
+
+    private void addArchivedMergedContactSources(UUID targetContactId, List<SourceItem> items,
+                                                  Optional<Instant> after) {
+        Set<String> seen = items.stream()
+                .map(item -> item.sourceType().name() + ":" + item.id())
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        for (MessageEntity message : messageMapper.listArchivedMergedContactMessages(targetContactId, config.maxInputRecords())) {
+            if (message.getId() == null || message.getOccurredAt() == null
+                    || (after.isPresent() && !message.getOccurredAt().isAfter(after.get()))) continue;
+            ChannelAccountEntity account = channelAccountMapper.selectById(message.getChannelAccountId());
+            if (account == null || !isSupportedChannel(account.getChannelType())) continue;
+            SourceItem item = new SourceItem(message.getId(), SourceType.MESSAGE, account.getChannelType(),
+                    message.getOccurredAt(), message.getDirection(), nullToEmpty(message.getSubject()), nullToEmpty(message.getBodyText()));
+            if (seen.add(item.sourceType().name() + ":" + item.id())) items.add(item);
+        }
+        for (CallRecordEntity call : callRecordMapper.listArchivedMergedContactCalls(targetContactId, config.maxInputRecords())) {
+            if (call.getId() == null || call.getOccurredAt() == null
+                    || (after.isPresent() && !call.getOccurredAt().isAfter(after.get()))) continue;
+            String text = (nullToEmpty(call.getTranscriptionResultOriginalText()) + "\n" + nullToEmpty(call.getNote())).trim();
+            SourceItem item = new SourceItem(call.getId(), SourceType.CALL_RECORD, "phone", call.getOccurredAt(),
+                    call.getDirection(), "", text);
+            if (seen.add(item.sourceType().name() + ":" + item.id())) items.add(item);
+        }
+        if (weComSummaryMapper == null) return;
+        for (WeComMessageSummaryJobEntity summary : weComSummaryMapper.listArchivedMergedContactSummaries(targetContactId, config.maxInputRecords())) {
+            if (summary.getId() == null || summary.getSendTime() == null || summary.getSummary() == null
+                    || summary.getSummary().isBlank()) continue;
+            Instant occurredAt = Instant.ofEpochSecond(summary.getSendTime());
+            if (after.isPresent() && !occurredAt.isAfter(after.get())) continue;
+            SourceItem item = new SourceItem(summary.getId(), SourceType.WECOM_SUMMARY, "wecom", occurredAt,
+                    "inbound", "", summary.getSummary());
+            if (seen.add(item.sourceType().name() + ":" + item.id())) items.add(item);
+        }
     }
 
     public InputBatch collect(UUID contactId, Optional<Instant> after) {

@@ -235,6 +235,16 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
                                                                  @Param("beforeId") UUID beforeId,
                                                                  @Param("isAdmin") boolean isAdmin);
 
+    @Select("select m.* from messages m "
+            + "join ai_topic_items i on i.message_id=m.id "
+            + "join ai_topics t on t.id=i.topic_id and t.owner_type='CONTACT' and t.status='ARCHIVED' "
+            + "join contacts source_contact on source_contact.id=t.owner_id "
+            + "where source_contact.status='merged' and source_contact.merged_to_id=#{targetContactId}::uuid "
+            + "and exists (select 1 from channel_accounts ca where ca.id=m.channel_account_id and ca.channel_type in ('chatapp','email')) "
+            + "order by m.occurred_at, m.id limit #{limit}")
+    List<MessageEntity> listArchivedMergedContactMessages(@Param("targetContactId") UUID targetContactId,
+                                                            @Param("limit") int limit);
+
     /**
      * Mark all messages in the given conversations as read (counts_as_unread = false).
      */

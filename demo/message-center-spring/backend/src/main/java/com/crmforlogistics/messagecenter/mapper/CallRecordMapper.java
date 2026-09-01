@@ -31,6 +31,15 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "</script>")
     List<CallRecordEntity> listUnassignedByAnchors(@Param("anchors") java.util.Set<String> anchors);
 
+    @Select("select cr.* from call_records cr "
+            + "join ai_topic_items i on i.call_record_id=cr.id "
+            + "join ai_topics t on t.id=i.topic_id and t.owner_type='CONTACT' and t.status='ARCHIVED' "
+            + "join contacts source_contact on source_contact.id=t.owner_id "
+            + "where source_contact.status='merged' and source_contact.merged_to_id=#{targetContactId}::uuid "
+            + "order by cr.occurred_at, cr.id limit #{limit}")
+    List<CallRecordEntity> listArchivedMergedContactCalls(@Param("targetContactId") UUID targetContactId,
+                                                          @Param("limit") int limit);
+
     @Select("SELECT count(*) FROM call_records WHERE transcription_state IN ('queued', 'processing')")
     int countPending();
 

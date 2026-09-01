@@ -5,6 +5,9 @@ import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
+import com.crmforlogistics.messagecenter.mapper.AiTopicMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerActivityService;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerService;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -29,19 +32,39 @@ public class ContactGroupService {
     private final ContactMapper contactMapper;
     private final ContactIdentityMapper contactIdentityMapper;
     private final ContactTagMapper contactTagMapper;
+    private final AiTopicMapper aiTopicMapper;
+    private final AiTopicOwnerActivityService aiTopicActivities;
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper) {
-        this(contactMapper, contactIdentityMapper, null);
+        this(contactMapper, contactIdentityMapper, null, null, null);
     }
 
     @Autowired
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper,
                                ContactTagMapper contactTagMapper) {
+        this(contactMapper, contactIdentityMapper, contactTagMapper, null, null);
+    }
+
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               AiTopicMapper aiTopicMapper,
+                               AiTopicOwnerActivityService aiTopicActivities) {
+        this(contactMapper, contactIdentityMapper, null, aiTopicMapper, aiTopicActivities);
+    }
+
+    @Autowired
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               ContactTagMapper contactTagMapper,
+                               AiTopicMapper aiTopicMapper,
+                               AiTopicOwnerActivityService aiTopicActivities) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.contactTagMapper = contactTagMapper;
+        this.aiTopicMapper = aiTopicMapper;
+        this.aiTopicActivities = aiTopicActivities;
     }
 
     /**
@@ -69,10 +92,16 @@ public class ContactGroupService {
         if (source == null) {
             throw new IllegalArgumentException("Source contact not found: " + sourceContactId);
         }
+        if (aiTopicMapper != null) {
+            aiTopicMapper.archiveReadyByContact(sourceContactId);
+        }
         source.setStatus("merged");
         source.setMergedToId(targetContactId);
         source.setUpdatedAt(Instant.now());
         contactMapper.updateById(source);
+        if (aiTopicActivities != null) {
+            aiTopicActivities.recordActivity(AiTopicOwnerService.contact(targetContactId), Instant.now());
+        }
     }
 
     /**

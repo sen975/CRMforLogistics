@@ -5,6 +5,8 @@ import com.crmforlogistics.messagecenter.entity.AiTopicItemEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 import java.util.LinkedHashSet;
@@ -30,6 +32,21 @@ public interface AiTopicItemMapper extends BaseMapper<AiTopicItemEntity> {
 
     @Select("select i.* from ai_topic_items i join ai_topics t on t.id=i.topic_id where t.contact_id=#{contactId}::uuid")
     List<AiTopicItemEntity> listAssignedByContact(UUID contactId);
+
+    @Update("<script>update ai_topic_items set topic_id=#{targetTopicId}::uuid "
+            + "where topic_id in (select old_topic.id from ai_topics old_topic "
+            + "join contacts old_contact on old_contact.id=old_topic.owner_id "
+            + "where old_topic.owner_type='CONTACT' and old_topic.status='ARCHIVED' "
+            + "and old_contact.status='merged' and old_contact.merged_to_id=#{targetContactId}::uuid) "
+            + "and <choose>"
+            + "<when test=\"sourceType == 'MESSAGE'\">message_id=#{sourceId}::uuid</when>"
+            + "<when test=\"sourceType == 'CALL_RECORD'\">call_record_id=#{sourceId}::uuid</when>"
+            + "<when test=\"sourceType == 'WECOM_SUMMARY'\">wecom_message_summary_job_id=#{sourceId}::uuid</when>"
+            + "<otherwise>1=0</otherwise></choose></script>")
+    int moveArchivedMergedSourceToTopic(@Param("targetTopicId") UUID targetTopicId,
+                                        @Param("targetContactId") UUID targetContactId,
+                                        @Param("sourceType") String sourceType,
+                                        @Param("sourceId") UUID sourceId);
 
     default com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.AssignedSourceIds listAssignedSourceIds(UUID contactId) {
         Set<UUID> messageIds = new LinkedHashSet<>();
