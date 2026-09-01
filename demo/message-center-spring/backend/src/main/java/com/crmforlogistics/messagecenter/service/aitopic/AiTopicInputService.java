@@ -13,6 +13,9 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComMessageSummaryJobMapper;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -38,16 +41,27 @@ public class AiTopicInputService {
     private final ChannelAccountMapper channelAccountMapper;
     private final ContactIdentityMapper contactIdentityMapper;
     private final CallRecordMapper callRecordMapper;
+    private final WeComMessageSummaryJobMapper weComSummaryMapper;
     private final AiTopicConfig config;
 
     public AiTopicInputService(ConversationMapper conversationMapper, MessageMapper messageMapper,
                                ChannelAccountMapper channelAccountMapper, ContactIdentityMapper contactIdentityMapper,
                                CallRecordMapper callRecordMapper, AiTopicConfig config) {
+        this(conversationMapper, messageMapper, channelAccountMapper, contactIdentityMapper,
+                callRecordMapper, null, config);
+    }
+
+    @Autowired
+    public AiTopicInputService(ConversationMapper conversationMapper, MessageMapper messageMapper,
+                               ChannelAccountMapper channelAccountMapper, ContactIdentityMapper contactIdentityMapper,
+                               CallRecordMapper callRecordMapper, WeComMessageSummaryJobMapper weComSummaryMapper,
+                               AiTopicConfig config) {
         this.conversationMapper = Objects.requireNonNull(conversationMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.contactIdentityMapper = Objects.requireNonNull(contactIdentityMapper);
         this.callRecordMapper = Objects.requireNonNull(callRecordMapper);
+        this.weComSummaryMapper = weComSummaryMapper;
         this.config = Objects.requireNonNull(config);
     }
 
@@ -82,6 +96,17 @@ public class AiTopicInputService {
                         call.getDirection(), "", text));
             }
         }
+        if (weComSummaryMapper != null) {
+            for (WeComMessageSummaryJobEntity summary :
+                    weComSummaryMapper.listCompletedUnassignedForContact(contactId, config.maxInputRecords())) {
+                if (summary.getId() == null || summary.getSendTime() == null || summary.getSummary() == null
+                        || summary.getSummary().isBlank()) continue;
+                Instant occurredAt = Instant.ofEpochSecond(summary.getSendTime());
+                if (after.isPresent() && !occurredAt.isAfter(after.get())) continue;
+                items.add(new SourceItem(summary.getId(), SourceType.WECOM_SUMMARY, "wecom", occurredAt,
+                        "inbound", "", summary.getSummary()));
+            }
+        }
         List<SourceItem> supported = new ArrayList<>(filterSupportedSources(items));
         supported.sort(Comparator.comparing(SourceItem::occurredAt).thenComparing(SourceItem::id));
         boolean hasMore = supported.size() > config.maxInputRecords();
@@ -94,6 +119,26 @@ public class AiTopicInputService {
             bounded.add(item); bytes += itemBytes;
         }
         return new InputBatch(List.copyOf(bounded), fingerprint(bounded), hasMore);
+    }
+
+    public InputBatch collect(AiTopicOwnerService.OwnerRef owner, UUID userId, Optional<Instant> after) {
+        Objects.requireNonNull(owner, "owner");
+        if ("CONTACT".equals(owner.type())) {
+            InputBatch contactBatch = collect(owner.id(), userId, after);
+            return new InputBatch(contactBatch.items(), fingerprint(owner, contactBatch.items()), contactBatch.hasMore());
+        }
+        if (weComSummaryMapper == null) return bounded(owner, List.of());
+        List<SourceItem> items = new ArrayList<>();
+        for (WeComMessageSummaryJobEntity summary :
+                weComSummaryMapper.listCompletedUnassignedForGroup(owner.id(), config.maxInputRecords())) {
+            if (summary.getId() == null || summary.getSendTime() == null || summary.getSummary() == null
+                    || summary.getSummary().isBlank()) continue;
+            Instant occurredAt = Instant.ofEpochSecond(summary.getSendTime());
+            if (after.isPresent() && !occurredAt.isAfter(after.get())) continue;
+            items.add(new SourceItem(summary.getId(), SourceType.WECOM_SUMMARY, "wecom", occurredAt,
+                    "inbound", "", summary.getSummary()));
+        }
+        return bounded(owner, items);
     }
 
     public InputBatch collect(UUID contactId, Optional<Instant> after) {
@@ -119,14 +164,22 @@ public class AiTopicInputService {
 
     public static List<SourceItem> filterSupportedSources(List<SourceItem> items) {
         return items.stream().filter(Objects::nonNull)
-                .filter(i -> isSupportedChannel(i.channelType()))
+                .filter(AiTopicInputService::isSupportedSource)
                 .sorted(Comparator.comparing(SourceItem::occurredAt).thenComparing(SourceItem::id))
                 .toList();
     }
 
     public static String fingerprint(List<SourceItem> items) {
+        return fingerprint(null, items);
+    }
+
+    public static String fingerprint(AiTopicOwnerService.OwnerRef owner, List<SourceItem> items) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            if (owner != null) {
+                digest.update(("owner:" + owner.type() + ":" + owner.id() + "\n")
+                        .getBytes(StandardCharsets.UTF_8));
+            }
             for (SourceItem item : filterSupportedSources(items)) digest.update(canonical(item).getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
@@ -135,6 +188,10 @@ public class AiTopicInputService {
     }
 
     private InputBatch bounded(List<SourceItem> items) {
+        return bounded(null, items);
+    }
+
+    private InputBatch bounded(AiTopicOwnerService.OwnerRef owner, List<SourceItem> items) {
         List<SourceItem> supported = new ArrayList<>(filterSupportedSources(items));
         boolean hasMore = supported.size() > config.maxInputRecords();
         if (supported.size() > config.maxInputRecords()) supported = new ArrayList<>(supported.subList(0, config.maxInputRecords()));
@@ -144,7 +201,7 @@ public class AiTopicInputService {
             if (!bounded.isEmpty() && bytes + itemBytes > config.maxInputBytes()) { hasMore = true; break; }
             bounded.add(item); bytes += itemBytes;
         }
-        return new InputBatch(List.copyOf(bounded), fingerprint(bounded), hasMore);
+        return new InputBatch(List.copyOf(bounded), fingerprint(owner, bounded), hasMore);
     }
 
     private static String canonical(SourceItem item) {
@@ -161,6 +218,11 @@ public class AiTopicInputService {
 
     private static boolean isSupportedChannel(String channel) {
         return "chatapp".equalsIgnoreCase(channel) || "email".equalsIgnoreCase(channel) || "phone".equalsIgnoreCase(channel);
+    }
+
+    private static boolean isSupportedSource(SourceItem item) {
+        return isSupportedChannel(item.channelType())
+                || (item.sourceType() == SourceType.WECOM_SUMMARY && "wecom".equalsIgnoreCase(item.channelType()));
     }
 
     private static String nullToEmpty(String value) { return value == null ? "" : value; }

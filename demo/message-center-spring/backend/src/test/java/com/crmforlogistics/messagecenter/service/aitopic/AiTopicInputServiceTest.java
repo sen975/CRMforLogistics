@@ -10,6 +10,8 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComMessageSummaryJobMapper;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -82,6 +84,84 @@ class AiTopicInputServiceTest {
         assertThat(AiTopicInputService.fingerprint(filtered)).hasSize(64);
         assertThat(AiTopicInputService.fingerprint(filtered))
                 .isEqualTo(AiTopicInputService.fingerprint(List.copyOf(filtered)));
+    }
+
+    @Test
+    void includesCompletedDirectWecomSummaryAsDedicatedSourceType() {
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        CallRecordMapper calls = mock(CallRecordMapper.class);
+        WeComMessageSummaryJobMapper summaries = mock(WeComMessageSummaryJobMapper.class);
+        AiTopicConfig config = new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30);
+        AiTopicInputService input = new AiTopicInputService(conversations, messages, accounts, identities, calls,
+                summaries, config);
+        UUID contactId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        WeComMessageSummaryJobEntity summary = new WeComMessageSummaryJobEntity();
+        summary.setId(UUID.randomUUID());
+        summary.setSendTime(1_787_891_200L);
+        summary.setSummary("客户确认九月出货计划");
+        when(conversations.listAccessibleForContact(contactId, userId)).thenReturn(List.of());
+        when(identities.findByContactId(contactId)).thenReturn(List.of());
+        when(summaries.listCompletedUnassignedForContact(contactId, 200)).thenReturn(List.of(summary));
+
+        AiTopicModels.InputBatch batch = input.collect(contactId, userId, Optional.empty());
+
+        assertThat(batch.items()).singleElement().satisfies(item -> {
+            assertThat(item.sourceType()).isEqualTo(AiTopicModels.SourceType.WECOM_SUMMARY);
+            assertThat(item.channelType()).isEqualTo("wecom");
+            assertThat(item.text()).isEqualTo("客户确认九月出货计划");
+        });
+    }
+
+    @Test
+    void fingerprintChangesWhenOfficialSummaryTextChanges() {
+        UUID id = UUID.randomUUID();
+        Instant at = Instant.parse("2026-09-01T00:00:00Z");
+        var first = new AiTopicModels.SourceItem(id, AiTopicModels.SourceType.WECOM_SUMMARY, "wecom", at,
+                "inbound", "", "第一版摘要");
+        var second = new AiTopicModels.SourceItem(id, AiTopicModels.SourceType.WECOM_SUMMARY, "wecom", at,
+                "inbound", "", "第二版摘要");
+        assertThat(AiTopicInputService.fingerprint(List.of(first)))
+                .isNotEqualTo(AiTopicInputService.fingerprint(List.of(second)));
+    }
+
+    @Test
+    void ownerScopedFingerprintChangesForDifferentOwnersAndSummaryJobs() {
+        Instant at = Instant.parse("2026-09-01T00:00:00Z");
+        var firstJob = new AiTopicModels.SourceItem(UUID.randomUUID(), AiTopicModels.SourceType.WECOM_SUMMARY,
+                "wecom", at, "inbound", "", "客户确认九月出货计划");
+        var secondJob = new AiTopicModels.SourceItem(UUID.randomUUID(), AiTopicModels.SourceType.WECOM_SUMMARY,
+                "wecom", at, "inbound", "", "客户确认九月出货计划");
+        var firstOwner = AiTopicOwnerService.contact(UUID.randomUUID());
+        var secondOwner = AiTopicOwnerService.contact(UUID.randomUUID());
+
+        assertThat(AiTopicInputService.fingerprint(firstOwner, List.of(firstJob)))
+                .isNotEqualTo(AiTopicInputService.fingerprint(secondOwner, List.of(firstJob)))
+                .isNotEqualTo(AiTopicInputService.fingerprint(firstOwner, List.of(secondJob)));
+    }
+
+    @Test
+    void groupOwnerCollectsOnlyThatGroupsCompletedSummaries() {
+        WeComMessageSummaryJobMapper summaries = mock(WeComMessageSummaryJobMapper.class);
+        AiTopicInputService input = new AiTopicInputService(mock(ConversationMapper.class), mock(MessageMapper.class),
+                mock(ChannelAccountMapper.class), mock(ContactIdentityMapper.class), mock(CallRecordMapper.class),
+                summaries, new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30));
+        UUID groupId = UUID.randomUUID();
+        WeComMessageSummaryJobEntity summary = new WeComMessageSummaryJobEntity();
+        summary.setId(UUID.randomUUID());
+        summary.setSendTime(1_787_891_200L);
+        summary.setSummary("群内确认装柜时间");
+        when(summaries.listCompletedUnassignedForGroup(groupId, 200)).thenReturn(List.of(summary));
+
+        AiTopicModels.InputBatch batch = input.collect(AiTopicOwnerService.group(groupId), UUID.randomUUID(), Optional.empty());
+
+        assertThat(batch.items()).singleElement().satisfies(item -> {
+            assertThat(item.sourceType()).isEqualTo(AiTopicModels.SourceType.WECOM_SUMMARY);
+            assertThat(item.text()).isEqualTo("群内确认装柜时间");
+        });
     }
 
     @Test

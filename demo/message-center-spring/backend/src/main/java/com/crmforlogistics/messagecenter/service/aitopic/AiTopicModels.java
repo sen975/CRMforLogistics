@@ -8,7 +8,8 @@ import java.util.UUID;
 public final class AiTopicModels {
     private AiTopicModels() {}
 
-    public enum SourceType { MESSAGE, CALL_RECORD }
+    public enum SourceType { MESSAGE, CALL_RECORD, WECOM_SUMMARY }
+    public enum OwnerType { CONTACT, WECOM_GROUP }
     public enum GenerationStatus { NOT_STARTED, GENERATING, READY, FAILED }
     public enum TopicOperationKind { EDIT, MERGE, DISCARD, RESTORE }
     public enum TopicOperationStatus { PENDING, PROCESSING, COMPLETED, FAILED }
