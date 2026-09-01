@@ -7,8 +7,15 @@ import java.util.UUID;
 public record WeComThreadResponse(
         UUID contactId,
         List<UUID> sourceConversationIds,
+        List<RelatedWeComGroupResponse> relatedGroups,
         List<MessageResponse> items,
         String nextCursor,
         int messageCount,
         String threadRevision
-) {}
+) {
+    public WeComThreadResponse(UUID contactId, List<UUID> sourceConversationIds,
+                               List<MessageResponse> items, String nextCursor,
+                               int messageCount, String threadRevision) {
+        this(contactId, sourceConversationIds, List.of(), items, nextCursor, messageCount, threadRevision);
+    }
+}

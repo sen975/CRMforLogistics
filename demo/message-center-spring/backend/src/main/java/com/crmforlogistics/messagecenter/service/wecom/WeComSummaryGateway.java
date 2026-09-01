@@ -75,7 +75,7 @@ public class WeComSummaryGateway {
             reference.put("secret_key", message.secretKey());
         }
         ProgramResult result = call(installation, input, timeout);
-        return new SubmitResult(result.errcode(), result.status(), result.jobId());
+        return new SubmitResult(result.errcode(), result.status(), result.jobId(), result.rawResponseJson());
     }
 
     public PollResult poll(ResolvedInstallation installation, String jobId, Duration timeout)
@@ -86,13 +86,13 @@ public class WeComSummaryGateway {
         input.put("jobid", jobId);
         input.putArray("msg_list");
         ProgramResult result = call(installation, input, timeout);
-        return new PollResult(result.errcode(), result.status(), result.jobId(), result.summary());
+        return new PollResult(result.errcode(), result.status(), result.jobId(), result.summary(), result.rawResponseJson());
     }
 
     private ProgramResult call(ResolvedInstallation installation, ObjectNode input, Duration timeout)
             throws WeComSummaryException {
         requireText(config.wecomChatDataProgramId(), 128);
-        String abilityId = config.wecomDailySummaryAbilityId();
+        String abilityId = config.wecomMessageSummaryAbilityId();
         requireText(abilityId, 128);
         if (timeout == null || timeout.isZero() || timeout.isNegative()) throw timeout(null);
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -127,7 +127,7 @@ public class WeComSummaryGateway {
             JsonNode outer = objectMapper.readTree(response);
             requireOnlyFields(outer, OUTER_FIELDS);
             if (integer(outer, "errcode") != 0) throw programError(null);
-            return parseProgramResult(text(outer, "response_data", MAX_RESPONSE_BYTES));
+            return parseProgramResult(text(outer, "response_data", MAX_RESPONSE_BYTES), response);
         } catch (WeComSummaryException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -139,7 +139,7 @@ public class WeComSummaryGateway {
         return restClient != null ? restClient : restClients.create(timeout);
     }
 
-    private ProgramResult parseProgramResult(String raw) throws WeComSummaryException {
+    private ProgramResult parseProgramResult(String raw, String rawResponseJson) throws WeComSummaryException {
         try {
             JsonNode body = objectMapper.readTree(raw);
             requireOnlyFields(body, RESULT_FIELDS);
@@ -154,7 +154,7 @@ public class WeComSummaryGateway {
             if (errcode == 0 && jobId.isBlank()) throw programError(null);
             if (errcode == 0 && status == 1 && summary.isBlank()) throw programError(null);
             if (status != 1 && !summary.isBlank()) throw programError(null);
-            return new ProgramResult(errcode, status, jobId, summary);
+            return new ProgramResult(errcode, status, jobId, summary, rawResponseJson);
         } catch (WeComSummaryException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -230,7 +230,16 @@ public class WeComSummaryGateway {
     }
 
     public record MessageReference(String msgid, String secretKey) {}
-    public record SubmitResult(int errcode, int status, String jobId) {}
-    public record PollResult(int errcode, int status, String jobId, String summary) {}
-    private record ProgramResult(int errcode, int status, String jobId, String summary) {}
+    public record SubmitResult(int errcode, int status, String jobId, String rawResponseJson) {
+        public SubmitResult(int errcode, int status, String jobId) {
+            this(errcode, status, jobId, "");
+        }
+    }
+    public record PollResult(int errcode, int status, String jobId, String summary, String rawResponseJson) {
+        public PollResult(int errcode, int status, String jobId, String summary) {
+            this(errcode, status, jobId, summary, "");
+        }
+    }
+    private record ProgramResult(int errcode, int status, String jobId, String summary,
+                                 String rawResponseJson) {}
 }

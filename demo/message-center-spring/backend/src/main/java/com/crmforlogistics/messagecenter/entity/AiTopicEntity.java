@@ -15,6 +15,7 @@ public class AiTopicEntity {
     private String ownerType;
     private UUID ownerId;
     private UUID wecomGroupSourceConversationId;
+    private String ownerLabel;
     private String contactDisplayName;
     private String contactRemark;
     private String contactChannelType;
@@ -40,6 +41,8 @@ public class AiTopicEntity {
     public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
     public UUID getWecomGroupSourceConversationId() { return wecomGroupSourceConversationId; }
     public void setWecomGroupSourceConversationId(UUID value) { this.wecomGroupSourceConversationId = value; }
+    public String getOwnerLabel() { return ownerLabel; }
+    public void setOwnerLabel(String value) { this.ownerLabel = value; }
     public String getContactDisplayName() { return contactDisplayName; }
     public void setContactDisplayName(String contactDisplayName) { this.contactDisplayName = contactDisplayName; }
     public String getContactRemark() { return contactRemark; }

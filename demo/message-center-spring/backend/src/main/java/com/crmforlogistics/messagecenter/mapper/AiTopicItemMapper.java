@@ -13,8 +13,14 @@ import java.util.UUID;
 
 @Mapper
 public interface AiTopicItemMapper extends BaseMapper<AiTopicItemEntity> {
-    @Insert("insert into ai_topic_items (id, topic_id, message_id, call_record_id, occurred_at, channel_type) values (gen_random_uuid(), #{topicId}::uuid, #{messageId}::uuid, #{callRecordId}::uuid, #{occurredAt}, #{channelType}) on conflict do nothing")
-    int insertIfAbsent(UUID topicId, UUID messageId, UUID callRecordId, java.time.Instant occurredAt, String channelType);
+    @Insert("insert into ai_topic_items (id, topic_id, message_id, call_record_id, wecom_message_summary_job_id, occurred_at, channel_type) values (gen_random_uuid(), #{topicId}::uuid, #{messageId}::uuid, #{callRecordId}::uuid, #{wecomMessageSummaryJobId}::uuid, #{occurredAt}, #{channelType}) on conflict do nothing")
+    int insertIfAbsent(UUID topicId, UUID messageId, UUID callRecordId, UUID wecomMessageSummaryJobId,
+                       java.time.Instant occurredAt, String channelType);
+
+    default int insertIfAbsent(UUID topicId, UUID messageId, UUID callRecordId,
+                               java.time.Instant occurredAt, String channelType) {
+        return insertIfAbsent(topicId, messageId, callRecordId, null, occurredAt, channelType);
+    }
 
     @Select("select * from ai_topic_items where topic_id=#{topicId}::uuid order by occurred_at, id")
     List<AiTopicItemEntity> listByTopic(UUID topicId);

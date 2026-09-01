@@ -5,4 +5,8 @@ import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.Generatio
 
 public interface TopicAiGateway {
     GenerationOutput generate(GenerationInput input);
+
+    default GenerationOutput generate(GenerationInput input, AiTopicGenerationAuditService.Context auditContext) {
+        return generate(input);
+    }
 }

@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserBindingService;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,18 +41,21 @@ public class WeComP0Controller {
     private final WeComExternalContactService externalContacts;
     private final WeComDirectoryService directory;
     private final WeComProfileBackfillService profileBackfill;
+    private final WeComUserBindingService bindings;
 
     public WeComP0Controller(AppConfig config, WeComInstallationService installations,
                              WeComAppChatService appChats,
                              WeComExternalContactService externalContacts,
                              WeComDirectoryService directory,
-                             WeComProfileBackfillService profileBackfill) {
+                             WeComProfileBackfillService profileBackfill,
+                             WeComUserBindingService bindings) {
         this.config = config;
         this.installations = installations;
         this.appChats = appChats;
         this.externalContacts = externalContacts;
         this.directory = directory;
         this.profileBackfill = profileBackfill;
+        this.bindings = bindings;
     }
 
     @GetMapping("/installations")
@@ -95,9 +99,13 @@ public class WeComP0Controller {
 
     @GetMapping("/installations/{authCorpId}/external-contacts")
     public JsonNode listExternalContacts(@PathVariable String authCorpId,
-                                         @RequestParam String userId,
                                          HttpServletRequest servletRequest) {
-        return externalContacts.list(authCorpId, userId, actor(servletRequest));
+        WeComUserBindingService.BoundIdentity binding = bindings.requireByUserId(SecurityUtil.currentUserId());
+        if (!authCorpId.equals(binding.authCorpId())) {
+            throw new WeComException("WECOM_BINDING_CORP_MISMATCH", 403,
+                    "当前账号绑定的企业微信企业与请求不一致");
+        }
+        return externalContacts.list(authCorpId, binding.wecomUserId(), actor(servletRequest));
     }
 
     @GetMapping("/installations/{authCorpId}/external-contacts/{externalUserId}")

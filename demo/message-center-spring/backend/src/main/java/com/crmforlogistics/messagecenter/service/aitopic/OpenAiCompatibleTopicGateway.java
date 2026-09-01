@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.Generatio
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationOutput;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -30,10 +31,17 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
     private final ObjectMapper mapper;
     private final TopicAiResponseParser parser;
     private final RestClient client;
+    private final AiTopicGenerationAuditService audit;
 
     public OpenAiCompatibleTopicGateway(AiTopicConfig config, ObjectMapper mapper) {
+        this(config, mapper, null);
+    }
+
+    @Autowired
+    public OpenAiCompatibleTopicGateway(AiTopicConfig config, ObjectMapper mapper, AiTopicGenerationAuditService audit) {
         this.config = config;
         this.mapper = mapper;
+        this.audit = audit;
         this.parser = new TopicAiResponseParser(mapper);
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(config.timeoutSeconds())).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
@@ -43,27 +51,54 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
 
     @Override
     public GenerationOutput generate(GenerationInput input) {
-        if (config.baseUrl().isBlank()) throw new AiTopicException("AI_NOT_CONFIGURED", false);
+        return generate(input, null);
+    }
+
+    @Override
+    public GenerationOutput generate(GenerationInput input, AiTopicGenerationAuditService.Context auditContext) {
+        String rawResponse = null;
+        Integer responseStatus = null;
+        String responseHeaders = null;
         try {
+            if (config.baseUrl().isBlank()) throw new AiTopicException("AI_NOT_CONFIGURED", false, "BASE_URL_MISSING", null);
             Map<String, Object> request = new LinkedHashMap<>();
             request.putAll(buildRequest(config.model(), input, mapper));
             RestClient.RequestBodySpec call = client.post().body(request);
             if (!config.apiKey().isBlank()) call.header("Authorization", "Bearer " + config.apiKey());
-            String response = call.retrieve().body(String.class);
+            HttpResult http = call.exchange((req, res) -> new HttpResult(res.getStatusCode().value(),
+                    res.getHeaders().entrySet().stream().filter(e -> e.getKey() != null && !e.getKey().equalsIgnoreCase("authorization") && !e.getKey().equalsIgnoreCase("set-cookie"))
+                            .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, e -> e.getValue().stream().limit(5).toList())),
+                    new String(res.getBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)));
+            rawResponse = http.body();
+            responseStatus = http.status();
+            responseHeaders = mapper.writeValueAsString(http.headers());
+            if (auditContext != null && audit != null) audit.outcome(auditContext, "PROVIDER_CALL", "STARTED", http.status(), responseHeaders, rawResponse, null, null, null, config);
+            if (http.status() >= 400) throw new org.springframework.web.client.HttpServerErrorException(org.springframework.http.HttpStatusCode.valueOf(http.status()), "provider response", http.body().getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.charset.StandardCharsets.UTF_8);
+            String response = http.body();
             JsonNode root = mapper.readTree(response);
             String content = root.path("choices").path(0).path("message").path("content").asText("");
-            if (content.isBlank()) throw new AiTopicException("AI_RESPONSE_INVALID", false);
-            return parser.parse(content, input.sources().stream().map(AiTopicModels.SourceItem::id).collect(java.util.stream.Collectors.toSet()));
+            if (content.isBlank()) throw new AiTopicException("AI_RESPONSE_INVALID", false, "EMPTY_CONTENT", null);
+            if (auditContext != null && audit != null) audit.outcome(auditContext, "RESPONSE_PARSE", "STARTED", http.status(), responseHeaders, response, null, null, null, config);
+            GenerationOutput output = parser.parse(content, input.sources().stream().map(AiTopicModels.SourceItem::id).collect(java.util.stream.Collectors.toSet()));
+            if (auditContext != null && audit != null) audit.outcome(auditContext, "RESPONSE_VALIDATE", "SUCCEEDED", http.status(), responseHeaders, response, mapper.writeValueAsString(output), null, null, config);
+            return output;
         } catch (AiTopicException e) {
+            if (auditContext != null && audit != null) audit.outcome(auditContext,
+                    e.code().startsWith("AI_RESPONSE_") ? (e.code().equals("AI_RESPONSE_PARSE_FAILED") ? "RESPONSE_PARSE" : "RESPONSE_VALIDATE") : "PROVIDER_CALL",
+                    "FAILED", responseStatus, responseHeaders, rawResponse, null, e.code(), e.diagnostic(), config);
             throw e;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
             int status = e.getStatusCode().value();
-            throw new AiTopicException(status == 408 || status == 429 || status >= 500 ? "AI_PROVIDER_UNAVAILABLE" : rejectionCode(status),
-                    status == 408 || status == 429 || status >= 500, "HTTP_" + status, e);
+            String code = status == 408 || status == 429 || status >= 500 ? "AI_PROVIDER_UNAVAILABLE" : rejectionCode(status);
+            if (auditContext != null && audit != null) audit.outcome(auditContext, "PROVIDER_CALL", "FAILED", status, null, e.getResponseBodyAsString(), null, code, "HTTP_" + status, config);
+            throw new AiTopicException(code, status == 408 || status == 429 || status >= 500, "HTTP_" + status, e);
         } catch (Exception e) {
+            if (auditContext != null && audit != null) audit.outcome(auditContext, "PROVIDER_CALL", "FAILED", null, null, null, null, "AI_PROVIDER_UNAVAILABLE", providerDiagnostic(e), config);
             throw new AiTopicException("AI_PROVIDER_UNAVAILABLE", true, providerDiagnostic(e), e);
         }
     }
+
+    private record HttpResult(int status, Map<String, List<String>> headers, String body) {}
 
     static URI resolveEndpoint(String configuredBaseUrl) {
         String value = configuredBaseUrl.trim();
@@ -119,10 +154,11 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
                 "id", topic.id(), "title", topic.title(), "summary", topic.summary(),
                 "firstOccurredAt", topic.firstOccurredAt(), "lastOccurredAt", topic.lastOccurredAt(),
                 "sourceIds", topic.sourceIds())).toList();
-        return Map.of("incremental", input.incremental(), "sources", sources, "existingTopics", topics);
+        return Map.of("owner", Map.of("type", input.owner().type(), "id", input.owner().id()),
+                "incremental", input.incremental(), "sources", sources, "existingTopics", topics);
     }
 
     private static String systemPrompt() {
-        return "Group only supplied ChatApp, email, and phone sources into business topics. Return JSON only: {topics:[{topicKey,title,summary,relevance,sourceIds:[uuid]}]}. For an existing topic, topicKey MUST be its exact existingTopics.id UUID; for a new topic, use a new opaque key that is not a UUID. Never invent sources or include unsupported channels. Write title and summary in Chinese.";
+        return "Group only supplied ChatApp, email, phone, and WeCom summaries into business topics. WeCom summaries contain the official summary only, never infer an unavailable original message. All supplied sources and existing topics share one owner scope; never associate another owner. Return JSON only: {topics:[{topicKey,title,summary,relevance,sourceIds:[uuid]}]}. Every topic MUST have a non-empty sourceIds array; assign every supplied source to exactly one topic, never leave a source ungrouped, and never emit a topic with an empty sourceIds. For an existing topic, topicKey MUST be its exact existingTopics.id UUID; for a new topic, use a new opaque key that is not a UUID. Never invent sources or include unsupported channels. Write title and summary in Chinese.";
     }
 }

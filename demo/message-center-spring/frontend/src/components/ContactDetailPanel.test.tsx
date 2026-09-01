@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App as AntApp, ConfigProvider } from 'antd';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -8,6 +9,7 @@ import ContactDetailPanel from './ContactDetailPanel';
 
 const fetchContact = vi.fn();
 const selectChannel = vi.fn();
+const updateTagsMutateAsync = vi.fn();
 
 vi.mock('../api/endpoints', () => ({
   fetchContact: (...args: unknown[]) => fetchContact(...args),
@@ -16,6 +18,7 @@ vi.mock('../api/endpoints', () => ({
 
 vi.mock('../hooks/useContacts', () => ({
   useUpdateContactRemark: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateContactTags: () => ({ mutateAsync: updateTagsMutateAsync, isPending: false }),
   useSplitContact: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
@@ -27,6 +30,8 @@ describe('ContactDetailPanel identity display', () => {
   beforeEach(() => {
     fetchContact.mockReset();
     selectChannel.mockReset();
+    updateTagsMutateAsync.mockReset();
+    updateTagsMutateAsync.mockResolvedValue(undefined);
     fetchContact.mockResolvedValue({
       id: 'contact-1',
       displayName: '8613428277520',
@@ -117,5 +122,50 @@ describe('ContactDetailPanel identity display', () => {
 
     fireEvent.click(await screen.findByText('客户邮箱'));
     expect(selectChannel).toHaveBeenCalledWith('email');
+  });
+
+  it('saves edited CRM tags for the contact', async () => {
+    fetchContact.mockResolvedValueOnce({
+      id: 'contact-1',
+      displayName: '客户一',
+      remark: '重点客户',
+      channelTypes: ['email'],
+      lastMessageAt: null,
+      lastText: '',
+      messageCount: 0,
+      unreadCount: 0,
+      tags: [{ id: 'tag-1', name: 'VIP', color: 'gold' }],
+      identities: [],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider>
+          <AntApp>
+            <MemoryRouter initialEntries={['/thread/contact-1']}>
+              <Routes>
+                <Route path="/thread/:contactId" element={<ContactDetailPanel />} />
+              </Routes>
+            </MemoryRouter>
+          </AntApp>
+        </ConfigProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('VIP')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '编辑标签' }));
+    const user = userEvent.setup();
+    const tagInput = screen.getByRole('combobox');
+    await user.type(tagInput, '重点');
+    await user.keyboard('{Enter}');
+    await user.click(screen.getByRole('button', { name: '保存标签' }));
+
+    expect(updateTagsMutateAsync).toHaveBeenCalledWith({
+      id: 'contact-1',
+      tags: [{ name: 'VIP' }, { name: '重点' }],
+    });
   });
 });

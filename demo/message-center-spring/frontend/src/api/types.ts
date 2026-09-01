@@ -6,6 +6,12 @@ export interface ContactIdentityResponse {
   displayName: string;
 }
 
+export interface ContactTag {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
 export interface ContactResponse {
   id: string;
   displayName: string;
@@ -15,6 +21,7 @@ export interface ContactResponse {
   lastText: string;
   messageCount: number;
   unreadCount: number;
+  tags?: ContactTag[];
   identities: ContactIdentityResponse[];
 }
 
@@ -22,6 +29,7 @@ export interface ContactConversationItem {
   type: 'CONTACT';
   id: string;
   displayName: string;
+  remark?: string | null;
   avatarUrl?: string | null;
   channelTypes: string[];
   lastMessageAt: string | null;
@@ -454,9 +462,9 @@ export interface TimelineResponse {
 export type TopicGenerationStatus = 'NOT_STARTED' | 'GENERATING' | 'READY' | 'FAILED';
 export interface TopicSourceItem {
   id: string;
-  sourceType: 'MESSAGE' | 'CALL_RECORD';
+  sourceType: 'MESSAGE' | 'CALL_RECORD' | 'WECOM_SUMMARY';
   occurredAt: string;
-  channelType: 'chatapp' | 'email' | 'phone';
+  channelType: 'chatapp' | 'email' | 'phone' | 'wecom';
 }
 export interface TopicProjection {
   id: string;
@@ -470,8 +478,16 @@ export interface TopicProjection {
   sourceCount: number;
   sourceItems: TopicSourceItem[];
   version: number;
+  contactName?: string | null;
+  contactRemark?: string | null;
+  contactChannelType?: string | null;
+  contactChannelNickname?: string | null;
+  ownerType?: 'CONTACT' | 'WECOM_GROUP';
+  ownerId?: string | null;
+  ownerLabel?: string | null;
+  isReferencedGroupTopic?: boolean;
 }
-export type TopicOperationKind = 'EDIT' | 'MERGE' | 'DISCARD' | 'RESTORE';
+export type TopicOperationKind = 'EDIT' | 'MERGE' | 'STORE' | 'RESTORE';
 export interface TopicOperationProjection {
   id: string;
   kind: TopicOperationKind;
@@ -503,6 +519,19 @@ export interface MergeTopicsRequest {
   topicIds: string[];
   expectedVersions: Record<string, number>;
 }
+
+export interface TopicInboxRequestProjection {
+  id: string;
+  topicId: string;
+  topicTitle: string;
+  ownerType: 'CONTACT' | 'WECOM_GROUP';
+  ownerId: string;
+  ownerLabel: string;
+  requestedByUserId: string;
+  createdAt: string;
+}
+
+export interface TopicRepositoryPage extends MyBatisPage<TopicProjection> {}
 
 export interface PhoneRecordResponse {
   id: string;

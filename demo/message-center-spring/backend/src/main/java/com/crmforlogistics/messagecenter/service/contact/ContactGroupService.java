@@ -1,14 +1,20 @@
 package com.crmforlogistics.messagecenter.service.contact;
 
+import com.crmforlogistics.messagecenter.dto.request.ContactTagsRequest;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Objects;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -22,11 +28,20 @@ public class ContactGroupService {
 
     private final ContactMapper contactMapper;
     private final ContactIdentityMapper contactIdentityMapper;
+    private final ContactTagMapper contactTagMapper;
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper) {
+        this(contactMapper, contactIdentityMapper, null);
+    }
+
+    @Autowired
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               ContactTagMapper contactTagMapper) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
+        this.contactTagMapper = contactTagMapper;
     }
 
     /**
@@ -112,6 +127,43 @@ public class ContactGroupService {
         contact.setRemark(remark == null || remark.isBlank() ? null : remark.trim());
         contact.setUpdatedAt(Instant.now());
         contactMapper.updateById(contact);
+    }
+
+    /** Replace the CRM tags assigned to a contact, within the caller's access scope. */
+    @Transactional
+    public void updateTags(UUID contactId, List<ContactTagsRequest.ContactTagInput> inputs,
+                           UUID userId) {
+        Objects.requireNonNull(contactId, "contactId");
+        if (contactTagMapper == null) {
+            throw new IllegalStateException("Contact tag support is unavailable");
+        }
+        contactMapper.findAccessibleById(contactId, userId, ContactService.isCurrentUserAdmin())
+                .orElseThrow(() -> new IllegalArgumentException("Contact not found: " + contactId));
+
+        LinkedHashMap<String, ContactTagsRequest.ContactTagInput> unique = new LinkedHashMap<>();
+        List<ContactTagsRequest.ContactTagInput> normalizedInputs = inputs == null
+                ? List.of() : inputs;
+        for (ContactTagsRequest.ContactTagInput input : normalizedInputs) {
+            if (input == null || input.name() == null || input.name().isBlank()) {
+                continue;
+            }
+            String name = input.name().trim();
+            requireLength(name, "tag name", 100);
+            String color = input.color() == null || input.color().isBlank()
+                    ? null : input.color().trim();
+            if (color != null) requireLength(color, "tag color", 30);
+            unique.putIfAbsent(name.toLowerCase(Locale.ROOT),
+                    new ContactTagsRequest.ContactTagInput(name, color));
+        }
+
+        contactTagMapper.deleteByContactId(contactId);
+        for (ContactTagsRequest.ContactTagInput input : unique.values()) {
+            contactTagMapper.insertTag(input.name(), input.color());
+            ContactTagMapper tagMapper = contactTagMapper;
+            var tag = tagMapper.findActiveByName(input.name())
+                    .orElseThrow(() -> new IllegalStateException("Contact tag was not created"));
+            tagMapper.insertTagging(contactId, tag.id());
+        }
     }
 
     /**

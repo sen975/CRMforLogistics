@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationInput;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -19,25 +20,57 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiCompatibleTopicGatewayTest {
     @Test
+    void marksAuditAwareConstructorForSpringInjection() throws NoSuchMethodException {
+        var constructor = OpenAiCompatibleTopicGateway.class.getConstructor(
+                com.crmforlogistics.messagecenter.config.AiTopicConfig.class,
+                ObjectMapper.class,
+                AiTopicGenerationAuditService.class);
+
+        assertThat(constructor.isAnnotationPresent(Autowired.class)).isTrue();
+    }
+
+    @Test
     void doesNotForceProviderSpecificJsonResponseFormat() {
         UUID sourceId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
         var source = new AiTopicModels.SourceItem(sourceId, AiTopicModels.SourceType.MESSAGE, "email",
                 Instant.parse("2026-08-01T00:00:00Z"), "inbound", "报价", "请报价");
         var request = OpenAiCompatibleTopicGateway.buildRequest(
-                "model", new GenerationInput(List.of(source), List.of(), false), new ObjectMapper().findAndRegisterModules());
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", ownerId), List.of(source), List.of(), false),
+                new ObjectMapper().findAndRegisterModules());
 
         assertThat(request).doesNotContainKey("response_format");
         assertThat(request).containsKeys("model", "messages");
     }
 
     @Test
+    void payloadCarriesTheSingleOwnerScopeAlongsideWeComSummary() throws Exception {
+        UUID ownerId = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        var source = new AiTopicModels.SourceItem(sourceId, AiTopicModels.SourceType.WECOM_SUMMARY, "wecom",
+                Instant.parse("2026-08-01T00:00:00Z"), "inbound", "", "官方会话概要");
+        var request = OpenAiCompatibleTopicGateway.buildRequest(
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", ownerId), List.of(source), List.of(), false),
+                new ObjectMapper().findAndRegisterModules());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
+        var payload = new ObjectMapper().readTree((String) messages.get(1).get("content"));
+
+        assertThat(payload.path("owner").path("type").asText()).isEqualTo("WECOM_GROUP");
+        assertThat(payload.path("owner").path("id").asText()).isEqualTo(ownerId.toString());
+        assertThat(payload.path("sources").get(0).path("channelType").asText()).isEqualTo("wecom");
+        assertThat(payload.path("sources").get(0).path("text").asText()).isEqualTo("官方会话概要");
+    }
+
+    @Test
     void systemPromptInstructsChineseTopics() {
         var request = OpenAiCompatibleTopicGateway.buildRequest(
-                "model", new GenerationInput(List.of(), List.of(), false), new ObjectMapper());
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("CONTACT", UUID.randomUUID()), List.of(), List.of(), false),
+                new ObjectMapper());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
         assertThat(messages.get(0).get("role")).isEqualTo("system");
-        assertThat((String) messages.get(0).get("content")).contains("Chinese");
+        assertThat((String) messages.get(0).get("content")).contains("Chinese", "WeCom summaries");
     }
 
     @Test

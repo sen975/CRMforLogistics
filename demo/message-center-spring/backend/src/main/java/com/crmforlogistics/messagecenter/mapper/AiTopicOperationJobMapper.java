@@ -14,8 +14,9 @@ import java.util.UUID;
 
 @Mapper
 public interface AiTopicOperationJobMapper extends BaseMapper<AiTopicOperationJobEntity> {
-    @Insert("insert into ai_topic_operation_jobs (id, contact_id, created_by_user_id, operation_kind, request_payload, expected_versions, idempotency_key, status, attempt_count, next_attempt_at) values (gen_random_uuid(), #{contactId}::uuid, #{userId}::uuid, #{operationKind}, cast(#{requestPayload} as jsonb), cast(#{expectedVersions} as jsonb), #{idempotencyKey}, 'PENDING', 0, #{now}) on conflict (created_by_user_id, idempotency_key) do nothing")
-    int insertIfAbsent(@Param("contactId") UUID contactId, @Param("userId") UUID userId,
+    @Insert("insert into ai_topic_operation_jobs (id, contact_id, owner_type, owner_id, wecom_group_source_conversation_id, created_by_user_id, operation_kind, request_payload, expected_versions, idempotency_key, status, attempt_count, next_attempt_at) values (gen_random_uuid(), #{contactId}::uuid, #{ownerType}, #{ownerId}::uuid, #{groupConversationId}::uuid, #{userId}::uuid, #{operationKind}, cast(#{requestPayload} as jsonb), cast(#{expectedVersions} as jsonb), #{idempotencyKey}, 'PENDING', 0, #{now}) on conflict (created_by_user_id, idempotency_key) do nothing")
+    int insertIfAbsent(@Param("contactId") UUID contactId, @Param("ownerType") String ownerType,
+                       @Param("ownerId") UUID ownerId, @Param("groupConversationId") UUID groupConversationId, @Param("userId") UUID userId,
                        @Param("operationKind") String operationKind, @Param("requestPayload") String requestPayload,
                        @Param("expectedVersions") String expectedVersions, @Param("idempotencyKey") String idempotencyKey,
                        @Param("now") Instant now);
@@ -24,10 +25,12 @@ public interface AiTopicOperationJobMapper extends BaseMapper<AiTopicOperationJo
     AiTopicOperationJobEntity findByIdempotencyKey(@Param("userId") UUID userId,
                                                     @Param("idempotencyKey") String idempotencyKey);
 
-    default AiTopicOperationJobEntity findOrCreate(UUID contactId, UUID userId, String operationKind,
+    default AiTopicOperationJobEntity findOrCreate(UUID contactId, String ownerType, UUID ownerId,
+                                                    UUID groupConversationId, UUID userId, String operationKind,
                                                     String requestPayload, String expectedVersions,
                                                     String idempotencyKey, Instant now) {
-        insertIfAbsent(contactId, userId, operationKind, requestPayload, expectedVersions, idempotencyKey, now);
+        insertIfAbsent(contactId, ownerType, ownerId, groupConversationId, userId, operationKind,
+                requestPayload, expectedVersions, idempotencyKey, now);
         return findByIdempotencyKey(userId, idempotencyKey);
     }
 

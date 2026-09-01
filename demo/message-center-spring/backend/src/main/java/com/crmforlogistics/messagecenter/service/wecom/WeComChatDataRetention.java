@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 
@@ -22,13 +23,23 @@ public class WeComChatDataRetention {
     private final AppConfig config;
     private final WeComChatDataMessageMapper mapper;
     private final WeComViewerReferenceLeaseRegistry leases;
+    private final WeComMessageSummaryRepository summaries;
 
     public WeComChatDataRetention(AppConfig config,
                                   WeComChatDataMessageMapper mapper,
                                   WeComViewerReferenceLeaseRegistry leases) {
+        this(config, mapper, leases, null);
+    }
+
+    @Autowired
+    public WeComChatDataRetention(AppConfig config,
+                                  WeComChatDataMessageMapper mapper,
+                                  WeComViewerReferenceLeaseRegistry leases,
+                                  WeComMessageSummaryRepository summaries) {
         this.config = config;
         this.mapper = mapper;
         this.leases = leases;
+        this.summaries = summaries;
     }
 
     public RetentionResult enforce() {
@@ -47,7 +58,12 @@ public class WeComChatDataRetention {
             int candidateLimit = Math.min(MAX_CANDIDATE_SCAN, BATCH_SIZE + leased.size());
             List<WeComChatDataMessageMapper.RetentionCandidate> candidates =
                     mapper.oldestRetentionCandidates(candidateLimit);
-            List<UUID> deleteIds = selectDeletes(usage, candidates, leased, maxMessages, maxBytes);
+            Set<String> protectedBySummary = summaries == null ? Set.of()
+                    : summaries.countNonTerminalByMsgids(candidates.stream()
+                            .map(WeComChatDataMessageMapper.RetentionCandidate::msgid)
+                            .filter(java.util.Objects::nonNull).toList());
+            List<UUID> deleteIds = selectDeletes(usage, candidates, leased, protectedBySummary,
+                    maxMessages, maxBytes);
             if (deleteIds.isEmpty()) {
                 return new RetentionResult(deleted, false);
             }
@@ -65,6 +81,7 @@ public class WeComChatDataRetention {
             WeComChatDataMessageMapper.RetentionUsage usage,
             List<WeComChatDataMessageMapper.RetentionCandidate> candidates,
             Set<String> leased,
+            Set<String> protectedBySummary,
             int maxMessages,
             long maxBytes) {
         if (usage == null || candidates == null || candidates.isEmpty()) return List.of();
@@ -73,7 +90,8 @@ public class WeComChatDataRetention {
         List<UUID> ids = new ArrayList<>();
         for (WeComChatDataMessageMapper.RetentionCandidate candidate : candidates) {
             if (candidate == null || candidate.id() == null || candidate.msgid() == null
-                    || leased.contains(candidate.msgid())) {
+                    || leased.contains(candidate.msgid())
+                    || protectedBySummary.contains(candidate.msgid())) {
                 continue;
             }
             ids.add(candidate.id());

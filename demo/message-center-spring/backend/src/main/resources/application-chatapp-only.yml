@@ -2,4 +2,4 @@ app:
   wecom-enabled: false
   wecom-chatdata-auto-sync-enabled: false
   wecom-chatdata-public-key-auto-register: false
-  wecom-daily-summary-enabled: false
+  wecom-message-summary-enabled: false

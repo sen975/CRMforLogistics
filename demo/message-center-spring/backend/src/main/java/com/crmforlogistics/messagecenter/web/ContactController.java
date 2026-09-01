@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.crmforlogistics.messagecenter.dto.request.ContactGroupRequest;
+import com.crmforlogistics.messagecenter.dto.request.ContactTagsRequest;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.contact.ContactGroupService;
@@ -10,6 +11,7 @@ import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -102,6 +104,13 @@ public class ContactController {
         UUID userId = SecurityUtil.currentUserId();
         contactGroupService.updateProfile(id, request.displayName(),
                 request.roleTitle(), userId);
+    }
+
+    @PutMapping("/{id}/tags")
+    public void updateTags(@PathVariable UUID id,
+                           @RequestBody ContactTagsRequest request) {
+        contactGroupService.updateTags(id, request == null ? null : request.tags(),
+                SecurityUtil.currentUserId());
     }
 
     /**

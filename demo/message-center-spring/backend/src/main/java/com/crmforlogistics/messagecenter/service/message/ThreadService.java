@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.dto.response.ThreadResponse;
 import com.crmforlogistics.messagecenter.dto.response.WeComGroupThreadResponse;
 import com.crmforlogistics.messagecenter.dto.response.WeComPartyView;
 import com.crmforlogistics.messagecenter.dto.response.WeComThreadResponse;
+import com.crmforlogistics.messagecenter.dto.response.RelatedWeComGroupResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
@@ -103,10 +104,20 @@ public class ThreadService {
 
     public WeComThreadResponse getContactWeComThread(UUID userId, UUID contactId, String cursor, int limit) {
         ThreadResponse response = threadPage(userId, contactId, "wecom", cursor, limit);
-        List<UUID> sourceIds = response.items().stream()
+        // The mapper already restricts source conversations to DIRECT. Keep a final
+        // response guard so legacy rows cannot leak GROUP messages into a contact view.
+        List<MessageResponse> directItems = response.items().stream()
+                .filter(item -> !"GROUP".equalsIgnoreCase(item.conversationType()))
+                .toList();
+        List<UUID> sourceIds = directItems.stream()
                 .map(MessageResponse::sourceConversationId).filter(java.util.Objects::nonNull).distinct().toList();
-        return new WeComThreadResponse(contactId, sourceIds,
-                response.items(), response.nextCursor(), response.messageCount(), response.threadRevision());
+        List<RelatedWeComGroupResponse> relatedGroups = conversationMapper.listAccessibleWeComGroupsForContact(contactId, userId)
+                .stream()
+                .map(group -> new RelatedWeComGroupResponse(group.sourceConversationId(), group.displayName(),
+                        group.avatarUrl(), group.participantCount()))
+                .toList();
+        return new WeComThreadResponse(contactId, sourceIds, relatedGroups,
+                directItems, response.nextCursor(), directItems.size(), response.threadRevision());
     }
 
     public WeComGroupThreadResponse getWeComGroupThread(UUID userId, UUID sourceConversationId,

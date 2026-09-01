@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography, Tag, Descriptions, Input, Button, Space, App, Spin, Divider, Popconfirm, List } from 'antd';
+import { Typography, Tag, Descriptions, Input, Button, Space, App, Spin, Divider, Popconfirm, List, Select } from 'antd';
 import { EditOutlined, CheckOutlined, CloseOutlined, ScissorOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchContact, fetchMessage } from '../api/endpoints';
-import { useUpdateContactRemark, useSplitContact } from '../hooks/useContacts';
+import { useUpdateContactRemark, useUpdateContactTags, useSplitContact } from '../hooks/useContacts';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import type { ContactIdentityResponse } from '../api/types';
 import EmailAttachmentList from './EmailAttachmentList';
 import AiTopicTimeline from './AiTopicTimeline';
 import { useTopicTimeline } from '../hooks/useTopicTimeline';
+import { decodeHtmlEntities } from '../utils/htmlEntities';
+import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Text, Title } = Typography;
 
@@ -30,6 +32,8 @@ export default function ContactDetailPanel() {
   const { message: appMessage } = App.useApp();
   const [editingRemark, setEditingRemark] = useState(false);
   const [remarkValue, setRemarkValue] = useState('');
+  const [editingTags, setEditingTags] = useState(false);
+  const [tagValues, setTagValues] = useState<string[]>([]);
   const { selectedDetail, selectChannel, selectMessage, selectCallRecord } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
 
@@ -46,6 +50,7 @@ export default function ContactDetailPanel() {
   });
 
   const updateRemark = useUpdateContactRemark();
+  const updateTags = useUpdateContactTags();
   const splitMutation = useSplitContact();
   const topicTimeline = useTopicTimeline(contactId);
 
@@ -96,12 +101,12 @@ export default function ContactDetailPanel() {
       <AiTopicTimeline
         contactId={contact.id}
         timeline={topicTimeline.data}
-        actions={{ update: topicTimeline.update, merge: topicTimeline.merge, discard: topicTimeline.discard, retry: topicTimeline.retry }}
-        onSourceClick={(source) => source.sourceType === 'MESSAGE' ? selectMessage(source.id) : selectCallRecord(source.id)}
+        actions={{ update: topicTimeline.update, merge: topicTimeline.merge, store: topicTimeline.store, retry: topicTimeline.retry }}
+        onSourceClick={(source) => source.sourceType === 'MESSAGE' ? selectMessage(source.id) : source.sourceType === 'CALL_RECORD' ? selectCallRecord(source.id) : undefined}
       />
       <Divider style={{ margin: '4px 0 16px' }} />
       <Title level={5} style={{ marginBottom: 16 }}>
-        {contact.displayName || contact.remark || '未命名'}
+        {contactDisplayName(contact)}
       </Title>
 
       <Descriptions column={1} size="small" bordered>
@@ -151,6 +156,53 @@ export default function ContactDetailPanel() {
                 onClick={() => {
                   setRemarkValue(contact.remark || '');
                   setEditingRemark(true);
+                }}
+              />
+            </Space>
+          )}
+        </Descriptions.Item>
+
+        <Descriptions.Item label="标签">
+          {editingTags ? (
+            <Space style={{ width: '100%' }}>
+              <Select
+                mode="tags"
+                value={tagValues}
+                onChange={setTagValues}
+                style={{ minWidth: 220, flex: 1 }}
+                options={(contact.tags ?? []).map((tag) => ({ value: tag.name, label: tag.name }))}
+                placeholder="输入标签后回车"
+              />
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckOutlined />}
+                aria-label="保存标签"
+                loading={updateTags.isPending}
+                onClick={async () => {
+                  try {
+                    await updateTags.mutateAsync({ id: contact.id, tags: tagValues.map((name) => ({ name })) });
+                    appMessage.success('标签已更新');
+                    setEditingTags(false);
+                  } catch {
+                    appMessage.error('标签更新失败');
+                  }
+                }}
+              />
+              <Button size="small" icon={<CloseOutlined />} aria-label="取消标签" onClick={() => setEditingTags(false)} />
+            </Space>
+          ) : (
+            <Space wrap>
+              {(contact.tags ?? []).length === 0 && <Text type="secondary">-</Text>}
+              {(contact.tags ?? []).map((tag) => <Tag key={tag.id} color={tag.color || undefined}>{tag.name}</Tag>)}
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                aria-label="编辑标签"
+                onClick={() => {
+                  setTagValues((contact.tags ?? []).map((tag) => tag.name));
+                  setEditingTags(true);
                 }}
               />
             </Space>
@@ -278,7 +330,7 @@ export default function ContactDetailPanel() {
                     && messageDetail.bodyHtml ? (
                     <div dangerouslySetInnerHTML={{ __html: messageDetail.bodyHtml }} />
                   ) : (
-                    <Text>{messageDetail.bodyText}</Text>
+                    <Text>{decodeHtmlEntities(messageDetail.bodyText)}</Text>
                   )}
                 </div>
               </Descriptions.Item>

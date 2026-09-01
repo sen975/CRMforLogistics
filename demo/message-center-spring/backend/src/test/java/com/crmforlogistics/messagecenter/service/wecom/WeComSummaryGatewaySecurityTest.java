@@ -26,7 +26,7 @@ class WeComSummaryGatewaySecurityTest {
         String secretKey = "summary-secret-key-must-not-leak";
         AppConfig config = mock(AppConfig.class);
         when(config.wecomChatDataProgramId()).thenReturn("program");
-        when(config.wecomDailySummaryAbilityId()).thenReturn("summary");
+        when(config.wecomMessageSummaryAbilityId()).thenReturn("summary");
         RestClient client = RestClient.builder()
                 .baseUrl("http://127.0.0.1:1")
                 .requestInterceptor((request, body, execution) -> {

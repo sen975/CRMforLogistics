@@ -209,11 +209,8 @@ export async function sendWeComAppChatMessage(
 
 export async function listWeComExternalContacts(
   authCorpId: string,
-  userId: string,
 ): Promise<WeComProviderData> {
-  const res = await client.get<WeComProviderData>(`${weComInstallationBase(authCorpId)}/external-contacts`, {
-    params: { userId },
-  });
+  const res = await client.get<WeComProviderData>(`${weComInstallationBase(authCorpId)}/external-contacts`);
   return res.data;
 }
 
@@ -359,6 +356,13 @@ export async function markContactRead(id: string): Promise<void> {
 
 export async function updateContactRemark(id: string, remark: string): Promise<void> {
   await client.post(`/contacts/${id}/remark`, { remark });
+}
+
+export async function updateContactTags(
+  id: string,
+  tags: Array<{ name: string; color?: string | null }>,
+): Promise<void> {
+  await client.put(`/contacts/${id}/tags`, { tags });
 }
 
 export async function updateContactProfile(
@@ -626,18 +630,33 @@ export async function mergeTopics(data: import('./types').MergeTopicsRequest): P
   return res.data;
 }
 
-export async function discardTopic(topicId: string, contactId: string): Promise<import('./types').TopicOperationProjection> {
-  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/discard`, { contactId }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+export async function storeTopic(topicId: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/store`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
   return res.data;
 }
 
-export async function restoreTopic(topicId: string, contactId: string): Promise<import('./types').TopicOperationProjection> {
-  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/restore`, { contactId }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+export async function restoreTopic(topicId: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topics/${topicId}/restore`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
   return res.data;
 }
 
-export async function fetchTopicRepository(params: { search?: string; page?: number; size?: number }): Promise<any> {
-  const res = await client.get('/v1/topic-repository', { params });
+export async function fetchTopicRepository(params: { search?: string; ownerType?: string; page?: number; size?: number }): Promise<import('./types').TopicRepositoryPage> {
+  const res = await client.get<import('./types').TopicRepositoryPage>('/v1/topic-repository', { params });
+  return res.data;
+}
+
+export async function fetchTopicInboxRequests(): Promise<import('./types').TopicInboxRequestProjection[]> {
+  const res = await client.get<import('./types').TopicInboxRequestProjection[]>('/v1/topic-inbox/requests');
+  return res.data;
+}
+
+export async function approveTopicStore(requestId: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topic-inbox/${requestId}/approve`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  return res.data;
+}
+
+export async function rejectTopicStore(requestId: string, reason?: string): Promise<import('./types').TopicOperationProjection> {
+  const res = await client.post<import('./types').TopicOperationProjection>(`/v1/topic-inbox/${requestId}/reject`, { reason: reason ?? '' }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
   return res.data;
 }
 

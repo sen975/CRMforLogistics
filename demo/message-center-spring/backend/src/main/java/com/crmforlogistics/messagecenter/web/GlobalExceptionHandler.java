@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.service.callrecord.CallRecordException;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookAuthenticationException;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
 import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -61,6 +62,19 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ApiError handleBadRequest(IllegalArgumentException e) {
         return new ApiError("BAD_REQUEST", e.getMessage(), UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(AiTopicException.class)
+    public ResponseEntity<ApiError> handleAiTopic(AiTopicException e, HttpServletRequest request) {
+        HttpStatus status = switch (e.code()) {
+            case "TOPIC_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            case "TOPIC_FORBIDDEN", "TOPIC_ADMIN_REQUIRED" -> HttpStatus.FORBIDDEN;
+            case "TOPIC_VERSION_CONFLICT", "TOPIC_STORE_NOT_READY", "TOPIC_RESTORE_NOT_READY",
+                    "TOPIC_OPERATION_CONFLICT", "TOPIC_STORE_REQUEST_CONFLICT" -> HttpStatus.CONFLICT;
+            case "AI_PROVIDER_UNAVAILABLE" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return ResponseEntity.status(status).body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
     @ExceptionHandler(EmailException.class)

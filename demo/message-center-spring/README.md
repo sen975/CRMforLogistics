@@ -31,11 +31,27 @@ macOS 本机只启动企业微信客户端、不指定联系人或企业时，�
 ./demo/message-center-spring/scripts/start-wecom-client.sh
 ```
 
+## 联系人备注与 CRM 标签
+
+联系人列表和详情接口返回 `remark` 与 `tags`。前端展示名称按 `remark`、`displayName`、`未命名` 的顺序选择；不会修改
+`contacts.display_name` 的原始语义。CRM 标签独立存储于 `contact_tags` / `contact_taggings`，可通过以下接口整体替换：
+
+```text
+GET /api/contacts
+GET /api/contacts/{contactId}
+PUT /api/contacts/{contactId}/tags
+```
+
+`PUT` 请求体为 `{ "tags": [{ "name": "重点客户", "color": "blue" }] }`。传空数组会清空联系人标签；标签名称大小写不敏感去重，
+并在服务端按当前用户的联系人访问权限校验。
+
 ## 邮件同步配置
 
 开启 `APP_EMAIL_SYNC_ENABLED=true` 后，邮件同步至少需要 `IMAP_USER` 和 `IMAP_PASSWORD`。139 邮箱在
 `IMAP_HOST`、`IMAP_PORT` 或 `MAIL_PROVIDER` 缺失、为空时分别使用 `imap.139.com`、`993` 和 `139`；也可用
 `APP_IMAP_HOST`、`APP_IMAP_PORT`、`APP_MAIL_PROVIDER` 显式覆盖。密码只通过环境变量或后端 `.env` 注入。
+
+同步会读取收件箱和发件箱。`APP_SENT_FOLDER`（或渠道账号中的 `sentFolder`）优先使用配置值；配置目录不存在或为空时，会依次尝试 `Sent`、`已发送`、`Sent Items`、`INBOX.Sent` 和 `INBOX/已发送`。139 邮箱的 OpenSSL IMAP fallback 会对中文目录名使用 IMAP Modified UTF-7 编码。应用自身通过 SMTP 发出的邮件在发送时已经写入数据库，不依赖发件箱再次同步。
 
 ## AI Topic 配置
 
@@ -56,6 +72,8 @@ ChatApp、邮件和电话转录/备注；企业微信不会进入 AI 输入。�
 | `AI_TOPIC_MAX_ATTEMPTS` | `3` | 最大尝试次数 |
 | `AI_TOPIC_LEASE_SECONDS` | `120` | 任务租约时长 |
 | `AI_TOPIC_POLL_INTERVAL_SECONDS` | `30` | 任务轮询间隔 |
+| `AI_TOPIC_AUDIT_MAX_REQUEST_BYTES` | `262144` | AI 请求审计快照上限；超限保存带 SHA-256 的截断快照 |
+| `AI_TOPIC_AUDIT_MAX_RESPONSE_BYTES` | `524288` | AI 原始响应审计上限；超限保存截断正文 |
 
 未配置 `AI_BASE_URL` 时，Topic 任务会以 `AI_NOT_CONFIGURED` 失败，已有消息收发和时间线不受影响。
 
@@ -68,6 +86,20 @@ ChatApp、邮件和电话转录/备注；企业微信不会进入 AI 输入。�
 select status, last_error_code, last_error_message, attempt_count, updated_at
 from ai_topic_generation_jobs
 order by updated_at desc
+limit 20;
+```
+
+每次 AI 尝试还会独立写入 `ai_topic_generation_attempts`，即使 Topic 事务回滚也保留。记录中的
+`stage` 可区分 `PROVIDER_CALL`、`RESPONSE_PARSE`、`RESPONSE_VALIDATE` 和 `BUSINESS_APPLY`；
+`raw_response_body` 保存 provider 原始响应，`request_payload` 保存脱敏请求快照，认证头和 API Key 永不保存。
+联系人级诊断接口为 `GET /api/v1/contacts/{contactId}/topics/attempts?limit=20`，也可直接查询：
+
+```sql
+select attempt_number, stage, status, response_status, error_code, error_diagnostic,
+       request_truncated, response_truncated, duration_ms, created_at, completed_at
+from ai_topic_generation_attempts
+where contact_id = '<ContactId>'
+order by created_at desc
 limit 20;
 ```
 
@@ -155,7 +187,27 @@ GET   /api/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}
 | `WECOM_CHATDATA_AUTO_SYNC_ENABLED` | 是否自动轮询会话专区 |
 | `WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS` | 自动同步间隔，默认 `60` 秒 |
 
-每日摘要默认关闭；需要时再配置 `WECOM_DAILY_SUMMARY_ENABLED=true` 和对应能力 ID。API 地址、超时和 token 刷新提前量也可通过 `WECOM_API_BASE_URL`、`WECOM_API_TIMEOUT_SECONDS`、`WECOM_TOKEN_REFRESH_SKEW_SECONDS` 覆盖。
+消息级摘要默认关闭；需要时配置 `WECOM_MESSAGE_SUMMARY_ENABLED=true`，能力 ID 通过 `WECOM_MESSAGE_SUMMARY_ABILITY_ID` 覆盖。开启后，新企业微信消息入库事务会幂等写入 `PENDING` 摘要任务，后台 worker 按单条消息异步提交 `conversation_daily_summary`，保存摘要、官方原始响应和校验阶段。8107 不保存消息正文，任务记录不随消息保留策略删除；摘要未完成时对应消息不会被清理。配置如下：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `WECOM_MESSAGE_SUMMARY_ENABLED` | `false` | 开启每条消息独立摘要 worker 与补偿任务 |
+| `WECOM_MESSAGE_SUMMARY_ABILITY_ID` | `conversation_daily_summary` | 企业微信数据与智能专区能力 ID |
+| `WECOM_MESSAGE_SUMMARY_POLL_INTERVAL_SECONDS` | `1` | worker 调度/官方轮询间隔 |
+| `WECOM_MESSAGE_SUMMARY_BATCH_SIZE` | `20` | 单轮最多领取任务 |
+| `WECOM_MESSAGE_SUMMARY_MAX_CONCURRENCY` | `2` | 单实例并发上限 |
+| `WECOM_MESSAGE_SUMMARY_MAX_TRANSIENT_ATTEMPTS` | `20` | 临时错误最大重试次数 |
+| `WECOM_MESSAGE_SUMMARY_MAX_BACKOFF_SECONDS` | `900` | 重试退避上限 |
+| `WECOM_MESSAGE_SUMMARY_BACKFILL_BATCH_SIZE` | `200` | 历史消息每轮补偿上限 |
+
+查询单条消息诊断：
+
+```bash
+curl -H 'Authorization: Bearer <crm-token>' \
+  'http://localhost:8107/api/v1/wecom/message-summaries/<msgid>'
+```
+
+返回的 `validationStage` 用于区分消息引用、官方错误、响应数据和字段校验失败；`rawRequestJson` 只包含操作类型和 `msgid`，不会包含 `secret_key`、access token、私钥或消息正文。分页检索使用同一路由的 `conversationId`、`status`、`from`、`to`、`page` 和 `size` 参数，`size` 最大为 100。
 
 ## 企业微信回调地址
 
@@ -264,6 +316,8 @@ rg -n 'wecom-(suite-secret|login-suite-secret|secret|token|encoding-aes-key): [^
 
 ### AI Topic 生命周期
 
-AI Topic 仅处理 ChatApp、邮件和电话来源，企业微信不会进入 AI 输入或 Topic 仓库。`AI_TOPIC_MATCH_THRESHOLD` 是模型返回的关联度分数接受阈值，不是本地标题相似度计算。首次打开联系人时创建异步生成任务；新增消息只会与 `READY` Topic 关联，已归入任意 Topic 的来源不会再次判断。
+Topic 按 owner 聚合：个人 owner（`CONTACT`）合并 ChatApp、邮件、电话和企业微信一对一官方单条摘要；群 owner（`WECOM_GROUP`）只生成一份群 Topic，联系人时间轴仅引用该 Topic，不复制来源。企业微信摘要必须为 `COMPLETED` 且 `summary` 非空，正文和 `secret_key` 不进入 Topic 输入或普通日志。消息/摘要入库后推进 owner 静默窗口，默认静默 360 秒（`AI_TOPIC_QUIET_WINDOW_SECONDS`）后由后台异步重构；读取联系人页面不会同步触发 AI。
 
-Topic 编辑、合并、弃用和恢复均返回 `202 Accepted` 操作任务。弃用会保留 Topic、来源和版本记录，仅从联系人时间轴隐藏，并在 `/topic-repository` 跨联系人仓库中保留。前端只在收到一次 `topic-snapshot-completed` SSE 终态事件后重新读取快照，不轮询或乐观更新。
+`AI_TOPIC_MATCH_THRESHOLD` 是 AI 返回的关联度分数阈值。增量任务只把新来源与同 owner 的 `READY` Topic 比较；`STORED`、`ARCHIVED` 或其他 owner 的 Topic 不参与后续判断。Topic 编辑、合并、入库、恢复和群入库审批均返回 `202 Accepted`，最终状态通过一次 `topic-snapshot-completed` SSE 事件通知前端，前端不轮询也不乐观移除卡片。个人 Topic 可直接入库；群 Topic 先在 `GET /api/v1/topic-inbox/requests` 中形成待审批申请，管理员通过 `POST /api/v1/topic-inbox/{requestId}/approve` 后才异步入库，拒绝使用同路径 `reject`。
+
+跨联系人仓库使用 `GET /api/v1/topic-repository?search=&ownerType=&page=&size=`，始终保留原始联系人或群 owner 标签；恢复使用 `POST /api/v1/topics/{topicId}/restore`。诊断时可查询 `ai_topic_generation_attempts` 的 `raw_request_json`、`raw_response_json`、`validation_stage`、`error_code` 和 `diagnostic`，这些字段经过大小上限和脱敏处理。

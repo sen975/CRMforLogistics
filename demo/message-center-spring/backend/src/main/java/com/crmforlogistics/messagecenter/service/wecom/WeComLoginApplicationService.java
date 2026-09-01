@@ -9,8 +9,11 @@ import com.crmforlogistics.messagecenter.dto.response.WeComBindingResponse;
 import com.crmforlogistics.messagecenter.dto.response.WeComLoginResponse;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -19,6 +22,7 @@ import java.util.UUID;
 @ConditionalOnWeComEnabled
 @ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")
 public class WeComLoginApplicationService {
+    private static final Logger log = LoggerFactory.getLogger(WeComLoginApplicationService.class);
     private final AppConfig config;
     private final WeComLoginAttemptService attempts;
     private final WeComAuthorizationGateway gateway;
@@ -26,6 +30,26 @@ public class WeComLoginApplicationService {
     private final WeComInstallationService installations;
     private final WeComUserBindingService bindings;
     private final AuthSessionService sessions;
+    private final WeComPartyProfileService profiles;
+
+    @Autowired
+    public WeComLoginApplicationService(AppConfig config,
+                                        WeComLoginAttemptService attempts,
+                                        WeComAuthorizationGateway gateway,
+                                        WeComAccessTokenService accessTokens,
+                                        WeComUserBindingService bindings,
+                                        AuthSessionService sessions,
+                                        WeComInstallationService installations,
+                                        WeComPartyProfileService profiles) {
+        this.config = config;
+        this.attempts = attempts;
+        this.gateway = gateway;
+        this.accessTokens = accessTokens;
+        this.installations = installations;
+        this.bindings = bindings;
+        this.sessions = sessions;
+        this.profiles = profiles;
+    }
 
     public WeComLoginApplicationService(AppConfig config,
                                         WeComLoginAttemptService attempts,
@@ -34,13 +58,7 @@ public class WeComLoginApplicationService {
                                         WeComUserBindingService bindings,
                                         AuthSessionService sessions,
                                         WeComInstallationService installations) {
-        this.config = config;
-        this.attempts = attempts;
-        this.gateway = gateway;
-        this.accessTokens = accessTokens;
-        this.installations = installations;
-        this.bindings = bindings;
-        this.sessions = sessions;
+        this(config, attempts, gateway, accessTokens, bindings, sessions, installations, null);
     }
 
     @Transactional
@@ -59,6 +77,7 @@ public class WeComLoginApplicationService {
         WeComAuthorizationGateway.LoginIdentity upstream = gateway.getLoginIdentity(
                 installation.authCorpId(), accessTokens.accessToken(installation, timeout), code, timeout);
         validateCorp(context, upstream.corpId());
+        hydrateAuthorizedProfile(installation, upstream, timeout);
         var identity = new WeComUserBindingService.ResolvedIdentity(
                 context.installationBinding().suiteId(), upstream.corpId(), upstream.userId(),
                 upstream.userId(), context.installationBinding());
@@ -86,6 +105,7 @@ public class WeComLoginApplicationService {
         WeComAuthorizationGateway.LoginIdentity upstream = gateway.getLoginIdentity(
                 installation.authCorpId(), accessTokens.accessToken(installation, timeout), code, timeout);
         validateCorp(context, upstream.corpId());
+        hydrateAuthorizedProfile(installation, upstream, timeout);
         var identity = new WeComUserBindingService.ResolvedIdentity(
                 context.installationBinding().suiteId(), upstream.corpId(), upstream.userId(),
                 upstream.userId(), context.installationBinding());
@@ -110,6 +130,21 @@ public class WeComLoginApplicationService {
     @Transactional
     public void unbind(UUID currentUserId) {
         bindings.unbind(currentUserId);
+    }
+
+    private void hydrateAuthorizedProfile(com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation installation,
+                                         WeComAuthorizationGateway.LoginIdentity identity, Duration timeout) {
+        if (profiles == null || identity == null || identity.userTicket() == null
+                || identity.userTicket().isBlank()) return;
+        try {
+            var accessToken = accessTokens.accessToken(installation, timeout);
+            profiles.syncAuthorizedEmployee(installation, identity.userId(),
+                    gateway.getUserDetail(accessToken, identity.userTicket(), timeout));
+        } catch (RuntimeException failure) {
+            log.warn("event=wecom.employee.profile_authorization_failed userId={} code={}",
+                    identity.userId(), failure instanceof WeComException exception
+                            ? exception.code() : "UNEXPECTED");
+        }
     }
 
     private static void validateCorp(WeComLoginAttemptService.AttemptContext context, String corpId) {

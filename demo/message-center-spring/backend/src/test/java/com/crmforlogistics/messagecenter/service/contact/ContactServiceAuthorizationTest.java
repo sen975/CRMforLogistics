@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.contact;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
+import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
@@ -12,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,9 @@ class ContactServiceAuthorizationTest {
             return Answers.RETURNS_DEFAULTS.answer(invocation);
         });
         MessageMapper messageMapper = mock(MessageMapper.class);
+        ContactTagMapper tagMapper = mock(ContactTagMapper.class);
+        when(tagMapper.findActiveByContactId(contactId)).thenReturn(List.of(
+                new ContactTagResponse(UUID.randomUUID(), "重点跟进", "blue")));
 
         Page<ContactEntity> contacts = new Page<>(1, 20);
         contacts.setRecords(List.of(contact));
@@ -70,7 +75,7 @@ class ContactServiceAuthorizationTest {
 
         ContactService service = new ContactService(
                 contactMapper, identityMapper, conversationMapper, messageMapper,
-                mock(ChatAppAccountResolver.class));
+                mock(ChatAppAccountResolver.class), tagMapper);
 
         ContactResponse result = service.listForUser(userId, null, null, null, 1, 20)
                 .getRecords().get(0);
@@ -79,6 +84,8 @@ class ContactServiceAuthorizationTest {
         assertThat(result.lastText()).isEqualTo("accessible message");
         assertThat(result.messageCount()).isEqualTo(7);
         assertThat(result.unreadCount()).isEqualTo(2);
+        assertThat(result.tags()).extracting(ContactTagResponse::name)
+                .containsExactly("重点跟进");
 
         verify(messageMapper).selectOne(any());
         verify(messageMapper, org.mockito.Mockito.times(2)).selectCount(any());

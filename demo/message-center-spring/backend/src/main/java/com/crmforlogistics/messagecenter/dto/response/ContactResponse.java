@@ -31,5 +31,6 @@ public record ContactResponse(
         String lastText,
         int messageCount,
         int unreadCount,
+        List<ContactTagResponse> tags,
         List<ContactIdentityResponse> identities
 ) {}

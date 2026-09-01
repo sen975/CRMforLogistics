@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import com.crmforlogistics.messagecenter.dto.response.ContactIdentityResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
+import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import com.crmforlogistics.messagecenter.dto.response.PhoneContactBindingResponse;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
@@ -15,11 +16,13 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -46,17 +49,30 @@ public class ContactService {
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final ChatAppAccountResolver chatAppAccountResolver;
+    private final ContactTagMapper contactTagMapper;
 
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
                           ConversationMapper conversationMapper,
                           MessageMapper messageMapper,
                           ChatAppAccountResolver chatAppAccountResolver) {
+        this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
+                chatAppAccountResolver, null);
+    }
+
+    @Autowired
+    public ContactService(ContactMapper contactMapper,
+                          ContactIdentityMapper contactIdentityMapper,
+                          ConversationMapper conversationMapper,
+                          MessageMapper messageMapper,
+                          ChatAppAccountResolver chatAppAccountResolver,
+                          ContactTagMapper contactTagMapper) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.chatAppAccountResolver = chatAppAccountResolver;
+        this.contactTagMapper = contactTagMapper;
     }
 
     /**
@@ -197,6 +213,10 @@ public class ContactService {
                         i.getDisplayName()))
                 .toList();
 
+        List<ContactTagResponse> tags = contactTagMapper == null
+                ? List.of()
+                : contactTagMapper.findActiveByContactId(contactId);
+
         return new ContactResponse(
                 contactId,
                 entity.getDisplayName(),
@@ -206,6 +226,7 @@ public class ContactService {
                 lastText,
                 messageCount,
                 unreadCount,
+                tags,
                 identityResponses);
     }
 
@@ -286,7 +307,7 @@ public class ContactService {
         return Math.min(size, MAX_PAGE_SIZE);
     }
 
-    private static boolean isCurrentUserAdmin() {
+    public static boolean isCurrentUserAdmin() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null) return false;
         return auth.getAuthorities().stream()

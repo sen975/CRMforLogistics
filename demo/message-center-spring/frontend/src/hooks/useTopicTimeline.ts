@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { discardTopic, fetchContactTopics, mergeTopics, retryTopicGeneration, updateTopic } from '../api/endpoints';
+import { fetchContactTopics, mergeTopics, retryTopicGeneration, storeTopic, updateTopic } from '../api/endpoints';
 import { useSse } from './useSse';
 import type { MergeTopicsRequest, UpdateTopicRequest } from '../api/types';
 
@@ -14,7 +14,7 @@ export function useTopicTimeline(contactId?: string) {
   useSse(invalidate, ['topic-snapshot-completed']);
   const update = useMutation({ mutationFn: ({ topicId, data }: { topicId: string; data: UpdateTopicRequest }) => updateTopic(topicId, data) });
   const merge = useMutation({ mutationFn: (data: MergeTopicsRequest) => mergeTopics(data) });
-  const discard = useMutation({ mutationFn: ({ topicId }: { topicId: string }) => discardTopic(topicId, contactId!) });
+  const store = useMutation({ mutationFn: ({ topicId }: { topicId: string }) => storeTopic(topicId) });
   const retry = useMutation({ mutationFn: () => retryTopicGeneration(contactId!) });
-  return { ...query, update, merge, discard, retry };
+  return { ...query, update, merge, store, retry };
 }

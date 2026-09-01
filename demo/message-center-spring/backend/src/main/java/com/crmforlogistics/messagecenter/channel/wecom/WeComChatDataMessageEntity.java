@@ -15,6 +15,7 @@ public class WeComChatDataMessageEntity {
     private UUID installationId;
     private UUID sourceConversationId;
     private UUID senderPartyId;
+    private String conversationType;
     private String receiverPartyIds;
     private String msgid;
     private String secretKey;
@@ -38,6 +39,9 @@ public class WeComChatDataMessageEntity {
 
     public UUID getSenderPartyId() { return senderPartyId; }
     public void setSenderPartyId(UUID senderPartyId) { this.senderPartyId = senderPartyId; }
+
+    public String getConversationType() { return conversationType; }
+    public void setConversationType(String conversationType) { this.conversationType = conversationType; }
 
     public String getReceiverPartyIds() { return receiverPartyIds; }
     public void setReceiverPartyIds(String receiverPartyIds) { this.receiverPartyIds = receiverPartyIds; }

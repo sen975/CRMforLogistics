@@ -51,4 +51,15 @@ class TopicAiResponseParserTest {
                 .isInstanceOf(AiTopicException.class)
                 .hasMessage("AI_RESPONSE_INVALID");
     }
+
+    @Test
+    void rejectsAnEmptyTopicEvenWhenOtherAssignmentsCoverAllSources() {
+        UUID source = UUID.randomUUID();
+        String json = "{\"topics\":[{\"topicKey\":\"valid\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + source + "\"]},"
+                + "{\"topicKey\":\"empty\",\"title\":\"空主题\",\"summary\":\"不应接受\",\"relevance\":0.1,\"sourceIds\":[]}] }";
+
+        assertThatThrownBy(() -> new TopicAiResponseParser().parse(json, Set.of(source)))
+                .isInstanceOf(AiTopicException.class)
+                .hasMessage("AI_RESPONSE_INVALID");
+    }
 }

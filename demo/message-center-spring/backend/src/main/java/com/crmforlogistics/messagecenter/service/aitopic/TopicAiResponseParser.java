@@ -33,7 +33,8 @@ public class TopicAiResponseParser {
                 double relevance = topic.path("relevance").asDouble(-1);
                 JsonNode sourceIds = topic.get("sourceIds");
                 if (key.isBlank() || title.isBlank() || summary.isBlank() || relevance < 0 || relevance > 1
-                        || sourceIds == null || !sourceIds.isArray() || sourceIds.isEmpty()) throw invalid();
+                        || sourceIds == null || !sourceIds.isArray()) throw invalid();
+                if (sourceIds.isEmpty()) throw invalid();
                 if (!topicKeys.add(key)) throw invalid();
                 List<UUID> ids = new ArrayList<>();
                 for (JsonNode source : sourceIds) {
@@ -43,12 +44,14 @@ public class TopicAiResponseParser {
                 }
                 result.add(new TopicAssignment(key, title, summary, relevance, ids));
             }
-            if (!seen.equals(allowedSourceIds)) throw invalid();
+            if (seen.isEmpty() || !seen.equals(allowedSourceIds)) throw invalid();
             return new GenerationOutput(List.copyOf(result));
         } catch (AiTopicException e) {
             throw e;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new AiTopicException("AI_RESPONSE_PARSE_FAILED", false, "INVALID_JSON", e);
         } catch (Exception e) {
-            throw new AiTopicException("AI_RESPONSE_INVALID", false, e);
+            throw new AiTopicException("AI_RESPONSE_INVALID", false, "STRUCTURE_OR_SOURCE_VALIDATION_FAILED", e);
         }
     }
 

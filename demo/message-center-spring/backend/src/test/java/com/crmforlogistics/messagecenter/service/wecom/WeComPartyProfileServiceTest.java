@@ -108,4 +108,42 @@ class WeComPartyProfileServiceTest {
         verify(directory, times(2)).listMembers(eq(installation), anyLong(), eq(true), eq(Duration.ofSeconds(1)));
         verify(directory, times(2)).getMember(eq(installation), anyString(), eq(Duration.ofSeconds(1)));
     }
+
+    @Test
+    void observedGroupProfileDoesNotEraseExistingFieldsWhenSnapshotIsPartial() {
+        WeComPartyEntity existing = new WeComPartyEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setInstallationId(UUID.fromString(installation.installationId()));
+        existing.setPartyType("EMPLOYEE");
+        existing.setProviderPartyId("member-4");
+        existing.setDisplayName("已有昵称");
+        existing.setAvatarUrl("https://avatar.example/existing.png");
+        when(parties.selectOne(any())).thenReturn(existing);
+
+        service.syncObservedProfile(installation, "EMPLOYEE", "member-4", "", "");
+
+        verify(parties).updateById(existing);
+        assertThat(existing.getDisplayName()).isEqualTo("已有昵称");
+        assertThat(existing.getAvatarUrl()).isEqualTo("https://avatar.example/existing.png");
+    }
+
+    @Test
+    void authorizedEmployeeProfileUpdatesOnlyReturnedAvatar() throws Exception {
+        WeComPartyEntity existing = new WeComPartyEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setInstallationId(UUID.fromString(installation.installationId()));
+        existing.setPartyType("EMPLOYEE");
+        existing.setProviderPartyId("member-authorized");
+        existing.setDisplayName("已有姓名");
+        existing.setAvatarUrl("");
+        when(parties.selectOne(any())).thenReturn(existing);
+
+        var result = service.syncAuthorizedEmployee(
+                installation, "member-authorized",
+                json.readTree("{\"userid\":\"member-authorized\",\"avatar\":\"https://avatar/a.png\"}"));
+
+        assertThat(result.displayName()).isEqualTo("已有姓名");
+        assertThat(result.avatarUrl()).isEqualTo("https://avatar/a.png");
+        verify(parties).updateById(existing);
+    }
 }

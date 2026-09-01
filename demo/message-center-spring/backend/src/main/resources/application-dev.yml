@@ -37,6 +37,8 @@ ai-topic:
   max-attempts: ${AI_TOPIC_MAX_ATTEMPTS:3}
   lease-seconds: ${AI_TOPIC_LEASE_SECONDS:120}
   poll-interval-seconds: ${AI_TOPIC_POLL_INTERVAL_SECONDS:30}
+  audit-max-request-bytes: ${AI_TOPIC_AUDIT_MAX_REQUEST_BYTES:262144}
+  audit-max-response-bytes: ${AI_TOPIC_AUDIT_MAX_RESPONSE_BYTES:524288}
 
 app:
   data-dir: ${APP_DATA_DIR:data-local}
@@ -76,4 +78,10 @@ app:
   sent-folder: Sent
 
   # 本地开发默认不轮询真实企业微信专区；生产默认值由 application.yml 统一拥有。
+  wecom-message-summary-poll-interval-seconds: ${WECOM_MESSAGE_SUMMARY_POLL_INTERVAL_SECONDS:1}
+  wecom-message-summary-batch-size: ${WECOM_MESSAGE_SUMMARY_BATCH_SIZE:20}
+  wecom-message-summary-max-concurrency: ${WECOM_MESSAGE_SUMMARY_MAX_CONCURRENCY:2}
+  wecom-message-summary-max-transient-attempts: ${WECOM_MESSAGE_SUMMARY_MAX_TRANSIENT_ATTEMPTS:20}
+  wecom-message-summary-max-backoff-seconds: ${WECOM_MESSAGE_SUMMARY_MAX_BACKOFF_SECONDS:900}
+  wecom-message-summary-backfill-batch-size: ${WECOM_MESSAGE_SUMMARY_BACKFILL_BATCH_SIZE:200}
   wecom-chatdata-auto-sync-enabled: ${WECOM_CHATDATA_AUTO_SYNC_ENABLED:false}

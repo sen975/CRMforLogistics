@@ -53,6 +53,7 @@ public class WeComChatDataStore {
     private final WeComSourceParticipantMapper participantMapper;
     private final WeComPartyProfileService profiles;
     private final PlatformTransactionManager transactionManager;
+    private final WeComMessageSummaryRepository summaryRepository;
 
     @Autowired
     public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -67,7 +68,8 @@ public class WeComChatDataStore {
                               WeComSourceConversationMapper sourceConversationMapper,
                               WeComSourceParticipantMapper participantMapper,
                               WeComPartyProfileService profiles,
-                              PlatformTransactionManager transactionManager) {
+                              PlatformTransactionManager transactionManager,
+                              WeComMessageSummaryRepository summaryRepository) {
         this.messageMapper = messageMapper;
         this.cursorMapper = cursorMapper;
         this.credentialProtector = credentialProtector;
@@ -81,6 +83,25 @@ public class WeComChatDataStore {
         this.participantMapper = participantMapper;
         this.profiles = profiles;
         this.transactionManager = transactionManager;
+        this.summaryRepository = summaryRepository;
+    }
+
+    public WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
+                       WeComChatDataCursorMapper cursorMapper,
+                       WeComCredentialProtector credentialProtector,
+                       WeComMessageProjector projector,
+                       EventHub eventHub,
+                       WeComChatDataRetention retention,
+                       WeComChatDataIngestFailureMapper failureMapper,
+                       WeComChatDataNormalizer normalizer,
+                       WeComPartyMapper partyMapper,
+                       WeComSourceConversationMapper sourceConversationMapper,
+                       WeComSourceParticipantMapper participantMapper,
+                       WeComPartyProfileService profiles,
+                       PlatformTransactionManager transactionManager) {
+        this(messageMapper, cursorMapper, credentialProtector, projector, eventHub, retention,
+                failureMapper, normalizer, partyMapper, sourceConversationMapper, participantMapper,
+                profiles, transactionManager, null);
     }
 
     WeComChatDataStore(WeComChatDataMessageMapper messageMapper,
@@ -211,6 +232,8 @@ public class WeComChatDataStore {
                 entity.setIngestStatus(candidate.direction().isBlank() ? "stored" : "direct");
                 entity.setInstallationId(parseUuid(key.installationId()));
                 if (messageMapper.insertIgnore(entity) > 0) {
+                    enqueueSummary(key, entity.getSourceConversationId(), candidate.msgid(),
+                            candidate.sendTime());
                     stored++;
                 } else {
                     duplicates++;
@@ -267,6 +290,7 @@ public class WeComChatDataStore {
         profileTargets.add(normalized.sender());
         profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
+        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime());
         if ("GROUP".equals(normalized.conversationType())) {
             projector.projectGroup(new WeComMessageProjector.WeComProjectedGroupMessage(
                     normalized.msgid(), sourceId, normalized.sendTime(), entity.getDirection()));
@@ -319,11 +343,31 @@ public class WeComChatDataStore {
         profileTargets.add(normalized.sender());
         profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
+        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime());
         projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
                 normalized.msgid(), sourceId, installationId, normalized.authCorpId(),
                 new WeComMessageProjector.ContactParty(normalized.contactParty().partyType(),
                         normalized.contactParty().providerPartyId()), normalized.sendTime(), entity.getDirection()));
         return true;
+    }
+
+    private void enqueueSummary(SyncKey key, UUID sourceConversationId, String msgid, long sendTime) {
+        if (summaryRepository == null) return;
+        String authCorpId = key.authCorpId();
+        if (authCorpId == null || authCorpId.isBlank()) {
+            throw new IllegalArgumentException("auth corp id required for message summary");
+        }
+        UUID installationId = parseUuid(key.installationId());
+        if (installationId == null) throw new IllegalArgumentException("installation id invalid");
+        String requestSnapshot = "{\"operation\":\"submit\",\"msgid\":\""
+                + escapeJson(msgid) + "\"}";
+        summaryRepository.enqueueIfAbsent(new WeComMessageSummaryRepository.EnqueueCommand(
+                installationId, authCorpId, sourceConversationId, msgid, sendTime,
+                requestSnapshot, Instant.now()));
+    }
+
+    private static String escapeJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private void runAfterCommit(boolean publishMessageEvent, ResolvedInstallation installation,

@@ -74,8 +74,24 @@ public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMess
             + "ON CONFLICT DO NOTHING")
     int insertIgnore(WeComChatDataMessageEntity entity);
 
-    @Select("SELECT * FROM wecom_chatdata_messages WHERE send_time >= #{from} AND send_time < #{to} "
-            + "ORDER BY send_time, msgid, userid, external_userid")
+    @Select("SELECT * FROM wecom_chatdata_messages "
+            + "WHERE installation_id = #{installationId} AND msgid = #{msgid} LIMIT 1")
+    WeComChatDataMessageEntity findSummaryReference(@Param("installationId") UUID installationId,
+                                                    @Param("msgid") String msgid);
+
+    @Select("SELECT m.* FROM wecom_chatdata_messages m "
+            + "LEFT JOIN wecom_message_summary_jobs j "
+            + "ON j.installation_id = m.installation_id AND j.msgid = m.msgid "
+            + "WHERE m.installation_id = #{installationId} AND j.id IS NULL "
+            + "ORDER BY m.send_time, m.id LIMIT #{limit}")
+    List<WeComChatDataMessageEntity> findForSummaryBackfill(@Param("installationId") UUID installationId,
+                                                            @Param("limit") int limit);
+
+    @Select("SELECT m.*, sc.conversation_type AS conversation_type "
+            + "FROM wecom_chatdata_messages m "
+            + "LEFT JOIN wecom_source_conversations sc ON sc.id = m.source_conversation_id "
+            + "WHERE m.send_time >= #{from} AND m.send_time < #{to} "
+            + "ORDER BY m.send_time, m.msgid, m.userid, m.external_userid")
     List<WeComChatDataMessageEntity> findBySendTimeRange(long from, long to);
 
     @Select("SELECT * FROM wecom_chatdata_messages WHERE external_userid = #{externalUserid} "

@@ -9,6 +9,7 @@ public record ConversationListItemResponse(
         String type,
         UUID id,
         String displayName,
+        String remark,
         String avatarUrl,
         List<String> channelTypes,
         Instant lastMessageAt,
@@ -21,7 +22,13 @@ public record ConversationListItemResponse(
     public static ConversationListItemResponse contact(UUID id, String displayName,
                                                         Instant lastMessageAt, String lastText,
                                                         int messageCount, int unreadCount) {
-        return new ConversationListItemResponse("CONTACT", id, displayName, null, List.of(),
+        return contact(id, displayName, null, lastMessageAt, lastText, messageCount, unreadCount);
+    }
+
+    public static ConversationListItemResponse contact(UUID id, String displayName, String remark,
+                                                        Instant lastMessageAt, String lastText,
+                                                        int messageCount, int unreadCount) {
+        return new ConversationListItemResponse("CONTACT", id, displayName, remark, null, List.of(),
                 lastMessageAt, lastText, messageCount, unreadCount, null, 0);
     }
 
@@ -30,7 +37,7 @@ public record ConversationListItemResponse(
                                                       Instant lastMessageAt, String lastText,
                                                       int messageCount, int unreadCount,
                                                       int participantCount) {
-        return new ConversationListItemResponse("WECOM_GROUP", id, displayName, null, List.of("wecom"),
+        return new ConversationListItemResponse("WECOM_GROUP", id, displayName, null, null, List.of("wecom"),
                 lastMessageAt, lastText, messageCount, unreadCount,
                 providerConversationKey, participantCount);
     }

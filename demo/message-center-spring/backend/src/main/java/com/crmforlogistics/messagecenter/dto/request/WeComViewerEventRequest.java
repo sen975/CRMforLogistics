@@ -10,7 +10,7 @@ import jakarta.validation.constraints.Size;
 public final class WeComViewerEventRequest {
     @NotBlank @Size(max = 64)
     private final String eventType;
-    @Size(max = 64)
+    @Size(max = 256)
     private final String eventKey;
     @Size(max = 64)
     private final String stage;

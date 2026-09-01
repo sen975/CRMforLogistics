@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -13,6 +14,19 @@ import java.util.UUID;
 
 @Mapper
 public interface AiTopicGenerationJobMapper extends BaseMapper<AiTopicGenerationJobEntity> {
+    @Insert("insert into ai_topic_generation_jobs (id, contact_id, owner_type, owner_id, wecom_group_source_conversation_id, created_by_user_id, trigger_source, job_kind, input_fingerprint, status, attempt_count, next_attempt_at) "
+            + "values (gen_random_uuid(), #{contactId}::uuid, #{ownerType}, #{ownerId}::uuid, #{groupConversationId}::uuid, null, 'AUTO', #{jobKind}, #{fingerprint}, 'PENDING', 0, #{now}) "
+            + "on conflict (owner_type, owner_id, input_fingerprint) do nothing")
+    int insertAutomaticIfAbsent(@Param("ownerType") String ownerType, @Param("ownerId") UUID ownerId,
+                                @Param("contactId") UUID contactId, @Param("groupConversationId") UUID groupConversationId,
+                                @Param("jobKind") String jobKind, @Param("fingerprint") String fingerprint,
+                                @Param("now") Instant now);
+
+    @Select("select * from ai_topic_generation_jobs where owner_type=#{ownerType} and owner_id=#{ownerId}::uuid and input_fingerprint=#{fingerprint} limit 1")
+    AiTopicGenerationJobEntity findByOwnerFingerprint(@Param("ownerType") String ownerType,
+                                                      @Param("ownerId") UUID ownerId,
+                                                      @Param("fingerprint") String fingerprint);
+
     @Insert("insert into ai_topic_generation_jobs (id, contact_id, created_by_user_id, job_kind, input_fingerprint, status, attempt_count, next_attempt_at) values (gen_random_uuid(), #{contactId}::uuid, #{userId}::uuid, #{jobKind}, #{fingerprint}, 'PENDING', 0, #{now}) on conflict (contact_id, input_fingerprint) do nothing")
     int insertIfAbsent(UUID contactId, UUID userId, String jobKind, String fingerprint, Instant now);
 

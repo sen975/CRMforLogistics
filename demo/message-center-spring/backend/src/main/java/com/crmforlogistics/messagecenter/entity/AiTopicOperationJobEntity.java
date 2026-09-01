@@ -14,6 +14,7 @@ public class AiTopicOperationJobEntity {
     private UUID contactId;
     private String ownerType;
     private UUID ownerId;
+    private UUID wecomGroupSourceConversationId;
     private UUID createdByUserId;
     private String operationKind;
     private String requestPayload;
@@ -38,6 +39,8 @@ public class AiTopicOperationJobEntity {
     public void setOwnerType(String ownerType) { this.ownerType = ownerType; }
     public UUID getOwnerId() { return ownerId; }
     public void setOwnerId(UUID ownerId) { this.ownerId = ownerId; }
+    public UUID getWecomGroupSourceConversationId() { return wecomGroupSourceConversationId; }
+    public void setWecomGroupSourceConversationId(UUID value) { this.wecomGroupSourceConversationId = value; }
     public UUID getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(UUID createdByUserId) { this.createdByUserId = createdByUserId; }
     public String getOperationKind() { return operationKind; }

@@ -31,13 +31,14 @@ class WeComLoginApplicationServiceTest {
         WeComAccessTokenService accessTokens = mock(WeComAccessTokenService.class);
         WeComUserBindingService bindings = mock(WeComUserBindingService.class);
         AuthSessionService sessions = mock(AuthSessionService.class);
+        WeComPartyProfileService profiles = mock(WeComPartyProfileService.class);
         ViewerAuditSink audit = mock(ViewerAuditSink.class);
         var attempt = WeComLoginAttemptService.forTests(config, installations,
                 Clock.fixed(Instant.ofEpochSecond(100), ZoneOffset.UTC), () -> "state-123456789012", audit);
         when(installations.resolveInstallation(any(), any())).thenReturn(
                 new com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation("i", "suite", "corp", "agent", "pc", 1));
         WeComLoginApplicationService service = new WeComLoginApplicationService(
-                config, attempt, gateway, accessTokens, bindings, sessions, installations);
+                config, attempt, gateway, accessTokens, bindings, sessions, installations, profiles);
         when(bindings.resolveOrCreate(any())).thenReturn(new WeComUserBindingService.BoundIdentity(
                 java.util.UUID.randomUUID(), "suite", "corp", "user", "AUTO_CREATED", null, "wecom_user"));
         when(sessions.issue(any(), any(), any())).thenReturn("crm-token");

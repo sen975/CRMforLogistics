@@ -13,6 +13,7 @@ ALTER TABLE ai_topics ALTER COLUMN contact_id DROP NOT NULL;
 ALTER TABLE ai_topics ALTER COLUMN owner_type SET NOT NULL;
 ALTER TABLE ai_topics ALTER COLUMN owner_id SET NOT NULL;
 ALTER TABLE ai_topics DROP CONSTRAINT IF EXISTS ck_ai_topics_status;
+UPDATE ai_topics SET status = 'STORED' WHERE status = 'DISCARDED';
 ALTER TABLE ai_topics ADD CONSTRAINT ck_ai_topics_status
     CHECK (status IN ('READY', 'STORED', 'ARCHIVED'));
 ALTER TABLE ai_topics DROP CONSTRAINT IF EXISTS ck_ai_topics_owner_type;
@@ -23,8 +24,6 @@ ALTER TABLE ai_topics ADD CONSTRAINT ck_ai_topics_owner_contact
     CHECK ((owner_type = 'CONTACT' AND contact_id = owner_id AND wecom_group_source_conversation_id IS NULL)
         OR (owner_type = 'WECOM_GROUP' AND contact_id IS NULL
             AND wecom_group_source_conversation_id = owner_id));
-
-UPDATE ai_topics SET status = 'STORED' WHERE status = 'DISCARDED';
 
 CREATE INDEX IF NOT EXISTS ix_ai_topics_owner_time
     ON ai_topics(owner_type, owner_id, last_occurred_at DESC, id);
@@ -55,6 +54,9 @@ WHERE owner_type IS NULL;
 ALTER TABLE ai_topic_generation_jobs ALTER COLUMN contact_id DROP NOT NULL;
 ALTER TABLE ai_topic_generation_jobs ALTER COLUMN owner_type SET NOT NULL;
 ALTER TABLE ai_topic_generation_jobs ALTER COLUMN owner_id SET NOT NULL;
+ALTER TABLE ai_topic_generation_jobs DROP CONSTRAINT IF EXISTS uq_ai_topic_generation_input;
+ALTER TABLE ai_topic_generation_jobs ADD CONSTRAINT uq_ai_topic_generation_owner_input
+    UNIQUE (owner_type, owner_id, input_fingerprint);
 ALTER TABLE ai_topic_generation_jobs DROP CONSTRAINT IF EXISTS ck_ai_topic_generation_owner_type;
 ALTER TABLE ai_topic_generation_jobs ADD CONSTRAINT ck_ai_topic_generation_owner_type
     CHECK (owner_type IN ('CONTACT', 'WECOM_GROUP'));

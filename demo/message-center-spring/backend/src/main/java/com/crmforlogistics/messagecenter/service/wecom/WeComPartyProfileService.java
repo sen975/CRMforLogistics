@@ -65,6 +65,28 @@ public class WeComPartyProfileService {
         return result;
     }
 
+    /** Applies sensitive fields returned for the currently authorized employee only. */
+    public ProfileResult syncAuthorizedEmployee(ResolvedInstallation installation, String userId,
+                                                JsonNode detail) {
+        String employee = required(userId);
+        if (detail == null || !detail.isObject()) {
+            return upsert(installation, "EMPLOYEE", employee, "", "", "PARTIAL",
+                    "WECOM_USER_DETAIL_EMPTY");
+        }
+        String returnedUserId = bounded(detail.path("userid").asText(""), 256);
+        if (!returnedUserId.isBlank() && !employee.equalsIgnoreCase(returnedUserId)) {
+            throw new IllegalArgumentException("authorized employee does not match user detail");
+        }
+        WeComPartyEntity existing = parties.selectOne(new LambdaQueryWrapper<WeComPartyEntity>()
+                .eq(WeComPartyEntity::getInstallationId, UUID.fromString(installation.installationId()))
+                .eq(WeComPartyEntity::getPartyType, "EMPLOYEE")
+                .eq(WeComPartyEntity::getProviderPartyId, employee));
+        String name = existing == null ? "" : bounded(existing.getDisplayName(), 512);
+        String avatar = bounded(detail.path("avatar").asText(""), 2048);
+        if (avatar.isBlank() && existing != null) avatar = bounded(existing.getAvatarUrl(), 2048);
+        return upsertProfile(installation, "EMPLOYEE", employee, name, avatar, "");
+    }
+
     public ProfileResult syncExternalContact(ResolvedInstallation installation, String externalUserId,
                                              Duration timeout) {
         JsonNode response;
@@ -88,7 +110,19 @@ public class WeComPartyProfileService {
         if (!"EMPLOYEE".equals(partyType) && !"EXTERNAL_CONTACT".equals(partyType)) {
             throw new IllegalArgumentException("unsupported observed party type");
         }
-        return upsertProfile(installation, partyType, providerPartyId, displayName, avatarUrl, "");
+        String name = bounded(displayName, 512);
+        String avatar = bounded(avatarUrl, 2048);
+        if (name.isBlank() || avatar.isBlank()) {
+            WeComPartyEntity existing = parties.selectOne(new LambdaQueryWrapper<WeComPartyEntity>()
+                    .eq(WeComPartyEntity::getInstallationId, UUID.fromString(installation.installationId()))
+                    .eq(WeComPartyEntity::getPartyType, partyType)
+                    .eq(WeComPartyEntity::getProviderPartyId, required(providerPartyId)));
+            if (existing != null) {
+                if (name.isBlank()) name = bounded(existing.getDisplayName(), 512);
+                if (avatar.isBlank()) avatar = bounded(existing.getAvatarUrl(), 2048);
+            }
+        }
+        return upsertProfile(installation, partyType, providerPartyId, name, avatar, "");
     }
 
     /**
