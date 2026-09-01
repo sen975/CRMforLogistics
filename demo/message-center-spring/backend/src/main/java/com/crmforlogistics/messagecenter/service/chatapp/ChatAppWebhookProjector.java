@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
@@ -43,6 +44,7 @@ public class ChatAppWebhookProjector {
     private final ObjectMapper objectMapper;
     private final ChatAppBroadcastRecipientMapper broadcastRecipientMapper;
     private final ChatAppBroadcastMessageProjector broadcastMessageProjector;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
                                    MessageMapper messageMapper,
@@ -54,6 +56,23 @@ public class ChatAppWebhookProjector {
                                    ObjectMapper objectMapper,
                                    ChatAppBroadcastRecipientMapper broadcastRecipientMapper,
                                    ChatAppBroadcastMessageProjector broadcastMessageProjector) {
+        this(channelEventMapper, messageMapper, statusEventMapper, contactIdentityMapper, contactMapper,
+                conversationMapper, eventHub, objectMapper, broadcastRecipientMapper,
+                broadcastMessageProjector, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
+                                   MessageMapper messageMapper,
+                                   MessageStatusEventMapper statusEventMapper,
+                                   ContactIdentityMapper contactIdentityMapper,
+                                   ContactMapper contactMapper,
+                                   ConversationMapper conversationMapper,
+                                   EventHub eventHub,
+                                   ObjectMapper objectMapper,
+                                   ChatAppBroadcastRecipientMapper broadcastRecipientMapper,
+                                   ChatAppBroadcastMessageProjector broadcastMessageProjector,
+                                   AiTopicActivityRecorder topicActivityRecorder) {
         this.channelEventMapper = Objects.requireNonNull(channelEventMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -64,6 +83,7 @@ public class ChatAppWebhookProjector {
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.broadcastRecipientMapper = Objects.requireNonNull(broadcastRecipientMapper);
         this.broadcastMessageProjector = Objects.requireNonNull(broadcastMessageProjector);
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     @Transactional
@@ -206,6 +226,7 @@ public class ChatAppWebhookProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{}");
         messageMapper.insertWithSequence(message);
+        recordTopicActivity(conversation, occurredAt);
         return message;
     }
 
@@ -230,7 +251,7 @@ public class ChatAppWebhookProjector {
                 displayName.isBlank() ? from : displayName);
         ConversationEntity conversation = conversationMapper.getOrCreateConversation(
                 event.getChannelAccountId(), identity.getId());
-        Instant occurredAt = Instant.now();
+        Instant occurredAt = event.getOccurredAt() == null ? Instant.now() : event.getOccurredAt();
         MessageEntity message = new MessageEntity();
         message.setId(UUID.randomUUID());
         message.setChannelAccountId(event.getChannelAccountId());
@@ -246,6 +267,7 @@ public class ChatAppWebhookProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{}");
         messageMapper.insertWithSequence(message);
+        recordTopicActivity(conversation, occurredAt);
 
         MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
         statusEvent.setId(UUID.randomUUID());
@@ -289,6 +311,12 @@ public class ChatAppWebhookProjector {
         identity.setSource("synced");
         contactIdentityMapper.insert(identity);
         return identity;
+    }
+
+    private void recordTopicActivity(ConversationEntity conversation, Instant occurredAt) {
+        if (topicActivityRecorder != null) {
+            topicActivityRecorder.recordConversation(conversation, occurredAt);
+        }
     }
 
     private ContactIdentityEntity backfillDisplayName(ContactIdentityEntity identity,

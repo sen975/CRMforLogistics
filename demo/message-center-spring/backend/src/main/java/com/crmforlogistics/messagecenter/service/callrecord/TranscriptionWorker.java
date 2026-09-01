@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.callrecord;
 import com.crmforlogistics.messagecenter.config.CallRecordConfig;
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
 import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -37,6 +38,7 @@ public class TranscriptionWorker {
     private final int concurrency;
     private final int leaseSeconds;
     private final int maxAttempts;
+    private final AiTopicActivityRecorder topicActivityRecorder;
     private final ThreadPoolExecutor workers;
     private final ScheduledExecutorService scheduler;
     private final ConcurrentHashMap<UUID, FutureTask<Void>> inFlight = new ConcurrentHashMap<>();
@@ -49,6 +51,16 @@ public class TranscriptionWorker {
                                FunAsrClient transcriber,
                                CallRecordConfig config,
                                Clock clock) {
+        this(mapper, audioStore, transcriber, config, clock, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TranscriptionWorker(CallRecordMapper mapper,
+                               MinioAudioStore audioStore,
+                               FunAsrClient transcriber,
+                               CallRecordConfig config,
+                               Clock clock,
+                               AiTopicActivityRecorder topicActivityRecorder) {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.audioStore = Objects.requireNonNull(audioStore, "audioStore");
         this.transcriber = Objects.requireNonNull(transcriber, "transcriber");
@@ -57,6 +69,7 @@ public class TranscriptionWorker {
         this.concurrency = config.workerConcurrency();
         this.leaseSeconds = config.leaseSeconds();
         this.maxAttempts = config.maxAttempts();
+        this.topicActivityRecorder = topicActivityRecorder;
         this.workers = new ThreadPoolExecutor(
                 concurrency, concurrency, 0, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(Math.max(1, concurrency)),
@@ -172,6 +185,10 @@ public class TranscriptionWorker {
                     leased, leased.getTranscriptionLeaseId(), result, completedAt);
             int rows = mapper.replace(completed, expectedVersion);
             if (rows > 0) {
+                if (topicActivityRecorder != null) {
+                    topicActivityRecorder.recordCall(
+                            completed.getContactAnchorPointId(), completed.getOccurredAt());
+                }
                 log.info("Transcription completed for call record {}", leased.getId());
             }
         } catch (Exception e) {

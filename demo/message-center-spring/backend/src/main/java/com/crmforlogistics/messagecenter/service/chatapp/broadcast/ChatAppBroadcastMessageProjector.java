@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageStateMachine;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppProviderMessageIdentity;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,6 +48,7 @@ public class ChatAppBroadcastMessageProjector {
     private final ObjectMapper objectMapper;
     private final EventHub eventHub;
     private final Clock clock;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public ChatAppBroadcastMessageProjector(
             ChatAppBroadcastMapper broadcastMapper,
@@ -59,6 +61,23 @@ public class ChatAppBroadcastMessageProjector {
             ObjectMapper objectMapper,
             EventHub eventHub,
             Clock clock) {
+        this(broadcastMapper, recipientMapper, messageMapper, conversationMapper, statusEventMapper,
+                templateMapper, textResolver, objectMapper, eventHub, clock, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ChatAppBroadcastMessageProjector(
+            ChatAppBroadcastMapper broadcastMapper,
+            ChatAppBroadcastRecipientMapper recipientMapper,
+            MessageMapper messageMapper,
+            ConversationMapper conversationMapper,
+            MessageStatusEventMapper statusEventMapper,
+            TemplateMapper templateMapper,
+            TemplateMessageTextResolver textResolver,
+            ObjectMapper objectMapper,
+            EventHub eventHub,
+            Clock clock,
+            AiTopicActivityRecorder topicActivityRecorder) {
         this.broadcastMapper = Objects.requireNonNull(broadcastMapper);
         this.recipientMapper = Objects.requireNonNull(recipientMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
@@ -69,6 +88,7 @@ public class ChatAppBroadcastMessageProjector {
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.eventHub = Objects.requireNonNull(eventHub);
         this.clock = Objects.requireNonNull(clock);
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     @Transactional
@@ -355,6 +375,9 @@ public class ChatAppBroadcastMessageProjector {
         event.setMetadataJsonb("{}");
         statusEventMapper.insertIgnore(event);
         conversationMapper.recomputeProjection(conversation.getId());
+        if (topicActivityRecorder != null) {
+            topicActivityRecorder.recordConversation(conversation, occurredAt);
+        }
         publishAfterCommit();
         return new ProjectionResult(message.getId(), true, "processing");
     }

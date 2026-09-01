@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
@@ -45,6 +46,33 @@ class ChatAppWebhookProjectorTest {
     @Mock EventHub eventHub;
     @Mock ChatAppBroadcastRecipientMapper broadcastRecipientMapper;
     @Mock ChatAppBroadcastMessageProjector broadcastMessageProjector;
+    @Mock AiTopicActivityRecorder topicActivityRecorder;
+
+    @Test
+    void inboundMessageRecordsTopicActivityAfterMessagePersistence() {
+        UUID accountId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.findByProviderMessageId(accountId, "inbound-1"))
+                .thenReturn(Optional.empty());
+        when(contactIdentityMapper.findByNormalizedValueInScope(
+                "chatapp", accountId.toString(), "60123456789"))
+                .thenReturn(Optional.of(identity));
+        when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
+                .thenReturn(conversation);
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setOccurredAt(java.time.Instant.parse("2026-09-01T08:00:00Z"));
+        event.setPayloadJsonb("{\"MessageId\":\"inbound-1\",\"From\":\"60123456789\",\"Message\":\"hello\"}");
+
+        projector().project(event);
+
+        verify(topicActivityRecorder).recordConversation(
+                conversation, java.time.Instant.parse("2026-09-01T08:00:00Z"));
+    }
 
     @Test
     void statusWebhookProjectsOntoExistingOutboundMessage() {
@@ -209,7 +237,7 @@ class ChatAppWebhookProjectorTest {
                 channelEventMapper, messageMapper, statusEventMapper,
                 contactIdentityMapper, contactMapper, conversationMapper,
                 eventHub, new ObjectMapper(), broadcastRecipientMapper,
-                broadcastMessageProjector);
+                broadcastMessageProjector, topicActivityRecorder);
     }
 
     private static MessageEntity messageWithStatus(String status) {

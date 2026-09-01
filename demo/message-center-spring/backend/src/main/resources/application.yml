@@ -26,6 +26,7 @@ logging:
     com.aliyun: ERROR
 
 ai-topic:
+  quiet-window-seconds: ${AI_TOPIC_QUIET_WINDOW_SECONDS:360}
   base-url: ${AI_BASE_URL:}
   api-key: ${AI_API_KEY:}
   model: ${AI_MODEL:gpt-4o-mini}

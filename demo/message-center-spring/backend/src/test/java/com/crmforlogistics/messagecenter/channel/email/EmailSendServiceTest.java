@@ -5,6 +5,10 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
+import com.crmforlogistics.messagecenter.entity.ConversationEntity;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -15,6 +19,8 @@ import org.mockito.quality.Strictness;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -25,6 +31,32 @@ class EmailSendServiceTest {
     @Mock ConversationMapper conversationMapper;
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock ContactIdentityMapper contactIdentityMapper;
+    @Mock AiTopicActivityRecorder topicActivityRecorder;
+
+    @Test
+    void persistedOutboundEmailRecordsTopicActivity() {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(java.util.UUID.randomUUID());
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(java.util.UUID.randomUUID());
+        identity.setContactId(java.util.UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(java.util.UUID.randomUUID());
+        when(channelAccountMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(account));
+        when(contactIdentityMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(identity));
+        when(conversationMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(conversation));
+
+        EmailSendService service = new EmailSendService(config, messageMapper,
+                conversationMapper, channelAccountMapper, contactIdentityMapper,
+                null, topicActivityRecorder);
+        service.persistOutbound("customer@example.test", "subject", "body", "<message@example.test>");
+
+        verify(topicActivityRecorder).recordContact(eq(identity.getContactId()),
+                org.mockito.ArgumentMatchers.any());
+    }
 
     @Test
     void shouldConstructWithDependencies() {

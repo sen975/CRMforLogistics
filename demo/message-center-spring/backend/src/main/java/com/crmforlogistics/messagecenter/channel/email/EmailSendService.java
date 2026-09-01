@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
@@ -49,6 +50,7 @@ public class EmailSendService {
     private final ContactIdentityMapper contactIdentityMapper;
     private final EmailAttachmentReader attachmentReader;
     private final EmailAttachmentStore attachmentStore;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -63,6 +65,16 @@ public class EmailSendService {
                 positiveIntOrDefault(config.emailAttachmentMaxCount(), 16),
                 positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
         this.attachmentStore = null;
+        this.topicActivityRecorder = null;
+    }
+
+    public EmailSendService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            EmailAttachmentStore attachmentStore) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper,
+                contactIdentityMapper, attachmentStore, null);
     }
 
     @Autowired
@@ -70,7 +82,8 @@ public class EmailSendService {
                             ConversationMapper conversationMapper,
                             ChannelAccountMapper channelAccountMapper,
                             ContactIdentityMapper contactIdentityMapper,
-                            EmailAttachmentStore attachmentStore) {
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -80,6 +93,7 @@ public class EmailSendService {
                 positiveIntOrDefault(config.emailAttachmentMaxCount(), 16),
                 positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
         this.attachmentStore = attachmentStore;
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     public record SendResult(String messageId, String from, String to, String subject, String status) {}
@@ -140,7 +154,7 @@ public class EmailSendService {
                 mailFrom(), cleanTo, subject, "sent");
     }
 
-    private UUID persistOutbound(String to, String subject, String body, String messageId) {
+    UUID persistOutbound(String to, String subject, String body, String messageId) {
         try {
             ChannelAccountEntity account = resolveEmailAccount();
             if (account == null) {
@@ -160,6 +174,9 @@ public class EmailSendService {
             entity.setOccurredAt(Instant.now());
             entity.setCurrentStatus("sent");
             messageMapper.insert(entity);
+            if (topicActivityRecorder != null) {
+                topicActivityRecorder.recordContact(identity.getContactId(), entity.getOccurredAt());
+            }
             return entity.getId();
         } catch (Exception e) {
             log.error("Failed to persist outbound email to DB", e);

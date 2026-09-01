@@ -7,6 +7,8 @@ import com.crmforlogistics.messagecenter.entity.CallTranscriptRevisionEntity;
 import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
 import com.crmforlogistics.messagecenter.mapper.CallTranscriptRevisionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +37,7 @@ public class CallRecordService {
     private final int maxRevisions;
     private final String model;
     private final Clock clock;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public CallRecordService(CallRecordMapper mapper,
                              CallTranscriptRevisionMapper revisionMapper,
@@ -43,6 +46,18 @@ public class CallRecordService {
                              CallRecordConfig config,
                              FunAsrConfig funAsrConfig,
                              Clock clock) {
+        this(mapper, revisionMapper, audioStore, contactIdentityMapper, config, funAsrConfig, clock, null);
+    }
+
+    @Autowired
+    public CallRecordService(CallRecordMapper mapper,
+                             CallTranscriptRevisionMapper revisionMapper,
+                             MinioAudioStore audioStore,
+                             ContactIdentityMapper contactIdentityMapper,
+                             CallRecordConfig config,
+                             FunAsrConfig funAsrConfig,
+                             Clock clock,
+                             AiTopicActivityRecorder topicActivityRecorder) {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.revisionMapper = Objects.requireNonNull(revisionMapper, "revisionMapper");
         this.audioStore = Objects.requireNonNull(audioStore, "audioStore");
@@ -53,6 +68,7 @@ public class CallRecordService {
         this.queueCapacity = config.queueCapacity();
         this.maxRevisions = config.maxRevisions();
         this.model = funAsrConfig.model();
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     public CallRecordEntity create(CreateCallRecordCommand command, InputStream input) {
@@ -175,9 +191,11 @@ public class CallRecordService {
         revised.setCurrentRevisionId(revEntity.getId());
         int rows = mapper.replace(revised, expectedVersion);
         if (rows == 0) throw transcriptVersionConflict(null);
+        recordTopicActivity(revised);
         return revised;
     }
 
+    @Transactional
     public CallRecordEntity reviseNote(UUID id, String note, long expectedVersion) {
         Objects.requireNonNull(id, "id");
         String normalizedNote = validateNote(note);
@@ -189,7 +207,13 @@ public class CallRecordService {
         if (rows == 0) throw versionConflict(null);
         current.setNote(normalizedNote);
         current.setVersion(current.getVersion() + 1);
+        recordTopicActivity(current);
         return current;
+    }
+
+    private void recordTopicActivity(CallRecordEntity record) {
+        if (topicActivityRecorder == null) return;
+        topicActivityRecorder.recordCall(record.getContactAnchorPointId(), record.getOccurredAt());
     }
 
     private ValidatedCreate validateCreate(CreateCallRecordCommand command) {

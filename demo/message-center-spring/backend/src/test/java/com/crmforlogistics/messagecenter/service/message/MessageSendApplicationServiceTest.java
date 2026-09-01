@@ -11,6 +11,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -39,6 +40,30 @@ class MessageSendApplicationServiceTest {
     @Mock TemplateMapper templateMapper;
     @Mock EventHub eventHub;
     @Mock ConversationAccessService conversationAccessService;
+    @Mock AiTopicActivityRecorder topicActivityRecorder;
+
+    @Test
+    void persistedOutboundMessageRecordsTopicActivity() {
+        UUID accountId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(conversationId);
+        conversation.setChannelAccountId(accountId);
+        when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
+                .thenReturn(conversation);
+        when(messageMapper.findByClientRequestId(accountId, "request-topic"))
+                .thenReturn(Optional.empty()).thenReturn(Optional.empty());
+        MessageSendApplicationService service = new MessageSendApplicationService(
+                messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
+                conversationAccessService,
+                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()), topicActivityRecorder);
+
+        service.accept(new MessageSendApplicationService.SendMessageCommand(
+                accountId, conversationId, "text", "request-topic", Map.of("text", "hello")), actorId);
+
+        verify(topicActivityRecorder).recordConversation(org.mockito.ArgumentMatchers.eq(conversation), any());
+    }
 
     @Test
     void duplicateClientRequestCreatesOnePendingMessageAndOutbox() {

@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import jakarta.activation.DataHandler;
 import jakarta.mail.Message;
 import jakarta.mail.AuthenticationFailedException;
@@ -63,6 +64,17 @@ class EmailSyncServiceTest {
     @Mock EventHub eventHub;
     @Mock EmailAttachmentStore attachmentStore;
     @Mock CredentialCipher credentialCipher;
+    @Mock AiTopicActivityRecorder topicActivityRecorder;
+
+    @Test
+    void sentFolderCandidatesIncludeConfiguredAndLocalizedMailboxNames() {
+        EmailSyncSettings settings = new EmailSyncSettings(
+                "imap.example.test", "993", "user", "password", true, 10,
+                "139", true, "/usr/bin/openssl", "INBOX", "已发送");
+
+        assertEquals(List.of("已发送", "Sent", "Sent Items", "INBOX.Sent", "INBOX/已发送"),
+                settings.sentFolderCandidates());
+    }
 
     @Test
     void shouldConstructWithDependencies() {
@@ -78,9 +90,10 @@ class EmailSyncServiceTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertEquals(9, injectionConstructor.getParameterCount());
+        assertEquals(10, injectionConstructor.getParameterCount());
         assertEquals(CredentialCipher.class, injectionConstructor.getParameterTypes()[7]);
         assertEquals(EmailAttachmentStore.class, injectionConstructor.getParameterTypes()[8]);
+        assertEquals(AiTopicActivityRecorder.class, injectionConstructor.getParameterTypes()[9]);
     }
 
     @Test
@@ -165,7 +178,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, attachmentStore);
+                eventHub, credentialCipher, attachmentStore, topicActivityRecorder);
         MimeMessage message = attachmentMessage();
 
         Method appendReceived = EmailSyncService.class.getDeclaredMethod(
@@ -181,6 +194,8 @@ class EmailSyncServiceTest {
                         && "image".equals(payloads.get(0).mediaKind())
                         && Arrays.equals("png".getBytes(StandardCharsets.UTF_8), payloads.get(0).bytes())),
                 anyBoolean());
+        verify(topicActivityRecorder).recordContact(
+                eq(identity.getContactId()), eq(Instant.parse("2026-08-13T00:00:00Z")));
     }
 
     @Test

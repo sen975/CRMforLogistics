@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.callrecord;
 import com.crmforlogistics.messagecenter.config.CallRecordConfig;
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
 import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -23,6 +24,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.timeout;
 
 class TranscriptionWorkerTest {
     private static final Instant NOW = Instant.parse("2026-08-07T07:00:00Z");
@@ -47,6 +50,31 @@ class TranscriptionWorkerTest {
 
             assertThat(versions.await()).isTrue();
             assertThat(versions.values()).containsExactly(7L, 8L);
+        } finally {
+            worker.shutdown();
+        }
+    }
+
+    @Test
+    void completedTranscriptionRecordsTopicActivityAtCallTime() throws Exception {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        MinioAudioStore audioStore = mock(MinioAudioStore.class);
+        FunAsrClient transcriber = mock(FunAsrClient.class);
+        AiTopicActivityRecorder topicActivityRecorder = mock(AiTopicActivityRecorder.class);
+        CallRecordEntity record = queuedRecord(7L);
+        record.setContactAnchorPointId("contact:" + UUID.randomUUID());
+        record.setOccurredAt(NOW.minusSeconds(120));
+        when(mapper.listRunnable(any(), anyInt())).thenReturn(List.of(record)).thenReturn(List.of());
+        when(audioStore.path(any())).thenReturn(Path.of("recording.mp3"));
+        when(transcriber.transcribe(any(), eq("sensevoice"), eq(10.0))).thenReturn(transcriptionResult());
+        VersionCapture versions = captureSuccessfulUpdates(mapper, 2);
+        TranscriptionWorker worker = worker(mapper, audioStore, transcriber, topicActivityRecorder);
+
+        try {
+            worker.start();
+            assertThat(versions.await()).isTrue();
+            verify(topicActivityRecorder, timeout(2_000)).recordCall(
+                    eq(record.getContactAnchorPointId()), eq(record.getOccurredAt()));
         } finally {
             worker.shutdown();
         }
@@ -81,13 +109,20 @@ class TranscriptionWorkerTest {
     private static TranscriptionWorker worker(CallRecordMapper mapper,
                                               MinioAudioStore audioStore,
                                               FunAsrClient transcriber) {
+        return worker(mapper, audioStore, transcriber, null);
+    }
+
+    private static TranscriptionWorker worker(CallRecordMapper mapper,
+                                              MinioAudioStore audioStore,
+                                              FunAsrClient transcriber,
+                                              AiTopicActivityRecorder topicActivityRecorder) {
         CallRecordConfig config = new CallRecordConfig(
                 "data/call-records", 104_857_600L, 7_200,
                 10_737_418_240L, 10_000, 64, 1, 2_100, 3,
                 10_485_760L, 20_000, 20, 300, 8, 256);
         return new TranscriptionWorker(
                 mapper, audioStore, transcriber, config,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), topicActivityRecorder);
     }
 
     private static CallRecordEntity queuedRecord(long version) {
@@ -105,6 +140,8 @@ class TranscriptionWorkerTest {
         record.setTranscriptionAttempts(0);
         record.setVersion(version);
         record.setCreatedAt(NOW.minusSeconds(60));
+        record.setOccurredAt(NOW.minusSeconds(60));
+        record.setContactAnchorPointId("contact:" + UUID.randomUUID());
         return record;
     }
 

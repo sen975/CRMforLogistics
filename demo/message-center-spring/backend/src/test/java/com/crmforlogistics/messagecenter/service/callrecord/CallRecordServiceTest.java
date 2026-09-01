@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.CallTranscriptRevisionEntity;
 import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
 import com.crmforlogistics.messagecenter.mapper.CallTranscriptRevisionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.transaction.annotation.Transactional;
@@ -114,8 +115,33 @@ class CallRecordServiceTest {
         verify(revisionMapper).insert(any(CallTranscriptRevisionEntity.class));
     }
 
+    @Test
+    void reviseNoteRecordsTopicActivityAtOriginalCallTimeAfterPersisting() {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
+        AiTopicActivityRecorder topicActivityRecorder = mock(AiTopicActivityRecorder.class);
+        CallRecordEntity current = completedRecord(6L);
+        current.setContactAnchorPointId("phone:60123456789");
+        current.setOccurredAt(NOW.minusSeconds(120));
+        when(mapper.findById(current.getId())).thenReturn(Optional.of(current));
+        when(mapper.updateNote(current.getId(), "已确认报价", 6L)).thenReturn(1);
+
+        CallRecordEntity revised = service(mapper, revisionMapper, topicActivityRecorder)
+                .reviseNote(current.getId(), "已确认报价", 6L);
+
+        assertThat(revised.getNote()).isEqualTo("已确认报价");
+        verify(topicActivityRecorder).recordCall(
+                current.getContactAnchorPointId(), current.getOccurredAt());
+    }
+
     private static CallRecordService service(CallRecordMapper mapper,
                                              CallTranscriptRevisionMapper revisionMapper) {
+        return service(mapper, revisionMapper, null);
+    }
+
+    private static CallRecordService service(CallRecordMapper mapper,
+                                             CallTranscriptRevisionMapper revisionMapper,
+                                             AiTopicActivityRecorder topicActivityRecorder) {
         return new CallRecordService(
                 mapper,
                 revisionMapper,
@@ -125,7 +151,8 @@ class CallRecordServiceTest {
                 new FunAsrConfig(
                         "http://127.0.0.1:8000", "sensevoice",
                         java.time.Duration.ofSeconds(3), java.time.Duration.ofSeconds(30)),
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                topicActivityRecorder);
     }
 
     private static CallRecordEntity completedRecord(long version) {

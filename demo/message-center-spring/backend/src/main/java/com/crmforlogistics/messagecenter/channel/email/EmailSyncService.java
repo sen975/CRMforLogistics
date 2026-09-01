@@ -14,6 +14,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import jakarta.mail.Address;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Folder;
@@ -53,6 +54,7 @@ public class EmailSyncService {
     private final CredentialCipher credentialCipher;
     private final EmailMimeParser mimeParser = new EmailMimeParser();
     private final EmailAttachmentStore attachmentStore;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -75,7 +77,6 @@ public class EmailSyncService {
                 contactIdentityMapper, contactMapper, eventHub, null, attachmentStore);
     }
 
-    @Autowired
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
                             ChannelAccountMapper channelAccountMapper,
@@ -84,6 +85,20 @@ public class EmailSyncService {
                             EventHub eventHub,
                             CredentialCipher credentialCipher,
                             EmailAttachmentStore attachmentStore) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                contactMapper, eventHub, credentialCipher, attachmentStore, null);
+    }
+
+    @Autowired
+    public EmailSyncService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            ContactMapper contactMapper,
+                            EventHub eventHub,
+                            CredentialCipher credentialCipher,
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -93,6 +108,7 @@ public class EmailSyncService {
         this.eventHub = eventHub;
         this.credentialCipher = credentialCipher;
         this.attachmentStore = attachmentStore;
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
@@ -110,7 +126,7 @@ public class EmailSyncService {
         }
         try (Store store = connectStore(settings)) {
             result = receiveLatestFromFolder(store, settings.inboxFolder(), "in", settings.receiveLimit(), result);
-            result = receiveLatestFromFolder(store, settings.sentFolder(), "out", settings.receiveLimit(), result);
+            result = receiveLatestFromFolders(store, settings.sentFolderCandidates(), "out", settings.receiveLimit(), result);
         }
         SyncResult finalResult = new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
                 "received " + result.saved() + " new email messages");
@@ -135,7 +151,23 @@ public class EmailSyncService {
         requireConfig(settings.imapPassword(), "imapPassword");
         OpenSslImapClient client = new OpenSslImapClient(settings);
         result = receiveLatestFromOpenSslFolder(client, settings.inboxFolder(), "in", settings.receiveLimit(), result);
-        return receiveLatestFromOpenSslFolder(client, settings.sentFolder(), "out", settings.receiveLimit(), result);
+        return receiveLatestFromOpenSslFolders(settings, "out", result);
+    }
+
+    private SyncResult receiveLatestFromOpenSslFolders(EmailSyncSettings settings,
+                                                       String direction, SyncResult result) throws Exception {
+        for (String folder : settings.sentFolderCandidates()) {
+            OpenSslImapClient client = new OpenSslImapClient(settings);
+            SyncResult updated = receiveLatestFromOpenSslFolder(client, folder, direction,
+                    settings.receiveLimit(), result);
+            if (updated.fetched() > result.fetched()) {
+                log.info("event=email.imap_sent_folder_selected folder={} fetched={}", folder,
+                        updated.fetched() - result.fetched());
+                return updated;
+            }
+        }
+        log.warn("event=email.imap_sent_folder_empty candidates={}", settings.sentFolderCandidates());
+        return result;
     }
 
     private SyncResult receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName,
@@ -172,6 +204,20 @@ public class EmailSyncService {
         } finally {
             folder.close(false);
         }
+    }
+
+    private SyncResult receiveLatestFromFolders(Store store, List<String> folderNames, String direction,
+                                                int limit, SyncResult result) throws Exception {
+        for (String folderName : folderNames) {
+            SyncResult updated = receiveLatestFromFolder(store, folderName, direction, limit, result);
+            if (updated.fetched() > result.fetched()) {
+                log.info("event=email.imap_sent_folder_selected folder={} fetched={}", folderName,
+                        updated.fetched() - result.fetched());
+                return updated;
+            }
+        }
+        log.warn("event=email.imap_sent_folder_empty candidates={}", folderNames);
+        return result;
     }
 
     private SyncResult appendReceived(SyncResult result, Message message, String direction) {
@@ -223,6 +269,9 @@ public class EmailSyncService {
             entity.setCurrentStatus("delivered");
             entity.setCurrentStatusAt(Instant.now());
             messageMapper.insertWithSequence(entity);
+            if (topicActivityRecorder != null) {
+                topicActivityRecorder.recordContact(identity.getContactId(), sentDate);
+            }
             if (attachmentStore != null && !parsed.attachments().isEmpty()) {
                 try {
                     var payloads = new EmailAttachmentReader(

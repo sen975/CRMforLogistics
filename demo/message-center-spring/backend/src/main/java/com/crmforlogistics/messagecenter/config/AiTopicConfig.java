@@ -15,7 +15,8 @@ public record AiTopicConfig(
         @DefaultValue("1") int workerConcurrency,
         @DefaultValue("3") int maxAttempts,
         @DefaultValue("120") int leaseSeconds,
-        @DefaultValue("30") int pollIntervalSeconds
+        @DefaultValue("30") int pollIntervalSeconds,
+        @DefaultValue("360") int quietWindowSeconds
 ) {
     public AiTopicConfig {
         if (timeoutSeconds <= 0 || timeoutSeconds > 300) throw new IllegalArgumentException("ai-topic timeoutSeconds must be 1..300");
@@ -26,5 +27,6 @@ public record AiTopicConfig(
         if (maxAttempts <= 0 || maxAttempts > 20) throw new IllegalArgumentException("ai-topic maxAttempts must be 1..20");
         if (leaseSeconds <= 0 || leaseSeconds > 3600) throw new IllegalArgumentException("ai-topic leaseSeconds must be 1..3600");
         if (pollIntervalSeconds <= 0 || pollIntervalSeconds > 3600) throw new IllegalArgumentException("ai-topic pollIntervalSeconds must be 1..3600");
+        if (quietWindowSeconds < 60 || quietWindowSeconds > 86_400) throw new IllegalArgumentException("ai-topic quietWindowSeconds must be 60..86400");
     }
 }

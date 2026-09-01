@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +53,7 @@ class ChatAppBroadcastMessageProjectorTest {
     @Mock MessageStatusEventMapper statusEventMapper;
     @Mock TemplateMapper templateMapper;
     @Mock EventHub eventHub;
+    @Mock AiTopicActivityRecorder topicActivityRecorder;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private UUID broadcastId;
@@ -110,7 +112,7 @@ class ChatAppBroadcastMessageProjectorTest {
                 broadcastMapper, recipientMapper, messageMapper, conversationMapper,
                 statusEventMapper, templateMapper,
                 new TemplateMessageTextResolver(templateMapper, objectMapper),
-                objectMapper, eventHub, Clock.fixed(NOW, ZoneOffset.UTC));
+                objectMapper, eventHub, Clock.fixed(NOW, ZoneOffset.UTC), topicActivityRecorder);
     }
 
     @Test
@@ -146,6 +148,7 @@ class ChatAppBroadcastMessageProjectorTest {
                         && ("broadcast:" + broadcastId + ":recipient:" + recipientId + ":processing")
                         .equals(event.getProviderEventId())));
         verify(conversationMapper).recomputeProjection(conversationId);
+        verify(topicActivityRecorder).recordConversation(any(ConversationEntity.class), eq(NOW));
         verify(eventHub, times(1)).publish("message-new", "{}");
     }
 

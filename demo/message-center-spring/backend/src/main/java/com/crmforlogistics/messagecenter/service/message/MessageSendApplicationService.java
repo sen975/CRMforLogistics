@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.OutboxJobMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class MessageSendApplicationService {
     private final EventHub eventHub;
     private final ConversationAccessService conversationAccessService;
     private final TemplateMessageTextResolver templateTextResolver;
+    private final AiTopicActivityRecorder topicActivityRecorder;
 
     public MessageSendApplicationService(MessageMapper messageMapper,
                                          OutboxJobMapper outboxJobMapper,
@@ -41,6 +43,19 @@ public class MessageSendApplicationService {
                                          EventHub eventHub,
                                          ConversationAccessService conversationAccessService,
                                          TemplateMessageTextResolver templateTextResolver) {
+        this(messageMapper, outboxJobMapper, statusEventMapper, objectMapper, eventHub,
+                conversationAccessService, templateTextResolver, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MessageSendApplicationService(MessageMapper messageMapper,
+                                         OutboxJobMapper outboxJobMapper,
+                                         MessageStatusEventMapper statusEventMapper,
+                                         ObjectMapper objectMapper,
+                                         EventHub eventHub,
+                                         ConversationAccessService conversationAccessService,
+                                         TemplateMessageTextResolver templateTextResolver,
+                                         AiTopicActivityRecorder topicActivityRecorder) {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.outboxJobMapper = Objects.requireNonNull(outboxJobMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -48,6 +63,7 @@ public class MessageSendApplicationService {
         this.eventHub = Objects.requireNonNull(eventHub);
         this.conversationAccessService = Objects.requireNonNull(conversationAccessService);
         this.templateTextResolver = Objects.requireNonNull(templateTextResolver);
+        this.topicActivityRecorder = topicActivityRecorder;
     }
 
     @Transactional
@@ -86,6 +102,9 @@ public class MessageSendApplicationService {
         message.setCreatedByUserId(actorUserId);
         message.setMetadataJsonb(toJson(command.content()));
         messageMapper.insertWithSequence(message);
+        if (topicActivityRecorder != null) {
+            topicActivityRecorder.recordConversation(conversation, now);
+        }
 
         OutboxJobEntity job = new OutboxJobEntity();
         job.setId(UUID.randomUUID());
