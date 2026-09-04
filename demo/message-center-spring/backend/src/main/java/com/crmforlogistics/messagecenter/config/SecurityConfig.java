@@ -66,7 +66,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/wecom/installations", "/api/v1/wecom/installations/**")
                     .hasRole("ADMIN")
                 .requestMatchers("/api/chatapp/sync/messages/reconcile").hasRole("ADMIN")
-                .requestMatchers("/api/channel-accounts/**").hasRole("ADMIN")
+                .requestMatchers("/api/channel-accounts/**").authenticated()
                 .requestMatchers("/api/v1/channel-accounts/*/whatsapp/templates/**").hasRole("ADMIN")
                 .requestMatchers("/api/v1/channel-accounts/*/whatsapp/public-templates/**").hasRole("ADMIN")
                 .requestMatchers(

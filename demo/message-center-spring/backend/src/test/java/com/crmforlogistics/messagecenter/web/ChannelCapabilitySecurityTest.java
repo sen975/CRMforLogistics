@@ -39,7 +39,7 @@ class ChannelCapabilitySecurityTest {
 
     @Test
     @WithMockUser(username = AGENT_ID, roles = "AGENT")
-    void agentCanReadCapabilitiesButCannotReadAdminChannelAccounts() throws Exception {
+    void agentCanReadCapabilitiesAndOwnChannelAccounts() throws Exception {
         UUID accountId = UUID.randomUUID();
         when(messageQueryService.channelCapabilities()).thenReturn(List.of(
                 new ChannelCapabilityResponse("chatapp", accountId, "CAMS 一号账号", "active")));
@@ -49,6 +49,6 @@ class ChannelCapabilitySecurityTest {
                 .andExpect(jsonPath("$[0].channelAccountId").value(accountId.toString()));
 
         mvc.perform(get("/api/channel-accounts"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
     }
 }

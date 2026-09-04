@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -24,35 +25,36 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(ChannelSettingsController.class)
 @Import(SecurityConfig.class)
 class ChannelSettingsControllerAuthorizationTest {
+    private static final String USER_ID = "00000000-0000-0000-0000-000000000005";
     @Autowired MockMvc mvc;
     @MockitoBean ChannelAccountService channelAccountService;
     @MockitoBean AuthSessionService authSessionService;
 
     @Test
-    @WithMockUser(roles = "AGENT")
-    void salesUserCannotAccessAnyChannelSettingsEndpoint() throws Exception {
+    @WithMockUser(username = USER_ID, roles = "AGENT")
+    void salesUserCanAccessSelfManagedChannelSettingsEndpoints() throws Exception {
         UUID accountId = UUID.randomUUID();
 
         mvc.perform(get("/api/channel-accounts"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(put("/api/channel-accounts/{id}", accountId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"Changed\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(post("/api/channel-accounts/{id}/sync", accountId))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(get("/api/channel-accounts/{id}/credentials", accountId))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
         mvc.perform(put("/api/channel-accounts/{id}/credentials", accountId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk());
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = USER_ID, roles = "ADMIN")
     void adminCanListChannelAccounts() throws Exception {
-        when(channelAccountService.list()).thenReturn(List.of());
+        when(channelAccountService.list(any())).thenReturn(List.of());
 
         mvc.perform(get("/api/channel-accounts"))
                 .andExpect(status().isOk());

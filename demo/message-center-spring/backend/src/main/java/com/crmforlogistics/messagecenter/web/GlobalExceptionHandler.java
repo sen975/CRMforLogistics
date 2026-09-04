@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
 import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.service.channel.ChannelAccountException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,13 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ApiError handleBadRequest(IllegalArgumentException e) {
         return new ApiError("BAD_REQUEST", e.getMessage(), UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(ChannelAccountException.class)
+    public ResponseEntity<ApiError> handleChannelAccount(ChannelAccountException e,
+                                                          HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
     @ExceptionHandler(AiTopicException.class)

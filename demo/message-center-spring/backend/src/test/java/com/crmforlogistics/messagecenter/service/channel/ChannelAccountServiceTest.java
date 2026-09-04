@@ -29,14 +29,16 @@ class ChannelAccountServiceTest {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         ChannelAccountService service = service(mapper);
         UUID id = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
         ChannelAccountEntity account = account(id, "whatsapp", "60111111111");
-        when(mapper.selectById(id)).thenReturn(account);
+        account.setOwnerUserId(owner);
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(account);
 
-        assertThatThrownBy(() -> service.update(id, Map.of(
+        assertThatThrownBy(() -> service.update(owner, id, Map.of(
                 "name", "Primary WhatsApp",
                 "accountIdentifier", "60222222222")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("CHATAPP_ACCOUNT_IDENTIFIER_IMMUTABLE");
+                .isInstanceOf(ChannelAccountException.class)
+                .hasMessage("CHANNEL_ACCOUNT_IDENTIFIER_IMMUTABLE");
 
         verify(mapper, never()).updateAccountIdentifier(any(), any());
         verify(mapper, never()).updateNameAndIdentifier(any(), any(), any());
@@ -48,12 +50,14 @@ class ChannelAccountServiceTest {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         ChannelAccountService service = service(mapper);
         UUID id = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
         ChannelAccountEntity account = account(id, "whatsapp", "60111111111");
-        when(mapper.selectById(id)).thenReturn(account);
+        account.setOwnerUserId(owner);
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(account);
 
-        ChannelAccountSummary summary = service.update(id, Map.of("name", "Primary WhatsApp"));
+        ChannelAccountSummary summary = service.update(owner, id, Map.of("name", "Primary WhatsApp"));
 
-        verify(mapper).updateName(id, "Primary WhatsApp");
+        verify(mapper).updateNameOwned(owner, id, "Primary WhatsApp");
         assertThat(summary.name()).isEqualTo("Primary WhatsApp");
         assertThat(summary.accountIdentifier()).isEqualTo("60111111111");
     }
@@ -63,9 +67,12 @@ class ChannelAccountServiceTest {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         ChannelAccountService service = service(mapper);
         UUID id = UUID.randomUUID();
-        when(mapper.selectById(id)).thenReturn(null);
+        UUID owner = UUID.randomUUID();
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(null);
 
-        assertThat(service.update(id, Map.of("name", "X"))).isNull();
+        assertThatThrownBy(() -> service.update(owner, id, Map.of("name", "X")))
+                .isInstanceOf(ChannelAccountException.class)
+                .hasMessage("RESOURCE_NOT_FOUND");
     }
 
     @Test
@@ -74,9 +81,11 @@ class ChannelAccountServiceTest {
         ChatAppMessageSyncService messageSyncService = mock(ChatAppMessageSyncService.class);
         ChatAppTemplateSyncService templateSyncService = mock(ChatAppTemplateSyncService.class);
         UUID id = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
         ChannelAccountEntity account = account(id, "whatsapp", "60111111111");
+        account.setOwnerUserId(owner);
         account.setAuthStatus("active");
-        when(mapper.selectById(id)).thenReturn(account);
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(account);
         when(messageSyncService.runAccount(id))
                 .thenReturn(new ChatAppMessageSyncService.SyncResultRecord(1, 2, 2, 0, 10));
         when(templateSyncService.runAccount(id))
@@ -85,11 +94,11 @@ class ChannelAccountServiceTest {
                 mapper, messageSyncService, templateSyncService,
                 mock(EmailSyncService.class), mock(CredentialCipher.class));
 
-        service.sync(id);
+        service.sync(owner, id);
 
         verify(messageSyncService).runAccount(id);
         verify(templateSyncService).runAccount(id);
-        verify(mapper).updateSyncStatus(eq(id), eq("success"), any());
+        verify(mapper).updateSyncStatusOwned(eq(owner), eq(id), eq("success"), any());
     }
 
     @Test
@@ -98,15 +107,18 @@ class ChannelAccountServiceTest {
         CredentialCipher cipher = mock(CredentialCipher.class);
         ChannelAccountService service = service(mapper, cipher);
         UUID id = UUID.randomUUID();
+        UUID owner = UUID.randomUUID();
         ChannelAccountEntity account = account(id, "email", "inbox@example.test");
+        account.setOwnerUserId(owner);
+        account.setAuthStatus("active");
         account.setEncryptedConfig("encrypted");
-        when(mapper.selectById(id)).thenReturn(account);
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(account);
         when(cipher.decrypt("encrypted")).thenReturn(Map.of(
                 "imapHost", "imap.old.example",
                 "imapPassword", "real-password"));
         when(cipher.encrypt(any())).thenReturn("new-encrypted");
 
-        service.updateCredentials(id, Map.of(
+        service.updateCredentials(owner, id, Map.of(
                 "imapHost", "imap.new.example",
                 "imapPassword", "***"));
 
