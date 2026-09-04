@@ -141,7 +141,7 @@ export default function PhoneRepositoryPage() {
           <PlayCircleOutlined
             style={{ cursor: 'pointer', fontSize: 16 }}
             title="查看会话"
-            onClick={(e) => { e.stopPropagation(); navigate(`/thread/${r.contactId}`); }}
+            onClick={(e) => { e.stopPropagation(); navigate(`/conversations/contact/${r.contactId}?channel=phone`); }}
           />
           {r.transcriptionState === 'failed' && (
             <ReloadOutlined
@@ -181,7 +181,7 @@ export default function PhoneRepositoryPage() {
         pagination={false}
         size="small"
         onRow={(r) => ({
-          onClick: () => navigate(`/thread/${r.contactId}`),
+          onClick: () => navigate(`/conversations/contact/${r.contactId}?channel=phone`),
           style: { cursor: 'pointer' },
         })}
       />

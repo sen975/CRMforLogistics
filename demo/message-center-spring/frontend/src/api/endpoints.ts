@@ -36,6 +36,11 @@ import type {
   WeComProviderData,
   WeComThreadResponse,
   WeComGroupThreadResponse,
+  WeComGroupTopicsResponse,
+  WeComGroupNameRefreshResponse,
+  ChannelAddressBookChannel,
+  ChannelAddressBookItem,
+  ChannelAddressBookPageResponse,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -334,6 +339,35 @@ export async function fetchContacts(params?: {
 }): Promise<MyBatisPage<ContactResponse>> {
   const res = await client.get<MyBatisPage<ContactResponse>>('/contacts', { params });
   return res.data;
+}
+
+export async function fetchChannelAddressBook(
+  channel: ChannelAddressBookChannel,
+  params?: { query?: string; page?: number; size?: number },
+): Promise<ChannelAddressBookPageResponse> {
+  const res = await client.get<ChannelAddressBookPageResponse>(
+    `/channel-address-books/${encodeURIComponent(channel)}`,
+    { params },
+  );
+  return res.data;
+}
+
+export async function createManualChannelContact(
+  channel: ChannelAddressBookChannel,
+  payload: { displayName: string; address: string },
+): Promise<ChannelAddressBookItem> {
+  const res = await client.post<ChannelAddressBookItem>(
+    `/channel-address-books/${encodeURIComponent(channel)}`,
+    { channelType: channel, ...payload },
+  );
+  return res.data;
+}
+
+export async function deleteManualChannelContact(
+  channel: ChannelAddressBookChannel,
+  contactId: string,
+): Promise<void> {
+  await client.delete(`/channel-address-books/${encodeURIComponent(channel)}/${encodeURIComponent(contactId)}`);
 }
 
 export async function listConversations(params?: {

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Spin, Typography, Empty, Button, Tag } from 'antd';
 import { ReloadOutlined, PhoneOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchThread, fetchContact, markContactRead } from '../api/endpoints';
+import { fetchThread, fetchContact, fetchWeComContactThread, markContactRead } from '../api/endpoints';
 import { useSse } from '../hooks/useSse';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import MessageBubble from '../components/MessageBubble';
@@ -15,7 +15,7 @@ import { callRecordPlacement } from '../utils/callRecordTimeline';
 import { segmentWeComTimeline, type WeComTimelineMode } from '../wecom/segmentWeComTimeline';
 import { useWeComViewer } from '../hooks/useWeComViewer';
 import { WeComConversationPanel } from '../components/wecom/WeComConversationPanel';
-import type { WeComConversationOption } from '../components/wecom/WeComConversationSelector';
+import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Text, Title } = Typography;
 
@@ -36,6 +36,8 @@ const stateTagMap: Record<string, { color: string; label: string }> = {
 
 export default function ThreadPage() {
   const { contactId } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
@@ -43,6 +45,8 @@ export default function ThreadPage() {
   const timelineScrollTopRef = useRef(0);
   const contactRequestGenerationRef = useRef(0);
   const activeContactIdRef = useRef<string | undefined>(contactId);
+  const requestedChannel = searchParams.get('channel');
+  const requestedIdentityId = searchParams.get('identityId') ?? undefined;
 
   const [allItems, setAllItems] = useState<MessageResponse[]>([]);
   const [itemsContactId, setItemsContactId] = useState<string | undefined>();
@@ -75,6 +79,11 @@ export default function ThreadPage() {
     const identity = contact?.identities.find((item) => item.channelType === 'wecom');
     return identity ? `wecom:${identity.identityValue}` : '';
   }, [contact]);
+  const { data: weComThread, refetch: refetchWeComContactThread } = useQuery({
+    queryKey: ['wecom-contact-thread', contactId],
+    queryFn: () => fetchWeComContactThread(contactId!, { limit: 50 }),
+    enabled: !!contactId && !!weComContactPointId,
+  });
 
   const fetchPage = useCallback(async (cursor?: string) => {
     const result = await fetchThread(contactId!, { cursor, limit: PAGE_SIZE });
@@ -114,6 +123,12 @@ export default function ThreadPage() {
       }
     };
   }, [contactId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (requestedChannel === 'chatapp' || requestedChannel === 'email' || requestedChannel === 'phone') {
+      selectChannel(requestedChannel);
+    }
+  }, [requestedChannel, selectChannel]);
 
   useEffect(() => {
     if (!contact || !weComContactPointId) return;
@@ -181,7 +196,9 @@ export default function ThreadPage() {
     const activeContactId = activeContactIdRef.current;
     if (!activeContactId) return;
     qc.invalidateQueries({ queryKey: ['thread', activeContactId] });
+    qc.invalidateQueries({ queryKey: ['wecom-contact-thread', activeContactId] });
     qc.invalidateQueries({ queryKey: ['contact', activeContactId] });
+    qc.invalidateQueries({ queryKey: ['contact-topics', activeContactId] });
     void refreshCallRecords();
     fetchThread(activeContactId, { limit: PAGE_SIZE }).then((result) => {
       if (generation !== contactRequestGenerationRef.current) return;
@@ -193,11 +210,15 @@ export default function ThreadPage() {
   });
 
   const currentItems = itemsContactId === contactId ? allItems : [];
+  const directContactItems = useMemo(
+    () => currentItems.filter((item) => item.conversationType !== 'GROUP'),
+    [currentItems],
+  );
   const displayItems = useMemo(() => {
-    const merged = [...currentItems, ...callRecords];
+    const merged = [...directContactItems, ...callRecords];
     merged.sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime());
     return merged;
-  }, [currentItems, callRecords]);
+  }, [directContactItems, callRecords]);
   const weComMode: WeComTimelineMode = useMemo(() => {
     const channels = new Set(contact?.channelTypes || []);
     return channels.size === 1 && channels.has('wecom') ? 'standalone' : 'mixed';
@@ -207,29 +228,14 @@ export default function ThreadPage() {
     [displayItems, weComMode],
   );
   const weComItems = useMemo(
-    () => currentItems.filter((item) => item.channelType === 'wecom' && !!item.sourceId),
-    [currentItems],
+    () => (weComThread?.items ?? []).filter((item) => (
+      item.channelType === 'wecom' && item.conversationType !== 'GROUP' && !!item.sourceId
+    )),
+    [weComThread],
   );
-  const weComConversations = useMemo(() => {
-    const groups = new Map<string, WeComConversationOption & { contactPointId: string; items: MessageResponse[] }>();
-    for (const item of weComItems) {
-      const id = item.sourceConversationId || `direct:${weComContactPointId}`;
-      const existing = groups.get(id);
-      if (existing) {
-        existing.items.push(item);
-        continue;
-      }
-      groups.set(id, {
-        id,
-        type: item.conversationType || 'DIRECT',
-        displayName: item.conversationDisplayName || (item.conversationType === 'GROUP' ? '企业微信群' : '企业微信会话'),
-        contactPointId: weComContactPointId,
-        items: [item],
-      });
-    }
-    return [...groups.values()];
-  }, [weComItems, weComContactPointId]);
   const showWeComConversation = selectedChannel === 'wecom' && !!weComContactPointId;
+  const isPhoneTimeline = selectedChannel === 'phone';
+  const canSwitchTimeline = (contact?.channelTypes ?? []).some((channel) => channel !== 'wecom');
 
   if (!contactId) {
     return (
@@ -252,11 +258,12 @@ export default function ThreadPage() {
       >
         <div>
           <Title level={5} style={{ margin: 0 }}>
-            {contact?.displayName || contact?.remark || '加载中...'}
+            {contact ? contactDisplayName(contact) : '加载中...'}
           </Title>
         </div>
         <Button
           icon={<ReloadOutlined />}
+          aria-label="刷新联系人会话"
           size="small"
           onClick={() => {
             const generation = contactRequestGenerationRef.current;
@@ -266,6 +273,7 @@ export default function ThreadPage() {
             setHasMore(false);
             setInitialLoadDone(false);
             void refreshCallRecords();
+            void refetchWeComContactThread();
             fetchPage(undefined).then((result) => {
               if (generation !== contactRequestGenerationRef.current) return;
               setAllItems(result.items);
@@ -283,8 +291,12 @@ export default function ThreadPage() {
           <WeComConversationPanel
             contactPointId={weComContactPointId}
             items={weComItems}
-            conversations={weComConversations}
             viewer={weComViewer}
+            relatedGroups={weComThread?.relatedGroups ?? []}
+            onSwitchToMixed={canSwitchTimeline ? clearChannel : undefined}
+            onOpenGroup={(sourceConversationId) => {
+              navigate(`/conversations/wecom-group/${encodeURIComponent(sourceConversationId)}`);
+            }}
           />
         </div>
       ) : (
@@ -389,13 +401,14 @@ export default function ThreadPage() {
       </div>
       )}
 
-      {!showWeComConversation && (
+      {!showWeComConversation && !isPhoneTimeline && (
         <div style={{ borderTop: '1px solid #f0f0f0', padding: 12, maxHeight: 260, overflow: 'auto' }}>
           <SendForm
             contact={contact}
             onCallRecordCreated={refreshCallRecords}
             activeChannel={selectedChannel ?? undefined}
             onChannelChange={handleChannelChange}
+            selectedIdentityId={requestedIdentityId}
           />
         </div>
       )}

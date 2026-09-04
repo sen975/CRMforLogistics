@@ -12,6 +12,30 @@ export interface ContactTag {
   color?: string | null;
 }
 
+export type ChannelAddressBookChannel = 'chatapp' | 'email' | 'phone';
+
+export interface ChannelAddressBookItem {
+  contactId: string;
+  identityId: string;
+  displayName: string;
+  remark: string | null;
+  channelType: ChannelAddressBookChannel;
+  address: string;
+  channelDisplayName: string;
+  additionalChannelTypes: ChannelAddressBookChannel[];
+  source: 'manual' | 'synced' | string;
+  lastContactAt: string | null;
+  hasActivity: boolean;
+  canDelete: boolean;
+}
+
+export interface ChannelAddressBookPageResponse {
+  items: ChannelAddressBookItem[];
+  page: number;
+  size: number;
+  hasMore: boolean;
+}
+
 export interface ContactResponse {
   id: string;
   displayName: string;

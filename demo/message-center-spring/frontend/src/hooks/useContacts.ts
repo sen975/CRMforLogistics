@@ -4,7 +4,14 @@ import {
   updateContactRemark,
   mergeContacts,
   splitContact,
+  toggleConversationPinned,
+  hideConversation,
+  reorderConversations,
+  fetchChannelAddressBook,
+  createManualChannelContact,
+  deleteManualChannelContact,
 } from '../api/endpoints';
+import type { ChannelAddressBookChannel, ConversationOrderRequest, ConversationTargetType } from '../api/types';
 import { listConversations } from '../api/endpoints';
 import type { ConversationListItem } from '../api/types';
 
@@ -39,6 +46,29 @@ export function useUnifiedConversations(search?: string, options?: ContactsQuery
     queryFn: () => listConversations({ search: search || undefined, limit: 50 }),
     enabled: options?.enabled ?? true,
     placeholderData: (prev) => prev,
+  });
+}
+
+export function useChannelAddressBook(channel: ChannelAddressBookChannel, query?: string, page = 1) {
+  return useQuery({
+    queryKey: ['channel-address-book', channel, query, page],
+    queryFn: () => fetchChannelAddressBook(channel, { query: query || undefined, page, size: 20 }),
+  });
+}
+
+export function useCreateManualChannelContact(channel: ChannelAddressBookChannel) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { displayName: string; address: string }) => createManualChannelContact(channel, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['channel-address-book', channel] }),
+  });
+}
+
+export function useDeleteManualChannelContact(channel: ChannelAddressBookChannel) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (contactId: string) => deleteManualChannelContact(channel, contactId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['channel-address-book', channel] }),
   });
 }
 

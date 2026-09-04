@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Layout, Button, Drawer, Typography, Space, Tooltip, theme } from 'antd';
+import { Layout, Button, Drawer, Typography, Space, Tooltip, Dropdown, theme, type MenuProps } from 'antd';
 import {
   ContactsOutlined,
   LogoutOutlined,
@@ -14,19 +14,23 @@ import {
   UserOutlined,
   WechatOutlined,
   FileSearchOutlined,
+  WhatsAppOutlined,
+  MailOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../hooks/useAuth';
 import { DetailPanelProvider, useDetailPanel } from '../hooks/useDetailPanel';
 import ContactsPage from '../pages/ContactsPage';
 import ContactDetailPanel from './ContactDetailPanel';
 import CallRecordDetail from './CallRecordDetail';
+import WeComGroupDetailPanel from './WeComGroupDetailPanel';
 import { AccountPanel } from './AccountPanel';
+import { AccountAvatar } from './AccountAvatar';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
 
 function AppLayoutInner() {
-  const { username, logout, isAdmin, canBroadcast } = useAuth();
+  const { username, profile, logout, isAdmin, canBroadcast } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const {
@@ -47,8 +51,9 @@ function AppLayoutInner() {
   const isWeComGroupPage = location.pathname.startsWith('/conversations/wecom-group/');
   const isPhoneRepositoryPage = location.pathname === '/phone-repository';
   const supportsDetailPanel = isThreadPage || isWeComGroupPage || isPhoneRepositoryPage;
-  const detailScope = isThreadPage ? 'thread' : isPhoneRepositoryPage ? 'phone-repository' : 'none';
+  const detailScope = isThreadPage ? 'thread' : isWeComGroupPage ? 'wecom-group' : isPhoneRepositoryPage ? 'phone-repository' : 'none';
   const selectedCallRecordId = selectedDetail?.kind === 'callRecord' ? selectedDetail.id : null;
+  const detailPanelTitle = selectedCallRecordId ? '电话详情' : isWeComGroupPage ? '群 Topic' : '联系人详情';
 
   useEffect(() => {
     clearSelection();
@@ -84,6 +89,110 @@ function AppLayoutInner() {
     return isMobile ? <Tooltip title={label}>{button}</Tooltip> : button;
   };
 
+  const navigationDropdown = (
+    label: string,
+    icon: React.ReactNode,
+    items: MenuProps['items'],
+  ) => {
+    const button = (
+      <Button
+        aria-label={label}
+        aria-haspopup="menu"
+        icon={icon}
+      >
+        {isMobile ? null : label}
+      </Button>
+    );
+    return (
+      <Dropdown
+        menu={{ items }}
+        trigger={isMobile ? ['click'] : ['hover', 'click']}
+      >
+        {isMobile ? <Tooltip title={label}>{button}</Tooltip> : button}
+      </Dropdown>
+    );
+  };
+
+  const whatsappItems: MenuProps['items'] = [
+    {
+      key: 'chatapp-address-book',
+      icon: <ContactsOutlined aria-hidden="true" />,
+      label: '通讯录',
+      onClick: () => navigate('/address-book/chatapp'),
+    },
+    {
+      key: 'templates',
+      icon: <FileTextOutlined aria-hidden="true" />,
+      label: '模板',
+      onClick: () => navigate('/templates'),
+    },
+    canBroadcast
+      ? {
+          key: 'broadcasts',
+          icon: <NotificationOutlined aria-hidden="true" />,
+          label: '群发',
+          onClick: () => navigate('/broadcasts'),
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const phoneItems: MenuProps['items'] = [
+    {
+      key: 'phone-address-book',
+      icon: <ContactsOutlined aria-hidden="true" />,
+      label: '通讯录',
+      onClick: () => navigate('/address-book/phone'),
+    },
+    {
+      key: 'phone-repository',
+      icon: <PhoneOutlined aria-hidden="true" />,
+      label: '电话仓库',
+      onClick: () => navigate('/phone-repository'),
+    },
+  ];
+
+  const systemItems: MenuProps['items'] = [
+    {
+      key: 'send',
+      icon: <SendOutlined aria-hidden="true" />,
+      label: '发送',
+      onClick: () => navigate('/send'),
+    },
+    {
+      key: 'topic-repository',
+      icon: <FileSearchOutlined aria-hidden="true" />,
+      label: 'Topic 仓库',
+      onClick: () => navigate('/topic-repository'),
+    },
+    {
+          key: 'channel-settings',
+          icon: <SettingOutlined aria-hidden="true" />,
+          label: '渠道设置',
+          onClick: () => navigate('/settings/channels'),
+        },
+    isAdmin
+      ? {
+          key: 'users',
+          icon: <UserOutlined aria-hidden="true" />,
+          label: '用户管理',
+          onClick: () => navigate('/settings/users'),
+        }
+      : null,
+    { type: 'divider' as const },
+    {
+      key: 'account',
+      icon: <UserOutlined aria-hidden="true" />,
+      label: '账号',
+      onClick: () => setAccountOpen(true),
+    },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined aria-hidden="true" />,
+      label: '退出登录',
+      onClick: logout,
+    },
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
   return (
     <Layout style={{ height: '100vh' }}>
       <Header
@@ -111,35 +220,22 @@ function AppLayoutInner() {
           </Text>
         </Space>
         <Space size={isMobile ? 4 : 8}>
-          {navigationButton('发送', <SendOutlined />, () => navigate('/send'))}
-          {canBroadcast && navigationButton('群发', <NotificationOutlined />, () => navigate('/broadcasts'))}
-          {isAdmin && (
-            <>
-              {navigationButton('企业微信', <WechatOutlined />, () => navigate('/settings/wecom'))}
-              {navigationButton('模板', <FileTextOutlined />, () => navigate('/templates'))}
-              {navigationButton('渠道设置', <SettingOutlined />, () => navigate('/settings/channels'))}
-            </>
-          )}
-          {navigationButton('电话仓库', <PhoneOutlined />, () => navigate('/phone-repository'))}
-          {navigationButton('Topic仓库', <FileSearchOutlined />, () => navigate('/topic-repository'))}
-          {(isThreadPage || selectedCallRecordId) && (
+          {navigationDropdown('WhatsApp', <WhatsAppOutlined />, whatsappItems)}
+          {navigationDropdown('邮件', <MailOutlined />, [{ key: 'email-address-book', icon: <ContactsOutlined aria-hidden="true" />, label: '通讯录', onClick: () => navigate('/address-book/email') }])}
+          {isAdmin && navigationButton('企业微信', <WechatOutlined />, () => navigate('/settings/wecom'))}
+          {navigationDropdown('电话', <PhoneOutlined />, phoneItems)}
+          {navigationDropdown('系统设置', <SettingOutlined />, systemItems)}
+          {supportsDetailPanel && (
             <Button
+              aria-label={detailPanelOpen ? '收起右侧栏' : '展开右侧栏'}
               icon={detailPanelOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
               onClick={toggleDetailPanel}
             />
           )}
-          {!isMobile && <Text type="secondary">{username}</Text>}
-          <Tooltip title="账号">
-            <Button
-              aria-label="账号"
-              icon={<UserOutlined />}
-              onClick={() => setAccountOpen(true)}
-              type="text"
-            />
-          </Tooltip>
-          <Tooltip title="退出登录">
-            <Button aria-label="退出登录" icon={<LogoutOutlined />} onClick={logout} type="text" />
-          </Tooltip>
+          {!isMobile && profile ? <Space size={6}>
+            <AccountAvatar avatar={profile.avatar} size={28} />
+            <Text type="secondary">{profile.displayName}</Text>
+          </Space> : !isMobile ? <Text type="secondary">{username}</Text> : null}
         </Space>
       </Header>
       <Layout style={{ flex: 1, overflow: 'hidden' }}>
@@ -180,7 +276,9 @@ function AppLayoutInner() {
           >
             {selectedCallRecordId
               ? <CallRecordDetail callRecordId={selectedCallRecordId} />
-              : <ContactDetailPanel />}
+              : isWeComGroupPage
+                ? <WeComGroupDetailPanel />
+                : <ContactDetailPanel />}
           </Sider>
         )}
       </Layout>
@@ -200,10 +298,10 @@ function AppLayoutInner() {
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
       >
-        <AccountPanel username={username} />
+        <AccountPanel />
       </Drawer>
       <Drawer
-        title={selectedCallRecordId ? '电话详情' : '联系人详情'}
+        title={detailPanelTitle}
         width="min(560px, 100vw)"
         open={isMobile && supportsDetailPanel && detailPanelOpen}
         onClose={() => setDetailPanelOpen(false)}
@@ -211,7 +309,9 @@ function AppLayoutInner() {
       >
         {selectedCallRecordId
           ? <CallRecordDetail callRecordId={selectedCallRecordId} />
-          : <ContactDetailPanel />}
+          : isWeComGroupPage
+            ? <WeComGroupDetailPanel />
+            : <ContactDetailPanel />}
       </Drawer>
     </Layout>
   );

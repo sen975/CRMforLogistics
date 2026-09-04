@@ -21,6 +21,7 @@ interface SendFormProps {
   contact?: ContactResponse;
   onCallRecordCreated?: () => void;
   selectedChannelAccountId?: string;
+  selectedIdentityId?: string;
   activeChannel?: string;
   onChannelChange?: (channel: string) => void;
 }
@@ -34,9 +35,26 @@ function identityOptions(contact: ContactResponse, channelType: string) {
     }));
 }
 
-function firstIdentityValue(contact: ContactResponse, channelType: string): string {
+function firstIdentityValue(contact: ContactResponse | undefined, channelType: string): string {
+  if (!contact) return '';
   const identity = contact.identities?.find((i) => i.channelType === channelType);
   return identity?.identityValue ?? '';
+}
+
+const TEMPLATE_PLACEHOLDER_PATTERN =
+  /\{\{\s*([^{}]+?)\s*\}\}|\$\{\s*([^{}]+?)\s*\}|\$\(\s*([^()]+?)\s*\)/g;
+
+function renderTemplateBody(body: string, values: Record<string, string>): string {
+  return body.replace(
+    TEMPLATE_PLACEHOLDER_PATTERN,
+    (match, doubleBraceKey?: string, dollarBraceKey?: string, dollarParenKey?: string) => {
+      const key = (doubleBraceKey ?? dollarBraceKey ?? dollarParenKey)?.trim();
+      if (!key || !values[key]) {
+        return match;
+      }
+      return values[key];
+    },
+  );
 }
 
 function identityLabel(identity: ContactIdentityResponse): string {
@@ -95,6 +113,7 @@ export default function SendForm({
   contact,
   onCallRecordCreated,
   selectedChannelAccountId,
+  selectedIdentityId,
   activeChannel,
   onChannelChange,
 }: SendFormProps) {
@@ -106,6 +125,8 @@ export default function SendForm({
   const previousFixedChannelAccountId = useRef(selectedChannelAccountId);
   const hasInitializedChatAppAccount = useRef(false);
   const [templateCode, setTemplateCode] = useState<string | undefined>(undefined);
+  const [templateDraftValues, setTemplateDraftValues] = useState<Record<string, string>>({});
+  const [templateForm] = Form.useForm();
   const [mediaMode, setMediaMode] = useState<string>('image');
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -140,7 +161,14 @@ export default function SendForm({
     )),
     [activeChatAppCapabilities, contact?.identities],
   );
+  const requestedIdentity = useMemo(
+    () => (contact?.identities ?? []).find((identity) => identity.id === selectedIdentityId),
+    [contact?.identities, selectedIdentityId],
+  );
   useEffect(() => {
+    if (channelCapabilitiesPending) {
+      return;
+    }
     if (previousFixedChannelAccountId.current !== selectedChannelAccountId) {
       previousFixedChannelAccountId.current = selectedChannelAccountId;
       setSelectedChatAppIdentityId(undefined);
@@ -172,6 +200,7 @@ export default function SendForm({
     }
   }, [
     activeContactChatAppAccounts,
+    channelCapabilitiesPending,
     selectedChannelAccountId,
     selectedChatAppAccountId,
   ]);
@@ -184,13 +213,28 @@ export default function SendForm({
     [contact?.identities, effectiveChatAppAccountId],
   );
   useEffect(() => {
+    if (channelCapabilitiesPending) {
+      return;
+    }
     if (selectedChatAppIdentityId && !chatAppIdentities.some(
       (identity) => identity.id === selectedChatAppIdentityId,
     )) {
       setSelectedChatAppIdentityId(undefined);
       setChatAppRecipientConfirmationRequired(true);
     }
-  }, [chatAppIdentities, selectedChatAppIdentityId]);
+  }, [channelCapabilitiesPending, chatAppIdentities, selectedChatAppIdentityId]);
+  useEffect(() => {
+    if (channelCapabilitiesPending || !requestedIdentity) return;
+    if (requestedIdentity.channelType === 'email') {
+      emailForm.setFieldValue('to', requestedIdentity.identityValue);
+      return;
+    }
+    if (requestedIdentity.channelType === 'chatapp') {
+      setSelectedChatAppAccountId(requestedIdentity.identityScope);
+      setSelectedChatAppIdentityId(requestedIdentity.id);
+      setChatAppRecipientConfirmationRequired(false);
+    }
+  }, [channelCapabilitiesPending, emailForm, requestedIdentity]);
   const effectiveChatAppIdentityId = chatAppIdentities.some(
     (identity) => identity.id === selectedChatAppIdentityId,
   )
@@ -202,6 +246,9 @@ export default function SendForm({
   const channels = contact?.channelTypes ?? [];
   const chatAppChannelAvailable = activeChatAppCapabilities.length > 0;
   const defaultChannel = channels[0] ?? 'email';
+  const selectedEmailIdentityValue = requestedIdentity?.channelType === 'email'
+    ? requestedIdentity.identityValue
+    : firstIdentityValue(contact, 'email');
 
   const handleEmail = async (values: Record<string, string>, form?: any) => {
     setSending(true);
@@ -378,7 +425,7 @@ export default function SendForm({
               onFinish={(values) => handleEmail(values, emailForm)}
               layout="vertical"
               size="small"
-              initialValues={{ to: firstIdentityValue(contact, 'email') }}
+              initialValues={{ to: selectedEmailIdentityValue }}
             >
               <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
                 {toSelect('email')}
@@ -459,11 +506,29 @@ export default function SendForm({
                   label: '模板',
                   children: (
                     <Form
+                      form={templateForm}
                       onFinish={handleTemplate}
                       layout="vertical"
                       size="small"
-                      onValuesChange={(changed) => {
-                        if (changed.templateCode) setTemplateCode(changed.templateCode);
+                      onValuesChange={(changed: Record<string, string | undefined>) => {
+                        if (changed.templateCode !== undefined) {
+                          setTemplateCode(changed.templateCode);
+                          setTemplateDraftValues({});
+                          const parameterFields = Object.keys(templateForm.getFieldsValue())
+                            .filter((field) => field !== 'templateCode');
+                          if (parameterFields.length > 0) {
+                            templateForm.resetFields(parameterFields);
+                          }
+                          templateForm.setFieldsValue({ templateCode: changed.templateCode });
+                          return;
+                        }
+                        setTemplateDraftValues((previous) => {
+                          const next = { ...previous };
+                          for (const [key, value] of Object.entries(changed)) {
+                            next[key] = value ?? '';
+                          }
+                          return next;
+                        });
                       }}
                     >
                       {chatAppAccountField}
@@ -477,6 +542,25 @@ export default function SendForm({
                           }))}
                         />
                       </Form.Item>
+                      {selectedTemplate && (
+                        <div
+                          aria-label="模板预览"
+                          style={{
+                            marginBottom: 16,
+                            padding: '10px 12px',
+                            border: '1px solid #d9d9d9',
+                            borderRadius: 4,
+                            background: '#fafafa',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                            {selectedTemplate.displayName}
+                          </div>
+                          <div style={{ whiteSpace: 'pre-wrap' }}>
+                            {renderTemplateBody(selectedTemplate.body, templateDraftValues)}
+                          </div>
+                        </div>
+                      )}
                       {selectedTemplate?.placeholders?.map((key) => (
                         <Form.Item
                           key={key}

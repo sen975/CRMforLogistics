@@ -15,6 +15,8 @@ const WeComManagementPage = lazy(() => import('./pages/WeComManagementPage'));
 const PhoneRepositoryPage = lazy(() => import('./pages/PhoneRepositoryPage'));
 const BroadcastsPage = lazy(() => import('./pages/BroadcastsPage'));
 const TopicRepositoryPage = lazy(() => import('./pages/TopicRepositoryPage'));
+const UserManagementPage = lazy(() => import('./pages/UserManagementPage'));
+const ChannelAddressBookPage = lazy(() => import('./pages/ChannelAddressBookPage'));
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const token = localStorage.getItem('token');
@@ -102,7 +104,9 @@ export const router = createBrowserRouter([
       { path: 'templates', element: <RouteBoundary><TemplatesPage /></RouteBoundary> },
       { path: 'settings/channels', element: <RouteBoundary><ChannelSettingsPage /></RouteBoundary> },
       { path: 'settings/wecom', element: <RouteBoundary><WeComManagementPage /></RouteBoundary> },
+      { path: 'settings/users', element: <RouteBoundary><UserManagementPage /></RouteBoundary> },
       { path: 'phone-repository', element: <RouteBoundary><PhoneRepositoryPage /></RouteBoundary> },
+      { path: 'address-book/:channel', element: <RouteBoundary><ChannelAddressBookPage /></RouteBoundary> },
       { path: 'topic-repository', element: <RouteBoundary><TopicRepositoryPage /></RouteBoundary> },
     ],
   },
