@@ -21,6 +21,14 @@ public interface AiTopicMapper extends BaseMapper<AiTopicEntity> {
     @Select("select * from ai_topics where owner_type=#{ownerType} and owner_id=#{ownerId}::uuid and status='READY' order by last_occurred_at desc, id")
     List<AiTopicEntity> listReadyByOwner(@Param("ownerType") String ownerType, @Param("ownerId") UUID ownerId);
 
+    @Select("select t.* from ai_topics t join contacts c on c.id=t.contact_id "
+            + "where t.id=#{topicId}::uuid and (t.owner_type is null or t.owner_type='CONTACT') "
+            + "and c.owner_user_id=#{ownerId}::uuid and c.deleted_at is null and c.status&lt;&gt;'merged' limit 1")
+    AiTopicEntity findContactTopicByIdAndOwner(@Param("topicId") UUID topicId, @Param("ownerId") UUID ownerId);
+
+    @Select("select * from ai_topics where id=#{topicId}::uuid and owner_type='WECOM_GROUP' limit 1")
+    AiTopicEntity findGroupTopicById(@Param("topicId") UUID topicId);
+
     @Select("select exists (select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=#{userId}::uuid and r.code='admin')")
     boolean isAdmin(@Param("userId") UUID userId);
 

@@ -47,13 +47,16 @@ public class MessageQueryService {
     }
 
     public MessageResponse getMessage(UUID id, UUID userId) {
-        MessageEntity entity = messageMapper.selectById(id);
-        if (entity == null) {
-            return null;
-        }
+        MessageEntity ownedEntity = messageMapper.findByIdAndOwner(id, userId);
+        if (ownedEntity != null) return toMessageResponse(ownedEntity);
+
+        // Only legacy WeCom records retain participant/grant authorization. Private channels
+        // must never fall back from their owner-scoped lookup to a global message id lookup.
+        MessageEntity legacyEntity = messageMapper.findWeComById(id);
+        if (legacyEntity == null) return null;
         conversationAccessService.requireAccessible(
-                entity.getConversationId(), entity.getChannelAccountId(), userId);
-        return toMessageResponse(entity);
+                legacyEntity.getConversationId(), legacyEntity.getChannelAccountId(), userId);
+        return toMessageResponse(legacyEntity);
     }
 
     public List<ChannelCapabilityResponse> channelCapabilities() {

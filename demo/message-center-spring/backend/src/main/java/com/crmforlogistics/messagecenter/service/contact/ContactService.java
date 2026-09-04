@@ -107,7 +107,7 @@ public class ContactService {
             throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
         }
         if (chatAppFilter) {
-            chatAppAccountResolver.requireCurrentAccount(channelAccountId);
+            chatAppAccountResolver.requireOwnedAccount(userId, channelAccountId);
         }
         int safeSize = clampSize(size);
         Page<ContactEntity> pageParam = new Page<>(page, safeSize);
@@ -215,7 +215,9 @@ public class ContactService {
 
         List<ContactTagResponse> tags = contactTagMapper == null
                 ? List.of()
-                : contactTagMapper.findActiveByContactId(contactId);
+                : entity.getOwnerUserId() == null
+                        ? contactTagMapper.findActiveByContactId(contactId)
+                        : contactTagMapper.findActiveByContactIdAndOwner(contactId, userId);
 
         return new ContactResponse(
                 contactId,

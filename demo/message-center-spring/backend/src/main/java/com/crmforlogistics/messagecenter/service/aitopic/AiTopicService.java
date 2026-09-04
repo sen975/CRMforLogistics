@@ -550,15 +550,16 @@ public class AiTopicService {
     }
 
     private AiTopicEntity requireTopic(UUID userId, UUID topicId) {
-        AiTopicEntity topic = topicMapper.selectById(topicId);
+        AiTopicEntity contactTopic = topicMapper.findContactTopicByIdAndOwner(topicId, userId);
+        if (contactTopic != null) return contactTopic;
+
+        AiTopicEntity topic = topicMapper.findGroupTopicById(topicId);
         if (topic == null) throw new AiTopicException("TOPIC_NOT_FOUND", false);
-        if (topic.getOwnerType() == null || "CONTACT".equals(topic.getOwnerType())) {
-            contactService.getById(userId, topic.getContactId());
-        } else if ("WECOM_GROUP".equals(topic.getOwnerType())) {
+        if ("WECOM_GROUP".equals(topic.getOwnerType())) {
             boolean admin = topicMapper.isAdmin(userId);
             if (!admin && !topicMapper.canAccessGroupTopic(topicId, userId, false)) throw new AiTopicException("TOPIC_FORBIDDEN", false);
         } else {
-            throw new AiTopicException("AI_TOPIC_OWNER_INVALID", false);
+            throw new AiTopicException("TOPIC_NOT_FOUND", false);
         }
         return topic;
     }

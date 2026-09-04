@@ -17,6 +17,31 @@ import java.util.UUID;
 @Mapper
 public interface MessageMapper extends BaseMapper<MessageEntity> {
 
+    @Select("select m.* from messages m "
+            + "join conversations cv on cv.id=m.conversation_id "
+            + "join contact_identities ci on ci.id=cv.contact_identity_id "
+            + "join contacts c on c.id=ci.contact_id "
+            + "join channel_accounts ca on ca.id=m.channel_account_id "
+            + "where m.id=#{messageId}::uuid and c.owner_user_id=#{ownerId}::uuid "
+            + "and ca.owner_user_id=#{ownerId}::uuid limit 1")
+    MessageEntity findByIdAndOwner(@Param("messageId") UUID messageId, @Param("ownerId") UUID ownerId);
+
+    @Select("select m.* from messages m join channel_accounts ca on ca.id=m.channel_account_id "
+            + "where m.id=#{messageId}::uuid and lower(ca.channel_type)='wecom' limit 1")
+    MessageEntity findWeComById(@Param("messageId") UUID messageId);
+
+    @Select("select m.* from messages m "
+            + "join conversations cv on cv.id=m.conversation_id "
+            + "join contact_identities ci on ci.id=cv.contact_identity_id "
+            + "join contacts c on c.id=ci.contact_id "
+            + "join channel_accounts ca on ca.id=m.channel_account_id "
+            + "where c.id=#{contactId}::uuid and c.owner_user_id=#{ownerId}::uuid "
+            + "and ca.owner_user_id=#{ownerId}::uuid "
+            + "order by m.occurred_at desc, m.id desc limit #{limit}")
+    List<MessageEntity> listByContactAndOwner(@Param("ownerId") UUID ownerId,
+                                              @Param("contactId") UUID contactId,
+                                              @Param("limit") int limit);
+
     /**
      * Atomically insert a message with ingest_sequence incremented from
      * the conversation. Uses a CTE: UPDATE conversations SET next_ingest_sequence+1
