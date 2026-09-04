@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
 import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.service.channel.ChannelAccountException;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,6 +69,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ChannelAccountException.class)
     public ResponseEntity<ApiError> handleChannelAccount(ChannelAccountException e,
                                                           HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(ChannelAddressBookException.class)
+    public ResponseEntity<ApiError> handleChannelAddressBook(ChannelAddressBookException e,
+                                                              HttpServletRequest request) {
         return ResponseEntity.status(e.status()).body(new ApiError(
                 e.code(), e.getMessage(), traceId(request), Map.of()));
     }
@@ -137,6 +145,10 @@ public class GlobalExceptionHandler {
         Map<String, String> fieldErrors = new LinkedHashMap<>();
         e.getBindingResult().getFieldErrors().forEach(error -> fieldErrors.putIfAbsent(
                 error.getField(), error.getDefaultMessage() == null ? "is invalid" : error.getDefaultMessage()));
+        if (request.getRequestURI().startsWith("/api/channel-address-books/")) {
+            return new ApiError("CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED",
+                    "CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED", traceId(request), fieldErrors);
+        }
         return new ApiError("TEMPLATE_VALIDATION_FAILED", "WhatsApp template validation failed",
                 traceId(request), fieldErrors);
     }

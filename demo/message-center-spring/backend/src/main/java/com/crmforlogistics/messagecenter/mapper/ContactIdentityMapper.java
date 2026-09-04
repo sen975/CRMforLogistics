@@ -7,6 +7,8 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Insert;
 
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +16,26 @@ import java.util.UUID;
 
 @Mapper
 public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity> {
+
+    @Insert("insert into contact_identities (id, contact_id, channel_type, identity_scope, " +
+            "identity_value, normalized_value, display_name, is_primary, verify_status, source, " +
+            "created_at, updated_at, version) values (#{id}::uuid, #{contactId}::uuid, #{channelType}, " +
+            "#{identityScope}, #{identityValue}, #{normalizedValue}, #{displayName}, #{isPrimary}, " +
+            "#{verifyStatus}, #{source}, #{createdAt}, #{updatedAt}, #{version}) " +
+            "on conflict (channel_type, identity_scope, normalized_value) where deleted_at is null " +
+            "do nothing")
+    int insertIfAbsent(ContactIdentityEntity identity);
+
+    @Select("select count(*) from contact_identities where contact_id=#{contactId}::uuid " +
+            "and deleted_at is null and source &lt;&gt; 'manual'")
+    int countNonManualByContactId(@Param("contactId") UUID contactId);
+
+    @Select("select count(*) from contact_identities where contact_id=#{contactId}::uuid " +
+            "and deleted_at is null")
+    int countActiveByContactId(@Param("contactId") UUID contactId);
+
+    @Delete("delete from contact_identities where contact_id=#{contactId}::uuid")
+    int deleteByContactId(@Param("contactId") UUID contactId);
 
     /**
      * Move all identities from one contact to another (merge).

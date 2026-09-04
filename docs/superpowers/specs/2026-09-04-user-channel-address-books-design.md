@@ -136,6 +136,14 @@
 
 三个通讯录为独立页面，复用现有设计 token、分页、搜索、加载态和错误反馈。页面首屏提供搜索与新增命令，不制作营销式介绍区域。
 
+通讯录 API 使用同一服务端 owner 合同：
+
+- `GET /api/channel-address-books/{channelType}`：按当前登录用户、渠道、搜索词和有界分页返回通讯录。
+- `POST /api/channel-address-books/{channelType}`：为当前登录用户创建人工联系人，请求体不能指定 owner。
+- `DELETE /api/channel-address-books/{channelType}/{contactId}`：仅删除当前用户无业务记录的人工联系人。
+
+`channelType` 只接受 `chatapp`、`email`、`phone`，并兼容输入 `whatsapp` 后立即规范为 `chatapp`。WhatsApp 和邮件身份作用域使用当前用户有效渠道账号 ID；尚未配置账号时使用当前用户 UUID 作为待绑定作用域。电话身份始终使用当前用户 UUID 作为作用域。入站同步必须调用共享的 `resolveOrCreateInbound(ownerId, channelType, accountId, address, displayName)`，并通过数据库唯一约束的 `ON CONFLICT DO NOTHING` 收敛并发建档。
+
 显示名称遵循以下优先级：
 
 1. 有用户备注时显示 `备注（渠道昵称、邮件显示名或真实地址）`。
