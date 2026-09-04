@@ -314,6 +314,24 @@ rg -n 'wecom-(suite-secret|login-suite-secret|secret|token|encoding-aes-key): [^
   demo/message-center-spring/backend/src/main/resources
 ```
 
+## 私有渠道历史归属回填
+
+部署包含 `V48__backfill_user_channel_owners.sql` 的后端前，必须先完成数据库备份。Flyway 会在正常后端启动时自动执行该迁移；不要手工拼写或执行反向更新。迁移只使用可审计的私有渠道账号、消息创建人和电话记录创建人回填 `chatapp`、邮件、电话的 owner；不会根据昵称、备注、地址或消息正文推断归属，也不会改写企业微信数据。
+
+部署前可执行只读预检，确认可归属和冲突的历史量：
+
+```bash
+psql "$SPRING_DATASOURCE_URL" -f scripts/backfill-user-channel-owners.sql
+```
+
+后端启动并完成 Flyway 后，执行只读对账：
+
+```bash
+psql "$SPRING_DATASOURCE_URL" -f scripts/verify-user-channel-owners.sql
+```
+
+无法可靠归属的历史记录将保留 `owner_user_id = NULL`，且不会进入按用户隔离的业务 API 或启动后续同步。回滚只能从部署前数据库备份恢复，禁止手写反向 SQL。
+
 ### AI Topic 生命周期
 
 Topic 按 owner 聚合：个人 owner（`CONTACT`）合并 ChatApp、邮件、电话和企业微信一对一官方单条摘要；群 owner（`WECOM_GROUP`）只生成一份群 Topic，联系人时间轴仅引用该 Topic，不复制来源。企业微信摘要必须为 `COMPLETED` 且 `summary` 非空，正文和 `secret_key` 不进入 Topic 输入或普通日志。消息/摘要入库后推进 owner 静默窗口，默认静默 360 秒（`AI_TOPIC_QUIET_WINDOW_SECONDS`）后由后台异步重构；读取联系人页面不会同步触发 AI。
