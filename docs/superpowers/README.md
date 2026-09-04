@@ -4,7 +4,11 @@
 
 ## 当前设计
 
-- [AI Topic 企业微信混合归属与静默重构设计](specs/2026-09-01-ai-topic-wecom-mixed-scope-design.md)：当前 AI Topic 最高层真源；定义个人/群 Topic 归属、企业微信摘要输入、6 分钟静默重构、群 Topic 入库审批、混合时间轴和仓库投影。
+- [用户私有渠道通讯录设计](specs/2026-09-04-user-channel-address-books-design.md)：定义 WhatsApp、邮件和电话按用户隔离的渠道账号、联系人、身份、标签、通话记录、通讯录页面、历史迁移和权限边界；企业微信沿用现有实现。
+- [企业微信代开发成员头像 OAuth2 授权设计](specs/2026-09-04-wecom-avatar-oauth-design.md)：定义 Web 登录与敏感头像授权分离、跨设备二维码授权、一次性 state、成员绑定校验和终态刷新。
+- [账户生命周期与用户资料设计](specs/2026-09-03-account-lifecycle-design.md)：定义公开注册、当前账户资料、密码管理、MinIO 用户头像、企业微信头像优先级和管理员角色管理。
+- [AI Topic 手动整理与联系人合并拆分设计](specs/2026-09-02-ai-topic-manual-review-contact-merge-split-design.md)：当前 AI Topic 人工整理与联系人结构变化的最高层真源；定义 `REVIEW_PENDING`、按联系方式/时间选源、AI 预览、融合生成新 Topic，以及联系人合并/拆分后的来源迁移。
+- [AI Topic 企业微信混合归属与静默重构设计](specs/2026-09-01-ai-topic-wecom-mixed-scope-design.md)：AI Topic 自动生成与企业微信混合归属基础真源；定义个人/群 Topic 归属、企业微信摘要输入、6 分钟静默重构、群 Topic 入库审批、混合时间轴和仓库投影。
 - [AI Topic 生命周期、异步任务与弃用仓库设计](specs/2026-08-28-ai-topic-lifecycle-and-repository-design.md)：当前 AI Topic 真源；定义非企业微信渠道的增量归类、异步命令、右侧时间轴、弃用隔离与跨联系人弃用仓库。
 - [企业微信会话身份与资料设计](specs/2026-08-24-wecom-conversation-identity-design.md)：定义代开发安装实例、ChatData 源会话、参与者、成员资料、企业名称和访问边界。
 - [企业微信统一会话工作区设计](specs/2026-08-25-wecom-unified-conversation-workspace-design.md)：定义联系人直聊聚合、左侧独立群聊、群发送者与参与者、单 OpenDataFrame 串行更新和导航行为。涉及 UI、路由、会话列表或 frame 生命周期时，以该文档为当前真源。
@@ -12,6 +16,9 @@
 
 ## 当前实施
 
+- [企业微信代开发成员头像 OAuth2 授权实施计划](plans/2026-09-04-wecom-avatar-oauth.md)：落实独立敏感授权二维码、一次性回调、绑定成员校验、终态轮询和 Web 登录 scope 清理。
+- [账户生命周期与用户资料实施计划](plans/2026-09-03-account-lifecycle.md)：落实公开注册、当前用户资料与头像、凭原密码改密、会话轮换和管理员用户管理。
+- [AI Topic 手动整理与联系人合并拆分实施计划](plans/2026-09-02-ai-topic-manual-review-contact-merge-split.md)：落实待确定区、人工选源预览、Topic 融合，以及联系人合并/拆分的 Topic 来源迁移。
 - [AI Topic 企业微信混合归属与静默重构实施计划](plans/2026-09-01-ai-topic-wecom-mixed-scope.md)：落实个人/群 owner、企业微信单条摘要混合输入、6 分钟静默重构、群 Topic 入库审批和最终快照刷新。
 - [AI Topic 联系方式合并重关联实施计划](plans/2026-09-01-ai-topic-contact-merge-reconciliation.md)：联系方式或联系人合并后，重新关联全部历史来源与现有 Topic，并在 AI 成功后原位迁移来源。
 
@@ -22,9 +29,13 @@
 
 ## 当前验收
 
+- [企业微信代开发成员头像 OAuth2 授权验收记录](reviews/2026-09-04-wecom-avatar-oauth-verification.md)：记录独立敏感授权 API、前端二维码入口、自动化门禁、浏览器验收、制品校验和服务器扫码停止条件。
+- [账户生命周期与用户资料验收记录](reviews/2026-09-03-account-lifecycle-verification.md)：记录账户专项测试、前端全量测试、桌面/移动浏览器验收、Jar/ZIP 制品及后端全量测试环境门禁。
+- [AI Topic 手动整理与联系人合并拆分验收记录](reviews/2026-09-02-ai-topic-manual-review-contact-merge-split-verification.md)：记录 Topic/联系人专项测试、前端全量测试、浏览器桌面验收、Jar/ZIP 制品与部署边界。
 - [AI Topic 企业微信混合归属与静默重构验收记录](reviews/2026-09-01-ai-topic-wecom-mixed-scope-verification.md)：记录后端/前端专项测试、构建、Jar 与前端压缩包产物，以及 Docker/本地运行环境门禁。
 
 - [企业微信消息级官方摘要验收记录](reviews/2026-08-31-wecom-message-summary-verification.md)：专项门禁已通过；全量回归受既有 Topic WIP 和本机 Docker 不可用影响。
+- [用户私有渠道通讯录验收记录](reviews/2026-09-04-user-channel-address-books-verification.md)：记录 owner 隔离专项测试、前端全量测试、构建、ZIP/Jar 制品和部署验收边界。
 
 ## 已被吸收的设计
 
