@@ -12,6 +12,7 @@ public class ContactEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
 
+    private UUID ownerUserId;
     private String displayName;
     private String roleTitle;
     private String remark;
@@ -30,6 +31,14 @@ public class ContactEntity {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public UUID getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(UUID ownerUserId) {
+        this.ownerUserId = ownerUserId;
     }
 
     public String getDisplayName() {

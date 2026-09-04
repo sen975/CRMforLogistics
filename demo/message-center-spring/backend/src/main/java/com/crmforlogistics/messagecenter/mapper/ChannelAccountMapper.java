@@ -15,6 +15,23 @@ import java.util.UUID;
 @Mapper
 public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
 
+    @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "last_synced_at, created_at, updated_at, deleted_at, version " +
+            "from channel_accounts where id = #{id}::uuid and owner_user_id = #{ownerId}::uuid " +
+            "and deleted_at is null limit 1")
+    ChannelAccountEntity findByIdAndOwner(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
+
+    @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "last_synced_at, created_at, updated_at, deleted_at, version " +
+            "from channel_accounts where owner_user_id = #{ownerId}::uuid " +
+            "and channel_type = #{channelType} and deleted_at is null " +
+            "and auth_status in ('active', 'expired', 'failed') " +
+            "order by created_at asc limit 2")
+    List<ChannelAccountEntity> findByOwnerAndChannelType(@Param("ownerId") UUID ownerId,
+                                                         @Param("channelType") String channelType);
+
     @Insert("insert into channel_accounts (id, channel_type, name, account_identifier, " +
             "account_identifier_normalized, auth_status, sync_status, encrypted_config) " +
             "values (#{id}::uuid, 'wecom', #{name}, #{authCorpId}, #{authCorpId}, " +

@@ -15,6 +15,7 @@ public class ChannelAccountEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
 
+    private UUID ownerUserId;
     private String channelType;
     private String name;
     private String accountIdentifier;
@@ -37,6 +38,14 @@ public class ChannelAccountEntity {
 
     public void setId(UUID id) {
         this.id = id;
+    }
+
+    public UUID getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(UUID ownerUserId) {
+        this.ownerUserId = ownerUserId;
     }
 
     public String getChannelType() {

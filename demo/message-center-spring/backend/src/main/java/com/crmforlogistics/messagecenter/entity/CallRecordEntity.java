@@ -13,6 +13,8 @@ public class CallRecordEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
 
+    private UUID ownerUserId;
+    private UUID contactId;
     private String contactAnchorPointId;
     private String phonePointId;
     private String direction;
@@ -52,6 +54,12 @@ public class CallRecordEntity {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
+
+    public UUID getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public UUID getContactId() { return contactId; }
+    public void setContactId(UUID contactId) { this.contactId = contactId; }
 
     public String getContactAnchorPointId() { return contactAnchorPointId; }
     public void setContactAnchorPointId(String contactAnchorPointId) { this.contactAnchorPointId = contactAnchorPointId; }

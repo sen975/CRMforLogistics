@@ -15,6 +15,12 @@ import java.util.UUID;
 @Mapper
 public interface ContactMapper extends BaseMapper<ContactEntity> {
 
+    @Select("select id, owner_user_id, display_name, role_title, remark, status, merged_to_id, " +
+            "created_by, created_at, updated_at, deleted_at, version from contacts " +
+            "where id = #{id}::uuid and owner_user_id = #{ownerId}::uuid " +
+            "and deleted_at is null and status <> 'merged' limit 1")
+    Optional<ContactEntity> findByIdAndOwner(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
+
     /**
      * List contacts visible to a user with permission scoping:
      * user-owned contacts OR contacts with team-assigned conversations

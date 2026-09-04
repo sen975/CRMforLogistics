@@ -12,6 +12,11 @@ import java.util.UUID;
 @Mapper
 public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
 
+    @Select("SELECT * FROM call_records WHERE id = #{id}::uuid " +
+            "AND owner_user_id = #{ownerId}::uuid")
+    Optional<CallRecordEntity> findByIdAndOwner(@Param("id") UUID id,
+                                                @Param("ownerId") UUID ownerId);
+
     @Select("SELECT * FROM call_records WHERE id = #{id}::uuid")
     Optional<CallRecordEntity> findById(@Param("id") UUID id);
 
@@ -101,4 +106,13 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "ORDER BY cr.occurred_at DESC, cr.id DESC"
             + "</script>")
     List<CallRecordEntity> searchPhoneRepository(@Param("query") String query);
+
+    @Select("<script>SELECT cr.* FROM call_records cr " +
+            "WHERE cr.owner_user_id = #{ownerId}::uuid " +
+            "<if test='query != null and query != \"\"'>" +
+            "AND (cr.phone_point_id LIKE CONCAT('%', #{query}, '%') " +
+            "OR cr.note ILIKE CONCAT('%', #{query}, '%'))" +
+            "</if> ORDER BY cr.occurred_at DESC, cr.id DESC</script>")
+    List<CallRecordEntity> searchPhoneRepositoryByOwner(@Param("ownerId") UUID ownerId,
+                                                         @Param("query") String query);
 }
