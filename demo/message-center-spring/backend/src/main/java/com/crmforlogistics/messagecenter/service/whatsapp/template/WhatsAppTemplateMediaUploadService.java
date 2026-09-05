@@ -32,27 +32,15 @@ public class WhatsAppTemplateMediaUploadService {
     private static final long PROCESSING_TIMEOUT_SECONDS = 90;
     private static final Pattern REQUEST_ID_PATTERN = Pattern.compile("[A-Za-z0-9._~:-]{1,255}");
 
-    private final WhatsAppTemplateApplicationService templateApplicationService;
     private final WhatsAppTemplateMediaUploadStore store;
     private final WhatsAppTemplateGateway gateway;
     private final Clock clock;
     private final WhatsAppProviderScopeService providerScopeService;
 
-    WhatsAppTemplateMediaUploadService(
-            WhatsAppTemplateApplicationService templateApplicationService,
-            WhatsAppTemplateMediaUploadStore store,
-            WhatsAppTemplateGateway gateway,
-            Clock clock) {
-        this(templateApplicationService, store, gateway, clock, null);
-    }
-
-    public WhatsAppTemplateMediaUploadService(
-            WhatsAppTemplateApplicationService templateApplicationService,
-            WhatsAppTemplateMediaUploadStore store,
+    WhatsAppTemplateMediaUploadService(WhatsAppTemplateMediaUploadStore store,
             WhatsAppTemplateGateway gateway,
             Clock clock,
             WhatsAppProviderScopeService providerScopeService) {
-        this.templateApplicationService = Objects.requireNonNull(templateApplicationService);
         this.store = Objects.requireNonNull(store);
         this.gateway = Objects.requireNonNull(gateway);
         this.clock = Objects.requireNonNull(clock);
@@ -81,7 +69,7 @@ public class WhatsAppTemplateMediaUploadService {
     public UploadResult upload(UUID accountId, HeaderFormat format, InputStream input, long declaredSize,
                                String fileName, String contentType, String clientRequestId,
                                UUID actorUserId, String traceId) {
-        templateApplicationService.validateAccount(accountId);
+        providerScopeService.requireAccount(accountId);
         String normalizedContentType = normalizeContentType(contentType);
         byte[] bytes = readBoundedAndValidate(format, input, declaredSize, normalizedContentType);
         String digest = sha256(bytes);
@@ -112,7 +100,7 @@ public class WhatsAppTemplateMediaUploadService {
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public MediaAssetView find(UUID accountId, String clientRequestId) {
-        templateApplicationService.validateAccount(accountId);
+        providerScopeService.requireAccount(accountId);
         TemplateMediaAssetEntity asset = store.find(accountId, requireRequestId(clientRequestId));
         Instant now = clock.instant();
         if (MediaAssetStatus.PROCESSING.name().equals(asset.getAssetStatus())

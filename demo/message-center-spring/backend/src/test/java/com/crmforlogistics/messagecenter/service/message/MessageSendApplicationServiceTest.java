@@ -1,7 +1,9 @@
 package com.crmforlogistics.messagecenter.service.message;
 
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
@@ -38,6 +40,7 @@ class MessageSendApplicationServiceTest {
     @Mock OutboxJobMapper outboxJobMapper;
     @Mock MessageStatusEventMapper statusEventMapper;
     @Mock TemplateMapper templateMapper;
+    @Mock ChannelAccountMapper accountMapper;
     @Mock EventHub eventHub;
     @Mock ConversationAccessService conversationAccessService;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
@@ -57,7 +60,7 @@ class MessageSendApplicationServiceTest {
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()), topicActivityRecorder);
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()), topicActivityRecorder);
 
         service.accept(new MessageSendApplicationService.SendMessageCommand(
                 accountId, conversationId, "text", "request-topic", Map.of("text", "hello")), actorId);
@@ -96,7 +99,7 @@ class MessageSendApplicationServiceTest {
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
         MessageSendApplicationService.SendMessageCommand command =
                 new MessageSendApplicationService.SendMessageCommand(
                         accountId,
@@ -136,7 +139,7 @@ class MessageSendApplicationServiceTest {
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
         ConversationEntity conversation = new ConversationEntity();
         conversation.setId(conversationId);
         when(conversationAccessService.lockForMessage(
@@ -161,7 +164,7 @@ class MessageSendApplicationServiceTest {
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
 
         assertThatThrownBy(() -> service.accept(
                 new MessageSendApplicationService.SendMessageCommand(
@@ -186,18 +189,20 @@ class MessageSendApplicationServiceTest {
                 .thenReturn(java.util.Optional.empty())
                 .thenReturn(java.util.Optional.empty());
 
+        UUID scopeId = UUID.randomUUID();
         TemplateEntity template = new TemplateEntity();
         template.setChannelAccountId(accountId);
         template.setBody("Hello $(customer), your order $(orderNo) is ready.");
         template.setStatus("APPROVED");
         template.setAllowSend(true);
-        when(templateMapper.findForSend(accountId, "order_ready", "en_US"))
+        when(accountMapper.selectById(accountId)).thenReturn(account(accountId, scopeId));
+        when(templateMapper.findSharedForSend(scopeId, "order_ready", "en_US"))
                 .thenReturn(java.util.Optional.of(template));
 
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
 
         service.accept(new MessageSendApplicationService.SendMessageCommand(
                 accountId, conversationId, "template", "request-template",
@@ -223,13 +228,15 @@ class MessageSendApplicationServiceTest {
         when(messageMapper.findByClientRequestId(accountId, "request-missing-template"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.empty());
-        when(templateMapper.findForSend(accountId, "missing_template", "en_US"))
+        UUID scopeId = UUID.randomUUID();
+        when(accountMapper.selectById(accountId)).thenReturn(account(accountId, scopeId));
+        when(templateMapper.findSharedForSend(scopeId, "missing_template", "en_US"))
                 .thenReturn(Optional.empty());
 
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
 
         assertThatThrownBy(() -> service.accept(
                 new MessageSendApplicationService.SendMessageCommand(
@@ -256,18 +263,20 @@ class MessageSendApplicationServiceTest {
         when(messageMapper.findByClientRequestId(accountId, "request-suspended-template"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.empty());
+        UUID scopeId = UUID.randomUUID();
         TemplateEntity suspended = new TemplateEntity();
         suspended.setChannelAccountId(accountId);
         suspended.setBody("Hello $(customer)");
         suspended.setStatus("SUSPENDED");
         suspended.setAllowSend(true);
-        when(templateMapper.findForSend(accountId, "order_ready", "en_US"))
+        when(accountMapper.selectById(accountId)).thenReturn(account(accountId, scopeId));
+        when(templateMapper.findSharedForSend(scopeId, "order_ready", "en_US"))
                 .thenReturn(Optional.of(suspended));
 
         MessageSendApplicationService service = new MessageSendApplicationService(
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
-                new TemplateMessageTextResolver(templateMapper, new ObjectMapper()));
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()));
 
         assertThatThrownBy(() -> service.accept(
                 new MessageSendApplicationService.SendMessageCommand(
@@ -279,5 +288,12 @@ class MessageSendApplicationServiceTest {
                 .hasMessage("CHATAPP_TEMPLATE_NOT_SYNCED");
         verify(messageMapper, times(0)).insertWithSequence(any());
         verify(outboxJobMapper, times(0)).insertIgnore(any());
+    }
+
+    private static ChannelAccountEntity account(UUID accountId, UUID scopeId) {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(accountId);
+        account.setProviderScopeId(scopeId);
+        return account;
     }
 }

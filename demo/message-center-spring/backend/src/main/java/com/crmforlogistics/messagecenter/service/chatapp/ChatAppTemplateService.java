@@ -1,14 +1,13 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
-import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateDisplayName;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateScopeGate;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,30 +23,36 @@ import java.util.UUID;
 public class ChatAppTemplateService {
 
     private final TemplateMapper templateMapper;
+    private final ChannelAccountMapper accountMapper;
+    private final WhatsAppTemplateScopeGate scopeGate;
     private final TemplateMessageTextResolver templateTextResolver;
-    private final ChannelAccountMapper channelAccountMapper;
-    private final AppConfig config;
     private final ObjectMapper objectMapper;
 
-    public ChatAppTemplateService(TemplateMapper templateMapper,
+    public ChatAppTemplateService(TemplateMapper templateMapper, ChannelAccountMapper accountMapper,
+                                  WhatsAppTemplateScopeGate scopeGate,
                                   TemplateMessageTextResolver templateTextResolver,
-                                  ChannelAccountMapper channelAccountMapper,
-                                  AppConfig config,
                                   ObjectMapper objectMapper) {
         this.templateMapper = Objects.requireNonNull(templateMapper);
+        this.accountMapper = Objects.requireNonNull(accountMapper);
+        this.scopeGate = Objects.requireNonNull(scopeGate);
         this.templateTextResolver = Objects.requireNonNull(templateTextResolver);
-        this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
-        this.config = Objects.requireNonNull(config);
         this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
     public List<TemplateResponse> listAll() {
-        return listForAccount(fixedAccount().getId());
+        return templateMapper.findSharedSendableForScope(scopeGate.requireReady()).stream()
+                .filter(ChatAppTemplateService::isSendable)
+                .map(this::toResponse)
+                .toList();
     }
 
     public List<TemplateResponse> listForAccount(UUID accountId) {
-        return templateMapper.findSendableForChannelAccount(accountId).stream()
-                .filter(template -> isSendableBy(accountId, template))
+        ChannelAccountEntity account = accountId == null ? null : accountMapper.selectById(accountId);
+        if (account == null || account.getProviderScopeId() == null) {
+            return List.of();
+        }
+        return templateMapper.findSharedSendableForScope(account.getProviderScopeId()).stream()
+                .filter(ChatAppTemplateService::isSendable)
                 .map(this::toResponse)
                 .toList();
     }
@@ -77,23 +82,6 @@ public class ChatAppTemplateService {
                 : List.copyOf(examples.keySet());
     }
 
-    private ChannelAccountEntity fixedAccount() {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectActiveChatAppAccounts();
-        if (accounts.isEmpty()) {
-            throw new IllegalStateException("CHATAPP_CHANNEL_ACCOUNT_NOT_CONFIGURED");
-        }
-        if (accounts.size() > 1) {
-            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_VIOLATION");
-        }
-        ChannelAccountEntity account = accounts.get(0);
-        String configured = ContactPointUtil.normalizePhone(config.chatappFrom());
-        String stored = ContactPointUtil.normalizePhone(account.getAccountIdentifier());
-        if (configured.isBlank() || !configured.equals(stored)) {
-            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_CONFIG_MISMATCH");
-        }
-        return account;
-    }
-
     private JsonNode readComponents(String componentsJsonb) {
         try {
             return objectMapper.readTree(componentsJsonb == null || componentsJsonb.isBlank() ? "[]" : componentsJsonb);
@@ -113,8 +101,8 @@ public class ChatAppTemplateService {
         }
     }
 
-    private static boolean isSendableBy(UUID accountId, TemplateEntity template) {
-        return accountId != null && accountId.equals(template.getChannelAccountId())
+    private static boolean isSendable(TemplateEntity template) {
+        return template != null
                 && "APPROVED".equalsIgnoreCase(template.getStatus())
                 && Boolean.TRUE.equals(template.getAllowSend())
                 && template.getDeletedAt() == null;

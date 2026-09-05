@@ -113,8 +113,10 @@ public class ChatAppBroadcastApplicationService {
         }
 
         requireAccountAccess(command.channelAccountId(), actorUserId, false);
-        TemplateEntity template = templateMapper.findForSend(
-                        command.channelAccountId(), command.templateCode(), command.languageCode())
+        var account = accountResolver.requireCurrentAccount(command.channelAccountId());
+        TemplateEntity template = java.util.Optional.ofNullable(account.getProviderScopeId())
+                .flatMap(scopeId -> templateMapper.findSharedForSend(
+                        scopeId, command.templateCode(), command.languageCode()))
                 .orElseThrow(() -> error(
                         "CHATAPP_BROADCAST_TEMPLATE_NOT_SENDABLE", HttpStatus.CONFLICT));
         if (template.getBody() == null || template.getBody().isBlank()) {

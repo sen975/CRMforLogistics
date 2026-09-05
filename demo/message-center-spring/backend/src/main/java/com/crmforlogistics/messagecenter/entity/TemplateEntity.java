@@ -35,12 +35,6 @@ public class TemplateEntity {
     private String examplesJsonb;
     private Integer messageSendTtlSeconds;
     private Boolean allowSend;
-    private Boolean desiredAllowSend;
-    private String permissionSyncStatus;
-    private Integer permissionSyncAttemptCount;
-    private Instant permissionSyncNextAttemptAt;
-    private String permissionSyncErrorCode;
-    private String permissionSyncErrorMessage;
     private String providerAuditStatus;
     private String rejectionReason;
     private String qualityScore;
@@ -180,54 +174,6 @@ public class TemplateEntity {
 
     public void setAllowSend(Boolean allowSend) {
         this.allowSend = allowSend;
-    }
-
-    public Boolean getDesiredAllowSend() {
-        return desiredAllowSend;
-    }
-
-    public void setDesiredAllowSend(Boolean desiredAllowSend) {
-        this.desiredAllowSend = desiredAllowSend;
-    }
-
-    public String getPermissionSyncStatus() {
-        return permissionSyncStatus;
-    }
-
-    public void setPermissionSyncStatus(String permissionSyncStatus) {
-        this.permissionSyncStatus = permissionSyncStatus;
-    }
-
-    public Integer getPermissionSyncAttemptCount() {
-        return permissionSyncAttemptCount;
-    }
-
-    public void setPermissionSyncAttemptCount(Integer permissionSyncAttemptCount) {
-        this.permissionSyncAttemptCount = permissionSyncAttemptCount;
-    }
-
-    public Instant getPermissionSyncNextAttemptAt() {
-        return permissionSyncNextAttemptAt;
-    }
-
-    public void setPermissionSyncNextAttemptAt(Instant permissionSyncNextAttemptAt) {
-        this.permissionSyncNextAttemptAt = permissionSyncNextAttemptAt;
-    }
-
-    public String getPermissionSyncErrorCode() {
-        return permissionSyncErrorCode;
-    }
-
-    public void setPermissionSyncErrorCode(String permissionSyncErrorCode) {
-        this.permissionSyncErrorCode = permissionSyncErrorCode;
-    }
-
-    public String getPermissionSyncErrorMessage() {
-        return permissionSyncErrorMessage;
-    }
-
-    public void setPermissionSyncErrorMessage(String permissionSyncErrorMessage) {
-        this.permissionSyncErrorMessage = permissionSyncErrorMessage;
     }
 
     public String getProviderAuditStatus() {

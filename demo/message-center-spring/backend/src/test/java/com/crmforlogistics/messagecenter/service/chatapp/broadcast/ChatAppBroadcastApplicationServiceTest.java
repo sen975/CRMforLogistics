@@ -48,6 +48,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ChatAppBroadcastApplicationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-14T06:00:00Z");
+    private static final UUID SCOPE_ID = UUID.fromString("20000000-0000-0000-0000-000000000001");
 
     @Mock ChatAppBroadcastMapper broadcastMapper;
     @Mock ChatAppBroadcastRecipientMapper recipientMapper;
@@ -267,7 +268,7 @@ class ChatAppBroadcastApplicationServiceTest {
         UUID actorId = UUID.randomUUID();
         when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
         when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(true);
-        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
+        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(command(accountId,
@@ -538,7 +539,7 @@ class ChatAppBroadcastApplicationServiceTest {
         template.setStatus("APPROVED");
         template.setAllowSend(true);
         template.setBody("Shipping notice");
-        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
+        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.of(template));
         return template;
     }
@@ -549,6 +550,7 @@ class ChatAppBroadcastApplicationServiceTest {
         account.setChannelType("chatapp");
         account.setAuthStatus("active");
         account.setAccountIdentifier("60199999999");
+        account.setProviderScopeId(SCOPE_ID);
         return account;
     }
 
