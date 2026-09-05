@@ -51,6 +51,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class WhatsAppTemplateApplicationServiceTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
+    private static final UUID SCOPE_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
     private static final UUID ACTOR_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-11T01:00:00Z");
 
@@ -179,6 +180,37 @@ class WhatsAppTemplateApplicationServiceTest {
         verify(gateway).delete(ACCOUNT_ID, "tpl-1", "en_US");
         assertThat(template.getDeletedAt()).isEqualTo(NOW);
         verify(templateMapper, times(4)).updateById(any(TemplateEntity.class));
+    }
+
+    @Test
+    void sharedPermissionExecutionUsesCredentialAccountAndRecordsTemplateRequestLinks() {
+        UUID templateId = UUID.randomUUID();
+        UUID changeRequestId = UUID.randomUUID();
+        TemplateEntity template = template("tpl-1", "APPROVED", true);
+        template.setId(templateId);
+        template.setProviderScopeId(SCOPE_ID);
+        template.setChannelAccountId(UUID.randomUUID());
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(ACCOUNT_ID);
+        account.setChannelType("whatsapp");
+        account.setAuthStatus("active");
+        account.setProviderScopeId(SCOPE_ID);
+        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
+        when(templateMapper.findSharedForUpdate(templateId)).thenReturn(Optional.of(template));
+        when(operationMapper.findByIdempotency(ACCOUNT_ID, "shared-permission")).thenReturn(Optional.empty());
+        when(operationMapper.insertIgnore(any())).thenReturn(1);
+        when(operationMapper.findByIdForUpdate(any())).thenReturn(Optional.empty());
+        when(gateway.setSendPermission(ACCOUNT_ID, "tpl-1", "en_US", false))
+                .thenReturn(new PropertyResult(false, "req-shared"));
+
+        service.setSendPermissionShared(SCOPE_ID, ACCOUNT_ID, templateId, false, "shared-permission",
+                ACTOR_ID, changeRequestId, "trace-shared");
+
+        ArgumentCaptor<TemplateOperationEntity> operation = ArgumentCaptor.forClass(TemplateOperationEntity.class);
+        verify(operationMapper).insertIgnore(operation.capture());
+        assertThat(operation.getValue().getTemplateId()).isEqualTo(templateId);
+        assertThat(operation.getValue().getChangeRequestId()).isEqualTo(changeRequestId);
+        verify(gateway).setSendPermission(ACCOUNT_ID, "tpl-1", "en_US", false);
     }
 
     @Test

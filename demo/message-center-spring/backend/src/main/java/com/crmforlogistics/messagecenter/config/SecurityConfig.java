@@ -50,6 +50,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/login").permitAll()
                 .requestMatchers("/api/auth/wecom/attempts", "/api/auth/wecom/exchange").permitAll()
                 .requestMatchers("/api/account/wecom-binding/**").authenticated()
+                .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/events").permitAll()
                 .requestMatchers(
                         "/api/wecom/callback",

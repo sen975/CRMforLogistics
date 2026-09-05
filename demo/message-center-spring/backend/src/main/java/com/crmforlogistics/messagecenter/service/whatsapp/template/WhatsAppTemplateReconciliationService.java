@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
+import com.crmforlogistics.messagecenter.mapper.TemplateChangeRequestMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMediaAssetMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ComponentType;
@@ -47,6 +48,7 @@ public class WhatsAppTemplateReconciliationService {
     private final WhatsAppTemplateGateway gateway;
     private final TemplateMapper templateMapper;
     private final TemplateOperationMapper operationMapper;
+    private final TemplateChangeRequestMapper changeRequestMapper;
     private final TemplateMediaAssetMapper mediaMapper;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -55,12 +57,14 @@ public class WhatsAppTemplateReconciliationService {
     public WhatsAppTemplateReconciliationService(WhatsAppTemplateGateway gateway,
                                                  TemplateMapper templateMapper,
                                                  TemplateOperationMapper operationMapper,
+                                                 TemplateChangeRequestMapper changeRequestMapper,
                                                  TemplateMediaAssetMapper mediaMapper,
                                                  ObjectMapper objectMapper,
                                                  Clock clock) {
         this.gateway = Objects.requireNonNull(gateway);
         this.templateMapper = Objects.requireNonNull(templateMapper);
         this.operationMapper = Objects.requireNonNull(operationMapper);
+        this.changeRequestMapper = Objects.requireNonNull(changeRequestMapper);
         this.mediaMapper = Objects.requireNonNull(mediaMapper);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.clock = Objects.requireNonNull(clock);
@@ -233,14 +237,14 @@ public class WhatsAppTemplateReconciliationService {
                                     List<ProviderTemplateSummary> summaries,
                                     Instant now) {
         if (matchingCodeAndLanguage(operation, summaries).isEmpty()) {
-            templateMapper.findForDisplay(operation.getChannelAccountId(), operation.getProviderTemplateId(),
-                    operation.getLanguageCode()).ifPresent(template -> {
+            templateForOperation(operation).ifPresent(template -> {
                         template.setDeletedAt(now);
                         template.setAllowSend(false);
                         template.setUpdatedAt(now);
                         templateMapper.updateById(template);
                     });
             operationMapper.markSucceeded(operation.getId(), operation.getProviderTemplateId(), null, now);
+            markRequestSucceeded(operation, null, now);
             return true;
         }
         retry(operation, "RECONCILIATION_NOT_CONFIRMED", "Provider still returns the template", now);
@@ -260,8 +264,7 @@ public class WhatsAppTemplateReconciliationService {
             return false;
         }
         TemplateSnapshot snapshot = detail.orElseThrow();
-        TemplateEntity current = templateMapper.findForDisplay(operation.getChannelAccountId(),
-                snapshot.templateCode(), snapshot.language()).orElse(null);
+        TemplateEntity current = templateForOperation(operation).orElse(null);
         persistSnapshot(snapshot, current, current == null ? null : current.getProviderScopeId(),
                 operation.getChannelAccountId(), now);
         if (create && snapshot.reviewStatus() == ReviewStatus.REJECTED) {
@@ -277,6 +280,7 @@ public class WhatsAppTemplateReconciliationService {
             });
         }
         operationMapper.markSucceeded(operation.getId(), snapshot.templateCode(), null, now);
+        markRequestSucceeded(operation, null, now);
         return true;
     }
 
@@ -414,6 +418,24 @@ public class WhatsAppTemplateReconciliationService {
 
     private void fail(TemplateOperationEntity operation, String code, String message, Instant now) {
         operationMapper.markFailed(operation.getId(), null, code, message == null ? "Provider rejected template" : message, now);
+        if (operation.getChangeRequestId() != null) {
+            changeRequestMapper.markExecutionFailed(operation.getChangeRequestId(), code,
+                    message == null ? "Provider rejected template" : message, now);
+        }
+    }
+
+    private Optional<TemplateEntity> templateForOperation(TemplateOperationEntity operation) {
+        if (operation.getTemplateId() != null) {
+            return templateMapper.findSharedForUpdate(operation.getTemplateId());
+        }
+        return templateMapper.findForDisplay(operation.getChannelAccountId(), operation.getProviderTemplateId(),
+                operation.getLanguageCode());
+    }
+
+    private void markRequestSucceeded(TemplateOperationEntity operation, String providerRequestId, Instant now) {
+        if (operation.getChangeRequestId() != null) {
+            changeRequestMapper.markSucceeded(operation.getChangeRequestId(), providerRequestId, now);
+        }
     }
 
     private static List<ProviderTemplateSummary> matchingCodeAndLanguage(TemplateOperationEntity operation,

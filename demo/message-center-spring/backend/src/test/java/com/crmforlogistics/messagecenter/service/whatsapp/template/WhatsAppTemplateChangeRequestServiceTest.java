@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.mapper.TemplateChangeRequestMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMediaAssetMapper;
+import com.crmforlogistics.messagecenter.mapper.RoleMapper;
 import com.crmforlogistics.messagecenter.mapper.UserMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService.ScopeAccount;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ChangeCommand;
@@ -38,16 +39,19 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class WhatsAppTemplateChangeRequestServiceTest {
     private static final UUID USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID OTHER_USER_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
+    private static final UUID ADMIN_ID = UUID.fromString("90000000-0000-0000-0000-000000000009");
     private static final UUID ACCOUNT_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
     private static final UUID SCOPE_ID = UUID.fromString("40000000-0000-0000-0000-000000000004");
     private static final UUID TEMPLATE_ID = UUID.fromString("50000000-0000-0000-0000-000000000005");
@@ -58,6 +62,8 @@ class WhatsAppTemplateChangeRequestServiceTest {
     @Mock private TemplateMediaAssetMapper mediaAssetMapper;
     @Mock private WhatsAppProviderScopeService providerScopeService;
     @Mock private UserMapper userMapper;
+    @Mock private RoleMapper roleMapper;
+    @Mock private WhatsAppTemplateApplicationService applicationService;
 
     private WhatsAppTemplateChangeRequestService service;
 
@@ -66,9 +72,9 @@ class WhatsAppTemplateChangeRequestServiceTest {
         lenient().when(templateMapper.findSharedForUpdate(TEMPLATE_ID)).thenReturn(Optional.of(template()));
         lenient().when(providerScopeService.requireOwnedActive(USER_ID)).thenReturn(scopeAccount());
         lenient().when(changeRequestMapper.insertIgnore(any())).thenReturn(1);
-        when(userMapper.findByIdNotDeleted(USER_ID)).thenReturn(Optional.of(user(USER_ID, "申请人")));
+        lenient().when(userMapper.findByIdNotDeleted(USER_ID)).thenReturn(Optional.of(user(USER_ID, "申请人")));
         service = new WhatsAppTemplateChangeRequestService(templateMapper, changeRequestMapper, mediaAssetMapper,
-                providerScopeService, userMapper, new WhatsAppTemplateValidator(),
+                providerScopeService, userMapper, roleMapper, applicationService, new WhatsAppTemplateValidator(),
                 new ObjectMapper().findAndRegisterModules(), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
@@ -161,6 +167,38 @@ class WhatsAppTemplateChangeRequestServiceTest {
         verify(changeRequestMapper, never()).listByRequester(OTHER_USER_ID, 0, 20);
     }
 
+    @Test
+    void administratorApprovalClaimsTheRequestAndUsesTheRequestedAccount() {
+        TemplateChangeRequestEntity pending = request("pending-1", ChangeType.SET_SEND_PERMISSION,
+                ChangeRequestStatus.PENDING_APPROVAL, 4, "pending-1", false);
+        when(roleMapper.userHasRole(ADMIN_ID, "admin")).thenReturn(true);
+        when(changeRequestMapper.findByIdForUpdate(pending.getId())).thenReturn(Optional.of(pending));
+        when(changeRequestMapper.claimApproval(pending.getId(), ADMIN_ID, NOW)).thenReturn(1);
+        when(providerScopeService.requireAccount(ACCOUNT_ID)).thenReturn(scopeAccount());
+        when(applicationService.setSendPermissionShared(SCOPE_ID, ACCOUNT_ID, TEMPLATE_ID, false,
+                "approve-1", ADMIN_ID, pending.getId(), "trace-1"))
+                .thenReturn(operation());
+
+        var outcome = service.approve(ADMIN_ID, pending.getId(), "approve-1", "trace-1");
+
+        assertThat(outcome.request().status()).isEqualTo(ChangeRequestStatus.SUCCEEDED.name());
+        verify(applicationService).setSendPermissionShared(SCOPE_ID, ACCOUNT_ID, TEMPLATE_ID, false,
+                "approve-1", ADMIN_ID, pending.getId(), "trace-1");
+        verify(applicationService, never()).setSendPermissionShared(eq(SCOPE_ID), eq(ADMIN_ID), any(), anyBoolean(),
+                any(), any(), any(), any());
+        verify(changeRequestMapper).markSucceeded(pending.getId(), operation().providerRequestId(), NOW);
+    }
+
+    @Test
+    void nonAdministratorCannotApproveOrDirectlyExecuteAChange() {
+        TemplateChangeRequestEntity pending = request("pending-2", ChangeType.DELETE,
+                ChangeRequestStatus.PENDING_APPROVAL, 4, "pending-2", null);
+        assertThatThrownBy(() -> service.approve(USER_ID, pending.getId(), "approve-2", "trace-1"))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class,
+                        error -> assertThat(error.code()).isEqualTo("WHATSAPP_TEMPLATE_ADMIN_REQUIRED"));
+        verifyNoInteractions(applicationService);
+    }
+
     private static ScopeAccount scopeAccount() {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(ACCOUNT_ID);
@@ -217,5 +255,11 @@ class WhatsAppTemplateChangeRequestServiceTest {
         user.setId(id);
         user.setDisplayName(displayName);
         return user;
+    }
+
+    private static WhatsAppTemplateApplicationService.OperationView operation() {
+        return new WhatsAppTemplateApplicationService.OperationView(UUID.randomUUID(),
+                WhatsAppTemplateModels.OperationType.SET_SEND_PERMISSION,
+                WhatsAppTemplateModels.OperationStatus.SUCCEEDED, "shipping_notice", "provider-1", null);
     }
 }

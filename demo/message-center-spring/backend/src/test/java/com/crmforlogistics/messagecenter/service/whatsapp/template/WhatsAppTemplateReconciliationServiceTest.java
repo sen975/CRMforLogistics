@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
+import com.crmforlogistics.messagecenter.mapper.TemplateChangeRequestMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMediaAssetMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ComponentType;
@@ -54,6 +55,7 @@ class WhatsAppTemplateReconciliationServiceTest {
     @Mock private WhatsAppTemplateGateway gateway;
     @Mock private TemplateMapper templateMapper;
     @Mock private TemplateOperationMapper operationMapper;
+    @Mock private TemplateChangeRequestMapper changeRequestMapper;
     @Mock private TemplateMediaAssetMapper mediaMapper;
 
     private ObjectMapper objectMapper;
@@ -63,7 +65,7 @@ class WhatsAppTemplateReconciliationServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper().findAndRegisterModules();
         service = new WhatsAppTemplateReconciliationService(gateway, templateMapper, operationMapper,
-                mediaMapper, objectMapper, Clock.fixed(NOW, ZoneOffset.UTC));
+                changeRequestMapper, mediaMapper, objectMapper, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -295,6 +297,23 @@ class WhatsAppTemplateReconciliationServiceTest {
     }
 
     @Test
+    void resolvedUnknownOperationAlsoCompletesItsChangeRequest() throws Exception {
+        UUID changeRequestId = UUID.randomUUID();
+        TemplateOperationEntity operation = unknownModify("tpl-1");
+        operation.setChangeRequestId(changeRequestId);
+        when(operationMapper.claimUnknown("worker-1", NOW, NOW.plusSeconds(120), 20))
+                .thenReturn(List.of(operation));
+        when(gateway.list(ACCOUNT_ID, 1, 100))
+                .thenReturn(new ProviderTemplatePage(List.of(summary("tpl-1", "delivery", "pass")), 1, false));
+        when(gateway.detail(ACCOUNT_ID, "tpl-1", "en_US"))
+                .thenReturn(Optional.of(snapshot("tpl-1", "delivery", ReviewStatus.APPROVED, true, null)));
+
+        assertThat(service.reconcileUnknown("worker-1")).isEqualTo(1);
+
+        verify(changeRequestMapper).markSucceeded(changeRequestId, null, NOW);
+    }
+
+    @Test
     void ambiguousUnknownCreateRemainsUnknownAndDoesNotTouchMedia() throws Exception {
         UUID assetId = UUID.randomUUID();
         TemplateOperationEntity operation = unknownCreate(assetId, "delivery");
@@ -412,6 +431,21 @@ class WhatsAppTemplateReconciliationServiceTest {
         verify(operationMapper).markFailed(eq(operation.getId()), eq(null), eq("RECONCILIATION_WINDOW_EXPIRED"),
                 any(), eq(NOW));
         verify(gateway, never()).list(any(), any(Integer.class), any(Integer.class));
+    }
+
+    @Test
+    void expiredUnknownOperationFailsItsLinkedChangeRequest() throws Exception {
+        UUID changeRequestId = UUID.randomUUID();
+        TemplateOperationEntity operation = unknownModify("tpl-1");
+        operation.setChangeRequestId(changeRequestId);
+        operation.setStartedAt(NOW.minusSeconds(24 * 60 * 60));
+        when(operationMapper.claimUnknown("worker-1", NOW, NOW.plusSeconds(120), 20))
+                .thenReturn(List.of(operation));
+
+        assertThat(service.reconcileUnknown("worker-1")).isZero();
+
+        verify(changeRequestMapper).markExecutionFailed(changeRequestId,
+                "RECONCILIATION_WINDOW_EXPIRED", "Reconciliation exceeded the 24 hour window", NOW);
     }
 
     @Test

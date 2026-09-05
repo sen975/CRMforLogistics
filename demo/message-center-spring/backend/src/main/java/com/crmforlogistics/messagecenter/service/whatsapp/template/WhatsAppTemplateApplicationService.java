@@ -248,6 +248,139 @@ public class WhatsAppTemplateApplicationService {
         }
     }
 
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
+    public OperationView modifyShared(UUID providerScopeId, UUID credentialAccountId, UUID templateId,
+                                      TemplateCommand command, UUID actorUserId, UUID changeRequestId,
+                                      String traceId) {
+        TemplateEntity current = lockSharedTemplate(providerScopeId, credentialAccountId, templateId);
+        TemplateCommand validated = validator.validate(command);
+        if (!Objects.equals(current.getName(), validated.name())) {
+            throw immutableName();
+        }
+        PreparedCommand prepared = prepareMedia(credentialAccountId, validated);
+        BeginOperation begun = beginOperation(credentialAccountId, validated.clientRequestId(), OperationType.MODIFY,
+                current.getProviderTemplateId(), current.getLanguageCode(), validated, actorUserId, traceId,
+                current.getId(), changeRequestId);
+        if (begun.existing()) {
+            return operationView(begun.operation());
+        }
+
+        TemplateOperationEntity operation = begun.operation();
+        try {
+            ModifyResult result = gateway.modify(credentialAccountId, current.getProviderTemplateId(),
+                    current.getLanguageCode(), prepared.providerCommand());
+            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(credentialAccountId,
+                    current.getProviderTemplateId(), current.getLanguageCode()).orElseGet(() -> unknownSnapshot(
+                    credentialAccountId, current.getProviderTemplateId(), validated));
+            persistSnapshot(snapshot, providerScopeId, credentialAccountId, actorUserId);
+            attach(prepared.asset());
+            succeed(operation, result.templateCode(), result.providerRequestId());
+            audit("WHATSAPP_TEMPLATE_MODIFY", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
+                    json(templateSummary(current)), json(snapshot), auditResult(OperationStatus.SUCCEEDED), traceId);
+            return operationView(operation);
+        } catch (WhatsAppTemplateException e) {
+            failOperation(operation, prepared.asset(), e);
+            auditOperation(operation, actorUserId, traceId);
+            throw e;
+        }
+    }
+
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
+    public OperationView setSendPermissionShared(UUID providerScopeId, UUID credentialAccountId, UUID templateId,
+                                                 boolean allowSend, String clientRequestId, UUID actorUserId,
+                                                 UUID changeRequestId, String traceId) {
+        TemplateEntity current = lockSharedTemplate(providerScopeId, credentialAccountId, templateId);
+        if (allowSend && !"APPROVED".equalsIgnoreCase(current.getStatus())) {
+            throw business("TEMPLATE_NOT_APPROVED", HttpStatus.CONFLICT,
+                    "Only approved templates can be enabled");
+        }
+        boolean previousAllowSend = Boolean.TRUE.equals(current.getAllowSend());
+        BeginOperation begun = beginOperation(credentialAccountId, clientRequestId, OperationType.SET_SEND_PERMISSION,
+                current.getProviderTemplateId(), current.getLanguageCode(), Map.of("allowSend", allowSend),
+                actorUserId, traceId, current.getId(), changeRequestId);
+        if (begun.existing()) {
+            return operationView(begun.operation());
+        }
+
+        TemplateOperationEntity operation = begun.operation();
+        current.setDesiredAllowSend(allowSend);
+        current.setPermissionSyncStatus("PENDING");
+        current.setPermissionSyncAttemptCount(0);
+        current.setPermissionSyncNextAttemptAt(null);
+        current.setPermissionSyncErrorCode(null);
+        current.setPermissionSyncErrorMessage(null);
+        current.setUpdatedAt(now());
+        templateMapper.updateById(current);
+        try {
+            PropertyResult result = gateway.setSendPermission(credentialAccountId, current.getProviderTemplateId(),
+                    current.getLanguageCode(), allowSend);
+            current.setAllowSend(result.allowSend());
+            current.setPermissionSyncStatus(result.allowSend() == allowSend ? "IDLE" : "FAILED");
+            current.setPermissionSyncAttemptCount(result.allowSend() == allowSend ? 0 : 1);
+            current.setPermissionSyncNextAttemptAt(result.allowSend() == allowSend ? null : now().plus(1, ChronoUnit.MINUTES));
+            current.setPermissionSyncErrorCode(result.allowSend() == allowSend ? null : "TEMPLATE_PERMISSION_NOT_CONFIRMED");
+            current.setPermissionSyncErrorMessage(result.allowSend() == allowSend ? null : "Provider did not confirm desired permission");
+            current.setUpdatedAt(now());
+            templateMapper.updateById(current);
+            succeed(operation, current.getProviderTemplateId(), result.providerRequestId());
+            audit("WHATSAPP_TEMPLATE_SEND_PERMISSION", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
+                    json(Map.of("allowSend", previousAllowSend)), json(Map.of("allowSend", result.allowSend())),
+                    auditResult(OperationStatus.SUCCEEDED), traceId);
+            return operationView(operation);
+        } catch (WhatsAppTemplateException e) {
+            current.setPermissionSyncStatus("FAILED");
+            current.setPermissionSyncAttemptCount(1);
+            current.setPermissionSyncNextAttemptAt(now().plus(1, ChronoUnit.MINUTES));
+            current.setPermissionSyncErrorCode(e.code());
+            current.setPermissionSyncErrorMessage(TemplatePermissionErrorSanitizer.sanitize(e.getMessage()));
+            current.setUpdatedAt(now());
+            templateMapper.updateById(current);
+            failOperation(operation, null, e);
+            auditOperation(operation, actorUserId, traceId);
+            throw e;
+        }
+    }
+
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
+    public OperationView deleteShared(UUID providerScopeId, UUID credentialAccountId, UUID templateId,
+                                      String clientRequestId, UUID actorUserId, UUID changeRequestId,
+                                      String traceId) {
+        TemplateEntity current = lockSharedTemplate(providerScopeId, credentialAccountId, templateId);
+        BeginOperation begun = beginOperation(credentialAccountId, clientRequestId, OperationType.DELETE,
+                current.getProviderTemplateId(), current.getLanguageCode(),
+                Map.of("templateCode", current.getProviderTemplateId(), "language", current.getLanguageCode()),
+                actorUserId, traceId, current.getId(), changeRequestId);
+        if (begun.existing()) {
+            return operationView(begun.operation());
+        }
+
+        TemplateOperationEntity operation = begun.operation();
+        try {
+            DeleteResult result = gateway.delete(credentialAccountId, current.getProviderTemplateId(), current.getLanguageCode());
+            if (!result.success()) {
+                throw providerRejected("TEMPLATE_DELETE_NOT_CONFIRMED", result.providerRequestId());
+            }
+            current.setDeletedAt(now());
+            current.setAllowSend(false);
+            current.setDesiredAllowSend(false);
+            current.setPermissionSyncStatus("IDLE");
+            current.setPermissionSyncAttemptCount(0);
+            current.setPermissionSyncNextAttemptAt(null);
+            current.setPermissionSyncErrorCode(null);
+            current.setPermissionSyncErrorMessage(null);
+            current.setUpdatedAt(now());
+            templateMapper.updateById(current);
+            succeed(operation, current.getProviderTemplateId(), result.providerRequestId());
+            audit("WHATSAPP_TEMPLATE_DELETE", "MESSAGE_TEMPLATE", current.getId(), actorUserId,
+                    "{}", json(Map.of("deleted", true)), auditResult(OperationStatus.SUCCEEDED), traceId);
+            return operationView(operation);
+        } catch (WhatsAppTemplateException e) {
+            failOperation(operation, null, e);
+            auditOperation(operation, actorUserId, traceId);
+            throw e;
+        }
+    }
+
     @Transactional(readOnly = true)
     public TemplatePageView list(UUID accountId, int page, int size, String search, String status,
                                  String category, String language, Boolean allowSend, Boolean deleted) {
@@ -384,6 +517,14 @@ public class WhatsAppTemplateApplicationService {
     private BeginOperation beginOperation(UUID accountId, String idempotencyKey, OperationType type,
                                           String templateCode, String language, Object request,
                                           UUID actorUserId, String traceId) {
+        return beginOperation(accountId, idempotencyKey, type, templateCode, language, request,
+                actorUserId, traceId, null, null);
+    }
+
+    private BeginOperation beginOperation(UUID accountId, String idempotencyKey, OperationType type,
+                                          String templateCode, String language, Object request,
+                                          UUID actorUserId, String traceId, UUID templateId,
+                                          UUID changeRequestId) {
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 255) {
             throw validation("clientRequestId", "must contain 1 to 255 characters");
         }
@@ -395,6 +536,8 @@ public class WhatsAppTemplateApplicationService {
         TemplateOperationEntity operation = new TemplateOperationEntity();
         operation.setId(UUID.randomUUID());
         operation.setChannelAccountId(accountId);
+        operation.setTemplateId(templateId);
+        operation.setChangeRequestId(changeRequestId);
         operation.setIdempotencyKey(idempotencyKey);
         operation.setOperationType(type.name());
         operation.setProviderTemplateId(templateCode);
@@ -421,6 +564,23 @@ public class WhatsAppTemplateApplicationService {
                 .last("FOR UPDATE"));
         if (template == null || template.getDeletedAt() != null) {
             throw business("WHATSAPP_TEMPLATE_NOT_FOUND", HttpStatus.NOT_FOUND, "WhatsApp template not found");
+        }
+        return template;
+    }
+
+    private TemplateEntity lockSharedTemplate(UUID providerScopeId, UUID credentialAccountId, UUID templateId) {
+        ChannelAccountEntity account = requireAccount(credentialAccountId);
+        if (!Objects.equals(providerScopeId, account.getProviderScopeId())) {
+            throw business("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
+                    "WhatsApp account does not belong to the shared template scope");
+        }
+        TemplateEntity template = templateId == null ? null : templateMapper.findSharedForUpdate(templateId).orElse(null);
+        if (template == null || template.getDeletedAt() != null) {
+            throw business("WHATSAPP_TEMPLATE_NOT_FOUND", HttpStatus.NOT_FOUND, "WhatsApp template not found");
+        }
+        if (!Objects.equals(providerScopeId, template.getProviderScopeId())) {
+            throw business("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
+                    "WhatsApp template does not belong to the requested shared template scope");
         }
         return template;
     }
