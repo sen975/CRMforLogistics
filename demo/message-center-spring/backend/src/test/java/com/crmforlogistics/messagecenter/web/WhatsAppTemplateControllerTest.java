@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.web;
 import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.dto.response.SharedTemplateResponse;
+import com.crmforlogistics.messagecenter.dto.response.TemplateChangeRequestResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
@@ -11,8 +12,10 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplat
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppSharedTemplateCatalogService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateChangeRequestService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ComponentType;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
@@ -61,6 +64,7 @@ class WhatsAppTemplateControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean WhatsAppSharedTemplateCatalogService catalogService;
     @MockitoBean WhatsAppTemplateApplicationService templateApplicationService;
+    @MockitoBean WhatsAppTemplateChangeRequestService changeRequestService;
     @MockitoBean PublicTemplateApplicationService publicTemplateService;
     @MockitoBean WhatsAppTemplateReconciliationService reconciliationService;
     @MockitoBean WhatsAppTemplateMediaUploadService mediaUploadService;
@@ -161,6 +165,26 @@ class WhatsAppTemplateControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
+    void agentSubmitsAndListsOnlyOwnTemplateChangeRequests() throws Exception {
+        when(changeRequestService.submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any()))
+                .thenReturn(changeOutcome());
+        when(changeRequestService.listMine(AGENT_ID, 1, 20)).thenReturn(changePage());
+
+        mvc.perform(post("/api/v1/whatsapp/templates/{templateId}/change-requests", TEMPLATE_ID)
+                        .contentType(MediaType.APPLICATION_JSON).content(changeJson()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.mode").value("APPROVAL_REQUIRED"))
+                .andExpect(jsonPath("$.request.status").value("PENDING_APPROVAL"));
+        mvc.perform(get("/api/v1/whatsapp/template-change-requests/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].templateId").value(TEMPLATE_ID.toString()));
+
+        verify(changeRequestService).submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any());
+        verify(changeRequestService).listMine(AGENT_ID, 1, 20);
+    }
+
     private void stubInteractiveEndpoints(UUID actorId) {
         when(templateApplicationService.create(eq(SCOPE_ID), eq(ACCOUNT_ID), any(), eq(actorId), any()))
                 .thenReturn(operation());
@@ -202,6 +226,26 @@ class WhatsAppTemplateControllerTest {
         return new WhatsAppTemplateMediaUploadService.MediaAssetView(UUID.randomUUID(), requestId,
                 HeaderFormat.IMAGE, "image/png", 3, "0".repeat(64), "https://provider.invalid/header.png",
                 MediaAssetStatus.UPLOADED, null, null, "trace-1");
+    }
+
+    private static WhatsAppTemplateChangeRequestService.ChangeOutcome changeOutcome() {
+        return new WhatsAppTemplateChangeRequestService.ChangeOutcome(
+                WhatsAppTemplateModels.ChangeMode.APPROVAL_REQUIRED, changeView(), null);
+    }
+
+    private static TemplateChangeRequestResponse.Page changePage() {
+        return new TemplateChangeRequestResponse.Page(List.of(changeView()), 1, 1, 20);
+    }
+
+    private static TemplateChangeRequestResponse changeView() {
+        return new TemplateChangeRequestResponse(UUID.fromString("00000000-0000-0000-0000-000000000007"), TEMPLATE_ID,
+                "发货提醒（shipping_notice）", 3, "SET_SEND_PERMISSION", "PENDING_APPROVAL", List.of(),
+                "申请人", null, null, null, null, null, Instant.EPOCH, null, null);
+    }
+
+    private static String changeJson() {
+        return "{\"changeType\":\"SET_SEND_PERMISSION\",\"expectedVersion\":3,"
+                + "\"clientRequestId\":\"change-1\",\"allowSend\":false}";
     }
 
     private static String createJson() {

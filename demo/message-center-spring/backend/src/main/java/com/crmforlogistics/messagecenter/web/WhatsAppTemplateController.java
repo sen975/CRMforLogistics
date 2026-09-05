@@ -1,7 +1,9 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.request.TemplateCreateRequest;
+import com.crmforlogistics.messagecenter.dto.request.TemplateChangeCommandRequest;
 import com.crmforlogistics.messagecenter.dto.response.SharedTemplateResponse;
+import com.crmforlogistics.messagecenter.dto.response.TemplateChangeRequestResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateOperationResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateApplicationService;
@@ -9,6 +11,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplat
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppSharedTemplateCatalogService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateChangeRequestService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
@@ -43,6 +46,7 @@ public class WhatsAppTemplateController {
 
     private final WhatsAppSharedTemplateCatalogService catalogService;
     private final WhatsAppTemplateApplicationService templateApplicationService;
+    private final WhatsAppTemplateChangeRequestService changeRequestService;
     private final PublicTemplateApplicationService publicTemplateService;
     private final WhatsAppTemplateReconciliationService reconciliationService;
     private final WhatsAppTemplateMediaUploadService mediaUploadService;
@@ -51,6 +55,7 @@ public class WhatsAppTemplateController {
 
     public WhatsAppTemplateController(WhatsAppSharedTemplateCatalogService catalogService,
                                       WhatsAppTemplateApplicationService templateApplicationService,
+                                      WhatsAppTemplateChangeRequestService changeRequestService,
                                       PublicTemplateApplicationService publicTemplateService,
                                       WhatsAppTemplateReconciliationService reconciliationService,
                                       WhatsAppTemplateMediaUploadService mediaUploadService,
@@ -58,6 +63,7 @@ public class WhatsAppTemplateController {
                                       WhatsAppTemplateScopeGate scopeGate) {
         this.catalogService = catalogService;
         this.templateApplicationService = templateApplicationService;
+        this.changeRequestService = changeRequestService;
         this.publicTemplateService = publicTemplateService;
         this.reconciliationService = reconciliationService;
         this.mediaUploadService = mediaUploadService;
@@ -103,6 +109,22 @@ public class WhatsAppTemplateController {
         UUID actorUserId = actorUserId();
         WhatsAppProviderScopeService.ScopeAccount scopeAccount = requireCurrentScopeAccount(actorUserId);
         return reconciliationService.syncScope(scopeAccount.scope().getId(), scopeAccount.account().getId());
+    }
+
+    @PostMapping("/templates/{templateId}/change-requests")
+    @ResponseStatus(HttpStatus.CREATED)
+    public WhatsAppTemplateChangeRequestService.ChangeOutcome submitChangeRequest(
+            @PathVariable UUID templateId, @RequestBody TemplateChangeCommandRequest request,
+            HttpServletRequest servletRequest) {
+        scopeGate.requireReady();
+        return changeRequestService.submit(actorUserId(), templateId, request.toCommand(), traceId(servletRequest));
+    }
+
+    @GetMapping("/template-change-requests/mine")
+    public TemplateChangeRequestResponse.Page listMyChangeRequests(
+            @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size) {
+        scopeGate.requireReady();
+        return changeRequestService.listMine(actorUserId(), page, size);
     }
 
     @GetMapping("/templates/{templateId}/operations")

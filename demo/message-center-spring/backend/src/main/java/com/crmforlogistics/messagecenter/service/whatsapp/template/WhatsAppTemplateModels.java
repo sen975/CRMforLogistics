@@ -24,6 +24,18 @@ public final class WhatsAppTemplateModels {
         CREATE, MODIFY, SET_SEND_PERMISSION, DELETE, RECONCILE, RETIRED
     }
 
+    public enum ChangeType {
+        MODIFY, SET_SEND_PERMISSION, DELETE, BIND_MEDIA
+    }
+
+    public enum ChangeRequestStatus {
+        PENDING_APPROVAL, REJECTED, STALE, EXECUTING, SUCCEEDED, EXECUTION_FAILED
+    }
+
+    public enum ChangeMode {
+        APPROVAL_REQUIRED, DIRECT
+    }
+
     public enum MediaAssetStatus {
         PROCESSING, UPLOADED, FAILED, SUBMISSION_UNKNOWN,
         ATTACHED, ATTACHMENT_UNKNOWN, ORPHANED
@@ -55,6 +67,26 @@ public final class WhatsAppTemplateModels {
             examples = immutableExamples(examples);
         }
     }
+
+    public record TemplateDraft(
+            String name,
+            String category,
+            List<TemplateComponent> components,
+            Map<String, List<String>> examples,
+            Integer messageSendTtlSeconds) {
+        public TemplateDraft {
+            components = components == null ? List.of() : List.copyOf(components);
+            examples = immutableExamples(examples);
+        }
+    }
+
+    public record ChangeCommand(
+            ChangeType changeType,
+            long expectedVersion,
+            String clientRequestId,
+            TemplateDraft template,
+            Boolean allowSend,
+            String remark) { }
 
     public record TemplateComponent(
             ComponentType type,
