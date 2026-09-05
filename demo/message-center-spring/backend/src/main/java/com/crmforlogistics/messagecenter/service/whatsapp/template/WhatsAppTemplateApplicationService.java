@@ -76,6 +76,22 @@ public class WhatsAppTemplateApplicationService {
 
     @Transactional(noRollbackFor = WhatsAppTemplateException.class)
     public OperationView create(UUID accountId, TemplateCommand command, UUID actorUserId, String traceId) {
+        return createInternal(null, accountId, command, actorUserId, traceId);
+    }
+
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
+    public OperationView create(UUID providerScopeId, UUID accountId, TemplateCommand command,
+                                UUID actorUserId, String traceId) {
+        ChannelAccountEntity account = requireAccount(accountId);
+        if (!Objects.equals(providerScopeId, account.getProviderScopeId())) {
+            throw business("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
+                    "WhatsApp account does not belong to the shared template scope");
+        }
+        return createInternal(providerScopeId, accountId, command, actorUserId, traceId);
+    }
+
+    private OperationView createInternal(UUID providerScopeId, UUID accountId, TemplateCommand command,
+                                         UUID actorUserId, String traceId) {
         requireAccount(accountId);
         TemplateCommand validated = validator.validate(command);
         PreparedCommand prepared = prepareMedia(accountId, validated);
@@ -90,7 +106,7 @@ public class WhatsAppTemplateApplicationService {
             CreateResult result = gateway.create(accountId, prepared.providerCommand());
             TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(accountId, result.templateCode(), validated.language())
                     .orElseGet(() -> unknownSnapshot(accountId, result.templateCode(), validated));
-            persistSnapshot(snapshot);
+            persistSnapshot(snapshot, providerScopeId, accountId, actorUserId);
             attach(prepared.asset());
             succeed(operation, result.templateCode(), result.providerRequestId());
             auditOperation(operation, actorUserId, traceId);
@@ -410,6 +426,26 @@ public class WhatsAppTemplateApplicationService {
     }
 
     private void persistSnapshot(TemplateSnapshot snapshot) {
+        persistSnapshot(snapshot, null, snapshot.accountId(), null);
+    }
+
+    private void persistSnapshot(TemplateSnapshot snapshot, UUID providerScopeId,
+                                 UUID credentialAccountId, UUID createdByUserId) {
+        if (providerScopeId != null) {
+            TemplateEntity shared = templateMapper.findBySharedIdentity(providerScopeId,
+                    snapshot.templateCode(), snapshot.language()).orElseGet(TemplateEntity::new);
+            boolean insert = shared.getId() == null;
+            if (insert) {
+                shared.setId(UUID.randomUUID());
+                shared.setCreatedAt(now());
+                shared.setCreatedByUserId(createdByUserId);
+            }
+            shared.setChannelAccountId(credentialAccountId);
+            shared.setProviderScopeId(providerScopeId);
+            applySnapshot(shared, snapshot);
+            templateMapper.upsertShared(shared);
+            return;
+        }
         TemplateEntity entity = templateMapper.selectOne(new QueryWrapper<TemplateEntity>()
                 .eq("channel_account_id", snapshot.accountId())
                 .eq("provider_template_id", snapshot.templateCode())
@@ -421,7 +457,16 @@ public class WhatsAppTemplateApplicationService {
             entity.setId(UUID.randomUUID());
             entity.setCreatedAt(now());
         }
-        entity.setChannelAccountId(snapshot.accountId());
+        entity.setChannelAccountId(credentialAccountId);
+        applySnapshot(entity, snapshot);
+        if (insert) {
+            templateMapper.insert(entity);
+        } else {
+            templateMapper.updateById(entity);
+        }
+    }
+
+    private void applySnapshot(TemplateEntity entity, TemplateSnapshot snapshot) {
         entity.setProviderTemplateId(snapshot.templateCode());
         entity.setLanguageCode(snapshot.language());
         entity.setName(snapshot.templateName());
@@ -442,11 +487,6 @@ public class WhatsAppTemplateApplicationService {
         entity.setLastSyncedAt(now());
         entity.setUpdatedAt(now());
         entity.setDeletedAt(snapshot.deletedAt());
-        if (insert) {
-            templateMapper.insert(entity);
-        } else {
-            templateMapper.updateById(entity);
-        }
     }
 
     private TemplateSnapshot unknownSnapshot(UUID accountId, String templateCode, TemplateCommand command) {

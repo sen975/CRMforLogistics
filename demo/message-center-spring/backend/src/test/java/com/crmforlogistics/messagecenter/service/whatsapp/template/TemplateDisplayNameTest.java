@@ -1,7 +1,6 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.crmforlogistics.messagecenter.dto.response.TemplateAdminResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.mapper.AuditLogMapper;
@@ -51,10 +50,6 @@ class TemplateDisplayNameTest {
         assertThat(view.remark()).isEqualTo("发货提醒");
         assertThat(view.displayName()).isEqualTo("发货提醒（delivery_notice）");
 
-        TemplateAdminResponse response = TemplateAdminResponse.from(view);
-        assertThat(response.name()).isEqualTo("delivery_notice");
-        assertThat(response.remark()).isEqualTo("发货提醒");
-        assertThat(response.displayName()).isEqualTo("发货提醒（delivery_notice）");
     }
 
     @Test

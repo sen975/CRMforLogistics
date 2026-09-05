@@ -36,16 +36,45 @@ public class WhatsAppTemplateMediaUploadService {
     private final WhatsAppTemplateMediaUploadStore store;
     private final WhatsAppTemplateGateway gateway;
     private final Clock clock;
+    private final WhatsAppProviderScopeService providerScopeService;
+
+    WhatsAppTemplateMediaUploadService(
+            WhatsAppTemplateApplicationService templateApplicationService,
+            WhatsAppTemplateMediaUploadStore store,
+            WhatsAppTemplateGateway gateway,
+            Clock clock) {
+        this(templateApplicationService, store, gateway, clock, null);
+    }
 
     public WhatsAppTemplateMediaUploadService(
             WhatsAppTemplateApplicationService templateApplicationService,
             WhatsAppTemplateMediaUploadStore store,
             WhatsAppTemplateGateway gateway,
-            Clock clock) {
+            Clock clock,
+            WhatsAppProviderScopeService providerScopeService) {
         this.templateApplicationService = Objects.requireNonNull(templateApplicationService);
         this.store = Objects.requireNonNull(store);
         this.gateway = Objects.requireNonNull(gateway);
         this.clock = Objects.requireNonNull(clock);
+        this.providerScopeService = providerScopeService;
+    }
+
+    public UploadResult uploadForUser(UUID actorUserId, HeaderFormat format, InputStream input, long declaredSize,
+                                      String fileName, String contentType, String clientRequestId, String traceId) {
+        if (providerScopeService == null) {
+            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
+        }
+        UUID accountId = providerScopeService.requireOwnedActive(actorUserId).account().getId();
+        return upload(accountId, format, input, declaredSize, fileName, contentType, clientRequestId,
+                actorUserId, traceId);
+    }
+
+    public MediaAssetView findForUser(UUID actorUserId, String clientRequestId) {
+        if (providerScopeService == null) {
+            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
+        }
+        UUID accountId = providerScopeService.requireOwnedActive(actorUserId).account().getId();
+        return find(accountId, clientRequestId);
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)

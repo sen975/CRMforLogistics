@@ -23,14 +23,30 @@ public class PublicTemplateApplicationService {
     private final WhatsAppTemplateApplicationService accountValidator;
     private final ChatAppPublicTemplateGateway gateway;
     private final Clock clock;
+    private final WhatsAppProviderScopeService providerScopeService;
     private final Map<CacheKey, CacheEntry> cache = new LinkedHashMap<>(16, 0.75f, true);
+
+    PublicTemplateApplicationService(WhatsAppTemplateApplicationService accountValidator,
+                                     ChatAppPublicTemplateGateway gateway,
+                                     Clock clock) {
+        this(accountValidator, gateway, clock, null);
+    }
 
     public PublicTemplateApplicationService(WhatsAppTemplateApplicationService accountValidator,
                                             ChatAppPublicTemplateGateway gateway,
-                                            Clock clock) {
+                                            Clock clock,
+                                            WhatsAppProviderScopeService providerScopeService) {
         this.accountValidator = Objects.requireNonNull(accountValidator);
         this.gateway = Objects.requireNonNull(gateway);
         this.clock = Objects.requireNonNull(clock);
+        this.providerScopeService = providerScopeService;
+    }
+
+    public Page listForUser(UUID actorUserId, Query query) {
+        if (providerScopeService == null) {
+            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
+        }
+        return list(providerScopeService.requireOwnedActive(actorUserId).account().getId(), query);
     }
 
     public Page list(UUID accountId, Query query) {
@@ -43,7 +59,7 @@ public class PublicTemplateApplicationService {
             if (cached != null && cached.expiresAt().isAfter(now)) return cached.page();
             if (cached != null) cache.remove(key);
         }
-        Page page = gateway.list(validated);
+        Page page = gateway.list(accountId, validated);
         synchronized (cache) {
             cache.put(key, new CacheEntry(page, now.plusSeconds(CACHE_TTL_SECONDS)));
             while (cache.size() > MAX_CACHE_ENTRIES) cache.remove(cache.keySet().iterator().next());

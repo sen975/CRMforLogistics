@@ -67,12 +67,6 @@ public class SecurityConfig {
                     .hasRole("ADMIN")
                 .requestMatchers("/api/chatapp/sync/messages/reconcile").hasRole("ADMIN")
                 .requestMatchers("/api/channel-accounts/**").authenticated()
-                .requestMatchers("/api/v1/channel-accounts/*/whatsapp/templates/**").hasRole("ADMIN")
-                .requestMatchers("/api/v1/channel-accounts/*/whatsapp/public-templates/**").hasRole("ADMIN")
-                .requestMatchers(
-                        "/api/v1/channel-accounts/*/whatsapp/template-media",
-                        "/api/v1/channel-accounts/*/whatsapp/template-media/**")
-                    .hasRole("ADMIN")
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()
             );

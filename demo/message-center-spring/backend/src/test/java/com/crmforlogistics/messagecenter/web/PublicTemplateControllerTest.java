@@ -14,7 +14,9 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateRemarkService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppSharedTemplateCatalogService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateScopeGate;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -40,29 +42,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @WebMvcTest(WhatsAppTemplateController.class)
 @Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class})
 class PublicTemplateControllerTest {
-    private static final UUID ACCOUNT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID ADMIN_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
 
     @Autowired MockMvc mvc;
     @MockitoBean WhatsAppTemplateApplicationService templateService;
     @MockitoBean WhatsAppTemplateReconciliationService reconciliationService;
     @MockitoBean WhatsAppTemplateMediaUploadService mediaUploadService;
-    @MockitoBean WhatsAppTemplateRemarkService remarkService;
     @MockitoBean PublicTemplateApplicationService publicTemplateService;
+    @MockitoBean WhatsAppSharedTemplateCatalogService catalogService;
+    @MockitoBean WhatsAppProviderScopeService providerScopeService;
+    @MockitoBean WhatsAppTemplateScopeGate scopeGate;
     @MockitoBean AuthSessionService authSessionService;
 
     @Test
-    @WithMockUser(roles = "ADMIN")
-    void adminListsTemplatesForPathAccountWithFilters() throws Exception {
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void adminListsSharedPublicTemplatesWithFilters() throws Exception {
         Query query = new Query("shipping", "en_US", "UTILITY", List.of("logistics"),
                 List.of("ORDER_MANAGEMENT"), 2, 10);
-        when(publicTemplateService.list(ACCOUNT_ID, query)).thenReturn(new Page(List.of(
+        when(publicTemplateService.listForUser(ADMIN_ID, query)).thenReturn(new Page(List.of(
                 new PublicTemplate("code-1", "shipping", "en_US", "UTILITY", List.of("logistics"),
                         "ORDER_MANAGEMENT", null, new Content("shipping", null, "external-1", "en_US",
                         "UTILITY", List.of(new MessagePage("page1", "Hello $(name)", List.of(
                         new Button("Open", "visitWebsite", "https://example.com")))), List.of()))), 1, 2, 10));
 
-        mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/public-templates", ACCOUNT_ID)
+        mvc.perform(get("/api/v1/whatsapp/public-templates")
                         .param("name", "shipping")
                         .param("language", "en_US")
                         .param("category", "UTILITY")
@@ -79,45 +82,48 @@ class PublicTemplateControllerTest {
                 .andExpect(jsonPath("$.items[0].content.pages[0].buttons[0].url").value("https://example.com"))
                 .andExpect(jsonPath("$.items[0].content.buttons").doesNotExist());
 
-        verify(publicTemplateService).list(eq(ACCOUNT_ID), eq(query));
+        verify(publicTemplateService).listForUser(eq(ADMIN_ID), eq(query));
     }
 
     @Test
-    @WithMockUser(roles = "AGENT")
-    void nonAdminCannotAccessPublicTemplateLibrary() throws Exception {
-        mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/public-templates", ACCOUNT_ID))
-                .andExpect(status().isForbidden());
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000005", roles = "AGENT")
+    void agentCanAccessSharedPublicTemplateLibrary() throws Exception {
+        UUID ownerId = UUID.fromString("00000000-0000-0000-0000-000000000005");
+        when(publicTemplateService.listForUser(eq(ownerId), any()))
+                .thenReturn(new Page(List.of(), 0, 1, 20));
+        mvc.perform(get("/api/v1/whatsapp/public-templates"))
+                .andExpect(status().isOk());
+        verify(publicTemplateService).listForUser(eq(ownerId), any());
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void listDefaultsLanguageToZhCn() throws Exception {
         Query query = new Query(null, "zh_CN", null, List.of(), List.of(), 1, 20);
-        when(publicTemplateService.list(ACCOUNT_ID, query)).thenReturn(new Page(List.of(), 0, 1, 20));
+        when(publicTemplateService.listForUser(ADMIN_ID, query)).thenReturn(new Page(List.of(), 0, 1, 20));
 
-        mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/public-templates", ACCOUNT_ID))
+        mvc.perform(get("/api/v1/whatsapp/public-templates"))
                 .andExpect(status().isOk());
 
-        verify(publicTemplateService).list(ACCOUNT_ID, query);
+        verify(publicTemplateService).listForUser(ADMIN_ID, query);
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void formerCopyEndpointIsNotMapped() throws Exception {
-        mvc.perform(post("/api/v1/channel-accounts/{accountId}/whatsapp/public-templates/{code}/copy",
-                        ACCOUNT_ID, "scene-001")
+        mvc.perform(post("/api/v1/whatsapp/public-templates/{code}/copy", "scene-001")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound());
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void serviceErrorsRetainStructuredCodeAndTraceId() throws Exception {
-        when(publicTemplateService.list(eq(ACCOUNT_ID), any())).thenThrow(new WhatsAppTemplateException(
+        when(publicTemplateService.listForUser(eq(ADMIN_ID), any())).thenThrow(new WhatsAppTemplateException(
                 "PUBLIC_TEMPLATE_QUERY_INVALID", org.springframework.http.HttpStatus.BAD_REQUEST,
                 "Public template query is invalid", Map.of(), null, false));
 
-        mvc.perform(get("/api/v1/channel-accounts/{accountId}/whatsapp/public-templates", ACCOUNT_ID)
+        mvc.perform(get("/api/v1/whatsapp/public-templates")
                         .param("page", "0"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("PUBLIC_TEMPLATE_QUERY_INVALID"))

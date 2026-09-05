@@ -55,27 +55,29 @@ class PublicTemplateApplicationServiceTest {
                 List.of(), "ORDER_MANAGEMENT", "ORDER", new Content("name-1", "name-1", "external-1",
                 "zh_CN", "UTILITY", List.of(new MessagePage("page1", "Hello $(name)", List.of(
                         new Button("Open", "visitWebsite", "https://example.com")))), List.of()))), 1, 1, 20);
-        when(gateway.list(query)).thenReturn(providerPage);
+        when(gateway.list(accountId, query)).thenReturn(providerPage);
 
         Page result = service.list(accountId, query);
 
         verify(accountValidator).validateAccount(accountId);
+        verify(gateway).list(accountId, query);
         assertThat(result).isEqualTo(providerPage);
     }
 
     @Test
-    void sharesPublicTemplateListCacheAcrossAccountsInTheSameGlobalChannel() {
+    void sharesPublicTemplateListCacheAcrossAccountsInTheSameCustSpace() {
         Query query = new Query(null, "zh_CN", null, List.of(), List.of(), 1, 20);
         Page providerPage = new Page(List.of(), 1, 0, 20);
         UUID secondAccountId = UUID.randomUUID();
-        when(gateway.list(query)).thenReturn(providerPage);
+        when(gateway.list(accountId, query)).thenReturn(providerPage);
 
         assertThat(service.list(accountId, query)).isEqualTo(providerPage);
         assertThat(service.list(secondAccountId, query)).isEqualTo(providerPage);
 
         verify(accountValidator).validateAccount(accountId);
         verify(accountValidator).validateAccount(secondAccountId);
-        verify(gateway, times(1)).list(query);
+        verify(gateway).list(accountId, query);
+        verify(gateway, never()).list(secondAccountId, query);
     }
 
     @Test
@@ -111,7 +113,8 @@ class PublicTemplateApplicationServiceTest {
                 assertThat(constructor.getParameterTypes()).containsExactly(
                         WhatsAppTemplateApplicationService.class,
                         ChatAppPublicTemplateGateway.class,
-                        Clock.class));
+                        Clock.class,
+                        WhatsAppProviderScopeService.class));
     }
 
     @Test
