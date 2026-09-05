@@ -71,7 +71,7 @@ d86c2d06dad860ae2f2f63e17178eff2aa61dfc3f9afecb82e3330c7629c5d3f  backend/target
 
 Chrome 在 `http://127.0.0.1:5173/templates` 完成桌面与 `390x844` 移动端检查。页面正常渲染“我的模板”“公共模板库”及空态，移动端文字未被遮挡；控制台没有应用错误。仅出现 React Router v7 future flag warning，不影响当前行为。移动端临时 viewport 已恢复默认值。
 
-本机后端未能启动到可登录状态，因此没有执行登录后普通用户申请、管理员批准/拒绝/重试和真实发送流程。启动被工作区既有 `V48__backfill_user_channel_owners.sql` 阻断：PostgreSQL 不支持 `min(uuid)`，Flyway 回滚。该 SQL 不属于本轮共享模板改动。
+Task 9 首次验收时，本机后端未能启动到可登录状态，因此没有执行登录后普通用户申请、管理员批准/拒绝/重试和真实发送流程。当时工作区既有 `V48__backfill_user_channel_owners.sql` 使用 PostgreSQL 不支持的 `min(uuid)`，导致 Flyway 回滚。后续已将两处 UUID 聚合改为唯一候选集合的 `array_agg(...)[1]`，并在临时 PostgreSQL 17.5 数据库中按顺序执行 V1 至 V48；全部迁移成功。登录后审批流仍未重新执行，V49 和真实 CAMS 验收边界保持不变。
 
 ## 未闭合环境门禁
 

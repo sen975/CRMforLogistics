@@ -41,6 +41,18 @@ class UserChannelOwnerBackfillSchemaContractTest {
     }
 
     @Test
+    void migrationAvoidsUnsupportedUuidMinAggregates() throws Exception {
+        String sql = Files.readString(Path.of(
+                "src/main/resources/db/migration/V48__backfill_user_channel_owners.sql"));
+        String compact = sql.replaceAll("\\s+", " ").toLowerCase();
+
+        assertThat(compact).doesNotContain("min(m.created_by_user_id)");
+        assertThat(compact).doesNotContain("min(identity.contact_id)");
+        assertThat(compact).contains("(array_agg(m.created_by_user_id))[1] as owner_user_id");
+        assertThat(compact).contains("(array_agg(identity.contact_id))[1] as contact_id");
+    }
+
+    @Test
     void verificationScriptOnlyReportsAggregatesAndDigests() throws Exception {
         String sql = Files.readString(Path.of(
                 "../scripts/verify-user-channel-owners.sql"));

@@ -10,7 +10,7 @@
 WITH account_candidates AS (
     SELECT ca.id AS account_id,
            ca.channel_type,
-           min(m.created_by_user_id) AS owner_user_id
+           (array_agg(m.created_by_user_id))[1] AS owner_user_id
     FROM channel_accounts ca
     JOIN messages m ON m.channel_account_id = ca.id
     WHERE ca.owner_user_id IS NULL
@@ -311,7 +311,7 @@ WHERE call_record.owner_user_id IS NULL
 
 WITH unambiguous_phone_contact AS (
     SELECT call_record.id AS call_record_id,
-           min(identity.contact_id) AS contact_id
+           (array_agg(identity.contact_id))[1] AS contact_id
     FROM call_records call_record
     JOIN contact_identities identity
       ON identity.channel_type = 'phone'
