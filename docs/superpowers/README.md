@@ -31,6 +31,7 @@
 
 ## 当前验收
 
+- [WhatsApp 共享模板与变更审批验收记录](reviews/2026-09-05-whatsapp-shared-template-approval-verification.md)：记录共享 schema、迁移、审批、发送投影、前端专项测试、生产制品和浏览器验收；同时保留 Docker/Testcontainers、V48 启动迁移与真实 CAMS 环境门禁。
 - [企业微信代开发成员头像 OAuth2 授权验收记录](reviews/2026-09-04-wecom-avatar-oauth-verification.md)：记录独立敏感授权 API、前端二维码入口、自动化门禁、浏览器验收、制品校验和服务器扫码停止条件。
 - [账户生命周期与用户资料验收记录](reviews/2026-09-03-account-lifecycle-verification.md)：记录账户专项测试、前端全量测试、桌面/移动浏览器验收、Jar/ZIP 制品及后端全量测试环境门禁。
 - [AI Topic 手动整理与联系人合并拆分验收记录](reviews/2026-09-02-ai-topic-manual-review-contact-merge-split-verification.md)：记录 Topic/联系人专项测试、前端全量测试、浏览器桌面验收、Jar/ZIP 制品与部署边界。

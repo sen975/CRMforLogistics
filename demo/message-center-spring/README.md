@@ -25,6 +25,34 @@ npm run dev
 - 后端：`http://127.0.0.1:8099`
 - 前端开发代理：`/api` 转发至后端 `8099`
 
+## WhatsApp 共享模板
+
+同一 CAMS `custSpaceId` 的 WhatsApp 模板存储在系统共享目录中，`message_templates` 是唯一真源；模板不按用户或渠道账号复制。所有已登录用户可浏览、同步和使用允许发送的共享模板，也可直接向 CAMS 申请新模板。渠道账号、联系人、消息和凭证仍按用户隔离。
+
+普通用户对已有模板的修改、发送权限、停用/删除及媒体绑定只会创建内部变更申请。管理员可批准、拒绝或重试申请，并可用自己的有效 WhatsApp 账号直接执行变更。批准后的申请始终使用申请时明确的账号；该账号失效或 scope 不匹配时操作以结构化错误失败，绝不替换为其他账号。
+
+共享模板 API：
+
+```text
+GET  /api/v1/whatsapp/templates
+GET  /api/v1/whatsapp/templates/{templateId}
+POST /api/v1/whatsapp/templates/applications
+POST /api/v1/whatsapp/templates/sync
+POST /api/v1/whatsapp/templates/{templateId}/change-requests
+GET  /api/v1/whatsapp/template-change-requests/mine
+```
+
+管理员审批 API：
+
+```text
+GET  /api/v1/admin/whatsapp/template-change-requests
+POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/approve
+POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/reject
+POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
+```
+
+旧的账号级 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 管理入口已退出，不提供兼容路径。应用启动时会回填账号 scope、归并历史副本并以官方详情对账；任何有效 WhatsApp 账号出现不同 `custSpaceId` 时，共享模板门禁保持关闭。
+
 macOS 本机只启动企业微信客户端、不指定联系人或企业时，运行：
 
 ```bash
