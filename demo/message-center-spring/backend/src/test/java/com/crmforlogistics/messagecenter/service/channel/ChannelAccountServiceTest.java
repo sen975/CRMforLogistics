@@ -7,6 +7,10 @@ import com.crmforlogistics.messagecenter.dto.response.ChannelAccountSummary;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
+import com.crmforlogistics.messagecenter.service.wecom.WeComChatDataSyncService;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -129,6 +133,58 @@ class ChannelAccountServiceTest {
                 .containsEntry("imapPassword", "real-password");
     }
 
+    @Test
+    void bindingAChatAppAccountChecksAndPersistsItsProviderScope() throws Exception {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        CredentialCipher cipher = mock(CredentialCipher.class);
+        WhatsAppProviderScopeService scopeService = mock(WhatsAppProviderScopeService.class);
+        UUID owner = UUID.randomUUID();
+        when(mapper.countActiveByOwnerAndChannel(owner, "chatapp")).thenReturn(0);
+        when(cipher.encrypt(any())).thenReturn("encrypted");
+        ChannelAccountService service = service(mapper, cipher, scopeService);
+
+        service.createOrBind(owner, new com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest(
+                "whatsapp", "Primary WhatsApp", "60111111111", Map.of(
+                "accessKeyId", "key-id",
+                "accessKeySecret", "key-secret",
+                "custSpaceId", "space-1",
+                "chatappFrom", "60111111111")));
+
+        verify(scopeService).assertCompatible("space-1");
+        var account = forClass(ChannelAccountEntity.class);
+        verify(mapper).insertOwned(account.capture(), eq(owner));
+        verify(scopeService).bind(account.getValue());
+    }
+
+    @Test
+    void credentialUpdateCannotCrossProviderScope() throws Exception {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        CredentialCipher cipher = mock(CredentialCipher.class);
+        WhatsAppProviderScopeService scopeService = mock(WhatsAppProviderScopeService.class);
+        UUID owner = UUID.randomUUID();
+        UUID id = UUID.randomUUID();
+        ChannelAccountEntity account = account(id, "chatapp", "60111111111");
+        account.setOwnerUserId(owner);
+        account.setAuthStatus("active");
+        account.setEncryptedConfig("old-encrypted");
+        when(mapper.findByIdAndOwner(id, owner)).thenReturn(account);
+        when(cipher.decrypt("old-encrypted")).thenReturn(Map.of(
+                "accessKeyId", "old-key",
+                "accessKeySecret", "old-secret",
+                "custSpaceId", "space-1",
+                "chatappFrom", "60111111111"));
+        org.mockito.Mockito.doThrow(new WhatsAppTemplateException(
+                        "WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
+                        "WhatsApp provider scope mismatch", Map.of(), null, false))
+                .when(scopeService).assertCompatible("space-2");
+        ChannelAccountService service = service(mapper, cipher, scopeService);
+
+        assertThatThrownBy(() -> service.updateCredentials(owner, id, Map.of("custSpaceId", "space-2")))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class,
+                        error -> assertThat(error.code()).isEqualTo("WHATSAPP_PROVIDER_SCOPE_MISMATCH"));
+        verify(mapper, never()).updateEncryptedConfigOwned(any(), any(), any());
+    }
+
     private static ChannelAccountService service(ChannelAccountMapper mapper) {
         return service(mapper, mock(CredentialCipher.class));
     }
@@ -139,6 +195,17 @@ class ChannelAccountServiceTest {
                 mock(ChatAppTemplateSyncService.class),
                 mock(EmailSyncService.class),
                 cipher);
+    }
+
+    private static ChannelAccountService service(ChannelAccountMapper mapper, CredentialCipher cipher,
+                                                 WhatsAppProviderScopeService scopeService) {
+        return new ChannelAccountService(mapper,
+                mock(ChatAppMessageSyncService.class),
+                mock(ChatAppTemplateSyncService.class),
+                mock(EmailSyncService.class),
+                cipher,
+                (WeComChatDataSyncService) null,
+                scopeService);
     }
 
     private static ChannelAccountEntity account(UUID id, String channelType, String identifier) {

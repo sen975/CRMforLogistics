@@ -16,7 +16,7 @@ import java.util.UUID;
 public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
 
     @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
-            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, provider_scope_id, " +
             "last_synced_at, created_at, updated_at, deleted_at, version " +
             "from channel_accounts where owner_user_id = #{ownerId}::uuid " +
             "and channel_type in ('chatapp', 'email') and deleted_at is null order by created_at asc")
@@ -29,7 +29,7 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
                                      @Param("channelType") String channelType);
 
     @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
-            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, provider_scope_id, " +
             "last_synced_at, created_at, updated_at, deleted_at, version " +
             "from channel_accounts where owner_user_id = #{ownerId}::uuid " +
             "and channel_type = #{channelType} and account_identifier_normalized = #{identifier} " +
@@ -58,14 +58,14 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
     int disableOwned(@Param("ownerId") UUID ownerId, @Param("id") UUID id);
 
     @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
-            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, provider_scope_id, " +
             "last_synced_at, created_at, updated_at, deleted_at, version " +
             "from channel_accounts where id = #{id}::uuid and owner_user_id = #{ownerId}::uuid " +
             "and deleted_at is null limit 1")
     ChannelAccountEntity findByIdAndOwner(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
 
     @Select("select id, owner_user_id, channel_type, name, account_identifier, " +
-            "account_identifier_normalized, auth_status, sync_status, encrypted_config, " +
+            "account_identifier_normalized, auth_status, sync_status, encrypted_config, provider_scope_id, " +
             "last_synced_at, created_at, updated_at, deleted_at, version " +
             "from channel_accounts where owner_user_id = #{ownerId}::uuid " +
             "and channel_type = #{channelType} and deleted_at is null " +
@@ -73,6 +73,10 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
             "order by created_at asc limit 2")
     List<ChannelAccountEntity> findByOwnerAndChannelType(@Param("ownerId") UUID ownerId,
                                                          @Param("channelType") String channelType);
+
+    @Update("update channel_accounts set provider_scope_id = #{scopeId}::uuid, updated_at = now() " +
+            "where id = #{accountId}::uuid and deleted_at is null")
+    int bindProviderScope(@Param("accountId") UUID accountId, @Param("scopeId") UUID scopeId);
 
     @Insert("insert into channel_accounts (id, channel_type, name, account_identifier, " +
             "account_identifier_normalized, auth_status, sync_status, encrypted_config) " +

@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.wecom.WeComChatDataSyncService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,7 @@ public class ChannelAccountService {
     private final EmailSyncService emailSyncService;
     private final CredentialCipher credentialCipher;
     private final WeComChatDataSyncService weComSyncService;
+    private final WhatsAppProviderScopeService whatsAppProviderScopeService;
 
     @Autowired
     public ChannelAccountService(ChannelAccountMapper channelAccountMapper,
@@ -46,9 +48,10 @@ public class ChannelAccountService {
                                  ChatAppTemplateSyncService chatAppTemplateSyncService,
                                  EmailSyncService emailSyncService,
                                  CredentialCipher credentialCipher,
-                                 ObjectProvider<WeComChatDataSyncService> weComSyncProvider) {
+                                 ObjectProvider<WeComChatDataSyncService> weComSyncProvider,
+                                 WhatsAppProviderScopeService whatsAppProviderScopeService) {
         this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
-                emailSyncService, credentialCipher, weComSyncProvider.getIfAvailable());
+                emailSyncService, credentialCipher, weComSyncProvider.getIfAvailable(), whatsAppProviderScopeService);
     }
 
     ChannelAccountService(ChannelAccountMapper channelAccountMapper,
@@ -57,7 +60,7 @@ public class ChannelAccountService {
                           EmailSyncService emailSyncService,
                           CredentialCipher credentialCipher) {
         this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
-                emailSyncService, credentialCipher, (WeComChatDataSyncService) null);
+                emailSyncService, credentialCipher, (WeComChatDataSyncService) null, null);
     }
 
     ChannelAccountService(ChannelAccountMapper channelAccountMapper,
@@ -66,12 +69,24 @@ public class ChannelAccountService {
                           EmailSyncService emailSyncService,
                           CredentialCipher credentialCipher,
                           WeComChatDataSyncService weComSyncService) {
+        this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
+                emailSyncService, credentialCipher, weComSyncService, null);
+    }
+
+    ChannelAccountService(ChannelAccountMapper channelAccountMapper,
+                          ChatAppMessageSyncService chatAppMessageSyncService,
+                          ChatAppTemplateSyncService chatAppTemplateSyncService,
+                          EmailSyncService emailSyncService,
+                          CredentialCipher credentialCipher,
+                          WeComChatDataSyncService weComSyncService,
+                          WhatsAppProviderScopeService whatsAppProviderScopeService) {
         this.channelAccountMapper = channelAccountMapper;
         this.chatAppMessageSyncService = chatAppMessageSyncService;
         this.chatAppTemplateSyncService = chatAppTemplateSyncService;
         this.emailSyncService = emailSyncService;
         this.credentialCipher = credentialCipher;
         this.weComSyncService = weComSyncService;
+        this.whatsAppProviderScopeService = whatsAppProviderScopeService;
     }
 
     public List<ChannelAccountSummary> list(UUID ownerId) {
@@ -125,6 +140,7 @@ public class ChannelAccountService {
         }
         String identifier = normalizeIdentifier(channelType, request.accountIdentifier());
         Map<String, String> credentials = validatedCredentials(channelType, request.credentials());
+        assertCompatibleScope(channelType, credentials);
         String encrypted = encrypt(credentials);
         ChannelAccountEntity existing = channelAccountMapper.findOwnedByIdentifier(ownerId, channelType, identifier);
         ChannelAccountEntity entity = existing == null ? new ChannelAccountEntity() : existing;
@@ -146,6 +162,7 @@ public class ChannelAccountService {
         } else {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_ALREADY_EXISTS", HttpStatus.CONFLICT);
         }
+        bindProviderScope(channelType, entity);
         return ChannelAccountSummary.from(entity);
     }
 
@@ -238,8 +255,11 @@ public class ChannelAccountService {
             existing.put(key, value);
         });
 
+        assertCompatibleScope(entity.getChannelType(), existing);
         String newEncrypted = credentialCipher.encrypt(existing);
         channelAccountMapper.updateEncryptedConfigOwned(ownerId, id, newEncrypted);
+        entity.setEncryptedConfig(newEncrypted);
+        bindProviderScope(entity.getChannelType(), entity);
         return Map.of("updated", existing.size());
     }
 
@@ -266,6 +286,18 @@ public class ChannelAccountService {
             return credentialCipher.encrypt(credentials);
         } catch (CredentialCipher.CredentialEncryptionException e) {
             throw new ChannelAccountException(e.code(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private void assertCompatibleScope(String channelType, Map<String, String> credentials) {
+        if ("chatapp".equals(normalizeChannelType(channelType)) && whatsAppProviderScopeService != null) {
+            whatsAppProviderScopeService.assertCompatible(credentials.get("custSpaceId"));
+        }
+    }
+
+    private void bindProviderScope(String channelType, ChannelAccountEntity entity) {
+        if ("chatapp".equals(normalizeChannelType(channelType)) && whatsAppProviderScopeService != null) {
+            whatsAppProviderScopeService.bind(entity);
         }
     }
 

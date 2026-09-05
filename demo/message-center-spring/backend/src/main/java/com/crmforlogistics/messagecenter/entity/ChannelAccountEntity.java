@@ -25,6 +25,7 @@ public class ChannelAccountEntity {
     @TableField(value = "encrypted_config", jdbcType = JdbcType.OTHER,
             typeHandler = JsonbStringTypeHandler.class)
     private String encryptedConfig;
+    private UUID providerScopeId;
     private Instant lastSyncedAt;
     private Instant createdAt;
     private Instant updatedAt;
@@ -102,6 +103,14 @@ public class ChannelAccountEntity {
 
     public void setEncryptedConfig(String encryptedConfig) {
         this.encryptedConfig = encryptedConfig;
+    }
+
+    public UUID getProviderScopeId() {
+        return providerScopeId;
+    }
+
+    public void setProviderScopeId(UUID providerScopeId) {
+        this.providerScopeId = providerScopeId;
     }
 
     public Instant getLastSyncedAt() {
