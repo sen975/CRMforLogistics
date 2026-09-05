@@ -118,9 +118,17 @@ public class ContactGroupService {
         Objects.requireNonNull(identityId, "identityId");
         String name = requireText(newContactName, "newContactName", 100);
 
+        var identity = contactIdentityMapper.selectById(identityId);
+        if (identity == null || identity.getContactId() == null) {
+            throw new IllegalArgumentException("Contact identity not found: " + identityId);
+        }
+        UUID sourceContactId = identity.getContactId();
+        ContactEntity sourceContact = requireAccessibleContact(sourceContactId, userId);
+
         // Create new contact
         ContactEntity newContact = new ContactEntity();
         newContact.setId(UUID.randomUUID());
+        newContact.setOwnerUserId(sourceContact.getOwnerUserId());
         newContact.setDisplayName(name);
         newContact.setStatus("active");
         if (userId != null) {
@@ -227,6 +235,16 @@ public class ContactGroupService {
 
     private ContactEntity requireContact(UUID contactId) {
         ContactEntity contact = contactMapper.selectById(contactId);
+        if (contact == null) {
+            throw new IllegalArgumentException("Contact not found: " + contactId);
+        }
+        return contact;
+    }
+
+    private ContactEntity requireAccessibleContact(UUID contactId, UUID userId) {
+        ContactEntity contact = userId == null ? contactMapper.selectById(contactId)
+                : contactMapper.findAccessibleById(contactId, userId,
+                        ContactService.isCurrentUserAdmin()).orElse(null);
         if (contact == null) {
             throw new IllegalArgumentException("Contact not found: " + contactId);
         }
