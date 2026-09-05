@@ -17,6 +17,7 @@
 
 ## 当前实施
 
+- [WhatsApp 共享模板与变更审批实施计划](plans/2026-09-05-whatsapp-shared-template-approval.md)：把共享 provider scope、账号副本归并、新模板直接官方申请、普通用户变更审批、管理员直接执行、发送解析切换和发布验收拆为九个可独立提交的 Task。
 - [企业微信代开发成员头像 OAuth2 授权实施计划](plans/2026-09-04-wecom-avatar-oauth.md)：落实独立敏感授权二维码、一次性回调、绑定成员校验、终态轮询和 Web 登录 scope 清理。
 - [账户生命周期与用户资料实施计划](plans/2026-09-03-account-lifecycle.md)：落实公开注册、当前用户资料与头像、凭原密码改密、会话轮换和管理员用户管理。
 - [AI Topic 手动整理与联系人合并拆分实施计划](plans/2026-09-02-ai-topic-manual-review-contact-merge-split.md)：落实待确定区、人工选源预览、Topic 融合，以及联系人合并/拆分的 Topic 来源迁移。
