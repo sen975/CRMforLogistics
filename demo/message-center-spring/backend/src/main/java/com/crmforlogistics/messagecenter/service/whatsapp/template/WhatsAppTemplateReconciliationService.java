@@ -50,7 +50,7 @@ public class WhatsAppTemplateReconciliationService {
     private final TemplateMediaAssetMapper mediaMapper;
     private final ObjectMapper objectMapper;
     private final Clock clock;
-    private final ConcurrentHashMap<UUID, CompletableFuture<SyncResult>> accountSyncs = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<SyncResult>> syncs = new ConcurrentHashMap<>();
 
     public WhatsAppTemplateReconciliationService(WhatsAppTemplateGateway gateway,
                                                  TemplateMapper templateMapper,
@@ -69,24 +69,34 @@ public class WhatsAppTemplateReconciliationService {
     /** Fetch the complete provider snapshot before changing the local projection. */
     public SyncResult syncAccount(UUID accountId) {
         UUID scopedAccountId = Objects.requireNonNull(accountId);
+        return sync("account:" + scopedAccountId, null, scopedAccountId);
+    }
+
+    public SyncResult syncScope(UUID providerScopeId, UUID credentialAccountId) {
+        UUID scopeId = Objects.requireNonNull(providerScopeId);
+        UUID accountId = Objects.requireNonNull(credentialAccountId);
+        return sync("scope:" + scopeId, scopeId, accountId);
+    }
+
+    private SyncResult sync(String key, UUID providerScopeId, UUID accountId) {
         CompletableFuture<SyncResult> current = new CompletableFuture<>();
-        CompletableFuture<SyncResult> existing = accountSyncs.putIfAbsent(scopedAccountId, current);
+        CompletableFuture<SyncResult> existing = syncs.putIfAbsent(key, current);
         if (existing != null) {
             return await(existing);
         }
         try {
-            SyncResult result = doSyncAccount(scopedAccountId);
+            SyncResult result = doSync(providerScopeId, accountId);
             current.complete(result);
             return result;
         } catch (RuntimeException | Error error) {
             current.completeExceptionally(error);
             throw error;
         } finally {
-            accountSyncs.remove(scopedAccountId, current);
+            syncs.remove(key, current);
         }
     }
 
-    private SyncResult doSyncAccount(UUID accountId) {
+    private SyncResult doSync(UUID providerScopeId, UUID accountId) {
         Instant now = now();
         ProviderSnapshot provider;
         try {
@@ -95,7 +105,7 @@ public class WhatsAppTemplateReconciliationService {
             return new SyncResult(0, 0, 0, false);
         }
 
-        Map<TemplateKey, TemplateEntity> existing = existingTemplates(accountId);
+        Map<TemplateKey, TemplateEntity> existing = existingTemplates(providerScopeId, accountId);
         int changed = 0;
         for (ProviderTemplateSummary summary : provider.items()) {
             TemplateKey key = key(summary.templateCode(), summary.language());
@@ -104,14 +114,14 @@ public class WhatsAppTemplateReconciliationService {
                 Optional<TemplateSnapshot> detail = verifiedDetail(accountId, summary.templateCode(),
                         summary.language(), gateway.detail(accountId, summary.templateCode(), summary.language()));
                 if (detail.isPresent()) {
-                    persistSnapshot(detail.orElseThrow(), current, now);
+                    persistSnapshot(detail.orElseThrow(), current, providerScopeId, accountId, now);
                 } else {
-                    persistSummary(summary, current, accountId, now);
+                    persistSummary(summary, current, providerScopeId, accountId, now);
                 }
                 changed++;
             } catch (RuntimeException error) {
                 // The list state is authoritative for review status, but not for components.
-                persistSummary(summary, current, accountId, now);
+                persistSummary(summary, current, providerScopeId, accountId, now);
                 changed++;
             }
             existing.remove(key);
@@ -252,7 +262,8 @@ public class WhatsAppTemplateReconciliationService {
         TemplateSnapshot snapshot = detail.orElseThrow();
         TemplateEntity current = templateMapper.findForDisplay(operation.getChannelAccountId(),
                 snapshot.templateCode(), snapshot.language()).orElse(null);
-        persistSnapshot(snapshot, current, now);
+        persistSnapshot(snapshot, current, current == null ? null : current.getProviderScopeId(),
+                operation.getChannelAccountId(), now);
         if (create && snapshot.reviewStatus() == ReviewStatus.REJECTED) {
             referencedMedia(operation, command, snapshot).ifPresent(asset -> mediaMapper.markOrphaned(asset.getId()));
             fail(operation, "TEMPLATE_PROVIDER_REJECTED", snapshot.rejectionReason(), now);
@@ -323,23 +334,28 @@ public class WhatsAppTemplateReconciliationService {
         return detail;
     }
 
-    private Map<TemplateKey, TemplateEntity> existingTemplates(UUID accountId) {
+    private Map<TemplateKey, TemplateEntity> existingTemplates(UUID providerScopeId, UUID accountId) {
         Map<TemplateKey, TemplateEntity> existing = new HashMap<>();
-        for (TemplateEntity entity : templateMapper.selectList(new LambdaQueryWrapper<TemplateEntity>()
-                .eq(TemplateEntity::getChannelAccountId, accountId)
-                .isNull(TemplateEntity::getDeletedAt))) {
+        List<TemplateEntity> templates = providerScopeId == null
+                ? templateMapper.selectList(new LambdaQueryWrapper<TemplateEntity>()
+                        .eq(TemplateEntity::getChannelAccountId, accountId)
+                        .isNull(TemplateEntity::getDeletedAt))
+                : templateMapper.findScopeTemplates(providerScopeId);
+        for (TemplateEntity entity : templates) {
             existing.put(key(entity.getProviderTemplateId(), entity.getLanguageCode()), entity);
         }
         return existing;
     }
 
-    private void persistSnapshot(TemplateSnapshot snapshot, TemplateEntity entity, Instant now) {
+    private void persistSnapshot(TemplateSnapshot snapshot, TemplateEntity entity, UUID providerScopeId,
+                                 UUID credentialAccountId, Instant now) {
         TemplateEntity target = entity == null ? new TemplateEntity() : entity;
         if (entity == null) {
             target.setId(UUID.randomUUID());
             target.setCreatedAt(now);
         }
-        target.setChannelAccountId(snapshot.accountId());
+        target.setChannelAccountId(credentialAccountId);
+        target.setProviderScopeId(providerScopeId);
         target.setProviderTemplateId(snapshot.templateCode());
         target.setLanguageCode(snapshot.language());
         target.setName(snapshot.templateName());
@@ -358,20 +374,23 @@ public class WhatsAppTemplateReconciliationService {
         target.setLastSyncedAt(now);
         target.setUpdatedAt(now);
         target.setDeletedAt(snapshot.deletedAt());
-        if (entity == null) {
+        if (providerScopeId != null) {
+            templateMapper.upsertShared(target);
+        } else if (entity == null) {
             templateMapper.insert(target);
         } else {
             templateMapper.updateById(target);
         }
     }
 
-    private void persistSummary(ProviderTemplateSummary summary, TemplateEntity entity, UUID accountId, Instant now) {
+    private void persistSummary(ProviderTemplateSummary summary, TemplateEntity entity, UUID providerScopeId,
+                                UUID accountId, Instant now) {
         if (entity == null) {
             TemplateSnapshot snapshot = new TemplateSnapshot(accountId, summary.templateCode(), summary.templateName(),
                     summary.language(), summary.category(), reviewStatus(summary.rawAuditStatus()),
                     summary.rawAuditStatus(), summary.reason(), false, List.of(), Map.of(), null,
                     summary.providerUpdatedAt(), null);
-            persistSnapshot(snapshot, null, now);
+            persistSnapshot(snapshot, null, providerScopeId, accountId, now);
             return;
         }
         entity.setName(summary.templateName());

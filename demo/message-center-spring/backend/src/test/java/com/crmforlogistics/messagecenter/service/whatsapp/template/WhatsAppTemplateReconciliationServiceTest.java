@@ -48,6 +48,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class WhatsAppTemplateReconciliationServiceTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("30000000-0000-0000-0000-000000000003");
+    private static final UUID SCOPE_ID = UUID.fromString("50000000-0000-0000-0000-000000000005");
     private static final Instant NOW = Instant.parse("2026-08-11T02:00:00Z");
 
     @Mock private WhatsAppTemplateGateway gateway;
@@ -193,6 +194,26 @@ class WhatsAppTemplateReconciliationServiceTest {
         assertThat(updated.getValue().getBody()).isEqualTo("New body");
         assertThat(updated.getValue().getStatus()).isEqualTo("PENDING");
         assertThat(updated.getValue().getRemark()).isEqualTo("发货提醒");
+    }
+
+    @Test
+    void scopeSyncWritesOneSharedProjectionAndPreservesItsScopeIdentity() {
+        TemplateEntity existing = template("tpl-1", "APPROVED", "[]");
+        existing.setProviderScopeId(SCOPE_ID);
+        existing.setRemark("共享备注");
+        when(templateMapper.findScopeTemplates(SCOPE_ID)).thenReturn(List.of(existing));
+        when(gateway.list(ACCOUNT_ID, 1, 100)).thenReturn(new ProviderTemplatePage(
+                List.of(summary("tpl-1", "official_name", "pass")), 1, false));
+        when(gateway.detail(ACCOUNT_ID, "tpl-1", "en_US"))
+                .thenReturn(Optional.of(snapshot("tpl-1", "official_name", ReviewStatus.APPROVED, true, null)));
+
+        var result = service.syncScope(SCOPE_ID, ACCOUNT_ID);
+
+        assertThat(result.complete()).isTrue();
+        ArgumentCaptor<TemplateEntity> updated = ArgumentCaptor.forClass(TemplateEntity.class);
+        verify(templateMapper).upsertShared(updated.capture());
+        assertThat(updated.getValue().getProviderScopeId()).isEqualTo(SCOPE_ID);
+        assertThat(updated.getValue().getRemark()).isEqualTo("共享备注");
     }
 
     @Test

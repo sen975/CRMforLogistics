@@ -19,12 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ChatAppTemplateSyncServiceTest {
+    private static final UUID SCOPE_ID = UUID.fromString("50000000-0000-0000-0000-000000000005");
 
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock WhatsAppTemplateReconciliationService reconciliationService;
@@ -61,7 +63,8 @@ class ChatAppTemplateSyncServiceTest {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(channelAccountId);
         when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account));
-        when(reconciliationService.syncAccount(channelAccountId))
+        account.setProviderScopeId(SCOPE_ID);
+        when(reconciliationService.syncScope(SCOPE_ID, channelAccountId))
                 .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(2, 120, 7, true));
 
         ChatAppTemplateSyncService.SyncResultRecord result = service().runOnce();
@@ -69,9 +72,26 @@ class ChatAppTemplateSyncServiceTest {
         assertEquals(2, result.pages());
         assertEquals(120, result.fetched());
         assertEquals(7, result.changed());
-        verify(reconciliationService).syncAccount(channelAccountId);
+        verify(reconciliationService).syncScope(SCOPE_ID, channelAccountId);
         verify(permissionReconciliationService).reconcileDueTemplates(
                 org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
+    }
+
+    @Test
+    void scheduledSyncUsesOnlyOneHealthyCredentialPerProviderScope() {
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        ChannelAccountEntity first = account(firstId);
+        ChannelAccountEntity second = account(secondId);
+        when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(first, second));
+        when(reconciliationService.syncScope(SCOPE_ID, firstId))
+                .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 4, 2, true));
+
+        ChatAppTemplateSyncService.SyncResultRecord result = service().runOnce();
+
+        assertEquals(4, result.fetched());
+        verify(reconciliationService, times(1)).syncScope(SCOPE_ID, firstId);
+        verify(reconciliationService, never()).syncScope(SCOPE_ID, secondId);
     }
 
     @Test
@@ -81,14 +101,15 @@ class ChatAppTemplateSyncServiceTest {
         account.setId(channelAccountId);
         account.setChannelType("whatsapp");
         account.setAuthStatus("active");
+        account.setProviderScopeId(SCOPE_ID);
         when(channelAccountMapper.selectById(channelAccountId)).thenReturn(account);
-        when(reconciliationService.syncAccount(channelAccountId))
+        when(reconciliationService.syncScope(SCOPE_ID, channelAccountId))
                 .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 10, 2, true));
 
         ChatAppTemplateSyncService.SyncResultRecord result = service().runAccount(channelAccountId);
 
         assertEquals(10, result.fetched());
-        verify(reconciliationService).syncAccount(channelAccountId);
+        verify(reconciliationService).syncScope(SCOPE_ID, channelAccountId);
         verify(permissionReconciliationService).reconcileDueTemplates(
                 org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
     }
@@ -96,5 +117,14 @@ class ChatAppTemplateSyncServiceTest {
     private ChatAppTemplateSyncService service() {
         return new ChatAppTemplateSyncService(
                 reconciliationService, permissionReconciliationService, channelAccountMapper);
+    }
+
+    private static ChannelAccountEntity account(UUID id) {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(id);
+        account.setProviderScopeId(SCOPE_ID);
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        return account;
     }
 }

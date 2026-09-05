@@ -17,6 +17,8 @@ public class TemplateEntity {
     private UUID id;
 
     private UUID channelAccountId;
+    private UUID providerScopeId;
+    private UUID createdByUserId;
     private String providerTemplateId;
     private String languageCode;
     private String name;
@@ -66,6 +68,22 @@ public class TemplateEntity {
 
     public void setChannelAccountId(UUID channelAccountId) {
         this.channelAccountId = channelAccountId;
+    }
+
+    public UUID getProviderScopeId() {
+        return providerScopeId;
+    }
+
+    public void setProviderScopeId(UUID providerScopeId) {
+        this.providerScopeId = providerScopeId;
+    }
+
+    public UUID getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    public void setCreatedByUserId(UUID createdByUserId) {
+        this.createdByUserId = createdByUserId;
     }
 
     public String getProviderTemplateId() {
