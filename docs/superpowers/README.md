@@ -4,6 +4,7 @@
 
 ## 当前设计
 
+- [WhatsApp 共享模板与变更审批设计](specs/2026-09-05-whatsapp-shared-template-approval-design.md)：WhatsApp 模板权限当前最高层真源；定义系统级共享模板、新模板直接官方申请、普通用户变更审批、管理员直接执行、共享身份迁移和凭证隔离。
 - [用户私有渠道通讯录设计](specs/2026-09-04-user-channel-address-books-design.md)：定义 WhatsApp、邮件和电话按用户隔离的渠道账号、联系人、身份、标签、通话记录、通讯录页面、历史迁移和权限边界；企业微信沿用现有实现。
 - [企业微信代开发成员头像 OAuth2 授权设计](specs/2026-09-04-wecom-avatar-oauth-design.md)：定义 Web 登录与敏感头像授权分离、跨设备二维码授权、一次性 state、成员绑定校验和终态刷新。
 - [账户生命周期与用户资料设计](specs/2026-09-03-account-lifecycle-design.md)：定义公开注册、当前账户资料、密码管理、MinIO 用户头像、企业微信头像优先级和管理员角色管理。
