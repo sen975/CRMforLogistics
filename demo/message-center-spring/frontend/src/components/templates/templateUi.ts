@@ -1,4 +1,4 @@
-import type { TemplateAdmin, TemplateButton, TemplateCategory, TemplateCommand, TemplateComponent, TemplateHeaderFormat } from '../../api/types';
+import type { SharedTemplate, TemplateButton, TemplateCategory, TemplateCommand, TemplateComponent, TemplateHeaderFormat } from '../../api/types';
 import { isWhatsAppTemplateLanguage, type WhatsAppTemplateLanguageCode } from './whatsappLanguages';
 
 export const MAX_TEMPLATE_NAME_LENGTH = 512;
@@ -25,7 +25,7 @@ export function isTemplateLanguage(value: string | null): value is WhatsAppTempl
   return isWhatsAppTemplateLanguage(value);
 }
 
-export const statusLabels: Record<TemplateAdmin['reviewStatus'], string> = {
+export const statusLabels: Record<SharedTemplate['reviewStatus'], string> = {
   PENDING: '审核中',
   APPROVED: '已通过',
   REJECTED: '已拒绝',
@@ -33,7 +33,7 @@ export const statusLabels: Record<TemplateAdmin['reviewStatus'], string> = {
   UNKNOWN: '未知',
 };
 
-export const statusColors: Record<TemplateAdmin['reviewStatus'], string> = {
+export const statusColors: Record<SharedTemplate['reviewStatus'], string> = {
   PENDING: 'processing',
   APPROVED: 'success',
   REJECTED: 'error',
@@ -41,31 +41,14 @@ export const statusColors: Record<TemplateAdmin['reviewStatus'], string> = {
   UNKNOWN: 'default',
 };
 
-export function templatePermissionState(template: TemplateAdmin): {
+export function templatePermissionState(template: SharedTemplate): {
   label: string;
   color: string;
   actionLabel: '暂停发送' | '恢复发送';
   toggleDisabled: boolean;
 } {
-  const actionLabel = template.desiredAllowSend ? '暂停发送' : '恢复发送';
-  const toggleDisabled = template.permissionSyncStatus === 'PENDING'
-    || (!template.desiredAllowSend && template.reviewStatus !== 'APPROVED');
-  if (template.permissionSyncStatus === 'PENDING') {
-    return {
-      label: template.desiredAllowSend ? '启用同步中' : '停用同步中',
-      color: 'processing',
-      actionLabel,
-      toggleDisabled,
-    };
-  }
-  if (template.permissionSyncStatus === 'FAILED') {
-    return {
-      label: template.desiredAllowSend ? '启用失败' : '停用失败',
-      color: 'error',
-      actionLabel,
-      toggleDisabled,
-    };
-  }
+  const actionLabel = template.allowSend ? '暂停发送' : '恢复发送';
+  const toggleDisabled = !template.allowSend && template.reviewStatus !== 'APPROVED';
   return {
     label: template.allowSend ? '已启用' : '已暂停',
     color: template.allowSend ? 'green' : 'default',
@@ -97,7 +80,7 @@ export function componentForHeader(format: TemplateHeaderFormat, text: string | 
   return { type: 'HEADER', headerFormat: format, text, mediaAssetId, buttons: [] };
 }
 
-export function initialValueForTemplate(template: TemplateAdmin | null): TemplateEditorInitialValue {
+export function initialValueForTemplate(template: SharedTemplate | null): TemplateEditorInitialValue {
   const header = template?.components.find((component) => component.type === 'HEADER');
   const body = bodyComponent(template?.components ?? []);
   const footer = template?.components.find((component) => component.type === 'FOOTER');

@@ -606,9 +606,9 @@ export interface TemplateComponent {
   buttons: TemplateButton[];
 }
 
-export interface TemplateAdmin {
+export interface SharedTemplate {
   id: string;
-  accountId: string;
+  version: number;
   templateCode: string;
   name: string;
   remark: string | null;
@@ -619,9 +619,6 @@ export interface TemplateAdmin {
   providerAuditStatus: string | null;
   rejectionReason: string | null;
   allowSend: boolean;
-  desiredAllowSend: boolean;
-  permissionSyncStatus: 'IDLE' | 'PENDING' | 'FAILED';
-  permissionSyncError: string | null;
   components: TemplateComponent[];
   examples: Record<string, string[]>;
   messageSendTtlSeconds: number | null;
@@ -659,8 +656,8 @@ export interface TemplateMediaAsset {
   traceId: string | null;
 }
 
-export interface TemplateListPage {
-  items: TemplateAdmin[];
+export interface SharedTemplateListPage {
+  items: SharedTemplate[];
   total: number;
   page: number;
   size: number;
@@ -676,13 +673,11 @@ export interface TemplateCommand {
   clientRequestId: string;
 }
 
-export type TemplateUpdateCommand = Omit<TemplateCommand, 'language'>;
-
-export interface TemplateListFilters {
+export interface SharedTemplateListFilters {
   page?: number;
   size?: number;
   search?: string;
-  status?: TemplateAdmin['reviewStatus'];
+  status?: SharedTemplate['reviewStatus'];
   category?: string;
   language?: string;
   allowSend?: boolean;
@@ -694,6 +689,52 @@ export interface TemplateSyncResult {
   fetched: number;
   changed: number;
   complete: boolean;
+}
+
+export type TemplateChangeType = 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'BIND_MEDIA';
+export type TemplateChangeStatus =
+  | 'PENDING_APPROVAL' | 'REJECTED' | 'STALE'
+  | 'EXECUTING' | 'SUCCEEDED' | 'EXECUTION_FAILED';
+
+export interface TemplateChangeRequestView {
+  id: string;
+  templateId: string;
+  templateDisplayName: string;
+  baseVersion: number;
+  changeType: TemplateChangeType;
+  status: TemplateChangeStatus;
+  diffs: Array<{ field: string; label: string; beforeValue: unknown; afterValue: unknown }>;
+  requestedByDisplayName: string;
+  reviewedByDisplayName: string | null;
+  reviewReason: string | null;
+  executionErrorCode: string | null;
+  executionErrorMessage: string | null;
+  providerRequestId: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  executionCompletedAt: string | null;
+}
+
+export interface TemplateChangeRequestPage {
+  items: TemplateChangeRequestView[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface TemplateChangeOperation {
+  operationId: string;
+  operationType: TemplateOperation['operationType'];
+  operationStatus: TemplateOperation['operationStatus'];
+  templateCode: string;
+  providerRequestId: string | null;
+  errorCode: string | null;
+}
+
+export interface TemplateChangeOutcome {
+  mode: 'APPROVAL_REQUIRED' | 'DIRECT';
+  request: TemplateChangeRequestView | null;
+  operation: TemplateChangeOperation | null;
 }
 
 export interface PublicTemplateVariable {

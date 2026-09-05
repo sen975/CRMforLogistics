@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { PublicTemplate, TemplateAdmin } from '../../api/types';
+import type { PublicTemplate, SharedTemplate } from '../../api/types';
 import { publicTemplateToEditorDraft } from './publicTemplateConversion';
 import TemplateEditorDrawer from './TemplateEditorDrawer';
 
@@ -130,9 +130,9 @@ describe('TemplateEditorDrawer existing templates', () => {
   it('keeps the official template name read-only and submits the original name', async () => {
     const user = userEvent.setup();
     const submit = vi.fn().mockResolvedValue(undefined);
-    const template: TemplateAdmin = {
+    const template: SharedTemplate = {
       id: 'template-1',
-      accountId: 'account-1',
+      version: 1,
       templateCode: 'welcome',
       name: 'official_welcome',
       remark: '客户欢迎',
@@ -143,9 +143,6 @@ describe('TemplateEditorDrawer existing templates', () => {
       providerAuditStatus: 'pass',
       rejectionReason: null,
       allowSend: true,
-      desiredAllowSend: true,
-      permissionSyncStatus: 'IDLE',
-      permissionSyncError: null,
       components: [{ type: 'BODY', headerFormat: null, text: '您好', mediaAssetId: null, buttons: [] }],
       examples: {},
       messageSendTtlSeconds: null,

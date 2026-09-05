@@ -5,14 +5,14 @@
 }
 
 .public-template-card,
-.owned-template-card,
+.shared-template-card,
 .public-template-card-skeleton {
   box-sizing: border-box;
   min-width: 0;
   min-height: 360px;
 }
 
-.owned-template-card {
+.shared-template-card {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
@@ -21,11 +21,11 @@
   background: #fff;
 }
 
-.owned-template-card:hover {
+.shared-template-card:hover {
   border-color: #1677ff;
 }
 
-.owned-template-card__preview {
+.shared-template-card__preview {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
@@ -37,16 +37,16 @@
   cursor: pointer;
 }
 
-.owned-template-card__preview:focus-visible {
+.shared-template-card__preview:focus-visible {
   outline: 2px solid #1677ff;
   outline-offset: -2px;
 }
 
-.owned-template-card__preview .template-message-canvas--compact {
+.shared-template-card__preview .template-message-canvas--compact {
   min-height: 260px;
 }
 
-.owned-template-card__summary {
+.shared-template-card__summary {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -54,7 +54,7 @@
   border-top: 1px solid #f0f0f0;
 }
 
-.owned-template-card__actions {
+.shared-template-card__actions {
   display: flex;
   justify-content: flex-end;
   gap: 2px;
@@ -62,7 +62,7 @@
   border-top: 1px solid #f0f0f0;
 }
 
-.owned-template-operations {
+.shared-template-operations {
   margin-top: 20px;
 }
 

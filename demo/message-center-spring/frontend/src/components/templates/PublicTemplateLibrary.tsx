@@ -3,7 +3,7 @@ import { Alert, Button, Input, Pagination, Select, Space } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { fetchPublicTemplates } from '../../api/endpoints';
-import type { ChannelAccount, PublicTemplate, PublicTemplateQuery } from '../../api/types';
+import type { PublicTemplate, PublicTemplateQuery } from '../../api/types';
 import { publicTemplateToEditorDraft, type PublicTemplateConversionResult } from './publicTemplateConversion';
 import PublicTemplateCardGrid from './PublicTemplateCardGrid';
 import PublicTemplateDetailModal from './PublicTemplateDetailModal';
@@ -21,10 +21,10 @@ function filterValues(value: string): string[] | undefined {
 }
 
 export default function PublicTemplateLibrary({
-  account,
+  hasWhatsAppAccount,
   onCreateFromPublicTemplate,
 }: {
-  account: ChannelAccount | null;
+  hasWhatsAppAccount: boolean;
   onCreateFromPublicTemplate?: (draft: PublicTemplateConversionResult) => void;
 }) {
   const [query, setQuery] = useState<PublicTemplateQuery>({ language: 'zh_CN', page: 1, size: 20 });
@@ -34,12 +34,12 @@ export default function PublicTemplateLibrary({
   const [selectedPageIndex, setSelectedPageIndex] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('parameter');
   const templatesQuery = useQuery({
-    queryKey: ['public-templates', account?.id, query],
-    queryFn: () => fetchPublicTemplates(account!.id, query),
-    enabled: !!account,
+    queryKey: ['public-templates', query],
+    queryFn: () => fetchPublicTemplates(query),
+    enabled: hasWhatsAppAccount,
     retry: false,
   });
-  const rows = account ? templatesQuery.data?.items ?? [] : [];
+  const rows = hasWhatsAppAccount ? templatesQuery.data?.items ?? [] : [];
   const queryError = templatesQuery.error ? errorDetails(templatesQuery.error) : null;
   const setFilter = (patch: Partial<PublicTemplateQuery>) => setQuery((current) => ({ ...current, ...patch, page: 1 }));
 
@@ -47,7 +47,7 @@ export default function PublicTemplateLibrary({
     setSelectedTemplate(null);
   };
   const openDetail = (template: PublicTemplate) => {
-    if (!account) return;
+    if (!hasWhatsAppAccount) return;
     setSelectedTemplate(template);
     setSelectedPageIndex(template.content.pages.length === 1 ? 0 : null);
     setPreviewMode('parameter');
@@ -56,7 +56,7 @@ export default function PublicTemplateLibrary({
   useEffect(() => {
     setSelectedTemplate(null);
     setSelectedPageIndex(null);
-  }, [account?.id]);
+  }, [hasWhatsAppAccount]);
 
   const customize = () => {
     if (!selectedTemplate || selectedPageIndex === null || !onCreateFromPublicTemplate) return;
@@ -67,19 +67,19 @@ export default function PublicTemplateLibrary({
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {!account && <Alert type="warning" showIcon message="没有可用于创建模板的 WhatsApp 账号" />}
+      {!hasWhatsAppAccount && <Alert type="warning" showIcon message="没有可用的 WhatsApp 账号" />}
       <Space wrap style={{ width: '100%' }}>
-        <Input aria-label="公共模板搜索" disabled={!account} placeholder="搜索公共模板名称" prefix={<SearchOutlined />} allowClear value={query.name ?? ''} onChange={(event) => setFilter({ name: event.target.value || undefined })} style={{ width: 240 }} />
-        <Select aria-label="公共模板语言" disabled={!account} value={query.language} onChange={(value) => setFilter({ language: value })} options={WHATSAPP_TEMPLATE_LANGUAGE_OPTIONS} showSearch optionFilterProp="label" style={{ width: 190 }} />
-        <Select aria-label="公共模板类别" disabled={!account} placeholder="模板类别" allowClear value={query.category} onChange={(value) => setFilter({ category: value })} options={[{ value: 'UTILITY', label: '工具' }, { value: 'MARKETING', label: '营销' }]} style={{ width: 130 }} />
-        <Input aria-label="行业筛选" disabled={!account} placeholder="行业，多个用逗号分隔" allowClear value={industryInput} onChange={(event) => { setIndustryInput(event.target.value); setFilter({ industries: filterValues(event.target.value) }); }} style={{ width: 190 }} />
-        <Input aria-label="用途筛选" disabled={!account} placeholder="用途，多个用逗号分隔" allowClear value={usecaseInput} onChange={(event) => { setUsecaseInput(event.target.value); setFilter({ usecases: filterValues(event.target.value) }); }} style={{ width: 190 }} />
+        <Input aria-label="公共模板搜索" disabled={!hasWhatsAppAccount} placeholder="搜索公共模板名称" prefix={<SearchOutlined />} allowClear value={query.name ?? ''} onChange={(event) => setFilter({ name: event.target.value || undefined })} style={{ width: 240 }} />
+        <Select aria-label="公共模板语言" disabled={!hasWhatsAppAccount} value={query.language} onChange={(value) => setFilter({ language: value })} options={WHATSAPP_TEMPLATE_LANGUAGE_OPTIONS} showSearch optionFilterProp="label" style={{ width: 190 }} />
+        <Select aria-label="公共模板类别" disabled={!hasWhatsAppAccount} placeholder="模板类别" allowClear value={query.category} onChange={(value) => setFilter({ category: value })} options={[{ value: 'UTILITY', label: '工具' }, { value: 'MARKETING', label: '营销' }]} style={{ width: 130 }} />
+        <Input aria-label="行业筛选" disabled={!hasWhatsAppAccount} placeholder="行业，多个用逗号分隔" allowClear value={industryInput} onChange={(event) => { setIndustryInput(event.target.value); setFilter({ industries: filterValues(event.target.value) }); }} style={{ width: 190 }} />
+        <Input aria-label="用途筛选" disabled={!hasWhatsAppAccount} placeholder="用途，多个用逗号分隔" allowClear value={usecaseInput} onChange={(event) => { setUsecaseInput(event.target.value); setFilter({ usecases: filterValues(event.target.value) }); }} style={{ width: 190 }} />
       </Space>
       {queryError && <Alert type="error" showIcon message={queryError.message} description={queryError.traceId ? `追踪 ID：${queryError.traceId}` : undefined} action={<Button size="small" onClick={() => void templatesQuery.refetch()}>重试加载</Button>} />}
       <PublicTemplateCardGrid
         templates={rows}
-        loading={!!account && (templatesQuery.isLoading || templatesQuery.isFetching)}
-        emptyDescription={!account ? '请选择有效的 WhatsApp 账号后浏览公共模板' : templatesQuery.error ? '暂无可显示的公共模板' : '暂无公共模板'}
+        loading={hasWhatsAppAccount && (templatesQuery.isLoading || templatesQuery.isFetching)}
+        emptyDescription={!hasWhatsAppAccount ? '配置 WhatsApp 账号后即可浏览公共模板' : templatesQuery.error ? '暂无可显示的公共模板' : '暂无公共模板'}
         onOpen={openDetail}
       />
       <Pagination
@@ -87,12 +87,12 @@ export default function PublicTemplateLibrary({
         pageSize={templatesQuery.data?.size ?? query.size ?? 20}
         total={templatesQuery.data?.total ?? 0}
         showSizeChanger={false}
-        disabled={!account || !templatesQuery.data?.total}
+        disabled={!hasWhatsAppAccount || !templatesQuery.data?.total}
         onChange={(page) => setQuery((current) => ({ ...current, page }))}
       />
       <PublicTemplateDetailModal
         template={selectedTemplate}
-        accountName={account?.name ?? ''}
+        accountName={hasWhatsAppAccount ? '当前 WhatsApp 账号' : ''}
         selectedPageIndex={selectedPageIndex}
         previewMode={previewMode}
         customizeEnabled={!!onCreateFromPublicTemplate}

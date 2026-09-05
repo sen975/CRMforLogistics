@@ -59,7 +59,7 @@ function renderLibrary(
     <QueryClientProvider client={queryClient}>
       <ConfigProvider>
         <AntApp>
-          <PublicTemplateLibrary account={selectedAccount} onCreateFromPublicTemplate={onCreateFromPublicTemplate} />
+          <PublicTemplateLibrary hasWhatsAppAccount={Boolean(selectedAccount)} onCreateFromPublicTemplate={onCreateFromPublicTemplate} />
         </AntApp>
       </ConfigProvider>
     </QueryClientProvider>,
@@ -94,7 +94,7 @@ describe('PublicTemplateLibrary', () => {
     await user.type(screen.getByLabelText('行业筛选'), '电商');
     await user.type(screen.getByLabelText('用途筛选'), '账号创建确认');
 
-    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith('account-1', expect.objectContaining({
+    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({
       name: 'account', language: 'zh_CN', industries: ['电商'], usecases: ['账号创建确认'], page: 1, size: 20,
     })));
   });
@@ -207,28 +207,27 @@ describe('PublicTemplateLibrary', () => {
     await user.click(screen.getByRole('button', { name: '重试加载' }));
     expect(await screen.findByRole('button', { name: `查看公共模板 ${publicTemplate.code}` })).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('Next Page'));
-    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith('account-1', expect.objectContaining({ page: 2, size: 20 })));
+    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, size: 20 })));
   });
 
   it('does not query without an account and closes the detail when the account changes', async () => {
     renderLibrary(null);
-    expect(screen.getByText('没有可用于创建模板的 WhatsApp 账号')).toBeInTheDocument();
-    expect(screen.getByText('请选择有效的 WhatsApp 账号后浏览公共模板')).toBeInTheDocument();
+    expect(screen.getByText('没有可用的 WhatsApp 账号')).toBeInTheDocument();
+    expect(screen.getByText('配置 WhatsApp 账号后即可浏览公共模板')).toBeInTheDocument();
     expect(api.fetchPublicTemplates).not.toHaveBeenCalled();
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(
-      <QueryClientProvider client={queryClient}><ConfigProvider><AntApp><PublicTemplateLibrary account={account} /></AntApp></ConfigProvider></QueryClientProvider>,
+      <QueryClientProvider client={queryClient}><ConfigProvider><AntApp><PublicTemplateLibrary hasWhatsAppAccount /></AntApp></ConfigProvider></QueryClientProvider>,
     );
     const user = userEvent.setup();
     const dialog = await openDetail(user);
     expect(dialog).toBeInTheDocument();
-    const secondAccount = { ...account, id: 'account-2', name: 'WhatsApp 备用账号' };
     view.rerender(
-      <QueryClientProvider client={queryClient}><ConfigProvider><AntApp><PublicTemplateLibrary account={secondAccount} /></AntApp></ConfigProvider></QueryClientProvider>,
+      <QueryClientProvider client={queryClient}><ConfigProvider><AntApp><PublicTemplateLibrary hasWhatsAppAccount={false} /></AntApp></ConfigProvider></QueryClientProvider>,
     );
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: publicTemplate.name })).not.toBeInTheDocument());
-    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith('account-2', expect.objectContaining({ page: 1, size: 20 })));
+    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenCalled());
   });
 });

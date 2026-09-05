@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Drawer, Form, Input, Select, Space, Typography } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
-import type { TemplateAdmin, TemplateButton, TemplateCategory, TemplateHeaderFormat, TemplateMediaAsset } from '../../api/types';
+import type { SharedTemplate, TemplateButton, TemplateCategory, TemplateHeaderFormat, TemplateMediaAsset } from '../../api/types';
 import TemplateMessagePreview from './TemplateMessagePreview';
 import type { PublicTemplateConversionResult } from './publicTemplateConversion';
 import { buildCommand, hasUnsupportedVariableSyntax, headerFormatLabels, initialValueForTemplate, isTemplateLanguage, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NAME_LENGTH, requestId, variableNames } from './templateUi';
@@ -96,7 +96,7 @@ export default function TemplateEditorDrawer({
   onSubmit,
 }: {
   open: boolean;
-  template: TemplateAdmin | null;
+  template: SharedTemplate | null;
   initialValue?: ReturnType<typeof initialValueForTemplate> | null;
   sourceContext?: PublicTemplateConversionResult | null;
   submitting?: boolean;
