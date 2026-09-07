@@ -2,6 +2,9 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.OwnerType;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationProjection;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationStatus;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GroupTopicTimelineResponse;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicInboxRequestProjection;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicService;
 import org.junit.jupiter.api.AfterEach;
@@ -100,6 +103,34 @@ class AiTopicControllerMixedScopeTest {
                 .andExpect(status().isOk());
 
         verify(service).listStored(userId, null, "WECOM_GROUP", 1, 20);
+    }
+
+    @Test
+    void exposesAGroupTopicTimelineEndpoint() throws Exception {
+        UUID sourceConversationId = UUID.randomUUID();
+        when(service.getGroupTopics(userId, sourceConversationId)).thenReturn(new GroupTopicTimelineResponse(
+                sourceConversationId, new GenerationProjection(GenerationStatus.NOT_STARTED, null, null, null),
+                List.of(), false));
+
+        mvc.perform(get("/api/v1/wecom/groups/{sourceConversationId}/topics", sourceConversationId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sourceConversationId").value(sourceConversationId.toString()))
+                .andExpect(jsonPath("$.weComUnsupported").value(false));
+
+        verify(service).getGroupTopics(userId, sourceConversationId);
+    }
+
+    @Test
+    void retriesFailedGroupTopicGeneration() throws Exception {
+        UUID sourceConversationId = UUID.randomUUID();
+        when(service.retryGroupGeneration(userId, sourceConversationId)).thenReturn(
+                new GenerationProjection(GenerationStatus.GENERATING, UUID.randomUUID(), null, Instant.now()));
+
+        mvc.perform(post("/api/v1/wecom/groups/{sourceConversationId}/topics/retry", sourceConversationId))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("GENERATING"));
+
+        verify(service).retryGroupGeneration(userId, sourceConversationId);
     }
 
     @Test

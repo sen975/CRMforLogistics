@@ -31,6 +31,18 @@ class TopicAiResponseParserTest {
     }
 
     @Test
+    void normalizesNamedRelevanceReturnedByCompatibleProviders() {
+        UUID source = UUID.fromString("c2349acc-0581-48f1-8b8c-546cb5032c23");
+        String json = "{\"topics\":[{\"topicKey\":\"topic-20260825-wecom-messages\",\"title\":\"企业微信群消息汇总\",\"summary\":\"三条群消息\",\"relevance\":\"high\",\"sourceIds\":[\"" + source + "\"]}]}";
+
+        var output = new TopicAiResponseParser().parse(json, Set.of(source));
+
+        assertThat(output.assignments()).singleElement()
+                .extracting(AiTopicModels.TopicAssignment::relevance)
+                .isEqualTo(0.9d);
+    }
+
+    @Test
     void rejectsAssignmentsThatDoNotCoverEveryAllowedSource() {
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();

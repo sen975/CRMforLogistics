@@ -7,3 +7,46 @@ body,
 body {
   margin: 0;
 }
+
+/* Keep the group detail tabs inside the fixed application sidebar. */
+.wecom-group-detail-tabs,
+.detail-panel-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wecom-group-detail-tabs > .ant-tabs-nav,
+.detail-panel-tabs > .ant-tabs-nav {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.wecom-group-detail-tabs.ant-tabs .ant-tabs-tab + .ant-tabs-tab,
+.detail-panel-tabs.ant-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin: 0 0 0 18px;
+}
+
+.wecom-group-detail-tabs > .ant-tabs-content-holder,
+.detail-panel-tabs > .ant-tabs-content-holder {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wecom-group-detail-tabs .ant-tabs-content,
+.wecom-group-detail-tabs .ant-tabs-tabpane,
+.detail-panel-tabs .ant-tabs-content,
+.detail-panel-tabs .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+
+.wecom-group-detail-tabs .ant-tabs-tabpane,
+.detail-panel-tabs .ant-tabs-tabpane {
+  overflow: auto;
+}

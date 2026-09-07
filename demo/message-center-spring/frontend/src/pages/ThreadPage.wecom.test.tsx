@@ -8,14 +8,21 @@ import ThreadPage from './ThreadPage';
 
 const api = vi.hoisted(() => ({
   fetchThread: vi.fn(),
+  fetchWeComContactThread: vi.fn(),
   fetchContact: vi.fn(),
   markContactRead: vi.fn(),
   selectChannel: vi.fn(),
   renderWeComConversation: vi.fn(),
+  refreshWeComContactThread: vi.fn(),
+  sse: vi.fn(),
 }));
 
 vi.mock('../api/endpoints', () => api);
-vi.mock('../hooks/useSse', () => ({ useSse: vi.fn() }));
+vi.mock('../hooks/useSse', () => ({
+  useSse: (callback: () => void) => {
+    api.sse.mockImplementation(callback);
+  },
+}));
 vi.mock('../hooks/useCallRecordTimeline', () => ({
   useCallRecordTimeline: () => ({ records: [], refresh: vi.fn() }),
 }));
@@ -47,9 +54,11 @@ vi.mock('../components/SendForm', () => ({
   default: ({
     activeChannel,
     onChannelChange,
+    selectedIdentityId,
   }: {
     activeChannel?: string;
     onChannelChange?: (channel: string) => void;
+    selectedIdentityId?: string;
   }) => (
     <div aria-label="发送渠道">
       <span>ChatApp</span>
@@ -57,6 +66,7 @@ vi.mock('../components/SendForm', () => ({
       <button type="button" role="tab" aria-selected={activeChannel === 'wecom'} onClick={() => onChannelChange?.('wecom')}>企业微信</button>
       <button type="button" role="tab" aria-selected={activeChannel === 'email'} onClick={() => onChannelChange?.('email')}>邮件</button>
       <button type="button" role="tab" aria-selected={activeChannel === 'call'} onClick={() => onChannelChange?.('call')}>电话记录</button>
+      <span data-testid="selected-identity">{selectedIdentityId ?? ''}</span>
     </div>
   ),
 }));
@@ -71,12 +81,23 @@ vi.mock('../components/wecom/WeComTimelineSegment', () => ({
   ),
 }));
 vi.mock('../components/wecom/WeComConversationPanel', () => ({
-  WeComConversationPanel: ({ contactPointId, items }: {
+  WeComConversationPanel: ({ contactPointId, items, relatedGroups, onOpenGroup, onSwitchToMixed }: {
     contactPointId: string;
     items: MessageResponse[];
+    relatedGroups?: Array<{ sourceConversationId: string }>;
+    onOpenGroup?: (sourceConversationId: string) => void;
+    onSwitchToMixed?: () => void;
   }) => {
     api.renderWeComConversation(contactPointId, items.map((item) => item.id));
-    return <div data-testid="wecom-conversation-page">整页企业微信:{items.length}</div>;
+    return <div data-testid="wecom-conversation-page">
+      整页企业微信:{items.length}
+      {onSwitchToMixed ? <button type="button" onClick={onSwitchToMixed}>切换</button> : null}
+      {relatedGroups?.map((group) => (
+        <button key={group.sourceConversationId} onClick={() => onOpenGroup?.(group.sourceConversationId)}>
+          关联群:{group.sourceConversationId}
+        </button>
+      ))}
+    </div>;
   },
 }));
 
@@ -144,6 +165,15 @@ beforeEach(() => {
     messageCount: 3,
     threadRevision: 'revision-1',
   });
+  api.fetchWeComContactThread.mockResolvedValue({
+    contactId: 'contact-1',
+    sourceConversationIds: [],
+    relatedGroups: [],
+    items: [message('1', 'wecom'), message('3', 'wecom')],
+    nextCursor: null,
+    messageCount: 2,
+    threadRevision: 'wecom-revision-1',
+  });
   api.markContactRead.mockResolvedValue(undefined);
 });
 
@@ -171,6 +201,40 @@ it('switches the merged contact to a full-page WeCom conversation and returns to
   expect(screen.queryByLabelText('发送渠道')).not.toBeInTheDocument();
   expect(screen.queryByText('ChatApp')).not.toBeInTheDocument();
   expect(screen.queryByText('企业微信CorpId')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '切换' }));
+  await waitFor(() => expect(screen.getByTestId('thread-timeline')).toBeInTheDocument());
+  expect(screen.getByTestId('message-2')).toBeInTheDocument();
+});
+
+it('opens a phone address-book timeline in read-only mode', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/conversations/contact/contact-1?channel=phone&identityId=phone-1']}>
+        <Routes>
+          <Route path="/conversations/contact/:contactId" element={<ThreadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(screen.getByTestId('thread-timeline')).toBeInTheDocument());
+  expect(screen.queryByLabelText('发送渠道')).not.toBeInTheDocument();
+});
+
+it('passes the address-book-selected identity into the matching send channel', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/conversations/contact/contact-1?channel=email&identityId=email-2']}>
+        <Routes>
+          <Route path="/conversations/contact/:contactId" element={<ThreadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(screen.getByTestId('selected-identity')).toHaveTextContent('email-2'));
 });
 
 it('opens the full-page WeCom conversation automatically for a WeCom-only contact', async () => {
@@ -208,6 +272,95 @@ it('opens the full-page WeCom conversation automatically for a WeCom-only contac
   expect(api.selectChannel).toHaveBeenCalledWith('wecom');
   expect(screen.queryByTestId('thread-timeline')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('发送渠道')).not.toBeInTheDocument();
+});
+
+it('renders only direct messages and exposes related groups as independent navigation', async () => {
+  const direct = { ...message('direct', 'wecom'), conversationType: 'DIRECT' as const };
+  const grouped = { ...message('grouped', 'wecom'), conversationType: 'GROUP' as const };
+  api.fetchThread.mockResolvedValueOnce({
+    items: [direct, grouped],
+    nextCursor: '',
+    messageCount: 2,
+    threadRevision: 'legacy-mixed',
+  });
+  api.fetchWeComContactThread.mockResolvedValueOnce({
+    contactId: 'contact-1',
+    sourceConversationIds: ['direct-source'],
+    relatedGroups: [{
+      sourceConversationId: 'group-source',
+      displayName: '客户项目群',
+      avatarUrl: null,
+      participantCount: 3,
+    }],
+    items: [direct],
+    nextCursor: null,
+    messageCount: 1,
+    threadRevision: 'direct-only',
+  });
+  api.fetchContact.mockResolvedValueOnce({
+    id: 'contact-1', displayName: '客户一', remark: '', channelTypes: ['wecom'],
+    lastMessageAt: null, lastText: '', messageCount: 2, unreadCount: 0,
+    identities: [{ id: 'identity-1', channelType: 'wecom', identityScope: 'external', identityValue: 'external-1', displayName: '客户一' }],
+  });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/thread/contact-1']}>
+        <Routes>
+          <Route path="/thread/:contactId" element={<ThreadPage />} />
+          <Route path="/conversations/wecom-group/:sourceConversationId" element={<div>独立群聊页面</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(api.renderWeComConversation).toHaveBeenCalledWith(
+    'wecom:external-1',
+    ['direct'],
+  ));
+  expect(api.renderWeComConversation).not.toHaveBeenCalledWith(
+    'wecom:external-1',
+    expect.arrayContaining(['grouped']),
+  );
+  fireEvent.click(screen.getByRole('button', { name: '关联群:group-source' }));
+  expect(await screen.findByText('独立群聊页面')).toBeInTheDocument();
+});
+
+it('refreshes the dedicated direct WeCom query from the thread refresh control', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/thread/contact-1']}>
+        <Routes>
+          <Route path="/thread/:contactId" element={<ThreadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(api.fetchWeComContactThread).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button', { name: '刷新联系人会话' }));
+  await waitFor(() => expect(api.fetchWeComContactThread).toHaveBeenCalledTimes(2));
+});
+
+it('invalidates the dedicated direct WeCom query when an SSE message arrives', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries');
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/thread/contact-1']}>
+        <Routes>
+          <Route path="/thread/:contactId" element={<ThreadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(api.fetchWeComContactThread).toHaveBeenCalledTimes(1));
+  await act(async () => {
+    api.sse();
+  });
+  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['wecom-contact-thread', 'contact-1'] });
 });
 
 it('ignores a delayed A response after A to B to A contact navigation', async () => {
@@ -292,6 +445,15 @@ it('never pairs the new contact point with messages retained from the previous c
       threadRevision: 'a',
     })
     .mockImplementationOnce(() => threadB.promise);
+  api.fetchWeComContactThread.mockImplementation((contactId: string) => Promise.resolve({
+    contactId,
+    sourceConversationIds: [`source-${contactId}`],
+    relatedGroups: [],
+    items: [message(contactId === 'contact-a' ? 'a-message' : 'b-message', 'wecom')],
+    nextCursor: null,
+    messageCount: 1,
+    threadRevision: contactId,
+  }));
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   queryClient.setQueryData(['contact', 'contact-b'], {
     id: 'contact-b',

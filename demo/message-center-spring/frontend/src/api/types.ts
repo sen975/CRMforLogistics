@@ -60,6 +60,7 @@ export interface ContactConversationItem {
   lastText: string;
   messageCount: number;
   unreadCount: number;
+  pinned?: boolean;
 }
 
 export interface WeComGroupConversationItem {
@@ -74,6 +75,7 @@ export interface WeComGroupConversationItem {
   unreadCount: number;
   providerConversationKey: string | null;
   participantCount: number;
+  pinned?: boolean;
 }
 
 export type ConversationListItem = ContactConversationItem | WeComGroupConversationItem;
@@ -84,6 +86,7 @@ export interface ConversationPage {
   size: number;
   current: number;
   pages: number;
+  nextCursor?: string | null;
 }
 
 export interface MessageResponse {
@@ -137,7 +140,7 @@ export interface WeComThreadResponse {
 
 export interface WeComGroupThreadResponse {
   sourceConversationId: string;
-  providerConversationKey: string;
+  groupChatId: string | null;
   displayName: string;
   avatarUrl?: string | null;
   openClientUrl?: string | null;
@@ -146,6 +149,14 @@ export interface WeComGroupThreadResponse {
   nextCursor: string | null;
   messageCount: number;
   threadRevision: string;
+}
+
+export interface WeComGroupNameRefreshResponse {
+  id: string;
+  sourceConversationId: string;
+  triggerSource: string;
+  status: string;
+  createdAt: string | null;
 }
 
 export interface MessageAttachmentResponse {
@@ -281,6 +292,52 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface RegisterRequest {
+  username: string;
+  displayName?: string;
+  password: string;
+}
+
+export interface AccountProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  roles: string[];
+  avatar: {
+    source: 'WECOM' | 'UPLOAD' | 'INITIAL';
+    contentUrl: string | null;
+    initial: string;
+    revision: string | null;
+  };
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  displayName: string;
+  status: string;
+  roles: string[];
+  createdAt: string;
+}
+
+export interface AdminUserPage {
+  items: AdminUser[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface AccountRole {
+  code: string;
+  displayName: string;
+}
+
 export interface WeComLoginAttempt {
   loginType: string;
   appId: string;
@@ -301,6 +358,23 @@ export interface WeComBindingResponse {
   wecomUserId: string | null;
   provisioningSource: 'AUTO_CREATED' | 'BOUND_EXISTING' | null;
   bound: boolean;
+  wecomDisplayName?: string | null;
+  corpName?: string | null;
+}
+
+export type WeComAvatarAuthorizationStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'EXPIRED';
+
+export interface WeComAvatarAuthorizationAttempt {
+  authorizationId: string;
+  authorizationUrl: string;
+  status: WeComAvatarAuthorizationStatus;
+  expiresIn: number;
+}
+
+export interface WeComAvatarAuthorizationProjection {
+  authorizationId: string;
+  status: WeComAvatarAuthorizationStatus;
+  errorCode: string | null;
 }
 
 export interface WeComViewerBootstrapResponse {
@@ -316,7 +390,7 @@ export interface WeComViewerSessionResponse {
 
 export type WeComViewerTarget =
   | { targetType: 'CONTACT'; targetId: string }
-  | { targetType: 'WECOM_GROUP'; targetId: string };
+  | { targetType: 'WECOM_GROUP'; targetId: string; chatId?: string | null };
 
 export interface WeComViewerMessage {
   msgid: string;
@@ -381,6 +455,16 @@ export interface MyBatisPage<T> {
   size: number;
   current: number;
   pages: number;
+}
+
+export type ConversationTargetType = 'CONTACT' | 'WECOM_GROUP';
+
+export interface ConversationOrderRequest {
+  sourceType: ConversationTargetType;
+  sourceId: string;
+  targetType: ConversationTargetType;
+  targetId: string;
+  placement: 'BEFORE' | 'AFTER';
 }
 
 export interface ChannelAccount {
@@ -510,6 +594,8 @@ export interface TopicProjection {
   ownerId?: string | null;
   ownerLabel?: string | null;
   isReferencedGroupTopic?: boolean;
+  reviewOrigin?: 'MERGE_SOURCE' | 'SPLIT_SOURCE' | 'MANUAL_SELECTION' | null;
+  reviewSourceTopicTitle?: string | null;
 }
 export type TopicOperationKind = 'EDIT' | 'MERGE' | 'STORE' | 'RESTORE';
 export interface TopicOperationProjection {
@@ -526,11 +612,63 @@ export interface TopicGenerationProjection {
   errorCode: string | null;
   updatedAt: string | null;
 }
-export interface ContactTopicsResponse {
-  contactId: string;
+export interface TopicTimelineResponse {
   generation: TopicGenerationProjection;
   topics: TopicProjection[];
   weComUnsupported: boolean;
+}
+export interface ManualReviewSourceOption {
+  id: string;
+  contactIdentityId: string;
+  sourceType: 'MESSAGE' | 'CALL_RECORD' | 'WECOM_SUMMARY';
+  channelType: string;
+  occurredAt: string;
+  direction: string;
+  subject: string;
+  text: string;
+  selectable: boolean;
+  excludedReason?: string | null;
+  assignedTopicId?: string | null;
+  assignedTopicTitle?: string | null;
+}
+export interface ManualReviewSourceListResponse {
+  contactId: string;
+  items: ManualReviewSourceOption[];
+  hasMore: boolean;
+  wecomExcludedReason?: string | null;
+}
+export interface ManualReviewPreviewResponse {
+  previewId: string;
+  contactId: string;
+  sourceFingerprint: string;
+  assignments: ManualReviewAssignment[];
+  expectedVersions: Record<string, number>;
+  expiresAt: string;
+}
+export interface ManualReviewAssignment {
+  topicKey: string;
+  title: string;
+  summary: string;
+  relevance: number;
+  sourceIds: string[];
+}
+export interface ManualReviewApplyResponse { previewId: string; topicIds: string[]; applied: boolean }
+export interface TopicFusionPreviewResponse {
+  previewId: string;
+  topicIds: string[];
+  title: string;
+  summary: string;
+  sourceCount: number;
+  expectedVersions: Record<string, number>;
+  expiresAt: string;
+}
+
+export interface ContactTopicsResponse extends TopicTimelineResponse {
+  contactId: string;
+}
+
+export interface WeComGroupTopicsResponse extends TopicTimelineResponse {
+  sourceConversationId: string;
 }
 export interface UpdateTopicRequest {
   contactId: string;
@@ -540,6 +678,11 @@ export interface UpdateTopicRequest {
 }
 export interface MergeTopicsRequest {
   contactId: string;
+  topicIds: string[];
+  expectedVersions: Record<string, number>;
+}
+
+export interface TopicFusionPreviewRequest {
   topicIds: string[];
   expectedVersions: Record<string, number>;
 }
@@ -606,6 +749,33 @@ export interface TemplateComponent {
   buttons: TemplateButton[];
 }
 
+export interface TemplateAdmin {
+  id: string;
+  accountId: string;
+  templateCode: string;
+  name: string;
+  remark: string | null;
+  displayName: string;
+  language: string;
+  category: string | null;
+  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED' | 'UNKNOWN';
+  providerAuditStatus: string | null;
+  rejectionReason: string | null;
+  allowSend: boolean;
+  desiredAllowSend: boolean;
+  permissionSyncStatus: 'IDLE' | 'PENDING' | 'FAILED';
+  permissionSyncError: string | null;
+  components: TemplateComponent[];
+  examples: Record<string, string[]>;
+  messageSendTtlSeconds: number | null;
+  qualityScore: string | null;
+  providerUpdatedAt: string | null;
+  lastSyncedAt: string | null;
+  deletedAt: string | null;
+}
+
+// Shared WhatsApp catalog projections. Account-scoped types above remain for
+// legacy component fixtures, while all runtime template APIs use these types.
 export interface SharedTemplate {
   id: string;
   version: number;
@@ -628,49 +798,11 @@ export interface SharedTemplate {
   deletedAt: string | null;
 }
 
-export interface TemplateOperation {
-  operationId: string;
-  operationType: 'CREATE' | 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'RECONCILE' | 'RETIRED';
-  operationStatus: 'PROCESSING' | 'SUCCEEDED' | 'SUBMISSION_UNKNOWN' | 'FAILED';
-  templateCode: string;
-  language: string | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-  traceId: string | null;
-  actorUserId: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-}
-
-export interface TemplateMediaAsset {
-  id: string;
-  clientRequestId: string;
-  format: TemplateMediaFormat;
-  contentType: string;
-  sizeBytes: number;
-  sha256: string;
-  providerUrl: string | null;
-  assetStatus: TemplateMediaAssetStatus;
-  errorCode: string | null;
-  errorMessage: string | null;
-  traceId: string | null;
-}
-
 export interface SharedTemplateListPage {
   items: SharedTemplate[];
   total: number;
   page: number;
   size: number;
-}
-
-export interface TemplateCommand {
-  name: string;
-  language: string;
-  category: TemplateCategory;
-  components: TemplateComponent[];
-  examples: Record<string, string[]>;
-  messageSendTtlSeconds?: number | null;
-  clientRequestId: string;
 }
 
 export interface SharedTemplateListFilters {
@@ -682,13 +814,6 @@ export interface SharedTemplateListFilters {
   language?: string;
   allowSend?: boolean;
   deleted?: boolean;
-}
-
-export interface TemplateSyncResult {
-  pages: number;
-  fetched: number;
-  changed: number;
-  complete: boolean;
 }
 
 export type TemplateChangeType = 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'BIND_MEDIA';
@@ -735,6 +860,71 @@ export interface TemplateChangeOutcome {
   mode: 'APPROVAL_REQUIRED' | 'DIRECT';
   request: TemplateChangeRequestView | null;
   operation: TemplateChangeOperation | null;
+}
+
+export interface TemplateOperation {
+  operationId: string;
+  operationType: 'CREATE' | 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'RECONCILE' | 'RETIRED';
+  operationStatus: 'PROCESSING' | 'SUCCEEDED' | 'SUBMISSION_UNKNOWN' | 'FAILED';
+  templateCode: string;
+  language: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  traceId: string | null;
+  actorUserId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface TemplateMediaAsset {
+  id: string;
+  clientRequestId: string;
+  format: TemplateMediaFormat;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  providerUrl: string | null;
+  assetStatus: TemplateMediaAssetStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  traceId: string | null;
+}
+
+export interface TemplateListPage {
+  items: TemplateAdmin[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface TemplateCommand {
+  name: string;
+  language: string;
+  category: TemplateCategory;
+  components: TemplateComponent[];
+  examples: Record<string, string[]>;
+  messageSendTtlSeconds?: number | null;
+  clientRequestId: string;
+}
+
+export type TemplateUpdateCommand = Omit<TemplateCommand, 'language'>;
+
+export interface TemplateListFilters {
+  page?: number;
+  size?: number;
+  search?: string;
+  status?: TemplateAdmin['reviewStatus'];
+  category?: string;
+  language?: string;
+  allowSend?: boolean;
+  deleted?: boolean;
+}
+
+export interface TemplateSyncResult {
+  pages: number;
+  fetched: number;
+  changed: number;
+  complete: boolean;
 }
 
 export interface PublicTemplateVariable {

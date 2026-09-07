@@ -39,6 +39,8 @@ class ChatAppHistoryReconciliationControllerTest {
 
     private static final UUID ACCOUNT_ID =
             UUID.fromString("d0a7f664-89ee-4658-b7c7-7c05e9a33552");
+    private static final UUID ADMIN_ID =
+            UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final Instant START = Instant.parse("2026-07-01T00:00:00Z");
     private static final Instant END = Instant.parse("2026-08-01T00:00:00Z");
 
@@ -52,10 +54,10 @@ class ChatAppHistoryReconciliationControllerTest {
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void adminCanRunBoundedDryRun() throws Exception {
-        when(messageSyncService.runAccount(
-                eq(ACCOUNT_ID), eq(START), eq(END), eq(5), eq(true)))
+        when(messageSyncService.runOwnedAccount(
+                eq(ADMIN_ID), eq(ACCOUNT_ID), eq(START), eq(END), eq(5), eq(true)))
                 .thenReturn(new ChatAppHistoryReconciliationResult(
                         1, 2, 1, 1, 0, 0, 0, true, 12, List.of()));
 
@@ -69,10 +71,10 @@ class ChatAppHistoryReconciliationControllerTest {
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void invalidPageLimitReturnsBadRequest() throws Exception {
-        when(messageSyncService.runAccount(
-                eq(ACCOUNT_ID), eq(START), eq(END), eq(51), eq(true)))
+        when(messageSyncService.runOwnedAccount(
+                eq(ADMIN_ID), eq(ACCOUNT_ID), eq(START), eq(END), eq(51), eq(true)))
                 .thenThrow(new IllegalArgumentException("CHATAPP_HISTORY_MAX_PAGES_INVALID"));
 
         mvc.perform(post("/api/chatapp/sync/messages/reconcile")

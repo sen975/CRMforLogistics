@@ -70,8 +70,21 @@ class WeComMessageSummaryRepositoryTest {
     void rejectsOversizedResponseBeforeDatabaseCall() {
         String oversized = "x".repeat(1_048_577);
         assertThrows(IllegalArgumentException.class, () -> repository.markRetry(
-                UUID.randomUUID(), "AI_RESPONSE_INVALID", oversized, "RESPONSE_DATA", now));
+                UUID.randomUUID(), "AI_RESPONSE_INVALID", oversized, "", "RESPONSE_DATA", now));
         verifyNoInteractions(mapper);
+    }
+
+    @Test
+    void retryPersistsDiagnosticSeparatelyFromTheOfficialResponse() {
+        UUID jobId = UUID.randomUUID();
+        when(mapper.updateRetry(jobId, "MESSAGE_SUMMARY_RUNTIME_ERROR", "", "IllegalStateException: missing identity",
+                "WORKER", now, 100)).thenReturn(1);
+
+        repository.markRetry(jobId, "MESSAGE_SUMMARY_RUNTIME_ERROR", "",
+                "IllegalStateException: missing identity", "WORKER", now);
+
+        verify(mapper).updateRetry(jobId, "MESSAGE_SUMMARY_RUNTIME_ERROR", "",
+                "IllegalStateException: missing identity", "WORKER", now, 100);
     }
 
     @Test

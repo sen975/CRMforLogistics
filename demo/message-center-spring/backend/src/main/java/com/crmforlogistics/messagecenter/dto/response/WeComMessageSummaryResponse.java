@@ -18,6 +18,7 @@ public record WeComMessageSummaryResponse(
         String rawResponseJson,
         String validationStage,
         String lastErrorCode,
+        String lastErrorDiagnostic,
         String failureState,
         int attemptCount,
         Instant nextAttemptAt,

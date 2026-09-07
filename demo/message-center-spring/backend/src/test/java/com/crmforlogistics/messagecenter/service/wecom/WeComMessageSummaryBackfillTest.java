@@ -43,4 +43,30 @@ class WeComMessageSummaryBackfillTest {
         verify(repository).enqueueIfAbsent(argThat(command -> command.msgid().equals("old")
                 && command.rawRequestJson().contains("\"operation\":\"submit\"")));
     }
+
+    @Test
+    void backfillSkipsMediaRowsEvenIfMapperReturnsOne() {
+        AppConfig config = mock(AppConfig.class);
+        when(config.localDevMode()).thenReturn(false);
+        when(config.wecomSuiteId()).thenReturn("suite");
+        when(config.wecomLoginAuthCorpId()).thenReturn("corp");
+        when(config.wecomMessageSummaryBackfillBatchSize()).thenReturn(200);
+        WeComInstallationService installations = mock(WeComInstallationService.class);
+        WeComChatDataMessageMapper messages = mock(WeComChatDataMessageMapper.class);
+        WeComMessageSummaryRepository repository = mock(WeComMessageSummaryRepository.class);
+        UUID installationId = UUID.randomUUID();
+        when(installations.resolveInstallation("suite", "corp"))
+                .thenReturn(new ResolvedInstallation(installationId.toString(), "suite", "corp", "agent", "code", 1));
+        WeComChatDataMessageEntity media = new WeComChatDataMessageEntity();
+        media.setMsgid("image");
+        media.setSendTime(1L);
+        media.setMsgtype("2");
+        when(messages.findForSummaryBackfill(installationId, 200)).thenReturn(List.of(media));
+
+        int result = new WeComMessageSummaryBackfill(config, installations, messages, repository)
+                .runOnce(installationId, Instant.parse("2026-08-31T09:00:00Z"));
+
+        assertThat(result).isZero();
+        verifyNoInteractions(repository);
+    }
 }

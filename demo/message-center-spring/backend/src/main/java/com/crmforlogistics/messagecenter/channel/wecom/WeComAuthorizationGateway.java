@@ -149,7 +149,17 @@ public class WeComAuthorizationGateway {
         }
         require(authCorpId, "authCorpId", 128);
         require(userId, "userId", 128);
-        return new LoginIdentity(authCorpId, userId);
+        return new LoginIdentity(authCorpId, userId, string(body, "user_ticket"));
+    }
+
+    /** Official member OAuth sensitive-profile exchange. The ticket is never cached here. */
+    public JsonNode getUserDetail(String accessToken, String userTicket, Duration timeout)
+            throws WeComException {
+        require(accessToken, "accessToken", 4096);
+        require(userTicket, "userTicket", 512);
+        String path = "/cgi-bin/auth/getuserdetail";
+        return postJson(path + "?access_token=" + encode(accessToken), path,
+                Map.of("user_ticket", userTicket), timeout);
     }
 
     private JsonNode getJson(String requestPath, String diagnosticPath, Duration timeout)
@@ -314,7 +324,11 @@ public class WeComAuthorizationGateway {
     }
     public record AuthorizedAgent(String agentId) {}
     public record CorpTokenResponse(String accessToken, int expiresIn) {}
-    public record LoginIdentity(String corpId, String userId) {}
+    public record LoginIdentity(String corpId, String userId, String userTicket) {
+        public LoginIdentity(String corpId, String userId) {
+            this(corpId, userId, "");
+        }
+    }
     private record SuiteTicket(String value, Instant expiresAt) {}
     private record SuiteToken(String token, long expiresAtEpochSecond) {}
 }

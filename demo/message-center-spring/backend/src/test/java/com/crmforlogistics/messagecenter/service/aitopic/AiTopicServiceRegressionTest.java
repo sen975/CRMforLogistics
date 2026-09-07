@@ -11,6 +11,7 @@ import com.crmforlogistics.messagecenter.mapper.AiTopicMapper;
 import com.crmforlogistics.messagecenter.mapper.AiTopicVersionMapper;
 import com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
+import com.crmforlogistics.messagecenter.mapper.AiTopicReviewMapper;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -28,6 +29,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 
 class AiTopicServiceRegressionTest {
     private final UUID userId = UUID.randomUUID();
@@ -116,6 +120,79 @@ class AiTopicServiceRegressionTest {
     }
 
     @Test
+    void doesNotMarkWeComOnlyContactUnsupportedBeforeItsFirstSummary() {
+        AiTopicInputService input = mock(AiTopicInputService.class);
+        when(input.collect(contactId, userId, java.util.Optional.empty()))
+                .thenReturn(new AiTopicModels.InputBatch(List.of(), "w".repeat(64), false));
+        when(topics.listReady(contactId)).thenReturn(List.of());
+        when(jobs.findByFingerprint(contactId, "w".repeat(64))).thenReturn(null);
+        when(identities.findByContactId(contactId)).thenReturn(List.of(identity("wecom")));
+
+        AiTopicModels.TopicTimelineResponse response = service(input).getTopics(userId, contactId);
+
+        assertThat(response.weComUnsupported()).isFalse();
+        assertThat(response.generation().status()).isEqualTo(GenerationStatus.NOT_STARTED);
+        assertThat(response.generation().errorCode()).isNull();
+    }
+
+    @Test
+    void readsReadyGroupTopicsWithoutEnqueuingWork() {
+        AiTopicInputService input = mock(AiTopicInputService.class);
+        UUID groupId = UUID.randomUUID();
+        AiTopicEntity groupTopic = topic("群报价讨论", Instant.parse("2026-08-03T00:00:00Z"));
+        groupTopic.setOwnerType("WECOM_GROUP");
+        groupTopic.setOwnerId(groupId);
+        when(topics.isAdmin(userId)).thenReturn(false);
+        when(topics.canAccessGroupOwner(groupId, userId)).thenReturn(true);
+        when(input.collect(eq(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", groupId)), eq(null), any()))
+                .thenReturn(new AiTopicModels.InputBatch(List.of(), "w".repeat(64), false));
+        when(topics.listReadyGroupTopics(groupId)).thenReturn(List.of(groupTopic));
+        when(items.listByTopic(groupTopic.getId())).thenReturn(List.of());
+
+        AiTopicModels.GroupTopicTimelineResponse response = service(input).getGroupTopics(userId, groupId);
+
+        assertThat(response.sourceConversationId()).isEqualTo(groupId);
+        assertThat(response.generation().status()).isEqualTo(GenerationStatus.READY);
+        assertThat(response.topics()).extracting(AiTopicModels.TopicProjection::title).containsExactly("群报价讨论");
+        verify(jobs, never()).insertAutomaticIfAbsent(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void retriesACompletedEmptyGroupGenerationByRequeueingItsTerminalJob() {
+        AiTopicInputService input = mock(AiTopicInputService.class);
+        UUID groupId = UUID.randomUUID();
+        String fingerprint = "r".repeat(64);
+        AiTopicGenerationJobEntity completed = job(fingerprint, "COMPLETED");
+        when(topics.isAdmin(userId)).thenReturn(false);
+        when(topics.canAccessGroupOwner(groupId, userId)).thenReturn(true);
+        when(input.collect(eq(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", groupId)), eq(null), any()))
+                .thenReturn(new AiTopicModels.InputBatch(List.of(source()), fingerprint, false));
+        when(jobs.findByOwnerFingerprint("WECOM_GROUP", groupId, fingerprint)).thenReturn(completed);
+
+        AiTopicModels.GenerationProjection response = service(input).retryGroupGeneration(userId, groupId);
+
+        assertThat(response.status()).isEqualTo(GenerationStatus.GENERATING);
+        assertThat(response.jobId()).isEqualTo(completed.getId());
+        verify(jobs).requeueTerminal(eq(completed.getId()), org.mockito.ArgumentMatchers.any(Instant.class));
+    }
+
+    @Test
+    void retriesACompletedEmptyContactGenerationByRequeueingItsTerminalJob() {
+        AiTopicInputService input = mock(AiTopicInputService.class);
+        String fingerprint = "s".repeat(64);
+        AiTopicGenerationJobEntity completed = job(fingerprint, "COMPLETED");
+        when(input.collect(contactId, userId, java.util.Optional.empty()))
+                .thenReturn(new AiTopicModels.InputBatch(List.of(source()), fingerprint, false));
+        when(jobs.findByFingerprint(contactId, fingerprint)).thenReturn(completed);
+
+        AiTopicModels.GenerationProjection response = service(input).retryGeneration(userId, contactId);
+
+        assertThat(response.status()).isEqualTo(GenerationStatus.GENERATING);
+        assertThat(response.jobId()).isEqualTo(completed.getId());
+        verify(jobs).requeueTerminal(eq(completed.getId()), org.mockito.ArgumentMatchers.any(Instant.class));
+    }
+
+    @Test
     void storesMergeSourceTopicIdsAsJsonArray() {
         var contactService = mock(com.crmforlogistics.messagecenter.service.contact.ContactService.class);
         AiTopicService service = new AiTopicService(contactService, mock(AiTopicInputService.class), topics, items, jobs,
@@ -133,9 +210,26 @@ class AiTopicServiceRegressionTest {
         when(items.listByTopic(firstId)).thenReturn(List.of(item(firstId)));
         when(items.listByTopic(secondId)).thenReturn(List.of(item(secondId)));
 
+        AiTopicReviewMapper reviews = mock(AiTopicReviewMapper.class);
+        TopicAiGateway gateway = mock(TopicAiGateway.class);
+        List<AiTopicItemEntity> firstItems = items.listByTopic(firstId);
+        List<AiTopicItemEntity> secondItems = items.listByTopic(secondId);
+        when(reviews.listTopicSources(any())).thenReturn(List.of(
+                new AiTopicReviewMapper.SourceRow(firstItems.get(0).getMessageId(), UUID.randomUUID(), "MESSAGE", "email",
+                        firstItems.get(0).getOccurredAt(), "inbound", "", "first"),
+                new AiTopicReviewMapper.SourceRow(secondItems.get(0).getMessageId(), UUID.randomUUID(), "MESSAGE", "email",
+                        secondItems.get(0).getOccurredAt(), "inbound", "", "second")));
+        when(gateway.fuse(any())).thenReturn(new AiTopicModels.GenerationOutput(List.of(
+                new AiTopicModels.TopicAssignment("fusion", "first", "summary", 1,
+                        List.of(firstItems.get(0).getMessageId(), secondItems.get(0).getMessageId())))));
+        service = new AiTopicService(contactService, mock(AiTopicInputService.class), topics, items, jobs,
+                versions, new AiTopicConfigHolder(new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30)),
+                identities, null, null, null, null, mock(AiTopicGenerationAttemptMapper.class), reviews, gateway);
+
         service.mergeTopics(userId, List.of(firstId, secondId), Map.of(firstId, 1L, secondId, 1L));
 
-        verify(versions).insertVersion(eq(firstId), eq(2L), eq("MERGED"), eq("first"), any(), eq("[\"" + firstId + "\",\"" + secondId + "\"]"), eq(userId));
+        verify(versions).insertVersion(any(UUID.class), eq(1L), eq("MERGED"), eq("first"), any(), eq("[\"" + firstId + "\",\"" + secondId + "\"]"), eq(userId));
+        verify(versions, times(2)).insertVersion(any(UUID.class), eq(2L), eq("MERGED_INTO"), anyString(), anyString(), anyString(), eq(userId));
     }
 
     @Test
@@ -289,6 +383,119 @@ class AiTopicServiceRegressionTest {
         ArgumentCaptor<AiTopicEntity> created = ArgumentCaptor.forClass(AiTopicEntity.class);
         verify(topics).insert(created.capture());
         assertThat(created.getValue().getId()).isNotNull();
+    }
+
+    @Test
+    void matchedReadyTopicAdoptsLatestAiTitleAndSummary() {
+        AiTopicInputService input = mock(AiTopicInputService.class);
+        AiTopicModels.SourceItem incoming = source();
+        AiTopicEntity existing = topic("旧标题", Instant.parse("2026-08-01T00:00:00Z"));
+        existing.setContactId(contactId);
+        existing.setOwnerType("CONTACT");
+        existing.setOwnerId(contactId);
+        existing.setConfirmedSummary("旧人工概要");
+        when(input.collect(eq(new AiTopicOwnerService.OwnerRef("CONTACT", contactId)), eq(userId), any()))
+                .thenReturn(new AiTopicModels.InputBatch(List.of(incoming), "n".repeat(64), false));
+        when(topics.listReadyByOwner("CONTACT", contactId)).thenReturn(List.of(existing));
+        when(topics.selectById(existing.getId())).thenReturn(existing);
+        when(items.listByTopic(existing.getId())).thenReturn(List.of(item(existing.getId())));
+        when(items.insertIfAbsent(eq(existing.getId()), eq(incoming.id()), eq(null), eq(null),
+                eq(incoming.occurredAt()), eq("email"))).thenReturn(1);
+        when(topics.updateAiGenerated(eq(existing.getId()), anyString(), anyString(), any(), any(),
+                anyString(), eq(1L))).thenReturn(1);
+        TopicAiGateway gateway = mock(TopicAiGateway.class);
+        when(gateway.generate(any())).thenReturn(new AiTopicModels.GenerationOutput(List.of(
+                new AiTopicModels.TopicAssignment(existing.getId().toString(), "新标题", "融合旧信息与新消息的新概要",
+                        .9, List.of(incoming.id())))));
+        AiTopicGenerationJobEntity job = job("n".repeat(64), "PROCESSING");
+        job.setContactId(contactId);
+        job.setOwnerType("CONTACT");
+        job.setOwnerId(contactId);
+        job.setCreatedByUserId(userId);
+        job.setJobKind("INCREMENTAL");
+
+        service(input).generate(job, userId, gateway);
+
+        verify(topics).updateAiGenerated(eq(existing.getId()), eq("新标题"),
+                eq("融合旧信息与新消息的新概要"), any(), eq(incoming.occurredAt()),
+                eq("n".repeat(64)), eq(1L));
+        assertThat(existing.getTitle()).isEqualTo("新标题");
+        assertThat(existing.getAiSummary()).isEqualTo("融合旧信息与新消息的新概要");
+        assertThat(existing.getConfirmedSummary()).isNull();
+    }
+
+    @Test
+    void recomputesReadyTopicFromRemainingSourcesAfterContactSplit() {
+        UUID topicId = UUID.randomUUID();
+        UUID remainingSourceId = UUID.randomUUID();
+        AiTopicEntity existing = topic("拆分前标题", Instant.parse("2026-08-01T00:00:00Z"));
+        existing.setId(topicId);
+        existing.setContactId(contactId);
+        existing.setOwnerType("CONTACT");
+        existing.setOwnerId(contactId);
+        existing.setConfirmedSummary("拆分前人工概要");
+        AiTopicReviewMapper reviews = mock(AiTopicReviewMapper.class);
+        TopicAiGateway gateway = mock(TopicAiGateway.class);
+        Instant remainingAt = Instant.parse("2026-08-02T00:00:00Z");
+        when(topics.selectById(topicId)).thenReturn(existing);
+        when(reviews.listTopicSources(List.of(topicId))).thenReturn(List.of(
+                new AiTopicReviewMapper.SourceRow(remainingSourceId, UUID.randomUUID(), "MESSAGE", "email",
+                        remainingAt, "inbound", "报价", "仅保留的邮件")));
+        when(gateway.fuse(any())).thenReturn(new AiTopicModels.GenerationOutput(List.of(
+                new AiTopicModels.TopicAssignment("recomputed", "拆分后标题", "只描述剩余来源的新概要", 1,
+                        List.of(remainingSourceId)))));
+        when(topics.updateAfterSplit(eq(topicId), anyString(), anyString(), any(), any(), anyString(), eq(1L)))
+                .thenReturn(1);
+        AiTopicService reconciler = new AiTopicService(
+                mock(com.crmforlogistics.messagecenter.service.contact.ContactService.class),
+                mock(AiTopicInputService.class), topics, items, jobs, versions,
+                new AiTopicConfigHolder(new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30)),
+                identities, null, null, null, null, mock(AiTopicGenerationAttemptMapper.class), reviews, gateway);
+
+        reconciler.recomputeAfterSourceSplit(topicId);
+
+        verify(topics).updateAfterSplit(eq(topicId), eq("拆分后标题"), eq("只描述剩余来源的新概要"),
+                eq(remainingAt), eq(remainingAt), anyString(), eq(1L));
+        verify(versions).insertVersion(topicId, 2L, "AI_GENERATED", "拆分后标题",
+                "只描述剩余来源的新概要", "[]", null);
+        assertThat(existing.getTitle()).isEqualTo("拆分后标题");
+        assertThat(existing.getAiSummary()).isEqualTo("只描述剩余来源的新概要");
+        assertThat(existing.getConfirmedSummary()).isNull();
+    }
+
+    @Test
+    void rejectsSplitRecomputeWhenAiOmitsARemainingSource() {
+        UUID topicId = UUID.randomUUID();
+        UUID firstSourceId = UUID.randomUUID();
+        UUID secondSourceId = UUID.randomUUID();
+        AiTopicEntity existing = topic("拆分前标题", Instant.parse("2026-08-01T00:00:00Z"));
+        existing.setId(topicId);
+        existing.setContactId(contactId);
+        existing.setOwnerType("CONTACT");
+        existing.setOwnerId(contactId);
+        AiTopicReviewMapper reviews = mock(AiTopicReviewMapper.class);
+        TopicAiGateway gateway = mock(TopicAiGateway.class);
+        when(topics.selectById(topicId)).thenReturn(existing);
+        when(reviews.listTopicSources(List.of(topicId))).thenReturn(List.of(
+                new AiTopicReviewMapper.SourceRow(firstSourceId, UUID.randomUUID(), "MESSAGE", "email",
+                        Instant.parse("2026-08-02T00:00:00Z"), "inbound", "", "第一条"),
+                new AiTopicReviewMapper.SourceRow(secondSourceId, UUID.randomUUID(), "MESSAGE", "email",
+                        Instant.parse("2026-08-03T00:00:00Z"), "inbound", "", "第二条")));
+        when(gateway.fuse(any())).thenReturn(new AiTopicModels.GenerationOutput(List.of(
+                new AiTopicModels.TopicAssignment("recomputed", "错误标题", "遗漏来源的概要", 1,
+                        List.of(firstSourceId)))));
+        AiTopicService reconciler = new AiTopicService(
+                mock(com.crmforlogistics.messagecenter.service.contact.ContactService.class),
+                mock(AiTopicInputService.class), topics, items, jobs, versions,
+                new AiTopicConfigHolder(new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30)),
+                identities, null, null, null, null, mock(AiTopicGenerationAttemptMapper.class), reviews, gateway);
+
+        assertThatThrownBy(() -> reconciler.recomputeAfterSourceSplit(topicId))
+                .isInstanceOf(AiTopicException.class)
+                .extracting(error -> ((AiTopicException) error).code())
+                .isEqualTo("TOPIC_SPLIT_RECONCILE_RESPONSE_INVALID");
+
+        verify(topics, never()).updateAfterSplit(any(), any(), any(), any(), any(), any(), anyLong());
     }
 
     private AiTopicModels.SourceItem source() {

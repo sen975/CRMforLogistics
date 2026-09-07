@@ -115,9 +115,27 @@ public class EmailSyncService {
 
     public SyncResult receiveLatest() throws Exception {
         EmailSyncSettings settings = resolveSettings();
+        return receiveLatest(resolveEmailAccount(), null, settings);
+    }
+
+    public SyncResult receiveLatest(UUID accountId, UUID ownerId) throws Exception {
+        ChannelAccountEntity account = requireOwnedEmailAccount(accountId, ownerId);
+        return receiveLatest(account, ownerId, EmailSyncSettings.from(config, account, credentialCipher, log));
+    }
+
+    public SyncResult receiveLatest(UUID ownerId) throws Exception {
+        List<ChannelAccountEntity> accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "email");
+        if (accounts.size() != 1) {
+            throw new EmailException("CHANNEL_ACCOUNT_REQUIRED", "Exactly one active email channel account is required");
+        }
+        return receiveLatest(accounts.get(0).getId(), ownerId);
+    }
+
+    private SyncResult receiveLatest(ChannelAccountEntity account, UUID ownerId,
+                                     EmailSyncSettings settings) throws Exception {
         SyncResult result = new SyncResult("email", 0, 0, 0, "");
         if (usesOpenSslImapFallback(settings)) {
-            SyncResult finalResult = receiveLatestWithOpenSsl(settings, result);
+            SyncResult finalResult = receiveLatestWithOpenSsl(settings, result, account, ownerId);
             if (finalResult.saved() > 0) {
                 eventHub.publish("message-new", "{}");
             }
@@ -125,8 +143,8 @@ public class EmailSyncService {
                     "received " + finalResult.saved() + " new email messages");
         }
         try (Store store = connectStore(settings)) {
-            result = receiveLatestFromFolder(store, settings.inboxFolder(), "in", settings.receiveLimit(), result);
-            result = receiveLatestFromFolders(store, settings.sentFolderCandidates(), "out", settings.receiveLimit(), result);
+            result = receiveLatestFromFolder(store, settings.inboxFolder(), "in", settings.receiveLimit(), result, account, ownerId);
+            result = receiveLatestFromFolders(store, settings.sentFolderCandidates(), "out", settings.receiveLimit(), result, account, ownerId);
         }
         SyncResult finalResult = new SyncResult("email", result.fetched(), result.saved(), result.skipped(),
                 "received " + result.saved() + " new email messages");
@@ -144,22 +162,24 @@ public class EmailSyncService {
         return PROVIDER_139.equalsIgnoreCase(effectiveMailProvider(settings)) && settings.imap139UseOpenssl();
     }
 
-    private SyncResult receiveLatestWithOpenSsl(EmailSyncSettings settings, SyncResult result) throws Exception {
+    private SyncResult receiveLatestWithOpenSsl(EmailSyncSettings settings, SyncResult result,
+                                                ChannelAccountEntity account, UUID ownerId) throws Exception {
         logSettings(settings);
         requireConfig(settings.imapHost(), "imapHost");
         requireConfig(settings.imapUser(), "imapUser");
         requireConfig(settings.imapPassword(), "imapPassword");
         OpenSslImapClient client = new OpenSslImapClient(settings);
-        result = receiveLatestFromOpenSslFolder(client, settings.inboxFolder(), "in", settings.receiveLimit(), result);
-        return receiveLatestFromOpenSslFolders(settings, "out", result);
+        result = receiveLatestFromOpenSslFolder(client, settings.inboxFolder(), "in", settings.receiveLimit(), result, account, ownerId);
+        return receiveLatestFromOpenSslFolders(settings, "out", result, account, ownerId);
     }
 
     private SyncResult receiveLatestFromOpenSslFolders(EmailSyncSettings settings,
-                                                       String direction, SyncResult result) throws Exception {
+                                                       String direction, SyncResult result,
+                                                       ChannelAccountEntity account, UUID ownerId) throws Exception {
         for (String folder : settings.sentFolderCandidates()) {
             OpenSslImapClient client = new OpenSslImapClient(settings);
             SyncResult updated = receiveLatestFromOpenSslFolder(client, folder, direction,
-                    settings.receiveLimit(), result);
+                    settings.receiveLimit(), result, account, ownerId);
             if (updated.fetched() > result.fetched()) {
                 log.info("event=email.imap_sent_folder_selected folder={} fetched={}", folder,
                         updated.fetched() - result.fetched());
@@ -171,20 +191,28 @@ public class EmailSyncService {
     }
 
     private SyncResult receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName,
-                                                       String direction, int limit, SyncResult result) throws Exception {
+                                                       String direction, int limit, SyncResult result,
+                                                       ChannelAccountEntity account, UUID ownerId) throws Exception {
         if (folderName == null || folderName.isBlank()) return result;
         var messages = client.fetchLatest(folderName, limit);
         result = new SyncResult("email", result.fetched() + messages.size(),
                 result.saved(), result.skipped(), result.message());
         for (Message message : messages) {
-            SyncResult updated = appendReceived(result, message, direction);
+            SyncResult updated = appendReceived(result, message, direction, account, ownerId);
             result = updated;
         }
         return result;
     }
 
+    private SyncResult receiveLatestFromOpenSslFolder(OpenSslImapClient client, String folderName,
+                                                       String direction, int limit, SyncResult result) throws Exception {
+        return receiveLatestFromOpenSslFolder(client, folderName, direction, limit, result,
+                resolveEmailAccount(), null);
+    }
+
     private SyncResult receiveLatestFromFolder(Store store, String folderName, String direction,
-                                                int limit, SyncResult result) throws Exception {
+                                                int limit, SyncResult result,
+                                                ChannelAccountEntity account, UUID ownerId) throws Exception {
         if (folderName == null || folderName.isBlank()) return result;
         Folder folder = store.getFolder(folderName);
         if (!folder.exists()) return result;
@@ -197,7 +225,7 @@ public class EmailSyncService {
             result = new SyncResult("email", result.fetched() + messages.length,
                     result.saved(), result.skipped(), result.message());
             for (Message message : messages) {
-                SyncResult updated = appendReceived(result, message, direction);
+                SyncResult updated = appendReceived(result, message, direction, account, ownerId);
                 result = updated;
             }
             return result;
@@ -207,9 +235,10 @@ public class EmailSyncService {
     }
 
     private SyncResult receiveLatestFromFolders(Store store, List<String> folderNames, String direction,
-                                                int limit, SyncResult result) throws Exception {
+                                                int limit, SyncResult result,
+                                                ChannelAccountEntity account, UUID ownerId) throws Exception {
         for (String folderName : folderNames) {
-            SyncResult updated = receiveLatestFromFolder(store, folderName, direction, limit, result);
+            SyncResult updated = receiveLatestFromFolder(store, folderName, direction, limit, result, account, ownerId);
             if (updated.fetched() > result.fetched()) {
                 log.info("event=email.imap_sent_folder_selected folder={} fetched={}", folderName,
                         updated.fetched() - result.fetched());
@@ -221,6 +250,11 @@ public class EmailSyncService {
     }
 
     private SyncResult appendReceived(SyncResult result, Message message, String direction) {
+        return appendReceived(result, message, direction, resolveEmailAccount(), null);
+    }
+
+    private SyncResult appendReceived(SyncResult result, Message message, String direction,
+                                      ChannelAccountEntity account, UUID ownerId) {
         try {
             String normalizedDirection = normalizeDirection(direction);
             String from = addresses(message.getFrom());
@@ -237,7 +271,6 @@ public class EmailSyncService {
                     ? message.getSentDate().toInstant() : Instant.now();
             String messageId = firstHeader(message, "Message-ID");
 
-            ChannelAccountEntity account = resolveEmailAccount();
             if (account == null) {
                 return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
             }
@@ -252,7 +285,8 @@ public class EmailSyncService {
                 return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
             }
 
-            ContactIdentityEntity identity = resolveOrCreateIdentity(contactSource);
+            ContactIdentityEntity identity = resolveOrCreateIdentity(contactSource,
+                    account.getId().toString(), ownerId);
             ConversationEntity conversation = resolveOrCreateConversation(identity.getId(), account.getId());
 
             MessageEntity entity = new MessageEntity();
@@ -333,24 +367,44 @@ public class EmailSyncService {
         return accounts.isEmpty() ? null : accounts.get(0);
     }
 
+    private ChannelAccountEntity requireOwnedEmailAccount(UUID accountId, UUID ownerId) {
+        if (accountId == null || ownerId == null) {
+            throw new EmailException("CHANNEL_ACCOUNT_REQUIRED", "Email channel account is required");
+        }
+        ChannelAccountEntity account = channelAccountMapper.findByIdAndOwner(accountId, ownerId);
+        if (account == null || !"email".equalsIgnoreCase(account.getChannelType())
+                || account.getDeletedAt() != null || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new EmailException("RESOURCE_NOT_FOUND", "Email channel account not found");
+        }
+        return account;
+    }
+
     private ContactIdentityEntity resolveOrCreateIdentity(String email) {
+        return resolveOrCreateIdentity(email, "email", null);
+    }
+
+    private ContactIdentityEntity resolveOrCreateIdentity(String email, String identityScope) {
+        return resolveOrCreateIdentity(email, identityScope, null);
+    }
+
+    private ContactIdentityEntity resolveOrCreateIdentity(String email, String identityScope, UUID ownerId) {
         String normalized = ContactPointUtil.extractEmail(email);
         List<ContactIdentityEntity> existing = contactIdentityMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ContactIdentityEntity>()
                         .eq(ContactIdentityEntity::getChannelType, "email")
-                        .eq(ContactIdentityEntity::getIdentityScope, "email")
+                        .eq(ContactIdentityEntity::getIdentityScope, identityScope)
                         .eq(ContactIdentityEntity::getIdentityValue, normalized));
         if (!existing.isEmpty()) {
             ContactIdentityEntity identity = existing.get(0);
             if (identity.getContactId() == null) {
-                linkToNewContact(identity, email, normalized);
+                linkToNewContact(identity, email, normalized, ownerId);
             }
             return identity;
         }
         ContactIdentityEntity identity = new ContactIdentityEntity();
         identity.setId(UUID.randomUUID());
         identity.setChannelType("email");
-        identity.setIdentityScope("email");
+        identity.setIdentityScope(identityScope);
         identity.setIdentityValue(normalized);
         identity.setNormalizedValue(normalized);
         identity.setDisplayName(ContactPointUtil.extractName(email, normalized));
@@ -359,6 +413,7 @@ public class EmailSyncService {
 
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
+        contact.setOwnerUserId(ownerId);
         contact.setDisplayName(ContactPointUtil.extractName(email, normalized));
         if (contact.getDisplayName() == null || contact.getDisplayName().isBlank()) {
             contact.setDisplayName(normalized);
@@ -372,8 +427,13 @@ public class EmailSyncService {
     }
 
     private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized) {
+        linkToNewContact(identity, email, normalized, null);
+    }
+
+    private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized, UUID ownerId) {
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
+        contact.setOwnerUserId(ownerId);
         String displayName = ContactPointUtil.extractName(email, normalized);
         contact.setDisplayName(!displayName.isBlank() ? displayName : normalized);
         contact.setCreatedAt(Instant.now());
@@ -512,6 +572,10 @@ public class EmailSyncService {
 
     EmailSyncSettings resolveSettings() {
         return EmailSyncSettings.from(config, resolveEmailAccount(), credentialCipher, log);
+    }
+
+    EmailSyncSettings resolveSettings(UUID accountId, UUID ownerId) {
+        return EmailSyncSettings.from(config, requireOwnedEmailAccount(accountId, ownerId), credentialCipher, log);
     }
 
     private void logSettings(EmailSyncSettings settings) {

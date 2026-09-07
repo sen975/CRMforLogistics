@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useContacts } from '../hooks/useContacts';
 import SendForm from '../components/SendForm';
 import { fetchChannelCapabilities } from '../api/endpoints';
+import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Title } = Typography;
 
@@ -100,7 +101,7 @@ export default function SendPage() {
             value={selectedId}
             style={{ width: '100%' }}
             options={contacts.map((c) => ({
-              label: `${c.displayName || c.remark || '未命名'} (${c.channelTypes?.join(', ')})`,
+              label: `${contactDisplayName(c)} (${c.channelTypes?.join(', ')})`,
               value: c.id,
             }))}
             notFoundContent={contactsPending ? <Spin size="small" /> : <Empty description="暂无 CAMS 消息历史联系人" />}

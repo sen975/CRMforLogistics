@@ -1,6 +1,7 @@
-import { List, Badge, Typography, Space, Tag } from 'antd';
-import { MailOutlined, MessageOutlined, PhoneOutlined, WechatOutlined } from '@ant-design/icons';
+import { Badge, Typography, Space, Tag, Tooltip } from 'antd';
+import { MailOutlined, MessageOutlined, PhoneOutlined, PushpinFilled, WechatOutlined } from '@ant-design/icons';
 import type { ContactResponse } from '../api/types';
+import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Text } = Typography;
 
@@ -24,7 +25,7 @@ function formatTime(iso: string | null): string {
 }
 
 interface ContactCardProps {
-  contact: Pick<ContactResponse, 'id' | 'displayName' | 'channelTypes' | 'lastMessageAt' | 'lastText' | 'messageCount' | 'unreadCount'> & { remark?: string };
+  contact: Pick<ContactResponse, 'id' | 'displayName' | 'channelTypes' | 'lastMessageAt' | 'lastText' | 'messageCount' | 'unreadCount'> & { remark?: string | null; pinned?: boolean };
   isActive: boolean;
   onClick: () => void;
 }
@@ -53,9 +54,14 @@ export default function ContactCard({ contact, isActive, onClick }: ContactCardP
           ))}
         </Space>
         <Text strong ellipsis style={{ flex: 1 }}>
-          {contact.displayName || contact.remark || '未命名'}
+          {contactDisplayName(contact)}
         </Text>
         <Space size={4}>
+          {contact.pinned ? (
+            <Tooltip title="已置顶">
+              <PushpinFilled aria-label="已置顶" style={{ color: '#1677ff', fontSize: 12 }} />
+            </Tooltip>
+          ) : null}
           {contact.unreadCount > 0 && (
             <Badge count={contact.unreadCount} size="small" />
           )}

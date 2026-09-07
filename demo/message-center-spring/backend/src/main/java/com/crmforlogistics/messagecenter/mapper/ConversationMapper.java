@@ -16,6 +16,9 @@ import java.util.List;
 
 @Mapper
 public interface ConversationMapper extends BaseMapper<ConversationEntity> {
+    String SAFE_GROUP_DISPLAY_NAME = "case when sc.group_kind='INTERNAL' then '内部群聊' "
+            + "when sc.group_kind='EXTERNAL' and nullif(sc.display_name, '') is not null "
+            + "and sc.display_name not like 'group:%' then sc.display_name else '外部群聊' end";
 
     /**
      * Server-side union of accessible CRM contacts and observed WeCom groups.
@@ -36,6 +39,8 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                  count(m.id) filter (where m.counts_as_unread)::int as unread_count,
                  null::text as provider_conversation_key,
                  0::int as participant_count,
+                 coalesce(pref.pinned, false) as pinned,
+                 pref.sort_rank,
                  coalesce(max(m.occurred_at), c.updated_at) as sort_at,
                  'CONTACT:' || c.id::text as sort_key
           from contacts c
@@ -57,6 +62,8 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
             or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))
           )
           left join messages m on m.conversation_id = cv.id
+          left join conversation_preferences pref on pref.user_id = #{userId}::uuid
+            and pref.target_type = 'CONTACT' and pref.target_id = c.id
           where c.deleted_at is null and c.status &lt;&gt; 'merged'
             and (
               exists (select 1 from user_roles ur join roles r on r.id = ur.role_id where ur.user_id = #{userId}::uuid and r.code = 'admin')
@@ -66,11 +73,30 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
             <if test="search != null and search != ''">
               and (c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark, '') ilike '%' || #{search} || '%')
             </if>
-          group by c.id, c.display_name, c.remark, c.updated_at
+            <if test="search == null or search == ''">
+              and (pref.hidden_at is null
+                or exists (select 1 from messages newer_m
+                           join conversations newer_cv on newer_cv.id = newer_m.conversation_id
+                           left join wecom_source_conversations newer_direct_sc
+                             on newer_direct_sc.id = newer_cv.source_conversation_id
+                             and newer_direct_sc.conversation_type = 'DIRECT'
+                           join contact_identities newer_ci
+                             on newer_ci.id = newer_cv.contact_identity_id
+                             or newer_direct_sc.contact_identity_id = newer_ci.id
+                           where newer_ci.contact_id = c.id and newer_ci.deleted_at is null
+                             and (exists (select 1 from user_roles newer_ur join roles newer_r on newer_r.id = newer_ur.role_id
+                                          where newer_ur.user_id = #{userId}::uuid and newer_r.code = 'admin')
+                               or newer_cv.assigned_user_id = #{userId}::uuid
+                               or exists (select 1 from team_members newer_tm where newer_tm.team_id = newer_cv.assigned_team_id and newer_tm.user_id = #{userId}::uuid)
+                               or exists (select 1 from conversation_access_grants newer_g where newer_g.conversation_id = newer_cv.id and newer_g.user_id = #{userId}::uuid
+                                          and newer_g.revoked_at is null and (newer_g.expires_at is null or newer_g.expires_at > now())))
+                             and newer_m.received_at &gt; pref.hidden_at))
+            </if>
+          group by c.id, c.display_name, c.remark, c.updated_at, pref.pinned, pref.sort_rank, pref.hidden_at
           union all
           select 'WECOM_GROUP' as type,
                  sc.id,
-                 coalesce(nullif(sc.display_name, ''), '企业微信群') as display_name,
+                 """ + SAFE_GROUP_DISPLAY_NAME + " as display_name,\n" + """
                  null::text as remark,
                  sc.avatar_url,
                  'wecom' as channel_types,
@@ -80,6 +106,8 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                  count(m.id) filter (where m.counts_as_unread)::int as unread_count,
                  sc.provider_conversation_key,
                  count(distinct participant.party_id)::int as participant_count,
+                 coalesce(pref.pinned, false) as pinned,
+                 pref.sort_rank,
                  coalesce(max(m.occurred_at), sc.updated_at) as sort_at,
                  'WECOM_GROUP:' || sc.id::text as sort_key
           from wecom_source_conversations sc
@@ -96,28 +124,52 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
           left join wecom_source_conversation_participants participant
             on participant.source_conversation_id = sc.id and participant.participant_status = 'OBSERVED'
           left join messages m on m.conversation_id = cv.id
+          left join conversation_preferences pref on pref.user_id = #{userId}::uuid
+            and pref.target_type = 'WECOM_GROUP' and pref.target_id = sc.id
           where sc.conversation_type = 'GROUP'
             and (cv.assigned_user_id is null and cv.assigned_team_id is null
               or cv.assigned_user_id = #{userId}::uuid
               or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid)
               or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())))
-            <if test="search != null and search != ''">
-            and coalesce(nullif(sc.display_name, ''), '企业微信群') ilike '%' || #{search} || '%'
+            <if test="search == null or search == ''">
+              and (pref.hidden_at is null
+                or exists (select 1 from messages newer_m
+                           where newer_m.conversation_id = cv.id
+                             and newer_m.received_at &gt; pref.hidden_at))
             </if>
-          group by sc.id, sc.display_name, sc.provider_conversation_key, sc.avatar_url, sc.updated_at
+            <if test="search != null and search != ''">
+            and """ + " " + SAFE_GROUP_DISPLAY_NAME + " ilike '%' || #{search} || '%'\n" + """
+            </if>
+          group by sc.id, sc.group_kind, sc.display_name, sc.provider_conversation_key, sc.avatar_url, sc.updated_at, pref.pinned, pref.sort_rank, pref.hidden_at
         )
         select type, id, display_name, remark, avatar_url, channel_types, last_message_at, last_text,
-               message_count, unread_count, provider_conversation_key, participant_count
+               message_count, unread_count, provider_conversation_key, participant_count, pinned,
+               sort_rank, sort_at, sort_key
         from unified
-        <if test="cursorAt != null and cursorKey != null">
-          where (sort_at &lt; #{cursorAt}::timestamptz or (sort_at = #{cursorAt}::timestamptz and sort_key &lt; #{cursorKey}))
+        <if test="cursorPinned != null and cursorAt != null and cursorKey != null">
+          where ((#{cursorPinned}::boolean = true and pinned = false)
+            or (pinned = #{cursorPinned}::boolean and (
+              <choose>
+                <when test="cursorRank == null">
+                  sort_rank is null and (sort_at &lt; #{cursorAt}::timestamptz
+                    or (sort_at = #{cursorAt}::timestamptz and sort_key &lt; #{cursorKey}))
+                </when>
+                <otherwise>
+                  sort_rank is null or sort_rank &gt; #{cursorRank}
+                    or (sort_rank = #{cursorRank} and (sort_at &lt; #{cursorAt}::timestamptz
+                      or (sort_at = #{cursorAt}::timestamptz and sort_key &lt; #{cursorKey})))
+                </otherwise>
+              </choose>
+            )))
         </if>
-        order by sort_at desc nulls last, sort_key desc
+        order by pinned desc, sort_rank nulls last, sort_at desc nulls last, sort_key desc
         limit #{limit}
         </script>
         """)
     List<UnifiedConversationRow> listUnified(@Param("userId") UUID userId,
                                              @Param("search") String search,
+                                             @Param("cursorPinned") Boolean cursorPinned,
+                                             @Param("cursorRank") Long cursorRank,
                                              @Param("cursorAt") String cursorAt,
                                              @Param("cursorKey") String cursorKey,
                                              @Param("limit") int limit);
@@ -125,13 +177,24 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
     record UnifiedConversationRow(String type, UUID id, String displayName, String remark, String avatarUrl,
                                   String channelTypes, Instant lastMessageAt, String lastText,
                                   int messageCount, int unreadCount,
-                                  String providerConversationKey, int participantCount) {
+                                  String providerConversationKey, int participantCount, boolean pinned,
+                                  Long sortRank, Instant sortAt, String sortKey) {
         public UnifiedConversationRow(String type, UUID id, String displayName, String avatarUrl,
                                       String channelTypes, Instant lastMessageAt, String lastText,
                                       int messageCount, int unreadCount,
                                       String providerConversationKey, int participantCount) {
             this(type, id, displayName, null, avatarUrl, channelTypes, lastMessageAt, lastText,
-                    messageCount, unreadCount, providerConversationKey, participantCount);
+                    messageCount, unreadCount, providerConversationKey, participantCount, false,
+                    null, lastMessageAt, type + ":" + id);
+        }
+
+        public UnifiedConversationRow(String type, UUID id, String displayName, String remark, String avatarUrl,
+                                      String channelTypes, Instant lastMessageAt, String lastText,
+                                      int messageCount, int unreadCount,
+                                      String providerConversationKey, int participantCount, boolean pinned) {
+            this(type, id, displayName, remark, avatarUrl, channelTypes, lastMessageAt, lastText,
+                    messageCount, unreadCount, providerConversationKey, participantCount, pinned,
+                    null, lastMessageAt, type + ":" + id);
         }
 
         public ConversationListItemResponse toResponse() {
@@ -140,13 +203,14 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                     .filter(value -> !value.isBlank()).sorted().toList();
             return new ConversationListItemResponse(type, id, displayName, remark, avatarUrl, channels,
                     lastMessageAt, lastText, messageCount, unreadCount,
-                    providerConversationKey, participantCount);
+                    providerConversationKey, participantCount, pinned);
         }
     }
 
     @Select("""
         select sc.id as source_conversation_id, sc.installation_id, sc.provider_conversation_key,
-               sc.display_name, sc.avatar_url, sc.conversation_type, cv.id as conversation_id
+               sc.group_kind, """ + SAFE_GROUP_DISPLAY_NAME + " as display_name,\n" + """
+               sc.avatar_url, sc.conversation_type, cv.id as conversation_id
         from wecom_source_conversations sc
         join conversations cv on cv.source_conversation_id = sc.id
         join wecom_installations wi on wi.id = sc.installation_id
@@ -167,7 +231,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                                                                @Param("sourceConversationId") UUID sourceConversationId);
 
     record WeComSourceConversationAccessRow(UUID sourceConversationId, UUID installationId,
-                                            String providerConversationKey, String displayName,
+                                            String providerConversationKey, String groupKind, String displayName,
                                             String avatarUrl, String conversationType,
                                             UUID conversationId) {}
 
@@ -306,7 +370,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
 
     /** Related customer groups for a contact; groups remain independent conversations. */
     @Select("select sc.id as source_conversation_id, "
-        + "coalesce(nullif(sc.display_name, ''), '企业微信群') as display_name, sc.avatar_url, "
+        + SAFE_GROUP_DISPLAY_NAME + " as display_name, sc.avatar_url, "
         + "count(distinct participant.party_id)::int as participant_count "
         + "from wecom_source_conversations sc "
         + "join conversations cv on cv.source_conversation_id = sc.id "
@@ -331,7 +395,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         + "or exists (select 1 from team_members tm where tm.team_id = cv.assigned_team_id and tm.user_id = #{userId}::uuid) "
         + "or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid "
         + "and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))) "
-        + "group by sc.id, sc.display_name, sc.avatar_url "
+        + "group by sc.id, sc.group_kind, sc.display_name, sc.avatar_url "
         + "order by max(sc.updated_at) desc")
     java.util.List<RelatedWeComGroupRow> listAccessibleWeComGroupsForContact(@Param("contactId") UUID contactId,
                                                                                 @Param("userId") UUID userId);

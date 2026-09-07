@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -183,6 +184,38 @@ class WeComMessageProjectorTest {
                 "employee-2".equals(identity.getIdentityValue())
                         && "employee-2".equals(identity.getDisplayName())));
         verify(conversations).getOrCreateConversation(eq(account.getId()), any());
+    }
+
+    @Test
+    void bindsDirectSourceConversationToTheResolvedWeComIdentity() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        WeComSourceConversationMapper sourceConversations = mock(WeComSourceConversationMapper.class);
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        account.setChannelType("wecom");
+        UUID sourceId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        when(accounts.selectSingleActiveByChannelType("wecom")).thenReturn(account);
+        when(messages.findByProviderMessageId(account.getId(), "direct-bind-1")).thenReturn(Optional.empty());
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(identityId);
+        identity.setContactId(UUID.randomUUID());
+        identity.setDisplayName("曹舒婷");
+        when(identities.findByNormalizedValueInScope("wecom", account.getId().toString(), "external-1"))
+                .thenReturn(Optional.of(identity));
+        when(conversations.getOrCreateConversation(any(), any())).thenReturn(new ConversationEntity());
+
+        WeComMessageProjector projector = new WeComMessageProjector(
+                accounts, identities, contacts, conversations, messages, null, null, sourceConversations);
+        projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
+                "direct-bind-1", sourceId, UUID.randomUUID(), "corp-1",
+                new WeComMessageProjector.ContactParty("EXTERNAL_CONTACT", "external-1"), 100L, "inbound"));
+
+        verify(sourceConversations).bindContactIdentity(sourceId, identityId);
     }
 
     @Test

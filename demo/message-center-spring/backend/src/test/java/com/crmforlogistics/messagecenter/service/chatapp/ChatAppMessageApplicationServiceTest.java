@@ -3,7 +3,6 @@ package com.crmforlogistics.messagecenter.service.chatapp;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
@@ -39,7 +38,6 @@ class ChatAppMessageApplicationServiceTest {
     @Mock ConversationMapper conversationMapper;
     @Mock MessageSendApplicationService sendService;
     @Mock ConversationAccessService conversationAccessService;
-    @Mock AppConfig appConfig;
 
     @Test
     void currentContactIdentityResolvesFixedAccountAndConversationBeforeAccepting() {
@@ -60,7 +58,7 @@ class ChatAppMessageApplicationServiceTest {
         conversation.setId(UUID.randomUUID());
         conversation.setChannelAccountId(account.getId());
 
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
         when(contactMapper.findAccessibleForChatAppSend(
                 contactId, identity.getId(), account.getId(), actorId))
@@ -102,7 +100,7 @@ class ChatAppMessageApplicationServiceTest {
         ConversationEntity conversation = conversation(account.getId());
 
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactMapper.findAccessibleForChatAppSend(
                 contactId, identity.getId(), account.getId(), actorId))
                 .thenReturn(Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
@@ -133,7 +131,7 @@ class ChatAppMessageApplicationServiceTest {
         identity.setIdentityScope(account.getId().toString());
         identity.setIdentityValue("60123456789");
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactMapper.findAccessibleForChatAppSend(
                 contactId, identity.getId(), account.getId(), actorId))
                 .thenReturn(Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
@@ -162,7 +160,7 @@ class ChatAppMessageApplicationServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("CHATAPP_CONTACT_IDENTITY_MISMATCH");
         verifyNoInteractions(channelAccountMapper, conversationMapper, sendService,
-                conversationAccessService, appConfig);
+                conversationAccessService);
     }
 
     @Test
@@ -184,7 +182,7 @@ class ChatAppMessageApplicationServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("CHATAPP_CONTACT_IDENTITY_NOT_FOUND");
         verifyNoInteractions(channelAccountMapper, conversationMapper, sendService,
-                conversationAccessService, appConfig);
+                conversationAccessService);
     }
 
     @Test
@@ -205,7 +203,7 @@ class ChatAppMessageApplicationServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("CHATAPP_CONTACT_IDENTITY_CHANNEL_INVALID");
         verifyNoInteractions(channelAccountMapper, conversationMapper, sendService,
-                conversationAccessService, appConfig);
+                conversationAccessService);
     }
 
     @Test
@@ -254,7 +252,7 @@ class ChatAppMessageApplicationServiceTest {
         ConversationEntity conversation = new ConversationEntity();
         conversation.setId(UUID.randomUUID());
 
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
         when(contactMapper.findAccessibleForChatAppSend(
                 contactId, identity.getId(), account.getId(), actorId)).thenReturn(Optional.empty());
@@ -304,7 +302,7 @@ class ChatAppMessageApplicationServiceTest {
         identity.setIdentityValue("60123456789");
 
         when(conversationMapper.selectById(conversation.getId())).thenReturn(conversation);
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
         ChatAppMessageApplicationService service = service();
 
@@ -333,7 +331,7 @@ class ChatAppMessageApplicationServiceTest {
         identity.setIdentityScope(account.getId().toString());
         identity.setIdentityValue("60123456789");
         when(conversationMapper.selectById(conversation.getId())).thenReturn(conversation);
-        when(channelAccountMapper.selectById(account.getId())).thenReturn(account);
+        when(channelAccountMapper.findByIdAndOwner(account.getId(), actorId)).thenReturn(account);
         when(contactIdentityMapper.selectById(identity.getId())).thenReturn(identity);
         org.mockito.Mockito.doThrow(new SecurityException("CHATAPP_CONVERSATION_FORBIDDEN"))
                 .when(conversationAccessService)
@@ -367,6 +365,6 @@ class ChatAppMessageApplicationServiceTest {
     private ChatAppMessageApplicationService service() {
         return new ChatAppMessageApplicationService(
                 contactIdentityMapper, contactMapper, conversationMapper, sendService,
-                conversationAccessService, new ChatAppAccountResolver(channelAccountMapper, appConfig));
+                conversationAccessService, new ChatAppAccountResolver(channelAccountMapper));
     }
 }

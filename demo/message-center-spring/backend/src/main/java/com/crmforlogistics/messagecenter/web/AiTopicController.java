@@ -3,11 +3,15 @@ package com.crmforlogistics.messagecenter.web;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GenerationProjection;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.GroupTopicTimelineResponse;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicProjection;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicTimelineResponse;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicOperationKind;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicOperationProjection;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicModels.TopicInboxRequestProjection;
+import com.crmforlogistics.messagecenter.dto.request.AiTopicManualReviewRequest;
+import com.crmforlogistics.messagecenter.dto.request.AiTopicFusionRequest;
+import com.crmforlogistics.messagecenter.dto.response.AiTopicManualReviewResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -21,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 
 @RestController
@@ -32,6 +37,62 @@ public class AiTopicController {
     @GetMapping("/contacts/{contactId}/topics")
     public TopicTimelineResponse topics(@PathVariable UUID contactId) {
         return service.getTopics(SecurityUtil.currentUserId(), contactId);
+    }
+
+    @GetMapping("/contacts/{contactId}/topic-review/sources")
+    public AiTopicManualReviewResponse.SourceListResponse manualReviewSources(
+            @PathVariable UUID contactId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) UUID contactIdentityId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Instant from,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) Instant to) {
+        return service.listManualReviewSources(SecurityUtil.currentUserId(), contactId, contactIdentityId, from, to);
+    }
+
+    @PostMapping("/contacts/{contactId}/topic-review/preview")
+    public AiTopicManualReviewResponse.PreviewResponse previewManualReview(@PathVariable UUID contactId,
+                                                                            @RequestBody AiTopicManualReviewRequest request) {
+        return service.previewManualReview(SecurityUtil.currentUserId(), contactId, request);
+    }
+
+    @GetMapping("/contacts/{contactId}/topic-review/pending")
+    public List<TopicProjection> manualReviewPending(@PathVariable UUID contactId) {
+        return service.getReviewPendingTopics(SecurityUtil.currentUserId(), contactId);
+    }
+
+    @PostMapping("/topics/{topicId}/keep")
+    public TopicProjection keepPending(@PathVariable UUID topicId) {
+        return service.keepPending(SecurityUtil.currentUserId(), topicId);
+    }
+
+
+    @PostMapping("/contacts/{contactId}/topic-review/{previewId}/apply")
+    public AiTopicManualReviewResponse.ApplyResponse applyManualReview(@PathVariable UUID contactId,
+                                                                         @PathVariable UUID previewId,
+                                                                         @RequestBody(required = false) AiTopicManualReviewRequest request,
+                                                                         @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return service.applyManualReview(SecurityUtil.currentUserId(), contactId, previewId, request, idempotencyKey);
+    }
+
+    @PostMapping("/contacts/{contactId}/topic-fusion/preview")
+    public AiTopicManualReviewResponse.FusionPreviewResponse previewFusion(
+            @PathVariable UUID contactId, @RequestBody AiTopicFusionRequest request) {
+        return service.previewTopicFusion(SecurityUtil.currentUserId(), contactId, request);
+    }
+
+    @PostMapping("/contacts/{contactId}/topic-fusion/{previewId}/apply")
+    public TopicProjection applyFusion(@PathVariable UUID contactId, @PathVariable UUID previewId,
+                                       @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return service.applyTopicFusion(SecurityUtil.currentUserId(), contactId, previewId, idempotencyKey);
+    }
+
+    @GetMapping("/wecom/groups/{sourceConversationId}/topics")
+    public GroupTopicTimelineResponse groupTopics(@PathVariable UUID sourceConversationId) {
+        return service.getGroupTopics(SecurityUtil.currentUserId(), sourceConversationId);
+    }
+
+    @PostMapping("/wecom/groups/{sourceConversationId}/topics/retry")
+    public ResponseEntity<GenerationProjection> retryGroupTopics(@PathVariable UUID sourceConversationId) {
+        return ResponseEntity.accepted().body(service.retryGroupGeneration(SecurityUtil.currentUserId(), sourceConversationId));
     }
 
     @PatchMapping("/topics/{topicId}")

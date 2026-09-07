@@ -49,6 +49,7 @@ public class WeComMessageSummaryBackfill {
         int enqueued = 0;
         for (WeComChatDataMessageEntity message : messages.findForSummaryBackfill(installationId, limit)) {
             if (message == null || message.getMsgid() == null || message.getSendTime() == null) continue;
+            if (!isTextMessageType(message.getMsgtype())) continue;
             String request = "{\"operation\":\"submit\",\"msgid\":\""
                     + escapeJson(message.getMsgid()) + "\"}";
             if (repository.enqueueIfAbsent(new WeComMessageSummaryRepository.EnqueueCommand(
@@ -56,6 +57,11 @@ public class WeComMessageSummaryBackfill {
                     message.getMsgid(), message.getSendTime(), request, now))) enqueued++;
         }
         return enqueued;
+    }
+
+    private static boolean isTextMessageType(String msgType) {
+        return msgType == null || msgType.isBlank() || "1".equals(msgType)
+                || "text".equalsIgnoreCase(msgType);
     }
 
     private static String escapeJson(String value) {

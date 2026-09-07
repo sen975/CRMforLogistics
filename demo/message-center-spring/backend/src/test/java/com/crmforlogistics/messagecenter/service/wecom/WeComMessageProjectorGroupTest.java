@@ -47,7 +47,8 @@ class WeComMessageProjectorGroupTest {
         page.setRecords(List.of(entity));
         when(conversations.findAccessibleWeComGroup(any(), any())).thenReturn(
                 new ConversationMapper.WeComSourceConversationAccessRow(
-                        sourceId, UUID.randomUUID(), "chat-id", "研发群", null, "GROUP", UUID.randomUUID()));
+                        sourceId, UUID.randomUUID(), "group:chat-id", "EXTERNAL", "研发群", null,
+                        "GROUP", UUID.randomUUID()));
         when(messages.listMessagesByConversations(any(), any(), any(), any(), any(), any(Boolean.class)))
                 .thenReturn(page);
         ChannelAccountEntity account = new ChannelAccountEntity();
@@ -69,6 +70,7 @@ class WeComMessageProjectorGroupTest {
         WeComGroupThreadResponse response = service.getWeComGroupThread(userId, sourceId, null, 20);
 
         assertThat(response.displayName()).isEqualTo("研发群");
+        assertThat(response.groupChatId()).isEqualTo("chat-id");
         assertThat(response.participants()).extracting(WeComPartyView::displayName)
                 .containsExactly("员工 A", "客户 A");
         assertThat(response.items()).singleElement().extracting(MessageResponse::sender)

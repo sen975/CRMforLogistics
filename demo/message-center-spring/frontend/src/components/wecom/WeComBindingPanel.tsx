@@ -8,6 +8,8 @@ import {
   unbindWeCom,
 } from '../../api/endpoints';
 import { WeComLoginPanel } from './WeComLoginPanel';
+import { WeComAvatarAuthorizationModal } from './WeComAvatarAuthorizationModal';
+import { useAuth } from '../../hooks/useAuth';
 
 const { Text } = Typography;
 
@@ -22,7 +24,9 @@ function errorMessage(error: unknown): string {
 }
 
 export function WeComBindingPanel() {
+  const { profile, refreshProfile } = useAuth();
   const [binding, setBinding] = useState(false);
+  const [avatarAuthorizationOpen, setAvatarAuthorizationOpen] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const bindingQuery = useQuery({
     queryKey: ['wecom-binding'],
@@ -66,10 +70,18 @@ export function WeComBindingPanel() {
           <Descriptions.Item label="企业微信">
             <Tag color="success">已绑定企业微信</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="成员标识">{current.wecomUserId}</Descriptions.Item>
-          <Descriptions.Item label="企业标识">{current.authCorpId}</Descriptions.Item>
+          <Descriptions.Item label="企业微信昵称">{current.wecomDisplayName?.trim() || '未获取'}</Descriptions.Item>
+          <Descriptions.Item label="所属企业">{current.corpName?.trim() || '未获取'}</Descriptions.Item>
         </Descriptions>
         {operationError && <Alert type="error" showIcon message={operationError} />}
+        {profile?.avatar.source !== 'WECOM' && (
+          <Button
+            icon={<WechatOutlined />}
+            onClick={() => setAvatarAuthorizationOpen(true)}
+          >
+            授权企业微信头像
+          </Button>
+        )}
         <Popconfirm
           title="解除企业微信绑定"
           description="解除后仍可使用账号密码登录。"
@@ -79,6 +91,15 @@ export function WeComBindingPanel() {
         >
           <Button danger loading={unbindMutation.isPending}>解除绑定</Button>
         </Popconfirm>
+        <WeComAvatarAuthorizationModal
+          open={avatarAuthorizationOpen}
+          onClose={() => setAvatarAuthorizationOpen(false)}
+          onSucceeded={async () => {
+            await bindingQuery.refetch();
+            await refreshProfile();
+            setAvatarAuthorizationOpen(false);
+          }}
+        />
       </Flex>
     );
   }
@@ -100,10 +121,11 @@ export function WeComBindingPanel() {
 
   const exchange = async (code: string, state: string) => {
     setOperationError(null);
-    try {
-      await exchangeMutation.mutateAsync({ code, state });
-      await bindingQuery.refetch();
-      setBinding(false);
+      try {
+        await exchangeMutation.mutateAsync({ code, state });
+        await bindingQuery.refetch();
+        await refreshProfile();
+        setBinding(false);
     } catch (error) {
       setOperationError(errorMessage(error));
     }

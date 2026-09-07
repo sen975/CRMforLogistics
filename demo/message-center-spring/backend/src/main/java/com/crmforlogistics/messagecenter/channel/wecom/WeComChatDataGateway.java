@@ -37,7 +37,8 @@ public class WeComChatDataGateway {
     private static final Set<String> PAGE_FIELDS = Set.of(
             "errcode", "errmsg", "has_more", "next_cursor", "msg_list");
     private static final Set<String> MESSAGE_FIELDS = Set.of(
-            "msgid", "sender", "receiver_list", "chatid", "send_time", "msgtype", "service_encrypt_info");
+            "msgid", "sender", "receiver_list", "chatid", "send_time", "msgtype", "media",
+            "service_encrypt_info");
     private static final Set<String> PARTY_FIELDS = Set.of("type", "id");
     private static final Set<String> ENCRYPTION_FIELDS = Set.of("encrypted_secret_key", "public_key_ver");
     private final AppConfig config;
@@ -176,7 +177,7 @@ public class WeComChatDataGateway {
                         List.copyOf(parties), optionalText(element, "chatid", 256),
                         longValue(element, "send_time"), integer(element, "msgtype"),
                         text(encryption, "encrypted_secret_key", 4096),
-                        integer(encryption, "public_key_ver")));
+                        integer(encryption, "public_key_ver"), optionalObjectJson(element, "media", 65_536)));
             }
             return new ProgramPage(hasMoreValue == 1, nextCursor, List.copyOf(messages));
         } catch (WeComChatDataException exception) {
@@ -231,6 +232,16 @@ public class WeComChatDataGateway {
         String value = node.get(field).asText();
         if (value.length() > maximum) throw programError(null);
         return value;
+    }
+
+    private String optionalObjectJson(JsonNode node, String field, int maximum)
+            throws Exception {
+        if (!node.has(field)) return "";
+        JsonNode value = node.get(field);
+        if (!value.isObject()) throw programError(null);
+        String json = objectMapper.writeValueAsString(value);
+        if (json.length() > maximum) throw programError(null);
+        return json;
     }
 
     private String boundedErrmsg(JsonNode node, String field) {
@@ -311,6 +322,13 @@ public class WeComChatDataGateway {
     public record ProgramPage(boolean hasMore, String nextCursor, List<EncryptedMessage> messages) {}
     public record EncryptedMessage(String msgid, Party sender, List<Party> receivers, String chatId,
                                    long sendTime, int msgType, String encryptedSecretKey,
-                                   int publicKeyVersion) {}
+                                   int publicKeyVersion, String mediaJson) {
+        public EncryptedMessage(String msgid, Party sender, List<Party> receivers, String chatId,
+                                long sendTime, int msgType, String encryptedSecretKey,
+                                int publicKeyVersion) {
+            this(msgid, sender, receivers, chatId, sendTime, msgType, encryptedSecretKey,
+                    publicKeyVersion, "");
+        }
+    }
     public record Party(int type, String id) {}
 }

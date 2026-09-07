@@ -4,12 +4,12 @@ import com.aliyun.sdk.service.cams20200606.AsyncClient;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppHistoryReconciliationResult;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessagePeerReconciliationService;
 import com.crmforlogistics.messagecenter.service.chatapp.PeerReconciliationModels.PeerReconciliationResult;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -44,24 +44,31 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ChatAppMessageSyncServiceTest {
 
-    @Mock AppConfig appConfig;
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock ChatAppPollingProjector pollingProjector;
     @Mock ChatAppMessagePeerReconciliationService peerReconciliationService;
+    @Mock ChatAppAccountCredentialsResolver credentialsResolver;
+
+    @BeforeEach
+    void setUpCredentials() {
+        when(credentialsResolver.resolve(any())).thenReturn(new ChatAppAccountCredentials(
+                "account-key", "account-secret", "account-space", "60122222222",
+                "ap-southeast-1", "cams.ap-southeast-1.aliyuncs.com"));
+    }
 
     @Test
     void shouldConstructWithDependencies() {
         ChatAppMessageSyncService service = new ChatAppMessageSyncService(
-                appConfig, channelAccountMapper, pollingProjector, peerReconciliationService);
+                channelAccountMapper, pollingProjector, peerReconciliationService, credentialsResolver);
         assertNotNull(service);
     }
 
     @Test
     void shouldRejectNullDependencies() {
         assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(
-                null, channelAccountMapper, pollingProjector, peerReconciliationService));
+                null, pollingProjector, peerReconciliationService, credentialsResolver));
         assertThrows(NullPointerException.class, () -> new ChatAppMessageSyncService(
-                appConfig, null, pollingProjector, peerReconciliationService));
+                channelAccountMapper, null, peerReconciliationService, credentialsResolver));
     }
 
     @Test
@@ -72,7 +79,6 @@ class ChatAppMessageSyncServiceTest {
         account.setId(accountId);
         account.setAccountIdentifier("8613266259485");
         when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account));
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         ListChatappMessageResponseBody.Data saved = ListChatappMessageResponseBody.Data.builder()
                 .messageId("wamid-saved")
@@ -115,7 +121,6 @@ class ChatAppMessageSyncServiceTest {
         account.setId(accountId);
         account.setAccountIdentifier("8613266259485");
         when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account));
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         ListChatappMessageResponseBody.Data row = ListChatappMessageResponseBody.Data.builder()
                 .messageId("wamid-projection-error")
@@ -167,7 +172,6 @@ class ChatAppMessageSyncServiceTest {
         account.setId(accountId);
         account.setAccountIdentifier("8613266259485");
         when(channelAccountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account));
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         AsyncClient client = mock(AsyncClient.class);
         CompletableFuture<ListChatappMessageResponse> failed = new CompletableFuture<>();
@@ -180,7 +184,7 @@ class ChatAppMessageSyncServiceTest {
     }
 
     @Test
-    void runAccountUsesTheRequestedAccountIdentifier() throws Exception {
+    void runAccountUsesTheSelectedAccountCredentials() throws Exception {
         UUID requestedAccountId = UUID.randomUUID();
         ChannelAccountEntity requestedAccount = new ChannelAccountEntity();
         requestedAccount.setId(requestedAccountId);
@@ -188,7 +192,6 @@ class ChatAppMessageSyncServiceTest {
         requestedAccount.setAuthStatus("active");
         requestedAccount.setAccountIdentifier("60199999999");
         when(channelAccountMapper.selectById(requestedAccountId)).thenReturn(requestedAccount);
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         AsyncClient client = mock(AsyncClient.class);
         when(client.listChatappMessage(any())).thenReturn(CompletableFuture.completedFuture(
@@ -201,7 +204,9 @@ class ChatAppMessageSyncServiceTest {
         org.mockito.ArgumentCaptor<ListChatappMessageRequest> requestCaptor =
                 org.mockito.ArgumentCaptor.forClass(ListChatappMessageRequest.class);
         verify(client).listChatappMessage(requestCaptor.capture());
-        assertThat(requestCaptor.getValue().getBusinessNumber()).isEqualTo("60199999999");
+        assertThat(requestCaptor.getValue().getBusinessNumber()).isEqualTo("60122222222");
+        assertThat(requestCaptor.getValue().getCustSpaceId()).isEqualTo("account-space");
+        verify(credentialsResolver).resolve(requestedAccount);
     }
 
     @Test
@@ -209,7 +214,6 @@ class ChatAppMessageSyncServiceTest {
         UUID accountId = UUID.randomUUID();
         ChannelAccountEntity account = activeAccount(accountId, "8613266259485");
         when(channelAccountMapper.selectById(accountId)).thenReturn(account);
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         Instant start = Instant.parse("2026-07-01T00:00:00Z");
         Instant end = Instant.parse("2026-08-01T00:00:00Z");
@@ -247,7 +251,6 @@ class ChatAppMessageSyncServiceTest {
         UUID accountId = UUID.randomUUID();
         when(channelAccountMapper.selectById(accountId))
                 .thenReturn(activeAccount(accountId, "8613266259485"));
-        when(appConfig.custSpaceId()).thenReturn("test-space");
 
         ListChatappMessageResponseBody.Data row = ListChatappMessageResponseBody.Data.builder()
                 .messageId("wamid-missing")
@@ -297,12 +300,12 @@ class ChatAppMessageSyncServiceTest {
 
     private ChatAppMessageSyncService serviceWithClient(AsyncClient client) throws Exception {
         Constructor<ChatAppMessageSyncService> constructor = ChatAppMessageSyncService.class
-                .getDeclaredConstructor(AppConfig.class, ChannelAccountMapper.class,
+                .getDeclaredConstructor(ChannelAccountMapper.class,
                         ChatAppPollingProjector.class, ChatAppMessagePeerReconciliationService.class,
-                        Supplier.class);
+                        ChatAppAccountCredentialsResolver.class, Supplier.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(appConfig, channelAccountMapper, pollingProjector,
-                peerReconciliationService,
+        return constructor.newInstance(channelAccountMapper, pollingProjector,
+                peerReconciliationService, credentialsResolver,
                 (Supplier<AsyncClient>) () -> client);
     }
 

@@ -8,7 +8,11 @@ import com.crmforlogistics.messagecenter.entity.WeComSourceConversationEntity;
 import com.crmforlogistics.messagecenter.mapper.AiTopicOwnerActivityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.config.AiTopicConfig;
 import com.crmforlogistics.messagecenter.service.wecom.WeComMessageSummaryRepository;
+import org.springframework.beans.factory.annotation.AutowiredAnnotationBeanPostProcessor;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -46,5 +50,23 @@ class WeComSummaryTopicActivityBridgeTest {
 
         assertThat(bridge.resolveOwner(sourceId))
                 .isEqualTo(new AiTopicOwnerService.OwnerRef("CONTACT", contactId));
+    }
+
+    @Test
+    void beanFactoryUsesTheAutowiredConstructor() {
+        DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+        factory.addBeanPostProcessor(new AutowiredAnnotationBeanPostProcessor());
+        factory.registerSingleton("summaries", mock(WeComMessageSummaryRepository.class));
+        factory.registerSingleton("conversations", mock(WeComSourceConversationMapper.class));
+        factory.registerSingleton("identities", mock(ContactIdentityMapper.class));
+        factory.registerSingleton("activities", mock(AiTopicOwnerActivityMapper.class));
+        AiTopicConfigHolder config = mock(AiTopicConfigHolder.class);
+        when(config.get()).thenReturn(new AiTopicConfig(
+                "", "", "gpt-4o-mini", 30, 200, 262144, 0.65,
+                1, 3, 120, 30));
+        factory.registerSingleton("config", config);
+        factory.registerBeanDefinition("bridge", new RootBeanDefinition(WeComSummaryTopicActivityBridge.class));
+
+        assertThat(factory.getBean(WeComSummaryTopicActivityBridge.class)).isNotNull();
     }
 }

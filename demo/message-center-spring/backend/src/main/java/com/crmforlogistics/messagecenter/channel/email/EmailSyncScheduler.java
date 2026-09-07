@@ -30,32 +30,32 @@ public class EmailSyncScheduler {
 
     @Scheduled(fixedDelay = 300_000)
     public void syncEmail() {
-        ChannelAccountEntity account = resolveEmailAccount();
-        if (account != null) {
-            channelAccountMapper.updateSyncStatus(account.getId(), "syncing", null);
-        }
-        try {
-            EmailSyncService.SyncResult result = syncService.receiveLatest();
-            log.info("Email sync: {}", result.message());
-            if (account != null) {
-                channelAccountMapper.updateSyncStatus(account.getId(), "success", Instant.now());
+        for (ChannelAccountEntity account : resolveEmailAccounts()) {
+            if (account.getOwnerUserId() == null) {
+                log.warn("event=email.sync_skipped accountId={} reason=missing_owner", account.getId());
+                continue;
             }
-        } catch (Exception e) {
-            String code = e instanceof EmailException emailException
-                    ? emailException.code() : "EMAIL_SYNC_FAILED";
-            log.error("event=email.sync_failed code={} accountId={}", code,
-                    account == null ? "" : account.getId(), e);
-            if (account != null) {
-                channelAccountMapper.updateSyncStatus(account.getId(), "failed", Instant.now());
+            channelAccountMapper.updateSyncStatusOwned(account.getOwnerUserId(), account.getId(), "syncing", null);
+            try {
+                EmailSyncService.SyncResult result = syncService.receiveLatest(account.getId(), account.getOwnerUserId());
+                log.info("Email sync accountId={}: {}", account.getId(), result.message());
+                channelAccountMapper.updateSyncStatusOwned(account.getOwnerUserId(), account.getId(), "success", Instant.now());
+            } catch (Exception e) {
+                String code = e instanceof EmailException emailException
+                        ? emailException.code() : "EMAIL_SYNC_FAILED";
+                log.error("event=email.sync_failed code={} accountId={}", code, account.getId(), e);
+                channelAccountMapper.updateSyncStatusOwned(account.getOwnerUserId(), account.getId(), "failed", Instant.now());
             }
         }
     }
 
-    private ChannelAccountEntity resolveEmailAccount() {
+    private List<ChannelAccountEntity> resolveEmailAccounts() {
         List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
                 new LambdaQueryWrapper<ChannelAccountEntity>()
                         .eq(ChannelAccountEntity::getChannelType, "email")
+                        .eq(ChannelAccountEntity::getAuthStatus, "active")
+                        .isNotNull(ChannelAccountEntity::getOwnerUserId)
                         .isNull(ChannelAccountEntity::getDeletedAt));
-        return accounts.isEmpty() ? null : accounts.get(0);
+        return accounts;
     }
 }

@@ -53,6 +53,32 @@ POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
 
 旧的账号级 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 管理入口已退出，不提供兼容路径。应用启动时会回填账号 scope、归并历史副本并以官方详情对账；任何有效 WhatsApp 账号出现不同 `custSpaceId` 时，共享模板门禁保持关闭。
 
+## 会话列表个性化
+
+联系人和企业微信群共用左侧会话列表。当前账号可以在列表项上点击右键执行“置顶/取消置顶”或“删除”；这里的删除只写入当前用户的会话偏好，不删除联系人、群聊、消息或 Topic。隐藏项仍可通过搜索找到，隐藏后新入库的消息也会让该项自动重新出现。
+
+拖动列表项到另一项上方或下方的间隙会调整当前账号的列表顺序，拖到联系人中心区域才会合并联系人；企业微信群不能参与合并。用户级状态由 `conversation_preferences` 统一保存，对应接口为：
+
+```text
+POST /api/conversations/preferences/pin
+POST /api/conversations/preferences/delete
+POST /api/conversations/preferences/order
+```
+
+排序接口只接收相邻放置意图，不接收客户端生成的整页排名：
+
+```json
+{
+  "sourceType": "CONTACT",
+  "sourceId": "00000000-0000-0000-0000-000000000001",
+  "targetType": "WECOM_GROUP",
+  "targetId": "00000000-0000-0000-0000-000000000002",
+  "placement": "BEFORE"
+}
+```
+
+`placement` 仅支持 `BEFORE` 或 `AFTER`。后端在当前用户的事务锁内读取完整可排序序列并统一生成排名，禁止跨置顶与非置顶区域排序。搜索状态下前端禁用拖动，避免用局部搜索结果改变完整列表顺序。
+
 macOS 本机只启动企业微信客户端、不指定联系人或企业时，运行：
 
 ```bash
@@ -177,6 +203,7 @@ GET   /api/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}
 ## 企业微信配置
 
 敏感值只允许通过环境变量或后端 `.env` 注入，不要写入 YAML、前端代码、普通日志或打包产物。
+`WECOM_ENABLED=false` 会整体停用企业微信模块，相关 Repository、worker、Topic 桥接和 Web 接口均不参与 Spring 启动。
 
 授权回调必需：
 

@@ -43,6 +43,27 @@ class SyncMessageAbilityTest {
     }
 
     @Test
+    void projectsMediaDescriptorWithoutCopyingMessageBody() {
+        SyncMessageAbility ability = new SyncMessageAbility(request ->
+                new SyncMessageAbility.InvocationResult(0, """
+                        {"errcode":0,"errmsg":"ok","has_more":0,"msg_list":[
+                          {"msgid":"media-1","sender":{"type":1,"id":"employee-1"},
+                           "receiver_list":[{"type":2,"id":"external-1"}],"chatid":"",
+                           "send_time":123,"msgtype":2,
+                           "image":{"media_id":"media-id-1","sdkfileid":"sdk-file-1","md5sum":"abc"},
+                           "content":"must-not-leave-zone",
+                           "service_encrypt_info":{"encrypted_secret_key":"cipher","public_key_ver":1}}
+                        ]}
+                        """, "sync_msg"));
+
+        JSONObject response = JSON.parseObject(ability.process("{\"cursor\":\"\",\"limit\":200}"));
+        JSONObject message = response.getJSONArray("msg_list").getJSONObject(0);
+        assertEquals("sdk-file-1", message.getJSONObject("media").getString("sdkfileid"));
+        assertEquals("media-id-1", message.getJSONObject("media").getString("media_id"));
+        assertFalse(message.containsKey("content"));
+    }
+
+    @Test
     void requiresCursorEvenOnTheFirstPage() {
         AtomicInteger calls = new AtomicInteger();
         SyncMessageAbility ability = new SyncMessageAbility(request -> {

@@ -208,6 +208,21 @@ class WeComViewerControllerTest {
         verify(viewer).recordClientEvent("component_error", "session-1", "viewer-token");
     }
 
+    @Test
+    void componentEventAcceptsLongDedupeKeyWithinBound() throws Exception {
+        String eventKey = "g".repeat(128);
+        mvc.perform(post("/api/v1/wecom/conversation-view/events")
+                        .header("Authorization", "Bearer crm-token")
+                        .header("X-WeCom-Viewer-Token", "viewer-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventType\":\"component_error\",\"eventKey\":\""
+                                + eventKey + "\",\"stage\":\"frame-update\",\"generation\":1,"
+                                + "\"viewerSessionId\":\"session-1\",\"errorCategory\":\"SDK_RESULT_FAILURE\"}"))
+                .andExpect(status().isNoContent());
+        verify(viewer).recordClientEvent("component_error", eventKey, "frame-update", 1L,
+                "session-1", "SDK_RESULT_FAILURE", "viewer-token");
+    }
+
     private static final class ViewerSyncContextFixture {
         private com.crmforlogistics.messagecenter.service.wecom.ViewerSyncContext context() {
             return new com.crmforlogistics.messagecenter.service.wecom.ViewerSyncContext(

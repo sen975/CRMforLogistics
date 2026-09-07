@@ -12,6 +12,7 @@
 
 - 产品界面使用“WhatsApp”，数据库/API 继续使用已有规范值 `chatapp`。
 - 每个用户最多一个未解绑的 `chatapp` 账号和一个未解绑的 `email` 账号；业务页面不显示账号选择器。
+- 所有 WhatsApp 账号属于同一个 CAMS `custSpaceId`；模板库全系统共享且所有登录用户可见、可申请，但每次 CAMS 调用仍使用本次操作账号的加密凭证，禁止全局配置回退。
 - 电话不配置渠道账号、不提供拨号，只展示电话时间轴。
 - 管理员只管理用户角色，不读取其他用户联系人、消息、附件、Topic、电话或渠道密钥。
 - 新数据 owner 必须由服务端认证主体或后台渠道账号确定，不能接受请求体 owner。
@@ -178,7 +179,7 @@
 
 - [ ] **Step 3: 改造发送与模板路径**
 
-  发送只解析当前用户唯一账号；模板、群发和媒体操作使用 `requireOwned`。将现有 WhatsApp 模板与媒体路径从管理员专属改为已登录用户，并以 owner 校验作为授权真相；群发仍保留其已有角色门禁且额外校验账号 owner。发送成功后再写真实会话和消息。
+  发送只解析当前用户唯一账号；模板元数据保持系统级共享，所有登录用户可见。所有登录用户均可创建、申请、查看、修改、同步、停用、删除和上传模板媒体；这些 CAMS 调用必须显式使用本次操作账号的加密凭证，不能读取全局 AK/SK、`custSpaceId` 或发送号码。群发仍保留其已有角色门禁且额外校验账号 owner。发送成功后再写真实会话和消息。
 
 - [ ] **Step 4: 运行测试并提交**
 
@@ -203,23 +204,25 @@
 - `EmailSyncService.receiveLatest(UUID accountId, UUID ownerId)`。
 - `EmailSendService.send(UUID ownerId, EmailSendCommand)`；禁止无 owner 的全局 `resolveEmailAccount()`。
 
-- [ ] **Step 1: 写邮件 owner 与 scope 失败测试**
+- [x] **Step 1: 写邮件 owner 与 scope 失败测试**
 
   覆盖 scheduler 逐个有效账号调用、同一邮箱在不同账号产生独立 identity、收信/发信消息带正确 owner、附件归属正确、单账号失败继续下一个账号。
 
-- [ ] **Step 2: 改造同步配置解析**
+- [x] **Step 2: 改造同步配置解析**
 
   从 `channel_accounts` 解密对应账号配置；同步方法必须接收账号和 owner；`findDuplicate`、identity、conversation、message、attachment 全部按账号作用域处理。
 
-- [ ] **Step 3: 改造发送链路**
+- [x] **Step 3: 改造发送链路**
 
   当前用户只解析唯一有效 email 账号；人工联系人首次发送创建 identity，SMTP 成功后持久化消息；失败保留可诊断状态，不伪造成功消息。
 
-- [ ] **Step 4: 改造 scheduler 与手动同步 API**
+- [x] **Step 4: 改造 scheduler 与手动同步 API**
 
   scheduler 查询全部有 owner 的有效邮件账号，逐账号隔离异常；手动同步接口校验当前用户拥有账号，管理员不能指定他人账号。
 
-- [ ] **Step 5: 运行专项测试并提交**
+- [x] **Step 5: 运行专项测试并提交**
+
+专项邮件测试 23 项全部通过；后端全量测试中 23 项因本机 Docker/Testcontainers/socket 不可用而无法执行，非邮件 owner 隔离断言失败。
 
   ```bash
   mvn -Dtest='EmailOwnerIsolationTest,EmailSyncSchedulerOwnerTest' test

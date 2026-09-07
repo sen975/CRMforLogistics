@@ -55,7 +55,10 @@ public class MessageController {
             String to = (String) body.get("to");
             String subject = (String) body.getOrDefault("subject", "");
             String text = (String) body.getOrDefault("body", "");
-            EmailSendService.SendResult result = emailSendService.send(to, subject, text);
+            var ownerId = currentUserIdOrNull();
+            EmailSendService.SendResult result = ownerId == null
+                    ? emailSendService.send(to, subject, text)
+                    : emailSendService.send(ownerId, to, subject, text);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -74,7 +77,16 @@ public class MessageController {
                                 file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename(),
                                 file.getContentType(), file.getSize(), file::getInputStream))
                         .toList();
-        return ResponseEntity.ok(emailSendService.send(to, subject, body, inputs));
+        var ownerId = currentUserIdOrNull();
+        return ResponseEntity.ok(ownerId == null
+                ? emailSendService.send(to, subject, body, inputs)
+                : emailSendService.send(ownerId, to, subject, body, inputs));
+    }
+
+    private UUID currentUserIdOrNull() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) return null;
+        return SecurityUtil.currentUserId();
     }
 
     @PostMapping("/send/chatapp-media")

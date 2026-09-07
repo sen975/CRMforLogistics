@@ -1,14 +1,12 @@
 package com.crmforlogistics.messagecenter.channel.chatapp;
 
 import com.aliyun.auth.credentials.Credential;
-import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
 import com.aliyun.auth.credentials.provider.ICredentialProvider;
 import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
 import com.aliyun.sdk.service.cams20200606.AsyncClient;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppHistoryReconciliationResult;
@@ -40,30 +38,31 @@ public class ChatAppMessageSyncService {
     private static final int MAX_PAGES = 50;
     private static final int PAGE_SIZE = 100;
 
-    private final AppConfig config;
     private final ChannelAccountMapper channelAccountMapper;
     private final ChatAppPollingProjector pollingProjector;
     private final ChatAppMessagePeerReconciliationService peerReconciliationService;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
     private final Supplier<AsyncClient> clientSupplier;
     private final Set<UUID> runningHistoryAccounts = ConcurrentHashMap.newKeySet();
 
     @Autowired
-    public ChatAppMessageSyncService(AppConfig config,
-                                     ChannelAccountMapper channelAccountMapper,
+    public ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
                                      ChatAppPollingProjector pollingProjector,
-                                     ChatAppMessagePeerReconciliationService peerReconciliationService) {
-        this(config, channelAccountMapper, pollingProjector, peerReconciliationService, null);
+                                     ChatAppMessagePeerReconciliationService peerReconciliationService,
+                                     ChatAppAccountCredentialsResolver credentialsResolver) {
+        this(channelAccountMapper, pollingProjector, peerReconciliationService,
+                credentialsResolver, null);
     }
 
-    ChatAppMessageSyncService(AppConfig config,
-                              ChannelAccountMapper channelAccountMapper,
+    ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
                               ChatAppPollingProjector pollingProjector,
                               ChatAppMessagePeerReconciliationService peerReconciliationService,
+                              ChatAppAccountCredentialsResolver credentialsResolver,
                               Supplier<AsyncClient> clientSupplier) {
-        this.config = Objects.requireNonNull(config);
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.pollingProjector = Objects.requireNonNull(pollingProjector);
         this.peerReconciliationService = Objects.requireNonNull(peerReconciliationService);
+        this.credentialsResolver = Objects.requireNonNull(credentialsResolver);
         this.clientSupplier = clientSupplier;
     }
 
@@ -85,6 +84,20 @@ public class ChatAppMessageSyncService {
         return syncAccount(account);
     }
 
+    public SyncResultRecord runOwnedAccount(UUID ownerId) {
+        if (ownerId == null) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        List<ChannelAccountEntity> accounts =
+                channelAccountMapper.findByOwnerAndChannelType(ownerId, "chatapp");
+        if (accounts.size() != 1) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        ChannelAccountEntity account = accounts.get(0);
+        validateActiveChatAppAccount(account);
+        return syncAccount(account);
+    }
+
     public ChatAppHistoryReconciliationResult runAccount(
             UUID channelAccountId, Instant startTime, Instant endTime, int maxPages) {
         return runAccount(channelAccountId, startTime, endTime, maxPages, false);
@@ -93,9 +106,20 @@ public class ChatAppMessageSyncService {
     public ChatAppHistoryReconciliationResult runAccount(
             UUID channelAccountId, Instant startTime, Instant endTime,
             int maxPages, boolean dryRun) {
+        return runOwnedAccount(null, channelAccountId, startTime, endTime, maxPages, dryRun);
+    }
+
+    public ChatAppHistoryReconciliationResult runOwnedAccount(
+            UUID ownerId, UUID channelAccountId, Instant startTime, Instant endTime,
+            int maxPages, boolean dryRun) {
         validateHistoryRange(startTime, endTime, maxPages);
-        ChannelAccountEntity account = channelAccountMapper.selectById(channelAccountId);
+        ChannelAccountEntity account = ownerId == null
+                ? channelAccountMapper.selectById(channelAccountId)
+                : channelAccountMapper.findByIdAndOwner(channelAccountId, ownerId);
         validateActiveChatAppAccount(account);
+        if (ownerId != null && !ownerId.equals(account.getOwnerUserId())) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
         if (!runningHistoryAccounts.add(channelAccountId)) {
             throw new IllegalStateException("CHATAPP_HISTORY_RECONCILIATION_IN_PROGRESS");
         }
@@ -107,6 +131,7 @@ public class ChatAppMessageSyncService {
     }
 
     private SyncResultRecord syncAccount(ChannelAccountEntity account) {
+        ChatAppAccountCredentials credentials = credentialsResolver.resolve(account);
         long started = System.nanoTime();
         int pages = 0;
         int fetched = 0;
@@ -117,12 +142,12 @@ public class ChatAppMessageSyncService {
         Map<String, Integer> skipReasons = new LinkedHashMap<>();
         long endTime = System.currentTimeMillis();
         long startTime = endTime - TimeUnit.DAYS.toMillis(30);
-        try (AsyncClient client = createClient()) {
+        try (AsyncClient client = createClient(credentials)) {
             for (int pageIndex = 1; pageIndex <= MAX_PAGES; pageIndex++) {
                 ListChatappMessageRequest request = ListChatappMessageRequest.builder()
-                        .custSpaceId(config.custSpaceId())
+                        .custSpaceId(credentials.custSpaceId())
                         .channelType("whatsapp")
-                        .businessNumber(account.getAccountIdentifier())
+                        .businessNumber(credentials.chatappFrom())
                         .startTime(startTime)
                         .endTime(endTime)
                         .page(ListChatappMessageRequest.Page.builder()
@@ -174,6 +199,7 @@ public class ChatAppMessageSyncService {
     private ChatAppHistoryReconciliationResult reconcileHistory(
             ChannelAccountEntity account, Instant startTime, Instant endTime,
             int maxPages, boolean dryRun) {
+        ChatAppAccountCredentials credentials = credentialsResolver.resolve(account);
         long started = System.nanoTime();
         int pages = 0;
         int scanned = 0;
@@ -183,10 +209,10 @@ public class ChatAppMessageSyncService {
         int failed = 0;
         int identitiesCreated = 0;
         List<ChatAppHistoryReconciliationResult.Failure> failures = new ArrayList<>();
-        try (AsyncClient client = createClient()) {
+        try (AsyncClient client = createClient(credentials)) {
             for (int pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
                 ListChatappMessageRequest request = historyRequest(
-                        account, startTime, endTime, pageIndex);
+                        credentials, startTime, endTime, pageIndex);
                 ListChatappMessageResponse response = client.listChatappMessage(request).get();
                 ListChatappMessageResponseBody body = response.getBody();
                 if (body == null || body.getData() == null || body.getData().isEmpty()) break;
@@ -232,11 +258,11 @@ public class ChatAppMessageSyncService {
     }
 
     private ListChatappMessageRequest historyRequest(
-            ChannelAccountEntity account, Instant startTime, Instant endTime, int pageIndex) {
+            ChatAppAccountCredentials credentials, Instant startTime, Instant endTime, int pageIndex) {
         return ListChatappMessageRequest.builder()
-                .custSpaceId(config.custSpaceId())
+                .custSpaceId(credentials.custSpaceId())
                 .channelType("whatsapp")
-                .businessNumber(account.getAccountIdentifier())
+                .businessNumber(credentials.chatappFrom())
                 .startTime(startTime.toEpochMilli())
                 .endTime(endTime.toEpochMilli())
                 .page(ListChatappMessageRequest.Page.builder()
@@ -268,27 +294,21 @@ public class ChatAppMessageSyncService {
         }
     }
 
-    private AsyncClient createClient() {
+    private AsyncClient createClient(ChatAppAccountCredentials credentials) {
         if (clientSupplier != null) return clientSupplier.get();
         return AsyncClient.builder()
-                .region(ChatAppSendService.defaulted(config.camsRegion(), "ap-southeast-1"))
-                .credentialsProvider(createCredentialsProvider())
+                .region(credentials.region())
+                .credentialsProvider(createCredentialsProvider(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(ChatAppSendService.defaulted(
-                                config.camsEndpoint(), "cams.ap-southeast-1.aliyuncs.com")))
+                        .setEndpointOverride(credentials.endpoint()))
                 .build();
     }
 
-    private ICredentialProvider createCredentialsProvider() {
-        String keyId = config.aliyunAccessKeyId();
-        String keySecret = config.aliyunAccessKeySecret();
-        if (keyId != null && !keyId.isBlank() && keySecret != null && !keySecret.isBlank()) {
-            return StaticCredentialProvider.create(Credential.builder()
-                    .accessKeyId(keyId)
-                    .accessKeySecret(keySecret)
-                    .build());
-        }
-        return DefaultCredentialProvider.builder().build();
+    private ICredentialProvider createCredentialsProvider(ChatAppAccountCredentials credentials) {
+        return StaticCredentialProvider.create(Credential.builder()
+                .accessKeyId(credentials.accessKeyId())
+                .accessKeySecret(credentials.accessKeySecret())
+                .build());
     }
 
     private static long elapsedMs(long started) {

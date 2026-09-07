@@ -59,6 +59,58 @@ class WeComPartyProfileServiceTest {
         assertThat(result.profileStatus()).isEqualTo("PARTIAL");
         assertThat(result.displayName()).isEqualTo("Bob");
         assertThat(result.displayName()).isNotEqualTo("member-2");
+        assertThat(result.profileErrorCode()).isEqualTo("WECOM_PROFILE_AVATAR_EMPTY");
+    }
+
+    @Test
+    void usesThumbAvatarWhenDirectoryDoesNotReturnFullAvatar() throws Exception {
+        when(directory.getMember(any(), eq("member-thumb"), any())).thenReturn(json.readTree(
+                "{\"name\":\"头像成员\",\"thumb_avatar\":\"https://avatar.example/thumb.png\"}"));
+        when(parties.selectOne(any())).thenReturn(null);
+
+        var result = service.syncEmployee(installation, "member-thumb", Duration.ofSeconds(1));
+
+        assertThat(result.avatarUrl()).isEqualTo("https://avatar.example/thumb.png");
+        assertThat(result.profileStatus()).isEqualTo("READY");
+    }
+
+    @Test
+    void directoryPartialResponseDoesNotEraseExistingAvatar() throws Exception {
+        WeComPartyEntity existing = new WeComPartyEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setInstallationId(UUID.fromString(installation.installationId()));
+        existing.setPartyType("EMPLOYEE");
+        existing.setProviderPartyId("member-existing-avatar");
+        existing.setDisplayName("已有成员");
+        existing.setAvatarUrl("https://avatar.example/existing.png");
+        when(directory.getMember(any(), eq("member-existing-avatar"), any())).thenReturn(json.readTree(
+                "{\"name\":\"已有成员\"}"));
+        when(parties.selectOne(any())).thenReturn(existing);
+
+        var result = service.syncEmployee(installation, "member-existing-avatar", Duration.ofSeconds(1));
+
+        assertThat(result.avatarUrl()).isEqualTo("https://avatar.example/existing.png");
+        assertThat(result.profileStatus()).isEqualTo("READY");
+    }
+
+    @Test
+    void directoryFailureDoesNotEraseExistingProfile() {
+        WeComPartyEntity existing = new WeComPartyEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setInstallationId(UUID.fromString(installation.installationId()));
+        existing.setPartyType("EMPLOYEE");
+        existing.setProviderPartyId("member-transient-failure");
+        existing.setDisplayName("已有成员");
+        existing.setAvatarUrl("https://avatar.example/existing.png");
+        when(directory.getMember(any(), eq("member-transient-failure"), any()))
+                .thenThrow(new RuntimeException("upstream timeout"));
+        when(parties.selectOne(any())).thenReturn(existing);
+
+        var result = service.syncEmployee(installation, "member-transient-failure", Duration.ofSeconds(1));
+
+        assertThat(result.profileStatus()).isEqualTo("DEGRADED");
+        assertThat(result.displayName()).isEqualTo("已有成员");
+        assertThat(result.avatarUrl()).isEqualTo("https://avatar.example/existing.png");
     }
 
     @Test
@@ -145,5 +197,16 @@ class WeComPartyProfileServiceTest {
         assertThat(result.displayName()).isEqualTo("已有姓名");
         assertThat(result.avatarUrl()).isEqualTo("https://avatar/a.png");
         verify(parties).updateById(existing);
+    }
+
+    @Test
+    void authorizedEmployeeProfilePersistsNicknameReturnedByWeCom() throws Exception {
+        when(parties.selectOne(any())).thenReturn(null);
+
+        var result = service.syncAuthorizedEmployee(
+                installation, "member-authorized",
+                json.readTree("{\"userid\":\"member-authorized\",\"name\":\"授权成员\"}"));
+
+        assertThat(result.displayName()).isEqualTo("授权成员");
     }
 }

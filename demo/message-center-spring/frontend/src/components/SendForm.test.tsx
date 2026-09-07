@@ -40,6 +40,7 @@ function renderForm(
   selectedChannelAccountId?: string,
   activeChannel?: string,
   onChannelChange?: (channel: string) => void,
+  selectedIdentityId?: string,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -56,6 +57,7 @@ function renderForm(
             selectedChannelAccountId={selectedChannelAccountId}
             activeChannel={activeChannel}
             onChannelChange={onChannelChange}
+            selectedIdentityId={selectedIdentityId}
           />
         </AntApp>
       </ConfigProvider>
@@ -100,6 +102,30 @@ beforeEach(() => {
 });
 
 describe('SendForm ChatApp recipient binding', () => {
+  it('uses the address-book-selected identity instead of the first email identity', async () => {
+    renderForm(contact([
+      { id: 'email-first', channelType: 'email', identityScope: 'account-a', identityValue: 'first@example.com', displayName: '第一邮箱' },
+      { id: 'email-selected', channelType: 'email', identityScope: 'account-a', identityValue: 'selected@example.com', displayName: '目标邮箱' },
+    ]), undefined, 'email', undefined, 'email-selected');
+
+    await waitFor(() => {
+      expect(screen.getByText('目标邮箱 (selected@example.com)')).toBeInTheDocument();
+    });
+  });
+
+  it('uses the address-book-selected ChatApp identity and its account scope', async () => {
+    api.fetchChannelCapabilities.mockResolvedValue([
+      { channelType: 'chatapp', channelAccountId: 'account-a', displayName: '账号 A', authStatus: 'active' },
+      { channelType: 'chatapp', channelAccountId: 'account-b', displayName: '账号 B', authStatus: 'active' },
+    ]);
+    renderForm(contact([
+      { id: 'chatapp-a', channelType: 'chatapp', identityScope: 'account-a', identityValue: '111', displayName: '账号 A 联系人' },
+      { id: 'chatapp-b', channelType: 'chatapp', identityScope: 'account-b', identityValue: '222', displayName: '账号 B 联系人' },
+    ]), undefined, 'chatapp', undefined, 'chatapp-b');
+
+    expect(await screen.findByLabelText('收件人')).toHaveValue('账号 B 联系人 (222)');
+  });
+
   it('reports the selected send channel through the controlled channel owner', async () => {
     const user = userEvent.setup();
     const onChannelChange = vi.fn();
@@ -162,6 +188,38 @@ describe('SendForm ChatApp recipient binding', () => {
       templateName: 'delivery_notice',
     }));
     expect(api.sendChatApp.mock.calls[0][0].templateName).not.toBe('发货提醒（delivery_notice）');
+  });
+
+  it('previews the selected template body and replaces entered parameters live', async () => {
+    const user = userEvent.setup();
+    api.fetchTemplates.mockResolvedValue([{
+      templateCode: 'delivery-notice',
+      templateName: 'delivery_notice',
+      displayName: '发货提醒',
+      languageCode: 'zh_CN',
+      body: '您好，{{name}}，预计 {{date}} 发货。',
+      placeholders: ['name', 'date'],
+    }]);
+    renderForm(contact([{
+      id: 'chatapp-1',
+      channelType: 'chatapp',
+      identityScope: 'phone',
+      identityValue: '16465894168',
+      displayName: '主账号',
+    }]));
+
+    await user.click(await screen.findByRole('tab', { name: 'ChatApp' }));
+    await user.click(screen.getByRole('tab', { name: '模板' }));
+    const templateSelect = screen.getByRole('combobox', { name: '模板' });
+    fireEvent.mouseDown(templateSelect);
+    await user.click(await screen.findByText('发货提醒 (zh_CN)', { exact: true }));
+
+    expect(screen.getByLabelText('模板预览')).toHaveTextContent('发货提醒');
+    expect(screen.getByLabelText('模板预览')).toHaveTextContent('您好，{{name}}，预计 {{date}} 发货。');
+
+    await user.type(screen.getByLabelText('name'), '张三');
+    await user.type(screen.getByLabelText('date'), '明天');
+    expect(screen.getByLabelText('模板预览')).toHaveTextContent('您好，张三，预计 明天 发货。');
   });
 
   it('renders one ChatApp identity as a read-only recipient', async () => {

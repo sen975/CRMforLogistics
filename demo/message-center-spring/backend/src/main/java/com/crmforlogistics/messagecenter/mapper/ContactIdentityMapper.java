@@ -57,6 +57,16 @@ public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity>
     @Select("select id, contact_id, channel_type, identity_scope, identity_value, normalized_value, display_name, is_primary, verify_status, source, created_at, updated_at, deleted_at, version from contact_identities where contact_id = #{contactId}::uuid and deleted_at is null order by is_primary desc, created_at, id")
     List<ContactIdentityEntity> findByContactId(@Param("contactId") UUID contactId);
 
+    @Select("select ci.id, ci.contact_id, ci.channel_type, ci.identity_scope, ci.identity_value, "
+            + "ci.normalized_value, ci.display_name, ci.is_primary, ci.verify_status, ci.source, "
+            + "ci.created_at, ci.updated_at, ci.deleted_at, ci.version "
+            + "from contact_identities ci join contacts c on c.id=ci.contact_id "
+            + "where ci.contact_id=#{contactId}::uuid and c.owner_user_id=#{ownerId}::uuid "
+            + "and ci.deleted_at is null and c.deleted_at is null and c.status&lt;&gt;'merged' "
+            + "order by ci.is_primary desc, ci.created_at, ci.id")
+    List<ContactIdentityEntity> findByContactIdAndOwner(@Param("contactId") UUID contactId,
+                                                        @Param("ownerId") UUID ownerId);
+
     /**
      * Find a non-deleted identity by normalized value within a channel type.
      */

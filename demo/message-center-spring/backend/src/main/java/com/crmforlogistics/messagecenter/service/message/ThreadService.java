@@ -146,9 +146,15 @@ public class ThreadService {
         String next = hasMore && !items.isEmpty()
                 ? encodeCursor(items.get(0).getOccurredAt(), items.get(0).getId()) : null;
         List<WeComPartyView> participants = weComSourceParticipantMapper.listPartyViews(sourceConversationId, userId);
-        return new WeComGroupThreadResponse(sourceConversationId, source.providerConversationKey(),
+        return new WeComGroupThreadResponse(sourceConversationId, groupChatId(source.providerConversationKey()),
                 source.displayName(), source.avatarUrl(), null, participants, responses, next,
                 responses.size(), "");
+    }
+
+    private static String groupChatId(String providerConversationKey) {
+        if (providerConversationKey == null || !providerConversationKey.startsWith("group:")) return null;
+        String chatId = providerConversationKey.substring("group:".length()).trim();
+        return chatId.isEmpty() || chatId.length() > 128 ? null : chatId;
     }
 
     public ThreadResponse threadPage(UUID userId, UUID contactId, String channelType,

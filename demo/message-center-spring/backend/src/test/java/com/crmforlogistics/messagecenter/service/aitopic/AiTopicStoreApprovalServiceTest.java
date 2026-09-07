@@ -41,7 +41,7 @@ class AiTopicStoreApprovalServiceTest {
         topic.setVersion(3L);
         topic.setTitle("报价跟进");
         topic.setAiSummary("等待确认");
-        when(topics.selectById(topicId)).thenReturn(topic);
+        when(topics.findContactTopicByIdAndOwner(topicId, userId)).thenReturn(topic);
         when(topics.transitionStatus(topicId, "READY", "STORED")).thenReturn(1);
 
         AiTopicOperationJobEntity job = new AiTopicOperationJobEntity();
@@ -67,7 +67,7 @@ class AiTopicStoreApprovalServiceTest {
         topic.setOwnerType("WECOM_GROUP");
         topic.setOwnerId(groupId);
         topic.setStatus("READY");
-        when(topics.selectById(topicId)).thenReturn(topic);
+        when(topics.findGroupTopicById(topicId)).thenReturn(topic);
         when(topics.isAdmin(userId)).thenReturn(false);
         when(topics.canAccessGroupTopic(topicId, userId, false)).thenReturn(true);
 
@@ -267,7 +267,7 @@ class AiTopicStoreApprovalServiceTest {
         topic.setOwnerType("CONTACT");
         topic.setOwnerId(contactId);
         topic.setStatus("STORED");
-        when(topics.selectById(topicId)).thenReturn(topic);
+        when(topics.findContactTopicByIdAndOwner(topicId, userId)).thenReturn(topic);
 
         AiTopicService service = service(topics, mock(AiTopicVersionMapper.class));
 

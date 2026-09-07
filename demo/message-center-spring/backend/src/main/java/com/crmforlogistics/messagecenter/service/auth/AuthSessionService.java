@@ -85,6 +85,11 @@ public class AuthSessionService {
         }
     }
 
+    @Transactional
+    public void revokeAll(UUID userId) {
+        sessionMapper.revokeActiveByUserId(Objects.requireNonNull(userId), Instant.now());
+    }
+
     private static boolean isValidPresentedToken(String token) {
         return token != null && !token.isBlank() && token.length() <= MAX_PRESENTED_TOKEN_LENGTH;
     }

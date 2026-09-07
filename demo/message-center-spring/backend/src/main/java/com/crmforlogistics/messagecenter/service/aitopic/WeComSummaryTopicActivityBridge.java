@@ -3,7 +3,9 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 import com.crmforlogistics.messagecenter.mapper.AiTopicOwnerActivityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.service.wecom.WeComMessageSummaryRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,6 +14,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 @Service
+@ConditionalOnWeComEnabled
 public class WeComSummaryTopicActivityBridge {
     private final WeComMessageSummaryRepository summaries;
     private final WeComSourceConversationMapper conversations;
@@ -19,6 +22,7 @@ public class WeComSummaryTopicActivityBridge {
     private final AiTopicOwnerActivityMapper activities;
     private final long quietWindowSeconds;
 
+    @Autowired
     public WeComSummaryTopicActivityBridge(WeComMessageSummaryRepository summaries,
                                             WeComSourceConversationMapper conversations,
                                             ContactIdentityMapper identities,
@@ -64,6 +68,13 @@ public class WeComSummaryTopicActivityBridge {
                                 String validationStage, Instant completedAt) {
         Objects.requireNonNull(job, "job");
         summaries.markCompleted(job.id(), summary, rawResponseJson, validationStage, completedAt);
+        recordSummaryActivity(job);
+    }
+
+    /** Records downstream Topic activity after the durable official summary is committed. */
+    @Transactional
+    public void recordSummaryActivity(WeComMessageSummaryRepository.LeasedJob job) {
+        Objects.requireNonNull(job, "job");
         var owner = resolveOwner(job.sourceConversationId());
         Instant occurredAt = Instant.ofEpochSecond(job.sendTime());
         activities.upsertActivity(owner.type(), owner.id(), occurredAt,

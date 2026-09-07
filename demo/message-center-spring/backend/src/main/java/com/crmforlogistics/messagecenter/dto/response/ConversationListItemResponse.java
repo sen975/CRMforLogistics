@@ -17,7 +17,8 @@ public record ConversationListItemResponse(
         int messageCount,
         int unreadCount,
         String providerConversationKey,
-        int participantCount
+        int participantCount,
+        boolean pinned
 ) {
     public static ConversationListItemResponse contact(UUID id, String displayName,
                                                         Instant lastMessageAt, String lastText,
@@ -29,7 +30,7 @@ public record ConversationListItemResponse(
                                                         Instant lastMessageAt, String lastText,
                                                         int messageCount, int unreadCount) {
         return new ConversationListItemResponse("CONTACT", id, displayName, remark, null, List.of(),
-                lastMessageAt, lastText, messageCount, unreadCount, null, 0);
+                lastMessageAt, lastText, messageCount, unreadCount, null, 0, false);
     }
 
     public static ConversationListItemResponse group(UUID id, String displayName,
@@ -39,6 +40,6 @@ public record ConversationListItemResponse(
                                                       int participantCount) {
         return new ConversationListItemResponse("WECOM_GROUP", id, displayName, null, null, List.of("wecom"),
                 lastMessageAt, lastText, messageCount, unreadCount,
-                providerConversationKey, participantCount);
+                providerConversationKey, participantCount, false);
     }
 }

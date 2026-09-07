@@ -8,7 +8,6 @@ import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
@@ -53,7 +52,6 @@ class ChatAppBroadcastMessageProjectorTest {
     @Mock ConversationMapper conversationMapper;
     @Mock MessageStatusEventMapper statusEventMapper;
     @Mock TemplateMapper templateMapper;
-    @Mock ChannelAccountMapper accountMapper;
     @Mock EventHub eventHub;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
 
@@ -112,8 +110,8 @@ class ChatAppBroadcastMessageProjectorTest {
 
         projector = new ChatAppBroadcastMessageProjector(
                 broadcastMapper, recipientMapper, messageMapper, conversationMapper,
-                statusEventMapper,
-                new TemplateMessageTextResolver(templateMapper, accountMapper, objectMapper),
+                statusEventMapper, templateMapper,
+                new TemplateMessageTextResolver(templateMapper, objectMapper),
                 objectMapper, eventHub, Clock.fixed(NOW, ZoneOffset.UTC), topicActivityRecorder);
     }
 

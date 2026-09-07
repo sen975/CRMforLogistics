@@ -1,11 +1,11 @@
-import { ReloadOutlined } from '@ant-design/icons';
-import { Button, Empty, Flex, Typography, theme } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
-import type { MessageResponse } from '../../api/types';
+import { GroupOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Avatar, Button, Empty, Flex, Typography, theme } from 'antd';
+import { useState } from 'react';
+import type { MessageResponse, RelatedWeComGroupResponse } from '../../api/types';
 import type { WeComViewerTarget } from '../../api/types';
 import type { WeComViewerHandle } from '../../hooks/useWeComViewer';
+import { weComGroupDisplayName } from '../../utils/weComGroupDisplayName';
 import { WeComConversationFrame } from './WeComConversationFrame';
-import { WeComConversationSelector, type WeComConversationOption } from './WeComConversationSelector';
 
 const { Text } = Typography;
 
@@ -13,40 +13,27 @@ export function WeComConversationPanel({
   contactPointId,
   items,
   viewer,
-  conversations,
   target,
   openClientUrl,
+  relatedGroups = [],
+  onOpenGroup,
+  onSwitchToMixed,
 }: {
   contactPointId: string;
   items: MessageResponse[];
   viewer: WeComViewerHandle;
-  conversations?: Array<WeComConversationOption & { contactPointId: string; items: MessageResponse[] }>;
   target?: WeComViewerTarget;
   openClientUrl?: string | null;
+  relatedGroups?: RelatedWeComGroupResponse[];
+  onOpenGroup?: (sourceConversationId: string) => void;
+  onSwitchToMixed?: () => void;
 }) {
   const { token } = theme.useToken();
   const [reloadKey, setReloadKey] = useState(0);
-  const options = useMemo(() => conversations ?? [], [conversations]);
-  const [selectedConversationId, setSelectedConversationId] = useState(options[0]?.id ?? '');
-  useEffect(() => {
-    if (!options.some((option) => option.id === selectedConversationId)) {
-      setSelectedConversationId(options[0]?.id ?? '');
-    }
-  }, [options, selectedConversationId]);
-  const effectiveConversationId = options.some((option) => option.id === selectedConversationId)
-    ? selectedConversationId
-    : options[0]?.id ?? '';
-  const selectedConversation = options.find((option) => option.id === effectiveConversationId);
-  const activeContactPointId = selectedConversation?.contactPointId ?? contactPointId;
-  const activeItems = selectedConversation?.items ?? items;
   if (!contactPointId) return <Empty description="联系人缺少企业微信身份" />;
-  const identityValue = contactPointId.startsWith('wecom:')
-    ? contactPointId.slice('wecom:'.length)
-    : contactPointId;
-  const effectiveOpenClientUrl = openClientUrl ?? `wxwork://message?username=${encodeURIComponent(identityValue)}`;
-  const handleOpenClient = () => {
-    void navigator.clipboard?.writeText(identityValue);
-  };
+  const effectiveOpenClientUrl = target?.targetType === 'WECOM_GROUP'
+    ? openClientUrl
+    : 'wxwork://';
 
   return (
     <div
@@ -57,14 +44,6 @@ export function WeComConversationPanel({
         <Text type="secondary">企业微信会话</Text>
         <Button type="text" size="small" aria-label="刷新企业微信会话" icon={<ReloadOutlined />} onClick={() => setReloadKey((value) => value + 1)} />
       </Flex>
-      <WeComConversationSelector
-        options={options}
-        selectedId={effectiveConversationId}
-        onSelect={(id) => {
-          setSelectedConversationId(id);
-          setReloadKey((value) => value + 1);
-        }}
-      />
       <div
         style={{
           flex: '1 1 auto',
@@ -76,32 +55,70 @@ export function WeComConversationPanel({
           flexDirection: 'column',
         }}
       >
-        {activeItems.length > 0 ? (
+        {items.length > 0 ? (
           <WeComConversationFrame
-            contactPointId={activeContactPointId}
+            contactPointId={contactPointId}
             target={target}
-            items={activeItems}
+            items={items}
             viewer={viewer}
             reloadKey={reloadKey}
           />
         ) : <Empty description="暂无企业微信消息" />}
       </div>
+      {relatedGroups.length > 0 ? (
+        <div
+          style={{
+            flex: '0 0 auto',
+            maxHeight: 144,
+            overflowY: 'auto',
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            padding: '8px 12px',
+          }}
+        >
+          <Text type="secondary" style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>
+            相关企业微信群
+          </Text>
+          {relatedGroups.map((group) => (
+            <Button
+              key={group.sourceConversationId}
+              type="text"
+              block
+              onClick={() => onOpenGroup?.(group.sourceConversationId)}
+              style={{ height: 40, paddingInline: 4 }}
+            >
+              <Flex align="center" gap={8} style={{ width: '100%', minWidth: 0 }}>
+                <Avatar size={28} src={group.avatarUrl || undefined} icon={<GroupOutlined />} />
+                <Text ellipsis style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                  {weComGroupDisplayName(group.displayName)}
+                </Text>
+                <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                  {group.participantCount} 人
+                </Text>
+              </Flex>
+            </Button>
+          ))}
+        </div>
+      ) : null}
       <Flex
         align="center"
         justify="space-between"
         gap={12}
         style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}
       >
-        <a
+        {target?.targetType !== 'WECOM_GROUP' && onSwitchToMixed ? (
+          <Button type="link" size="small" onClick={onSwitchToMixed}>
+            切换
+          </Button>
+        ) : <span />}
+        {effectiveOpenClientUrl ? <a
           role="button"
           className="ant-btn ant-btn-primary ant-btn-sm"
           href={effectiveOpenClientUrl}
           data-testid="wecom-open-client-link"
           aria-label="在企业微信中打开"
-          onClick={handleOpenClient}
         >
           在企业微信中打开
-        </a>
+        </a> : null}
       </Flex>
     </div>
   );

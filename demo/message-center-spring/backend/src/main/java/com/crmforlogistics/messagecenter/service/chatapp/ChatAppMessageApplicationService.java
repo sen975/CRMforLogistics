@@ -64,8 +64,8 @@ public class ChatAppMessageApplicationService {
         if (!"chatapp".equalsIgnoreCase(identity.getChannelType())) {
             throw new IllegalArgumentException("CHATAPP_CONTACT_IDENTITY_CHANNEL_INVALID");
         }
-        ChannelAccountEntity account = accountResolver.requireCurrentAccount(
-                conversation.getChannelAccountId());
+        ChannelAccountEntity account = accountResolver.requireOwnedAccount(
+                actorUserId, conversation.getChannelAccountId());
         String recipient = recipientForAccount(account, identity);
         conversationAccessService.requireAccessible(
                 conversation.getId(), account.getId(), actorUserId);
@@ -115,7 +115,7 @@ public class ChatAppMessageApplicationService {
         } catch (RuntimeException error) {
             throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE", error);
         }
-        ChannelAccountEntity account = accountResolver.requireCurrentAccount(channelAccountId);
+        ChannelAccountEntity account = accountResolver.requireOwnedAccount(actorUserId, channelAccountId);
         String recipient = recipientForAccount(account, identity);
         if (contactMapper.findAccessibleForChatAppSend(
                 contactId, identity.getId(), account.getId(), actorUserId).isEmpty()) {

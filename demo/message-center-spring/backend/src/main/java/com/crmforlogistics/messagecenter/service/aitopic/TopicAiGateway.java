@@ -9,4 +9,8 @@ public interface TopicAiGateway {
     default GenerationOutput generate(GenerationInput input, AiTopicGenerationAuditService.Context auditContext) {
         return generate(input);
     }
+
+    default GenerationOutput fuse(GenerationInput input) {
+        return generate(input);
+    }
 }

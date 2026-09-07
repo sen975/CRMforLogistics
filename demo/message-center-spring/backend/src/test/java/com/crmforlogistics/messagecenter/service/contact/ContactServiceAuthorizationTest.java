@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -227,7 +228,7 @@ class ContactServiceAuthorizationTest {
         ChatAppAccountResolver accountResolver = mock(ChatAppAccountResolver.class);
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(accountId);
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account);
+        when(accountResolver.requireOwnedAccount(userId, accountId)).thenReturn(account);
         Page<ContactEntity> contacts = new Page<>(1, 20);
         contacts.setRecords(List.of());
         when(contactMapper.listForUser(any(), any(), any(), any(), any(),
@@ -241,6 +242,8 @@ class ContactServiceAuthorizationTest {
 
         verify(contactMapper).listForUser(any(), eq(userId), isNull(), isNull(), isNull(),
                 eq(false), eq("chatapp"), eq(accountId));
+        verify(accountResolver).requireOwnedAccount(userId, accountId);
+        verify(accountResolver, never()).requireCurrentAccount(accountId);
     }
 
     @Test
@@ -248,13 +251,14 @@ class ContactServiceAuthorizationTest {
         UUID accountId = UUID.randomUUID();
         ContactMapper contactMapper = mock(ContactMapper.class);
         ChatAppAccountResolver accountResolver = mock(ChatAppAccountResolver.class);
-        when(accountResolver.requireCurrentAccount(accountId))
+        UUID userId = UUID.randomUUID();
+        when(accountResolver.requireOwnedAccount(userId, accountId))
                 .thenThrow(new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE"));
         ContactService service = new ContactService(
                 contactMapper, mock(ContactIdentityMapper.class),
                 mock(ConversationMapper.class), mock(MessageMapper.class), accountResolver);
 
-        assertThatThrownBy(() -> service.listForUser(UUID.randomUUID(), null, null, null,
+        assertThatThrownBy(() -> service.listForUser(userId, null, null, null,
                 1, 20, "chatapp", accountId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");

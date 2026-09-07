@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.web;
 import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
+import com.crmforlogistics.messagecenter.service.account.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -37,6 +38,20 @@ class AuthControllerSecurityTest {
     @Autowired MockMvc mvc;
     @MockitoBean AuthenticationConfiguration authenticationConfiguration;
     @MockitoBean AuthSessionService authSessionService;
+    @MockitoBean AccountService accountService;
+
+    @Test
+    void registrationIsPublicAndReturnsTheIssuedSession() throws Exception {
+        when(accountService.register("agent_01", "张三", "Example123", "127.0.0.1", null))
+                .thenReturn(new AccountService.SessionResult("register-token", "agent_01", List.of("AGENT")));
+
+        mvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"agent_01\",\"displayName\":\"张三\",\"password\":\"Example123\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.token").value("register-token"))
+                .andExpect(jsonPath("$.roles[0]").value("AGENT"));
+    }
 
     @Test
     void loginIsPublicAndIssuesOpaqueSession() throws Exception {

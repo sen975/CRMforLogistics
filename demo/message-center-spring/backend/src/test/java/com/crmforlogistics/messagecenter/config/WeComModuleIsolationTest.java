@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import com.crmforlogistics.messagecenter.web.WeComAuthController;
+import com.crmforlogistics.messagecenter.web.WeComAvatarAuthorizationController;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -72,6 +73,15 @@ class WeComModuleIsolationTest {
         assertThat(condition.value()).contains("app.wecom-suite-id");
     }
 
+    @Test
+    void weComAvatarAuthorizationControllerFollowsTheSuiteConfigurationCondition() {
+        ConditionalOnExpression condition = WeComAvatarAuthorizationController.class
+                .getAnnotation(ConditionalOnExpression.class);
+
+        assertThat(condition).isNotNull();
+        assertThat(condition.value()).contains("app.wecom-suite-id");
+    }
+
     private static Set<String> scanWeComBeans() {
         var scanner = new ClassPathScanningCandidateComponentProvider(false);
         scanner.addIncludeFilter(new AnnotationTypeFilter(Component.class, true));
@@ -80,6 +90,11 @@ class WeComModuleIsolationTest {
                 .forEach(bean -> classes.add(bean.getBeanClassName()));
         scanner.findCandidateComponents("com.crmforlogistics.messagecenter.service.wecom")
                 .forEach(bean -> classes.add(bean.getBeanClassName()));
+        scanner.findCandidateComponents("com.crmforlogistics.messagecenter.service.aitopic").stream()
+                .map(bean -> bean.getBeanClassName())
+                .filter(name -> name != null && name.substring(name.lastIndexOf('.') + 1)
+                        .startsWith("WeCom"))
+                .forEach(classes::add);
         scanner.findCandidateComponents("com.crmforlogistics.messagecenter.web").stream()
                 .map(bean -> bean.getBeanClassName())
                 .filter(name -> name != null && name.substring(name.lastIndexOf('.') + 1)

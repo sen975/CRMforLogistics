@@ -1,8 +1,10 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.request.LoginRequest;
+import com.crmforlogistics.messagecenter.dto.request.RegisterRequest;
 import com.crmforlogistics.messagecenter.dto.response.LoginResponse;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
+import com.crmforlogistics.messagecenter.service.account.AccountService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -25,11 +27,23 @@ public class AuthController {
 
     private final AuthenticationConfiguration authConfig;
     private final AuthSessionService authSessionService;
+    private final AccountService accountService;
 
     public AuthController(AuthenticationConfiguration authConfig,
-                          AuthSessionService authSessionService) {
+                          AuthSessionService authSessionService,
+                          AccountService accountService) {
         this.authConfig = authConfig;
         this.authSessionService = authSessionService;
+        this.accountService = accountService;
+    }
+
+    @PostMapping("/register")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LoginResponse register(@Valid @RequestBody RegisterRequest request,
+                                  HttpServletRequest servletRequest) {
+        AccountService.SessionResult result = accountService.register(request.username(), request.displayName(),
+                request.password(), servletRequest.getRemoteAddr(), servletRequest.getHeader("User-Agent"));
+        return new LoginResponse(result.token(), result.username(), result.roles());
     }
 
     @PostMapping("/login")

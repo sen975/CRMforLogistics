@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplatePermissionReconciliationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -16,21 +17,26 @@ import java.util.UUID;
 @Service
 public class ChatAppTemplateSyncService {
     private final WhatsAppTemplateReconciliationService reconciliationService;
+    private final WhatsAppTemplatePermissionReconciliationService permissionReconciliationService;
     private final ChannelAccountMapper channelAccountMapper;
     private final WhatsAppProviderScopeService providerScopeService;
 
     @Autowired
     public ChatAppTemplateSyncService(WhatsAppTemplateReconciliationService reconciliationService,
+                                      WhatsAppTemplatePermissionReconciliationService permissionReconciliationService,
                                       ChannelAccountMapper channelAccountMapper,
                                       WhatsAppProviderScopeService providerScopeService) {
         this.reconciliationService = Objects.requireNonNull(reconciliationService);
+        this.permissionReconciliationService = Objects.requireNonNull(permissionReconciliationService);
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.providerScopeService = Objects.requireNonNull(providerScopeService);
     }
 
     ChatAppTemplateSyncService(WhatsAppTemplateReconciliationService reconciliationService,
+                               WhatsAppTemplatePermissionReconciliationService permissionReconciliationService,
                                ChannelAccountMapper channelAccountMapper) {
         this.reconciliationService = Objects.requireNonNull(reconciliationService);
+        this.permissionReconciliationService = Objects.requireNonNull(permissionReconciliationService);
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.providerScopeService = null;
     }
@@ -73,10 +79,31 @@ public class ChatAppTemplateSyncService {
         return syncScope(scopeId(account), channelAccountId).result();
     }
 
+    public SyncResultRecord runOwnedAccount(UUID ownerId) {
+        if (ownerId == null) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        java.util.List<ChannelAccountEntity> accounts =
+                channelAccountMapper.findByOwnerAndChannelType(ownerId, "chatapp");
+        if (accounts.isEmpty()) {
+            throw new IllegalStateException("CHATAPP_CHANNEL_ACCOUNT_NOT_CONFIGURED");
+        }
+        if (accounts.size() > 1) {
+            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_VIOLATION");
+        }
+        ChannelAccountEntity account = accounts.get(0);
+        if (account.getDeletedAt() != null || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        return syncScope(scopeId(account), account.getId()).result();
+    }
+
     private SyncAttempt syncScope(UUID providerScopeId, UUID channelAccountId) {
         long started = System.nanoTime();
         WhatsAppTemplateReconciliationService.SyncResult result =
                 reconciliationService.syncScope(providerScopeId, channelAccountId);
+        permissionReconciliationService.reconcileDueTemplates(
+                channelAccountId, "chatapp-template-sync-" + channelAccountId);
         return new SyncAttempt(new SyncResultRecord(result.pages(), result.fetched(), result.changed(),
                 elapsedMs(started)), result.complete());
     }

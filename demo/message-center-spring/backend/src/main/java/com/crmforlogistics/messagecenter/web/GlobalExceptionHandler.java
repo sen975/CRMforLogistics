@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
 import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.service.account.AccountException;
 import com.crmforlogistics.messagecenter.service.channel.ChannelAccountException;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,6 +17,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -64,6 +68,12 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ApiError handleBadRequest(IllegalArgumentException e) {
         return new ApiError("BAD_REQUEST", e.getMessage(), UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(AccountException.class)
+    public ResponseEntity<ApiError> handleAccount(AccountException e, HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
     @ExceptionHandler(ChannelAccountException.class)
@@ -136,7 +146,39 @@ public class GlobalExceptionHandler {
             ServletRequestBindingException.class, MissingServletRequestPartException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ApiError handleRequestBinding(Exception e, HttpServletRequest request) {
-        return new ApiError("BAD_REQUEST", "INVALID_REQUEST", traceId(request), Map.of());
+        String traceId = traceId(request);
+        LOG.warn("event=http.request_binding_failed traceId={} method={} path={} diagnostic={}",
+                traceId, request.getMethod(), request.getRequestURI(), requestBindingDiagnostic(e));
+        return new ApiError("BAD_REQUEST", "INVALID_REQUEST", traceId, Map.of());
+    }
+
+    static String requestBindingDiagnostic(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof InvalidFormatException invalid) {
+                String path = jsonPath(invalid);
+                String target = invalid.getTargetType() == null ? "unknown" : invalid.getTargetType().getSimpleName();
+                return "invalid_format path=" + path + " targetType=" + target;
+            }
+            if (current instanceof JsonMappingException mapping) {
+                return "json_mapping path=" + jsonPath(mapping);
+            }
+            if (current instanceof JsonProcessingException) {
+                return "json_processing";
+            }
+            current = current.getCause();
+        }
+        return failure == null ? "unknown" : failure.getClass().getSimpleName();
+    }
+
+    private static String jsonPath(JsonMappingException failure) {
+        String path = failure.getPath().stream()
+                .map(reference -> reference.getFieldName() != null
+                        ? reference.getFieldName() : "[" + reference.getIndex() + "]")
+                .filter(value -> !value.equals("[-1]"))
+                .reduce((left, right) -> left + "." + right)
+                .orElse("unknown");
+        return path.length() > 120 ? path.substring(0, 120) : path;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -145,18 +187,25 @@ public class GlobalExceptionHandler {
         Map<String, String> fieldErrors = new LinkedHashMap<>();
         e.getBindingResult().getFieldErrors().forEach(error -> fieldErrors.putIfAbsent(
                 error.getField(), error.getDefaultMessage() == null ? "is invalid" : error.getDefaultMessage()));
-        if (request.getRequestURI().startsWith("/api/channel-address-books/")) {
+        boolean addressBookRequest = request.getRequestURI().startsWith("/api/channel-address-books/");
+        if (addressBookRequest) {
             return new ApiError("CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED",
                     "CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED", traceId(request), fieldErrors);
         }
-        return new ApiError("TEMPLATE_VALIDATION_FAILED", "WhatsApp template validation failed",
+        boolean accountRequest = request.getRequestURI().startsWith("/api/account/")
+                || request.getRequestURI().startsWith("/api/admin/")
+                || request.getRequestURI().equals("/api/auth/register");
+        return new ApiError(accountRequest ? "ACCOUNT_VALIDATION_FAILED" : "TEMPLATE_VALIDATION_FAILED",
+                accountRequest ? "ACCOUNT_VALIDATION_FAILED" : "WhatsApp template validation failed",
                 traceId(request), fieldErrors);
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
     public ApiError handleUploadTooLarge(MaxUploadSizeExceededException e, HttpServletRequest request) {
-        return new ApiError("TEMPLATE_MEDIA_INVALID", "Uploaded file exceeds allowed size",
+        boolean accountAvatar = request.getRequestURI().equals("/api/account/avatar");
+        return new ApiError(accountAvatar ? "AVATAR_INVALID" : "TEMPLATE_MEDIA_INVALID",
+                accountAvatar ? "AVATAR_INVALID" : "Uploaded file exceeds allowed size",
                 traceId(request), Map.of("file", "exceeds the maximum request size"));
     }
 

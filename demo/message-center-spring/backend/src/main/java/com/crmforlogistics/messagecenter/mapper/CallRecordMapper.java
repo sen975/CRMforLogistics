@@ -17,6 +17,12 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
     Optional<CallRecordEntity> findByIdAndOwner(@Param("id") UUID id,
                                                 @Param("ownerId") UUID ownerId);
 
+    @Select("SELECT * FROM call_records WHERE owner_user_id=#{ownerId}::uuid "
+            + "AND contact_id=#{contactId}::uuid AND client_request_id=#{requestId}")
+    Optional<CallRecordEntity> findByOwnerAndIdempotency(@Param("ownerId") UUID ownerId,
+                                                         @Param("contactId") UUID contactId,
+                                                         @Param("requestId") String requestId);
+
     @Select("SELECT * FROM call_records WHERE id = #{id}::uuid")
     Optional<CallRecordEntity> findById(@Param("id") UUID id);
 
@@ -28,6 +34,11 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "<foreach item='a' collection='anchors' open='(' separator=',' close=')'>#{a}</foreach>"
             + "</script>")
     List<CallRecordEntity> listByAnchors(@Param("anchors") java.util.Set<String> anchors);
+
+    @Select("SELECT * FROM call_records WHERE owner_user_id=#{ownerId}::uuid "
+            + "AND contact_id=#{contactId}::uuid ORDER BY occurred_at, id")
+    List<CallRecordEntity> listByOwnerAndContact(@Param("ownerId") UUID ownerId,
+                                                 @Param("contactId") UUID contactId);
 
     @Select("<script>"
             + "SELECT cr.* FROM call_records cr WHERE cr.contact_anchor_point_id IN "

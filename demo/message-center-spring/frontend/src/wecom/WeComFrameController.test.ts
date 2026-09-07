@@ -24,4 +24,32 @@ describe('WeComFrameController', () => {
     expect(frame.setData).toHaveBeenCalledTimes(1);
     expect(calls).toEqual([{ msgList: [] }]);
   });
+
+  it('setData 未完成时取消更新不会产生无人接管的 AbortError', async () => {
+    let releaseSetData!: () => void;
+    const frame = {
+      setData: vi.fn(() => new Promise<void>((resolve) => { releaseSetData = resolve; })),
+    } as unknown as WeComOpenDataFrame;
+    const abortController = new AbortController();
+    const waitForUpdated = (signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('已取消', 'AbortError')), { once: true });
+      void resolve;
+    });
+    const controller = new WeComFrameController();
+
+    const update = controller.update(
+      frame,
+      { msgList: [{ msgid: 'b' }] },
+      1,
+      () => 1,
+      abortController.signal,
+      waitForUpdated,
+    );
+    await Promise.resolve();
+    abortController.abort();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    releaseSetData();
+
+    await expect(update).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });

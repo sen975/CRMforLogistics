@@ -34,6 +34,7 @@ import type {
   TemplateResponse,
 } from '../api/types';
 import { useSse } from '../hooks/useSse';
+import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Title, Text } = Typography;
 
@@ -161,7 +162,10 @@ export default function BroadcastsPage() {
         && identity.identityScope === accountId)
       .map((identity) => ({
         value: identity.id,
-        label: contact.displayName || identity.displayName || identity.identityValue,
+        label: contactDisplayName({
+          remark: contact.remark,
+          displayName: contact.displayName || identity.displayName || identity.identityValue,
+        }),
       }))), [accountId, contactsQuery.data?.records]);
 
   const createMutation = useMutation({

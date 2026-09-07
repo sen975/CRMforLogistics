@@ -23,7 +23,10 @@ import com.aliyun.sdk.service.cams20200606.models.ModifyChatappTemplateRequest;
 import com.aliyun.sdk.service.cams20200606.models.ModifyChatappTemplateResponse;
 import com.aliyun.sdk.service.cams20200606.models.ModifyChatappTemplateResponseBody;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOssMediaUploader;
-import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.CreateResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
@@ -55,12 +58,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 class AliyunChatAppTemplateGatewayTest {
 
-    @Mock
-    private AppConfig config;
     @Mock
     private AsyncClient client;
     @Mock
@@ -70,8 +72,7 @@ class AliyunChatAppTemplateGatewayTest {
 
     @BeforeEach
     void setUp() {
-        when(config.custSpaceId()).thenReturn("cams-space");
-        gateway = new AliyunChatAppTemplateGateway(config, client, uploader);
+        gateway = new AliyunChatAppTemplateGateway(client, uploader, "cams-space");
     }
 
     @Test
@@ -98,6 +99,29 @@ class AliyunChatAppTemplateGatewayTest {
         assertThat(request.getValue().getExample()).containsEntry("customer", "Ada,Bea");
         assertThat(result.templateCode()).isEqualTo("tpl-1");
         assertThat(result.providerRequestId()).isEqualTo("req-create");
+    }
+
+    @Test
+    void exposesAccountCredentialFailureInsteadOfGenericProviderError() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        ChatAppAccountCredentialsResolver credentialsResolver = mock(ChatAppAccountCredentialsResolver.class);
+        UUID accountId = UUID.randomUUID();
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(accountId);
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        account.setAccountIdentifier("60122222222");
+        when(accountMapper.selectById(accountId)).thenReturn(account);
+        when(credentialsResolver.resolve(account)).thenThrow(
+                new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"));
+        AliyunChatAppTemplateGateway accountGateway = new AliyunChatAppTemplateGateway(
+                uploader, accountMapper, credentialsResolver);
+
+        assertThatThrownBy(() -> accountGateway.create(accountId, command()))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
+                    assertThat(error.code()).isEqualTo("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+                    assertThat(error.retryable()).isFalse();
+                });
     }
 
     @Test
@@ -259,7 +283,8 @@ class AliyunChatAppTemplateGatewayTest {
     @Test
     void timesOutWithStableRetryableError() {
         when(client.createChatappTemplate(any())).thenReturn(new CompletableFuture<>());
-        AliyunChatAppTemplateGateway shortGateway = new AliyunChatAppTemplateGateway(config, client, uploader, Duration.ofMillis(10));
+        AliyunChatAppTemplateGateway shortGateway = new AliyunChatAppTemplateGateway(
+                client, uploader, Duration.ofMillis(10), "cams-space");
         assertThatThrownBy(() -> shortGateway.create(UUID.randomUUID(), command()))
                 .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
                     var e = (WhatsAppTemplateException) error;

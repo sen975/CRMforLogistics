@@ -1,11 +1,13 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.entity.ChannelEventEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
@@ -14,6 +16,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -42,6 +45,8 @@ class ChatAppContactProjectionTest {
             mock(ChatAppBroadcastRecipientMapper.class);
     private final ChatAppBroadcastMessageProjector broadcastMessageProjector =
             mock(ChatAppBroadcastMessageProjector.class);
+    private final ChannelAccountMapper channelAccountMapper = mock(ChannelAccountMapper.class);
+    private final ChannelAddressBookService addressBookService = mock(ChannelAddressBookService.class);
 
     @Test
     void usesExistingIdentityOnlyWithinCurrentChatAppAccountScope() {
@@ -50,16 +55,18 @@ class ChatAppContactProjectionTest {
         existing.setId(UUID.randomUUID());
         existing.setDisplayName("人工维护名称");
         ConversationEntity conversation = conversation(existing.getId());
-        when(contactIdentityMapper.findByNormalizedValueInScope(
-                "chatapp", accountId.toString(), "60123456789"))
-                .thenReturn(Optional.of(existing));
+        UUID ownerId = stubOwnedAccount(accountId);
+        when(addressBookService.resolveOrCreateInbound(
+                ownerId, "chatapp", accountId, "60123456789", "60123456789"))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), existing.getId(), false));
         when(conversationMapper.getOrCreateConversation(accountId, existing.getId()))
                 .thenReturn(conversation);
 
         projector().project(inboundEvent(accountId, "wamid-existing"));
 
-        verify(contactIdentityMapper).findByNormalizedValueInScope(
-                "chatapp", accountId.toString(), "60123456789");
+        verify(addressBookService).resolveOrCreateInbound(
+                ownerId, "chatapp", accountId, "60123456789", "60123456789");
         verify(contactIdentityMapper, never()).insert(any(ContactIdentityEntity.class));
         verify(contactMapper, never()).insert(any(ContactEntity.class));
         assertThat(existing.getDisplayName()).isEqualTo("人工维护名称");
@@ -69,32 +76,42 @@ class ChatAppContactProjectionTest {
     void createsSeparateIdentitiesForSameNumberInDifferentChatAppAccounts() {
         UUID firstAccountId = UUID.randomUUID();
         UUID secondAccountId = UUID.randomUUID();
-        when(contactIdentityMapper.findByNormalizedValueInScope(
-                eq("chatapp"), any(String.class), eq("60123456789")))
-                .thenReturn(Optional.empty());
+        UUID firstOwner = stubOwnedAccount(firstAccountId);
+        UUID secondOwner = stubOwnedAccount(secondAccountId);
+        UUID firstIdentity = UUID.randomUUID();
+        UUID secondIdentity = UUID.randomUUID();
+        when(addressBookService.resolveOrCreateInbound(
+                firstOwner, "chatapp", firstAccountId, "60123456789", "60123456789"))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), firstIdentity, true));
+        when(addressBookService.resolveOrCreateInbound(
+                secondOwner, "chatapp", secondAccountId, "60123456789", "60123456789"))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), secondIdentity, true));
         when(conversationMapper.getOrCreateConversation(any(UUID.class), any(UUID.class)))
                 .thenAnswer(invocation -> conversation(invocation.getArgument(1, UUID.class)));
 
         projector().project(inboundEvent(firstAccountId, "wamid-first"));
         projector().project(inboundEvent(secondAccountId, "wamid-second"));
 
-        ArgumentCaptor<ContactIdentityEntity> inserted =
-                ArgumentCaptor.forClass(ContactIdentityEntity.class);
-        verify(contactIdentityMapper, times(2)).insert(inserted.capture());
-        assertThat(inserted.getAllValues())
-                .extracting(ContactIdentityEntity::getIdentityScope)
-                .containsExactly(firstAccountId.toString(), secondAccountId.toString());
+        verify(addressBookService).resolveOrCreateInbound(
+                firstOwner, "chatapp", firstAccountId, "60123456789", "60123456789");
+        verify(addressBookService).resolveOrCreateInbound(
+                secondOwner, "chatapp", secondAccountId, "60123456789", "60123456789");
     }
 
     @Test
     void duplicateMessageDoesNotCreateAnotherIdentity() {
         UUID accountId = UUID.randomUUID();
+        UUID ownerId = stubOwnedAccount(accountId);
         when(messageMapper.findByProviderMessageId(accountId, "wamid-duplicate"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(new MessageEntity()));
-        when(contactIdentityMapper.findByNormalizedValueInScope(
-                "chatapp", accountId.toString(), "60123456789"))
-                .thenReturn(Optional.empty());
+        UUID identityId = UUID.randomUUID();
+        when(addressBookService.resolveOrCreateInbound(
+                ownerId, "chatapp", accountId, "60123456789", "60123456789"))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), identityId, true));
         when(conversationMapper.getOrCreateConversation(any(UUID.class), any(UUID.class)))
                 .thenAnswer(invocation -> conversation(invocation.getArgument(1, UUID.class)));
 
@@ -102,16 +119,26 @@ class ChatAppContactProjectionTest {
         var duplicate = projector().project(inboundEvent(accountId, "wamid-duplicate"));
 
         assertThat(duplicate.duplicate()).isTrue();
-        verify(contactIdentityMapper).insert(any(ContactIdentityEntity.class));
-        verify(contactMapper).insert(any(ContactEntity.class));
+        verify(addressBookService).resolveOrCreateInbound(
+                ownerId, "chatapp", accountId, "60123456789", "60123456789");
     }
 
     private ChatAppWebhookProjector projector() {
         return new ChatAppWebhookProjector(
                 channelEventMapper, messageMapper, statusEventMapper,
-                contactIdentityMapper, contactMapper, conversationMapper,
-                eventHub, new ObjectMapper(), broadcastRecipientMapper,
-                broadcastMessageProjector);
+                conversationMapper, eventHub, new ObjectMapper(), broadcastRecipientMapper,
+                broadcastMessageProjector, null, channelAccountMapper, addressBookService);
+    }
+
+    private UUID stubOwnedAccount(UUID accountId) {
+        UUID ownerId = UUID.randomUUID();
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(accountId);
+        account.setOwnerUserId(ownerId);
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        when(channelAccountMapper.selectById(accountId)).thenReturn(account);
+        return ownerId;
     }
 
     private static ChannelEventEntity inboundEvent(UUID accountId, String providerMessageId) {

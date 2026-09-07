@@ -9,8 +9,10 @@ import LoginPage from './LoginPage';
 
 const api = vi.hoisted(() => ({
   login: vi.fn(),
+  register: vi.fn(),
   logout: vi.fn(),
   exchangeWeComLogin: vi.fn(),
+  fetchAccountProfile: vi.fn(),
 }));
 
 vi.mock('../api/endpoints', () => api);
@@ -49,6 +51,28 @@ beforeEach(() => {
     viewerAuthToken: 'viewer-memory-only',
     viewerExpiresIn: 300,
   });
+  api.fetchAccountProfile.mockResolvedValue({
+    id: 'user-1', username: 'employee-1', displayName: '员工一', roles: ['USER'],
+    avatar: { source: 'INITIAL', contentUrl: null, initial: '员', revision: null },
+  });
+  api.register.mockResolvedValue({ token: 'register-token', username: 'agent_01', roles: ['AGENT'] });
+});
+
+it('registers a custom login id and starts the new session', async () => {
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(screen.getByText('注册').closest('label')!);
+  await user.type(screen.getByPlaceholderText('登录 ID'), 'agent_01');
+  await user.type(screen.getByPlaceholderText('昵称'), '张三');
+  await user.type(screen.getByPlaceholderText('密码'), 'Example123');
+  await user.type(screen.getByPlaceholderText('确认密码'), 'Example123');
+  await user.click(screen.getByRole('button', { name: '注册并登录' }));
+
+  await waitFor(() => expect(api.register).toHaveBeenCalledWith({
+    username: 'agent_01', displayName: '张三', password: 'Example123',
+  }));
+  expect(window.localStorage.getItem('token')).toBe('register-token');
 });
 
 it('keeps viewport padding inside the mobile login page height', () => {

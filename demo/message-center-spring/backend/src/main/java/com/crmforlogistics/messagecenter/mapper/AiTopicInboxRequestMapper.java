@@ -12,6 +12,10 @@ import java.util.UUID;
 
 @Mapper
 public interface AiTopicInboxRequestMapper extends BaseMapper<AiTopicInboxRequestEntity> {
+    String SAFE_GROUP_OWNER_LABEL = "case when sc.group_kind='INTERNAL' then '内部群聊' "
+            + "when sc.group_kind='EXTERNAL' and nullif(sc.display_name, '') is not null "
+            + "and sc.display_name not like 'group:%' then sc.display_name else '外部群聊' end";
+
     @Insert("insert into ai_topic_inbox_requests (id, topic_id, requested_by_user_id, status, created_at) "
             + "values (gen_random_uuid(), #{topicId}::uuid, #{userId}::uuid, 'PENDING', now()) on conflict do nothing")
     int insertPendingIfAbsent(@Param("topicId") UUID topicId, @Param("userId") UUID userId);
@@ -20,7 +24,7 @@ public interface AiTopicInboxRequestMapper extends BaseMapper<AiTopicInboxReques
     AiTopicInboxRequestEntity findPendingByTopicId(@Param("topicId") UUID topicId);
 
     @Select("select r.*, t.title as topic_title, t.owner_type, t.owner_id, "
-            + "coalesce(nullif(sc.display_name, ''), nullif(sc.provider_conversation_key, '')) as owner_label "
+            + SAFE_GROUP_OWNER_LABEL + " as owner_label "
             + "from ai_topic_inbox_requests r join ai_topics t on t.id=r.topic_id "
             + "join wecom_source_conversations sc on sc.id=t.owner_id "
             + "where r.status='PENDING' and t.status='READY' and t.owner_type='WECOM_GROUP' "

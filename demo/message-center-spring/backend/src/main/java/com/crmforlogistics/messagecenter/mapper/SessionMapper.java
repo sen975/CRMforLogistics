@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Update;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 
 @Mapper
 public interface SessionMapper extends BaseMapper<SessionEntity> {
@@ -42,4 +43,8 @@ public interface SessionMapper extends BaseMapper<SessionEntity> {
             """)
     int revokeByTokenHash(@Param("tokenHash") byte[] tokenHash,
                           @Param("revokedAt") Instant revokedAt);
+
+    @Update("update user_sessions set revoked_at = #{revokedAt} where user_id = #{userId}::uuid and revoked_at is null")
+    int revokeActiveByUserId(@Param("userId") UUID userId,
+                             @Param("revokedAt") Instant revokedAt);
 }

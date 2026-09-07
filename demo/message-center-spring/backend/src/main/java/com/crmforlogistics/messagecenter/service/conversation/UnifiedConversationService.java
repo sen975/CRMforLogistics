@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.service.conversation;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.crmforlogistics.messagecenter.dto.response.ConversationListItemResponse;
+import com.crmforlogistics.messagecenter.dto.response.ConversationPageResponse;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import org.springframework.stereotype.Service;
 
@@ -21,44 +21,53 @@ public class UnifiedConversationService {
         this.conversationMapper = conversationMapper;
     }
 
-    public Page<ConversationListItemResponse> list(UUID userId, String search, String cursor, int limit) {
+    public ConversationPageResponse list(UUID userId, String search, String cursor, int limit) {
         int safeLimit = limit <= 0 ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
-        CursorPair pair = decodeCursor(cursor);
+        CursorKey key = decodeCursor(cursor);
         List<ConversationMapper.UnifiedConversationRow> rows = conversationMapper.listUnified(
-                userId, search, pair.sortAt(), pair.sortKey(), safeLimit);
-        List<ConversationListItemResponse> records = rows.stream()
+                userId, search, key.pinned(), key.sortRank(), key.sortAt(), key.sortKey(), safeLimit + 1);
+        boolean hasMore = rows.size() > safeLimit;
+        List<ConversationMapper.UnifiedConversationRow> visibleRows = hasMore
+                ? rows.subList(0, safeLimit) : rows;
+        List<ConversationListItemResponse> records = visibleRows.stream()
                 .map(ConversationMapper.UnifiedConversationRow::toResponse)
                 .toList();
-        Page<ConversationListItemResponse> page = new Page<>(1, safeLimit, false);
-        page.setRecords(records);
-        page.setTotal(records.size());
-        return page;
+        String nextCursor = hasMore && !visibleRows.isEmpty()
+                ? encodeCursor(visibleRows.get(visibleRows.size() - 1)) : null;
+        return new ConversationPageResponse(records, records.size(), safeLimit, 1, 1, nextCursor);
     }
 
-    public static String encodeCursor(Instant sortAt, String sortKey) {
-        if (sortAt == null || sortKey == null) return null;
+    static String encodeCursor(ConversationMapper.UnifiedConversationRow row) {
+        if (row == null || row.sortAt() == null || row.sortKey() == null) return null;
+        String rank = row.sortRank() == null ? "_" : row.sortRank().toString();
         return Base64.getUrlEncoder().withoutPadding()
-                .encodeToString((sortAt + "|" + sortKey).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                .encodeToString(((row.pinned() ? "1" : "0") + "|" + rank + "|"
+                        + row.sortAt() + "|" + row.sortKey())
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
-    private static CursorPair decodeCursor(String cursor) {
-        if (cursor == null || cursor.isBlank()) return new CursorPair(null, null);
+    private static CursorKey decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return new CursorKey(null, null, null, null);
+        if (cursor.length() > 1024) throw new IllegalArgumentException("invalid conversation cursor");
         String raw = cursor;
         try {
             raw = new String(Base64.getUrlDecoder().decode(cursor), java.nio.charset.StandardCharsets.UTF_8);
         } catch (IllegalArgumentException ignored) {
             // Accept the plain form for internal callers and diagnostics.
         }
-        String[] parts = raw.split("\\|", 2);
-        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+        String[] parts = raw.split("\\|", 4);
+        if (parts.length != 4 || !(parts[0].equals("0") || parts[0].equals("1"))
+                || parts[2].isBlank() || parts[3].isBlank()) {
             throw new IllegalArgumentException("invalid conversation cursor");
         }
         try {
-            return new CursorPair(parts[0], parts[1]);
+            Instant.parse(parts[2]);
+            Long rank = parts[1].equals("_") ? null : Long.parseLong(parts[1]);
+            return new CursorKey(parts[0].equals("1"), rank, parts[2], parts[3]);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("invalid conversation cursor", e);
         }
     }
 
-    private record CursorPair(String sortAt, String sortKey) {}
+    private record CursorKey(Boolean pinned, Long sortRank, String sortAt, String sortKey) {}
 }

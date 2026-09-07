@@ -78,21 +78,23 @@ public class ChatAppController {
 
     @PostMapping("/sync/messages")
     public ResponseEntity<?> syncMessages() {
-        ChatAppMessageSyncService.SyncResultRecord result = messageSyncService.runOnce();
+        ChatAppMessageSyncService.SyncResultRecord result =
+                messageSyncService.runOwnedAccount(SecurityUtil.currentUserId());
         return ResponseEntity.ok(result);
     }
 
     @PostMapping("/sync/messages/reconcile")
     public ResponseEntity<ChatAppHistoryReconciliationResult> reconcileMessages(
             @RequestBody HistoryReconciliationRequest request) {
-        return ResponseEntity.ok(messageSyncService.runAccount(
-                request.accountId(), request.startTime(), request.endTime(),
+        return ResponseEntity.ok(messageSyncService.runOwnedAccount(
+                SecurityUtil.currentUserId(), request.accountId(), request.startTime(), request.endTime(),
                 request.maxPages(), request.dryRun()));
     }
 
     @PostMapping("/sync/templates")
     public ResponseEntity<?> syncTemplates() {
-        ChatAppTemplateSyncService.SyncResultRecord result = templateSyncService.runOnce();
+        ChatAppTemplateSyncService.SyncResultRecord result =
+                templateSyncService.runOwnedAccount(SecurityUtil.currentUserId());
         return ResponseEntity.ok(result);
     }
 

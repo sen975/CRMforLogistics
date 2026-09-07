@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Typography, App, Tabs } from 'antd';
+import { Card, Form, Input, Button, Typography, App, Tabs, Segmented } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useAuth } from '../hooks/useAuth';
 import { WeComLoginPanel } from '../components/wecom/WeComLoginPanel';
@@ -9,7 +9,10 @@ const { Title } = Typography;
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
-  const { login, loginWithWeCom, isAuthenticated } = useAuth();
+  const [passwordMode, setPasswordMode] = useState<'login' | 'register'>('login');
+  const [loginForm] = Form.useForm();
+  const [registerForm] = Form.useForm();
+  const { login, register, loginWithWeCom, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const { message } = App.useApp();
 
@@ -22,7 +25,22 @@ export default function LoginPage() {
     try {
       await login(values.username, values.password);
     } catch {
+      loginForm.resetFields(['password']);
       message.error('用户名或密码错误');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegister = async (values: {
+    username: string; displayName?: string; password: string; confirmPassword: string;
+  }) => {
+    setLoading(true);
+    try {
+      await register({ username: values.username, displayName: values.displayName, password: values.password });
+    } catch {
+      registerForm.resetFields(['password', 'confirmPassword']);
+      message.error('注册失败，请检查登录 ID 是否已存在');
     } finally {
       setLoading(false);
     }
@@ -39,7 +57,15 @@ export default function LoginPage() {
   if (isAuthenticated) return null;
 
   const passwordLogin = (
-    <Form onFinish={handleSubmit} size="large">
+    <>
+      <Segmented
+        block
+        value={passwordMode}
+        onChange={(value) => setPasswordMode(value as 'login' | 'register')}
+        options={[{ label: '登录', value: 'login' }, { label: '注册', value: 'register' }]}
+        style={{ marginBottom: 20 }}
+      />
+      {passwordMode === 'login' ? <Form form={loginForm} onFinish={handleSubmit} size="large">
       <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
         <Input prefix={<UserOutlined />} placeholder="用户名" autoFocus />
       </Form.Item>
@@ -51,7 +77,36 @@ export default function LoginPage() {
           登录
         </Button>
       </Form.Item>
-    </Form>
+      </Form> : <Form form={registerForm} onFinish={handleRegister} size="large">
+        <Form.Item name="username" rules={[
+          { required: true, message: '请输入登录 ID' },
+          { pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/, message: '请输入 3-32 位合法登录 ID' },
+        ]}>
+          <Input prefix={<UserOutlined />} placeholder="登录 ID" autoFocus />
+        </Form.Item>
+        <Form.Item name="displayName" rules={[{ max: 50, message: '昵称最多 50 个字符' }]}>
+          <Input prefix={<UserOutlined />} placeholder="昵称" />
+        </Form.Item>
+        <Form.Item name="password" rules={[
+          { required: true, message: '请输入密码' },
+          { min: 8, max: 72, message: '密码长度为 8-72 位' },
+        ]}>
+          <Input.Password prefix={<LockOutlined />} placeholder="密码" />
+        </Form.Item>
+        <Form.Item name="confirmPassword" dependencies={['password']} rules={[
+          { required: true, message: '请确认密码' },
+          ({ getFieldValue }) => ({ validator(_, value) {
+            return !value || value === getFieldValue('password')
+              ? Promise.resolve() : Promise.reject(new Error('两次输入的密码不一致'));
+          } }),
+        ]}>
+          <Input.Password prefix={<LockOutlined />} placeholder="确认密码" />
+        </Form.Item>
+        <Form.Item style={{ marginBottom: 0 }}>
+          <Button type="primary" htmlType="submit" loading={loading} block>注册并登录</Button>
+        </Form.Item>
+      </Form>}
+    </>
   );
 
   return (

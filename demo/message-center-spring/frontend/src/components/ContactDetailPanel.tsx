@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography, Tag, Descriptions, Input, Button, Space, App, Spin, Divider, Popconfirm, List, Select } from 'antd';
+import { Typography, Tag, Descriptions, Input, Button, Space, App, Spin, Empty, Popconfirm, List, Select, Tabs } from 'antd';
 import { EditOutlined, CheckOutlined, CloseOutlined, ScissorOutlined } from '@ant-design/icons';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchContact, fetchMessage } from '../api/endpoints';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { applyTopicFusion, fetchContact, fetchMessage, fetchManualReviewPending, keepPendingTopic, previewTopicFusion } from '../api/endpoints';
 import { useUpdateContactRemark, useUpdateContactTags, useSplitContact } from '../hooks/useContacts';
 import { useDetailPanel } from '../hooks/useDetailPanel';
 import type { ContactIdentityResponse } from '../api/types';
 import EmailAttachmentList from './EmailAttachmentList';
 import AiTopicTimeline from './AiTopicTimeline';
+import AiTopicManualReviewPanel from './AiTopicManualReviewPanel';
 import { useTopicTimeline } from '../hooks/useTopicTimeline';
 import { decodeHtmlEntities } from '../utils/htmlEntities';
 import { contactDisplayName } from '../utils/contactDisplayName';
@@ -34,8 +35,17 @@ export default function ContactDetailPanel() {
   const [remarkValue, setRemarkValue] = useState('');
   const [editingTags, setEditingTags] = useState(false);
   const [tagValues, setTagValues] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState('topics');
   const { selectedDetail, selectChannel, selectMessage, selectCallRecord } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
+
+  useEffect(() => {
+    setActiveTab('topics');
+  }, [contactId]);
+
+  useEffect(() => {
+    if (selectedDetail?.kind === 'message') setActiveTab('message');
+  }, [selectedDetail]);
 
   const { data: contact, isLoading } = useQuery({
     queryKey: ['contact', contactId],
@@ -53,6 +63,15 @@ export default function ContactDetailPanel() {
   const updateTags = useUpdateContactTags();
   const splitMutation = useSplitContact();
   const topicTimeline = useTopicTimeline(contactId);
+  const pendingTopics = useQuery({ queryKey: ['topic-review-pending', contactId], queryFn: () => fetchManualReviewPending(contactId!), enabled: !!contactId });
+  const refreshTopicSections = () => {
+    void qc.invalidateQueries({ queryKey: ['topic-review-pending', contactId] });
+    void qc.invalidateQueries({ queryKey: ['contact-topics', contactId] });
+  };
+  const keepPending = useMutation({ mutationFn: keepPendingTopic, onSuccess: refreshTopicSections });
+  const fusionPreview = useMutation({ mutationFn: ({ topicIds, expectedVersions }: { topicIds: string[]; expectedVersions: Record<string, number> }) =>
+    previewTopicFusion(contactId!, { topicIds, expectedVersions }) });
+  const fusionApply = useMutation({ mutationFn: (previewId: string) => applyTopicFusion(contactId!, previewId), onSuccess: refreshTopicSections });
 
   const handleSplit = async (identity: ContactIdentityResponse) => {
     try {
@@ -96,89 +115,37 @@ export default function ContactDetailPanel() {
     }
   };
 
-  return (
-    <div style={{ padding: 16 }}>
-      <AiTopicTimeline
-        contactId={contact.id}
-        timeline={topicTimeline.data}
-        actions={{ update: topicTimeline.update, merge: topicTimeline.merge, store: topicTimeline.store, retry: topicTimeline.retry }}
-        onSourceClick={(source) => source.sourceType === 'MESSAGE' ? selectMessage(source.id) : source.sourceType === 'CALL_RECORD' ? selectCallRecord(source.id) : undefined}
-      />
-      <Divider style={{ margin: '4px 0 16px' }} />
-      <Title level={5} style={{ marginBottom: 16 }}>
-        {contactDisplayName(contact)}
-      </Title>
+  const handleSelectChannel = (channelType: string) => {
+    setActiveTab('accounts');
+    selectChannel(channelType);
+  };
 
+  const tabContentStyle = { padding: 16, minHeight: 0 };
+  const contactInfo = (
+    <div style={tabContentStyle}>
+      <Title level={5} style={{ margin: '0 0 16px' }}>联系人信息</Title>
       <Descriptions column={1} size="small" bordered>
-        <Descriptions.Item label="渠道">
-          <Space size={4} wrap>
-            {contact.channelTypes?.map((ch) => {
-              const info = channelLabels[ch] ?? { label: ch, color: 'default' };
-              return (
-                <Tag key={ch} color={info.color}>
-                  {info.label}
-                </Tag>
-              );
-            })}
-          </Space>
-        </Descriptions.Item>
-
+        <Descriptions.Item label="名称">{contactDisplayName(contact)}</Descriptions.Item>
         <Descriptions.Item label="备注">
           {editingRemark ? (
             <Space style={{ width: '100%' }}>
-              <Input
-                size="small"
-                value={remarkValue}
-                onChange={(e) => setRemarkValue(e.target.value)}
-                style={{ flex: 1 }}
-                autoFocus
-              />
-              <Button
-                size="small"
-                type="primary"
-                icon={<CheckOutlined />}
-                loading={updateRemark.isPending}
-                onClick={handleSaveRemark}
-              />
-              <Button
-                size="small"
-                icon={<CloseOutlined />}
-                onClick={() => setEditingRemark(false)}
-              />
+              <Input size="small" value={remarkValue} onChange={(e) => setRemarkValue(e.target.value)} style={{ flex: 1 }} autoFocus />
+              <Button size="small" type="primary" icon={<CheckOutlined />} loading={updateRemark.isPending} onClick={handleSaveRemark} />
+              <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingRemark(false)} />
             </Space>
           ) : (
             <Space>
               <Text>{contact.remark || '-'}</Text>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => {
-                  setRemarkValue(contact.remark || '');
-                  setEditingRemark(true);
-                }}
-              />
+              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => { setRemarkValue(contact.remark || ''); setEditingRemark(true); }} />
             </Space>
           )}
         </Descriptions.Item>
-
         <Descriptions.Item label="标签">
           {editingTags ? (
             <Space style={{ width: '100%' }}>
-              <Select
-                mode="tags"
-                value={tagValues}
-                onChange={setTagValues}
-                style={{ minWidth: 220, flex: 1 }}
-                options={(contact.tags ?? []).map((tag) => ({ value: tag.name, label: tag.name }))}
-                placeholder="输入标签后回车"
-              />
-              <Button
-                size="small"
-                type="primary"
-                icon={<CheckOutlined />}
-                aria-label="保存标签"
-                loading={updateTags.isPending}
+              <Select mode="tags" value={tagValues} onChange={setTagValues} style={{ minWidth: 160, flex: 1 }}
+                options={(contact.tags ?? []).map((tag) => ({ value: tag.name, label: tag.name }))} placeholder="输入标签后回车" />
+              <Button size="small" type="primary" icon={<CheckOutlined />} aria-label="保存标签" loading={updateTags.isPending}
                 onClick={async () => {
                   try {
                     await updateTags.mutateAsync({ id: contact.id, tags: tagValues.map((name) => ({ name })) });
@@ -187,164 +154,133 @@ export default function ContactDetailPanel() {
                   } catch {
                     appMessage.error('标签更新失败');
                   }
-                }}
-              />
+                }} />
               <Button size="small" icon={<CloseOutlined />} aria-label="取消标签" onClick={() => setEditingTags(false)} />
             </Space>
           ) : (
             <Space wrap>
               {(contact.tags ?? []).length === 0 && <Text type="secondary">-</Text>}
               {(contact.tags ?? []).map((tag) => <Tag key={tag.id} color={tag.color || undefined}>{tag.name}</Tag>)}
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                aria-label="编辑标签"
-                onClick={() => {
-                  setTagValues((contact.tags ?? []).map((tag) => tag.name));
-                  setEditingTags(true);
-                }}
-              />
+              <Button type="link" size="small" icon={<EditOutlined />} aria-label="编辑标签"
+                onClick={() => { setTagValues((contact.tags ?? []).map((tag) => tag.name)); setEditingTags(true); }} />
             </Space>
           )}
         </Descriptions.Item>
-
-        <Descriptions.Item label="消息数">
-          {contact.messageCount}
-        </Descriptions.Item>
-
-        <Descriptions.Item label="最后消息">
-          {contact.lastMessageAt
-            ? new Date(contact.lastMessageAt).toLocaleString('zh-CN')
-            : '-'}
-        </Descriptions.Item>
-
-        <Descriptions.Item label="未读数">
-          {contact.unreadCount}
-        </Descriptions.Item>
-
-        {contact.lastText && (
-          <Descriptions.Item label="最近内容">
-            <Text ellipsis style={{ maxWidth: 200 }}>
-              {contact.lastText}
-            </Text>
-          </Descriptions.Item>
-        )}
+        <Descriptions.Item label="消息数">{contact.messageCount}</Descriptions.Item>
+        <Descriptions.Item label="最后消息">{contact.lastMessageAt ? new Date(contact.lastMessageAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
+        <Descriptions.Item label="未读数">{contact.unreadCount}</Descriptions.Item>
+        {contact.lastText && <Descriptions.Item label="最近内容"><Text ellipsis style={{ maxWidth: 200 }}>{contact.lastText}</Text></Descriptions.Item>}
       </Descriptions>
+    </div>
+  );
 
-      {contact.identities && contact.identities.length > 0 && (
-        <>
-          <Divider style={{ margin: '16px 0 12px' }} />
-          <Title level={5} style={{ marginBottom: 8 }}>融合账号</Title>
-          <List
-            size="small"
-            dataSource={contact.identities}
-            renderItem={(identity) => (
-              <List.Item
-                onClick={() => selectChannel(identity.channelType)}
-                style={{ cursor: 'pointer' }}
-                actions={[
-                  contact.identities.length > 1 ? (
-                    <Popconfirm
-                      key="split"
-                      title="确定要拆分此账号吗？"
-                      description="该账号将成为一个独立的联系人"
-                      onConfirm={() => handleSplit(identity)}
-                      okText="确定"
-                      cancelText="取消"
-                    >
-                      <Button
-                        size="small"
-                        type="link"
-                        danger
-                        icon={<ScissorOutlined />}
-                        loading={splitMutation.isPending}
-                      >
-                        拆分
-                      </Button>
-                    </Popconfirm>
-                  ) : null,
-                ].filter(Boolean)}
-              >
-                <List.Item.Meta
-                  title={
-                    <Space size={4}>
-                      <Tag color={channelLabels[identity.channelType]?.color ?? 'default'}>
-                        {channelLabels[identity.channelType]?.label ?? identity.channelType}
-                      </Tag>
-                      <Text>{identity.displayName || identity.identityValue}</Text>
-                    </Space>
-                  }
-                  description={
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {identity.channelType === 'chatapp'
-                        ? identity.identityValue
-                        : `${identity.identityScope}: ${identity.identityValue}`}
-                    </Text>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-        </>
-      )}
-
-      {selectedMessageId && (
-        <>
-          <Divider style={{ margin: '16px 0 12px' }} />
-          <Title level={5} style={{ marginBottom: 12 }}>消息详情</Title>
-
-          {messageDetail ? (
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="方向">
-                <Tag color={messageDetail.direction === 'inbound' ? 'blue' : 'green'}>
-                  {messageDetail.direction === 'inbound' ? '接收' : '发送'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="类型">
-                <Tag>{messageDetail.kind}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="渠道">
-                <Tag>{messageDetail.channelType}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="发送方">
-                {messageDetail.from}
-              </Descriptions.Item>
-              <Descriptions.Item label="接收方">
-                {messageDetail.to}
-              </Descriptions.Item>
-              <Descriptions.Item label="时间">
-                {formatFullTime(messageDetail.occurredAt)}
-              </Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag>{messageDetail.status}</Tag>
-              </Descriptions.Item>
-              {messageDetail.subject && (
-                <Descriptions.Item label="主题">
-                  <Text strong>{messageDetail.subject}</Text>
-                </Descriptions.Item>
-              )}
-              <Descriptions.Item label="内容">
-                <div style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 13 }}>
-                  {(messageDetail.kind === 'email' || messageDetail.channelType === 'email')
-                    && messageDetail.bodyHtml ? (
-                    <div dangerouslySetInnerHTML={{ __html: messageDetail.bodyHtml }} />
-                  ) : (
-                    <Text>{decodeHtmlEntities(messageDetail.bodyText)}</Text>
-                  )}
-                </div>
-              </Descriptions.Item>
-              <Descriptions.Item label="附件">
-                <EmailAttachmentList attachments={messageDetail.attachments ?? []} />
-              </Descriptions.Item>
-            </Descriptions>
-          ) : (
-            <div style={{ textAlign: 'center', padding: 8 }}>
-              <Spin size="small" />
-            </div>
+  const accountChannels = (
+    <div style={tabContentStyle}>
+      <Title level={5} style={{ margin: '0 0 16px' }}>账号渠道</Title>
+      <Descriptions column={1} size="small" bordered>
+        <Descriptions.Item label="渠道">
+          <Space size={4} wrap>
+            {contact.channelTypes?.map((ch) => {
+              const info = channelLabels[ch] ?? { label: ch, color: 'default' };
+              return <Tag key={ch} color={info.color}>{info.label}</Tag>;
+            })}
+          </Space>
+        </Descriptions.Item>
+      </Descriptions>
+      {contact.identities && contact.identities.length > 0 ? (
+        <List
+          size="small"
+          header={<Text strong>已绑定账号</Text>}
+          dataSource={contact.identities}
+          renderItem={(identity) => (
+            <List.Item
+              onClick={() => handleSelectChannel(identity.channelType)}
+              style={{ cursor: 'pointer' }}
+              actions={[
+                contact.identities.length > 1 ? (
+                  <Popconfirm key="split" title="确定要拆分此账号吗？" description="该账号将成为一个独立的联系人"
+                    onConfirm={() => handleSplit(identity)} okText="确定" cancelText="取消">
+                    <Button size="small" type="link" danger icon={<ScissorOutlined />} loading={splitMutation.isPending}>拆分</Button>
+                  </Popconfirm>
+                ) : null,
+              ].filter(Boolean)}
+            >
+              <List.Item.Meta
+                title={<Space size={4}><Tag color={channelLabels[identity.channelType]?.color ?? 'default'}>{channelLabels[identity.channelType]?.label ?? identity.channelType}</Tag><Text>{identity.displayName || identity.identityValue}</Text></Space>}
+                description={identity.channelType === 'wecom' ? undefined : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {identity.channelType === 'chatapp' ? identity.identityValue : `${identity.identityScope}: ${identity.identityValue}`}
+                  </Text>
+                )}
+              />
+            </List.Item>
           )}
-        </>
-      )}
+        />
+      ) : <Text type="secondary">暂无绑定账号</Text>}
+    </div>
+  );
+
+  const messageInfo = (
+    <div style={tabContentStyle}>
+      <Title level={5} style={{ margin: '0 0 12px' }}>消息详情</Title>
+      {!selectedMessageId ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请从消息或 Topic 来源中选择一条消息" /> : messageDetail ? (
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label="方向"><Tag color={messageDetail.direction === 'inbound' ? 'blue' : 'green'}>{messageDetail.direction === 'inbound' ? '接收' : '发送'}</Tag></Descriptions.Item>
+          <Descriptions.Item label="类型"><Tag>{messageDetail.kind}</Tag></Descriptions.Item>
+          <Descriptions.Item label="渠道"><Tag>{messageDetail.channelType}</Tag></Descriptions.Item>
+          <Descriptions.Item label="发送方">{messageDetail.from}</Descriptions.Item>
+          <Descriptions.Item label="接收方">{messageDetail.to}</Descriptions.Item>
+          <Descriptions.Item label="时间">{formatFullTime(messageDetail.occurredAt)}</Descriptions.Item>
+          <Descriptions.Item label="状态"><Tag>{messageDetail.status}</Tag></Descriptions.Item>
+          {messageDetail.subject && <Descriptions.Item label="主题"><Text strong>{messageDetail.subject}</Text></Descriptions.Item>}
+          <Descriptions.Item label="内容">
+            <div style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 13 }}>
+              {(messageDetail.kind === 'email' || messageDetail.channelType === 'email') && messageDetail.bodyHtml
+                ? <div dangerouslySetInnerHTML={{ __html: messageDetail.bodyHtml }} />
+                : <Text>{decodeHtmlEntities(messageDetail.bodyText)}</Text>}
+            </div>
+          </Descriptions.Item>
+          <Descriptions.Item label="附件"><EmailAttachmentList attachments={messageDetail.attachments ?? []} /></Descriptions.Item>
+        </Descriptions>
+      ) : <div style={{ textAlign: 'center', padding: 8 }}><Spin size="small" /></div>}
+    </div>
+  );
+
+  return (
+    <div className="contact-detail-panel" style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <Tabs
+        className="detail-panel-tabs"
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        size="small"
+        destroyOnHidden
+        data-testid="contact-detail-tabs"
+        style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0 }}
+        tabBarStyle={{ margin: 0, paddingInline: 8, flex: '0 0 auto' }}
+        items={[
+          {
+            key: 'topics',
+            label: 'Topic 时间轴',
+            children: <div style={tabContentStyle}>
+              <AiTopicTimeline
+                contactId={contact.id}
+                timeline={topicTimeline.data}
+                actions={{ update: topicTimeline.update, merge: topicTimeline.merge, store: topicTimeline.store, retry: topicTimeline.retry }}
+                pendingTopics={pendingTopics.data ?? []}
+                onKeepPending={(topicId) => keepPending.mutate(topicId)}
+                onPreviewFusion={(topicIds, expectedVersions) => fusionPreview.mutateAsync({ topicIds, expectedVersions })}
+                onApplyFusion={(previewId) => fusionApply.mutateAsync(previewId).then(() => undefined)}
+                onSourceClick={(source) => source.sourceType === 'MESSAGE' ? selectMessage(source.id) : source.sourceType === 'CALL_RECORD' ? selectCallRecord(source.id) : undefined}
+              />
+              <AiTopicManualReviewPanel contactId={contact.id} identities={contact.identities ?? []}
+                topics={topicTimeline.data?.topics ?? []} onApplied={refreshTopicSections} />
+            </div>,
+          },
+          { key: 'contact', label: '联系人信息', children: contactInfo },
+          { key: 'accounts', label: '账号渠道', children: accountChannels },
+          { key: 'message', label: '消息详情', children: messageInfo },
+        ]}
+      />
     </div>
   );
 }

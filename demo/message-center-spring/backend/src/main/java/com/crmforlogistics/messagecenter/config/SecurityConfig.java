@@ -47,10 +47,11 @@ public class SecurityConfig {
                     UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/auth/login").permitAll()
+                .requestMatchers("/api/auth/login", "/api/auth/register").permitAll()
                 .requestMatchers("/api/auth/wecom/attempts", "/api/auth/wecom/exchange").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/public/wecom-avatar/oauth/callback").permitAll()
                 .requestMatchers("/api/account/wecom-binding/**").authenticated()
-                .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/events").permitAll()
                 .requestMatchers(
                         "/api/wecom/callback",

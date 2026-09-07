@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { WeComGroupHeader } from './WeComGroupHeader';
 
 describe('WeComGroupHeader', () => {
+  it('leaves the Topic entry point to the shared application detail panel', () => {
+    render(<WeComGroupHeader thread={{ displayName: '群 A', avatarUrl: null, participants: [], openClientUrl: null }} />);
+
+    expect(screen.queryByRole('button', { name: '查看群 Topic' })).not.toBeInTheDocument();
+  });
+
   it('shows the native action only when the backend supplies an allowed URL', () => {
     const { rerender } = render(<WeComGroupHeader thread={{ displayName: '群 A', avatarUrl: null, participants: [], openClientUrl: null }} />);
     expect(screen.queryByRole('link', { name: '在企业微信中打开' })).not.toBeInTheDocument();

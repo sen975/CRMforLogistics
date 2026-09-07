@@ -75,7 +75,28 @@ public class CallRecordService {
         ValidatedCreate validated = validateCreate(command);
         Binding binding = resolveBinding(validated.contactId(), validated.phonePointId());
 
-        var existing = mapper.findByIdempotency(binding.anchor(), validated.clientRequestId());
+        return createPersisted(null, null, validated, binding, input);
+    }
+
+    public CallRecordEntity create(UUID ownerId, CreateCallRecordCommand command, InputStream input) {
+        Objects.requireNonNull(ownerId, "ownerId");
+        ValidatedCreate validated = validateCreate(command);
+        UUID contactId;
+        try {
+            contactId = UUID.fromString(validated.contactId());
+        } catch (IllegalArgumentException error) {
+            throw bindingInvalid();
+        }
+        Binding binding = resolveBinding(ownerId, contactId, validated.phonePointId());
+        return createPersisted(ownerId, contactId, validated, binding, input);
+    }
+
+    private CallRecordEntity createPersisted(UUID ownerId, UUID contactId, ValidatedCreate validated,
+                                              Binding binding, InputStream input) {
+
+        var existing = ownerId == null
+                ? mapper.findByIdempotency(binding.anchor(), validated.clientRequestId())
+                : mapper.findByOwnerAndIdempotency(ownerId, contactId, validated.clientRequestId());
         if (existing.isPresent()) return existing.get();
 
         if (mapper.countPending() >= queueCapacity) {
@@ -92,6 +113,8 @@ public class CallRecordService {
 
         CallRecordEntity entity = new CallRecordEntity();
         entity.setId(id);
+        entity.setOwnerUserId(ownerId);
+        entity.setContactId(contactId);
         entity.setContactAnchorPointId(binding.anchor());
         entity.setPhonePointId(binding.phonePointId());
         entity.setDirection(validated.direction());
@@ -139,6 +162,12 @@ public class CallRecordService {
         return mapper.findById(id).orElseThrow(CallRecordService::notFound);
     }
 
+    public CallRecordEntity detail(UUID ownerId, UUID id) {
+        Objects.requireNonNull(ownerId, "ownerId");
+        Objects.requireNonNull(id, "id");
+        return mapper.findByIdAndOwner(id, ownerId).orElseThrow(CallRecordService::notFound);
+    }
+
     public List<CallRecordEntity> listByAnchors(Set<String> anchors) {
         Set<String> allowed = normalizeAnchors(anchors);
         return allowed.isEmpty() ? List.of() : mapper.listByAnchors(allowed);
@@ -160,6 +189,41 @@ public class CallRecordService {
         int rows = mapper.replace(retried, expectedVersion);
         if (rows == 0) throw versionConflict(null);
         return retried;
+    }
+
+    public CallRecordEntity retry(UUID ownerId, UUID id, String actor, String clientRequestId) {
+        CallRecordEntity current = detail(ownerId, id);
+        return retryCurrent(current, actor, clientRequestId);
+    }
+
+    private CallRecordEntity retryCurrent(CallRecordEntity current, String actor, String clientRequestId) {
+        UUID id = current.getId();
+        requireActor(actor);
+        requireText(clientRequestId, MAX_REQUEST_ID_LENGTH,
+                "CALL_RECORD_INPUT_INVALID", "clientRequestId is invalid");
+        if (mapper.countPending() >= queueCapacity) {
+            throw new CallRecordException(
+                    "TRANSCRIPTION_QUEUE_FULL", 429,
+                    "Transcription queue is full", true);
+        }
+        long expectedVersion = current.getVersion();
+        CallRecordEntity retried = CallRecordStateMachine.manualRetry(current, clock.instant());
+        int rows = mapper.replace(retried, expectedVersion);
+        if (rows == 0) throw versionConflict(null);
+        return retried;
+    }
+
+    @Transactional
+    public CallRecordEntity revise(UUID ownerId, UUID id, String text, String actor,
+                                   long expectedVersion) {
+        detail(ownerId, id);
+        return revise(id, text, actor, expectedVersion);
+    }
+
+    @Transactional
+    public CallRecordEntity reviseNote(UUID ownerId, UUID id, String note, long expectedVersion) {
+        detail(ownerId, id);
+        return reviseNote(id, note, expectedVersion);
     }
 
     @Transactional
@@ -288,6 +352,26 @@ public class CallRecordService {
             throw new CallRecordException(
                     "CONTACT_BINDING_UNAVAILABLE", 503,
                     "Unable to resolve contact binding", true, e);
+        }
+    }
+
+    private Binding resolveBinding(UUID ownerId, UUID contactId, String selectedPhone) {
+        try {
+            var identities = contactIdentityMapper.findByContactIdAndOwner(contactId, ownerId);
+            if (identities == null || identities.isEmpty()) throw bindingInvalid();
+            for (var identity : identities) {
+                if ("phone".equalsIgnoreCase(identity.getChannelType())
+                        && identity.getNormalizedValue() != null) {
+                    String phonePoint = "phone:" + identity.getNormalizedValue();
+                    if (phonePoint.equals(selectedPhone)) return new Binding(phonePoint, phonePoint);
+                }
+            }
+            throw bindingInvalid();
+        } catch (CallRecordException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new CallRecordException("CONTACT_BINDING_UNAVAILABLE", 503,
+                    "Unable to resolve contact binding", true, error);
         }
     }
 

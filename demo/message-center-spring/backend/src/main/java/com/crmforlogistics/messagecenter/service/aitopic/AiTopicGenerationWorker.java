@@ -2,6 +2,9 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 
 import com.crmforlogistics.messagecenter.entity.AiTopicGenerationJobEntity;
 import com.crmforlogistics.messagecenter.mapper.AiTopicGenerationJobMapper;
+import com.crmforlogistics.messagecenter.service.wecom.WeComGroupNameRefreshService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +20,21 @@ public class AiTopicGenerationWorker {
     private final AiTopicService service;
     private final TopicAiGateway gateway;
     private final AiTopicConfigHolder config;
+    private final ObjectProvider<WeComGroupNameRefreshService> groupNameRefreshes;
 
     public AiTopicGenerationWorker(AiTopicGenerationJobMapper jobs, AiTopicService service, TopicAiGateway gateway, AiTopicConfigHolder config) {
-        this.jobs = jobs; this.service = service; this.gateway = gateway; this.config = config;
+        this(jobs, service, gateway, config, null);
+    }
+
+    @Autowired
+    public AiTopicGenerationWorker(AiTopicGenerationJobMapper jobs, AiTopicService service, TopicAiGateway gateway,
+                                   AiTopicConfigHolder config,
+                                   ObjectProvider<WeComGroupNameRefreshService> groupNameRefreshes) {
+        this.jobs = jobs;
+        this.service = service;
+        this.gateway = gateway;
+        this.config = config;
+        this.groupNameRefreshes = groupNameRefreshes;
     }
 
     public int runOnce() {
@@ -31,6 +46,7 @@ public class AiTopicGenerationWorker {
                 service.generate(job, job.getCreatedByUserId(), gateway);
                 jobs.finish(job.getId(), owner, "COMPLETED", null, null, Instant.now(), Instant.now());
                 service.publishSnapshotCompleted();
+                requestGroupNameRefresh(job);
             } catch (AiTopicException error) {
                 int attempt = (job.getAttemptCount() == null ? 0 : job.getAttemptCount()) + 1;
                 boolean retry = error.retryable() && attempt < config.get().maxAttempts();
@@ -48,6 +64,18 @@ public class AiTopicGenerationWorker {
             processed++;
         }
         return processed;
+    }
+
+    private void requestGroupNameRefresh(AiTopicGenerationJobEntity job) {
+        if (!"WECOM_GROUP".equals(job.getOwnerType()) || job.getOwnerId() == null || groupNameRefreshes == null) return;
+        WeComGroupNameRefreshService refresh = groupNameRefreshes.getIfAvailable();
+        if (refresh == null) return;
+        try {
+            refresh.requestAfterTopicUpdated(job.getOwnerId());
+        } catch (RuntimeException error) {
+            LOG.warn("event=wecom_group_name_refresh_enqueue_failed topicJobId={} groupId={}",
+                    job.getId(), job.getOwnerId(), error);
+        }
     }
 
     static String truncate(String value, int max) {

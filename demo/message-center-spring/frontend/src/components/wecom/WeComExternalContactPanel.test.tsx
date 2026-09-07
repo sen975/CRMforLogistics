@@ -2,12 +2,11 @@ import '@testing-library/jest-dom/vitest';
 import { ConfigProvider } from 'antd';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import WeComExternalContactPanel from './WeComExternalContactPanel';
 
 const api = vi.hoisted(() => ({
-  listWeComDirectoryMembers: vi.fn(),
+  fetchWeComBinding: vi.fn(),
   listWeComExternalContacts: vi.fn(),
   getWeComExternalContact: vi.fn(),
 }));
@@ -15,30 +14,31 @@ const api = vi.hoisted(() => ({
 vi.mock('../../api/endpoints', () => api);
 
 describe('WeComExternalContactPanel', () => {
-  it('shows the internal member selector before loading customers', () => {
+  it('requires a bound WeCom identity before loading customers', async () => {
+    api.fetchWeComBinding.mockResolvedValue({ bound: false });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><ConfigProvider><WeComExternalContactPanel authCorpId="corp-1" /></ConfigProvider></QueryClientProvider>);
-    expect(screen.getByLabelText('客户联系成员 ID')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '加载客户' })).toBeInTheDocument();
+    expect(await screen.findByText('当前账号尚未绑定企业微信')).toBeInTheDocument();
+    expect(api.listWeComExternalContacts).not.toHaveBeenCalled();
   });
 
-  it('renders directory members and fetched external contacts as selectable entries', async () => {
-    api.listWeComDirectoryMembers.mockResolvedValue({
-      userlist: [{ userid: 'employee-1', name: '员工一' }],
-    });
+  it('loads each bound customer detail and renders nicknames instead of raw ids', async () => {
+    api.fetchWeComBinding.mockResolvedValue({ bound: true, authCorpId: 'corp-1', wecomUserId: 'employee-1' });
     api.listWeComExternalContacts.mockResolvedValue({
       external_userid: ['external-1', 'external-2'],
     });
-    api.getWeComExternalContact.mockResolvedValue({ external_contact: { name: '客户一' } });
+    api.getWeComExternalContact.mockImplementation(async (_corp: string, externalId: string) => ({
+      external_contact: { external_userid: externalId, name: externalId === 'external-1' ? '客户一' : '客户二' },
+    }));
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><ConfigProvider><WeComExternalContactPanel authCorpId="corp-1" /></ConfigProvider></QueryClientProvider>);
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('combobox', { name: '客户联系成员' }));
-    await user.click(await screen.findByText('员工一 (employee-1)'));
-    await waitFor(() => expect(api.listWeComExternalContacts).toHaveBeenCalledWith('corp-1', 'employee-1'));
-    expect(await screen.findByText('external-1')).toBeInTheDocument();
-    expect(screen.getByText('external-2')).toBeInTheDocument();
+    await waitFor(() => expect(api.listWeComExternalContacts).toHaveBeenCalledWith('corp-1'));
+    await waitFor(() => expect(api.getWeComExternalContact).toHaveBeenCalledWith('corp-1', 'external-1'));
+    await waitFor(() => expect(api.getWeComExternalContact).toHaveBeenCalledWith('corp-1', 'external-2'));
+    expect(await screen.findByText('客户一')).toBeInTheDocument();
+    expect(screen.getByText('客户二')).toBeInTheDocument();
+    expect(screen.queryByText('external-1', { selector: '.ant-typography' })).not.toBeInTheDocument();
   });
 });

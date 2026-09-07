@@ -5,6 +5,7 @@ const viewerSdk = vi.hoisted(() => ({
   register: vi.fn(),
   initOpenData: vi.fn(),
   createOpenDataFrameFactory: vi.fn(),
+  createScrollViewContext: vi.fn(),
 }));
 
 vi.mock('@wecom/jssdk', () => viewerSdk);
@@ -68,7 +69,12 @@ describe('loadWeComViewerSdk', () => {
 
     script?.dispatchEvent(new Event('load'));
 
-    await expect(loading).resolves.toMatchObject(viewerSdk);
+    await expect(loading).resolves.toMatchObject({
+      register: viewerSdk.register,
+      initOpenData: viewerSdk.initOpenData,
+      createOpenDataFrameFactory: viewerSdk.createOpenDataFrameFactory,
+      createScrollViewContext: expect.any(Function),
+    });
     expect(window.ww).toBe(loginSdk);
   });
 });

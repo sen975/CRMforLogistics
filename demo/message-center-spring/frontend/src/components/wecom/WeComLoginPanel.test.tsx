@@ -43,6 +43,7 @@ it('mounts the official panel with the backend-issued attempt', async () => {
       lang: 'zh',
     }),
   }));
+  expect(options.params).not.toHaveProperty('scope');
   await act(async () => options.onLoginSuccess({ code: 'login-code' }));
   expect(onAuthenticated).toHaveBeenCalledWith('login-code', 'state-1');
   expect(screen.getByLabelText('企业微信官方登录组件')).toBeInTheDocument();

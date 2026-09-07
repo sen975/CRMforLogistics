@@ -11,6 +11,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.Session;
@@ -34,6 +35,7 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +53,7 @@ public class EmailSendService {
     private final EmailAttachmentReader attachmentReader;
     private final EmailAttachmentStore attachmentStore;
     private final AiTopicActivityRecorder topicActivityRecorder;
+    private final CredentialCipher credentialCipher;
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -66,6 +69,7 @@ public class EmailSendService {
                 positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
         this.attachmentStore = null;
         this.topicActivityRecorder = null;
+        this.credentialCipher = null;
     }
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
@@ -74,7 +78,17 @@ public class EmailSendService {
                             ContactIdentityMapper contactIdentityMapper,
                             EmailAttachmentStore attachmentStore) {
         this(config, messageMapper, conversationMapper, channelAccountMapper,
-                contactIdentityMapper, attachmentStore, null);
+                contactIdentityMapper, attachmentStore, null, null);
+    }
+
+    public EmailSendService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, null);
     }
 
     @Autowired
@@ -83,7 +97,8 @@ public class EmailSendService {
                             ChannelAccountMapper channelAccountMapper,
                             ContactIdentityMapper contactIdentityMapper,
                             EmailAttachmentStore attachmentStore,
-                            AiTopicActivityRecorder topicActivityRecorder) {
+                            AiTopicActivityRecorder topicActivityRecorder,
+                            CredentialCipher credentialCipher) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -94,26 +109,46 @@ public class EmailSendService {
                 positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
         this.attachmentStore = attachmentStore;
         this.topicActivityRecorder = topicActivityRecorder;
+        this.credentialCipher = credentialCipher;
     }
 
     public record SendResult(String messageId, String from, String to, String subject, String status) {}
 
     public SendResult send(String to, String subject, String body) throws Exception {
-        return send(to, subject, body, List.of());
+        return sendInternal(null, null, Map.of(), to, subject, body, List.of());
     }
 
     public SendResult send(String to, String subject, String body, List<EmailAttachmentInput> attachmentInputs) throws Exception {
+        return sendInternal(null, null, Map.of(), to, subject, body, attachmentInputs);
+    }
+
+    public SendResult send(UUID ownerId, String to, String subject, String body) throws Exception {
+        return send(ownerId, to, subject, body, List.of());
+    }
+
+    public SendResult send(UUID ownerId, String to, String subject, String body,
+                           List<EmailAttachmentInput> attachmentInputs) throws Exception {
+        ChannelAccountEntity account = requireOwnedEmailAccount(ownerId);
+        Map<String, String> saved = decrypt(account);
+        return sendInternal(ownerId, account, saved, to, subject, body, attachmentInputs);
+    }
+
+    private SendResult sendInternal(UUID ownerId, ChannelAccountEntity account,
+                                    Map<String, String> saved,
+                                    String to, String subject, String body,
+                                    List<EmailAttachmentInput> attachmentInputs) throws Exception {
         String cleanTo = required(to, "to");
         var attachments = attachmentReader.read(attachmentInputs == null ? List.of() : attachmentInputs);
-        SmtpEndpoint endpoint = smtpEndpoint();
-        Session session = Session.getInstance(smtpProperties(endpoint));
+        SmtpSettings settings = SmtpSettings.from(config, saved);
+        SmtpEndpoint endpoint = smtpEndpoint(settings);
+        Session session = Session.getInstance(smtpProperties(endpoint, settings));
         MimeMessage message = new MimeMessage(session);
         try {
-            String fromName = config.mailFromName();
+            String fromName = settings.fromName();
             if (fromName == null || fromName.isBlank()) {
-                message.setFrom(new InternetAddress(mailFrom()));
+                message.setFrom(new InternetAddress(settings.from()));
             } else {
-                message.setFrom(new InternetAddress(mailFrom(), fromName, "UTF-8"));
+                message.setFrom(new InternetAddress(settings.from(), fromName, "UTF-8"));
             }
         } catch (UnsupportedEncodingException ex) {
             throw new MessagingException("Failed to encode sender name", ex);
@@ -137,31 +172,55 @@ public class EmailSendService {
             message.setContent(multipart);
         }
         message.saveChanges();
-        message.setHeader("Message-ID", messageIdHeader(mailFrom(), endpoint.serverName()));
+        message.setHeader("Message-ID", messageIdHeader(settings.from(), endpoint.serverName()));
 
         try (Transport transport = session.getTransport("smtp")) {
-            transport.connect(endpoint.connectHost(), smtpPort(),
-                    config.smtpUser(), smtpPassword());
+            transport.connect(endpoint.connectHost(), settings.port(),
+                    settings.user(), settings.password());
             transport.sendMessage(message, message.getAllRecipients());
         }
 
         String messageId = message.getMessageID() == null ? "" : message.getMessageID();
-        UUID dbId = persistOutbound(cleanTo, subject, body, messageId);
+        UUID dbId = account == null
+                ? persistOutbound(cleanTo, subject, body, messageId)
+                : persistOutbound(ownerId, account.getId(), cleanTo, subject, body, messageId);
         if (dbId != null && attachmentStore != null && !attachments.isEmpty()) {
             attachmentStore.store(dbId, attachments, true);
         }
         return new SendResult(dbId != null ? dbId.toString() : messageId,
-                mailFrom(), cleanTo, subject, "sent");
+                settings.from(), cleanTo, subject, "sent");
     }
 
     UUID persistOutbound(String to, String subject, String body, String messageId) {
+        ChannelAccountEntity account = resolveEmailAccount();
+        // Legacy callers already resolved the account from the compatibility query;
+        // preserve that mocked/legacy path while owner-scoped callers re-validate ownership below.
+        return persistOutboundForAccount(account, to, subject, body, messageId);
+    }
+
+    UUID persistOutbound(UUID ownerId, UUID accountId, String to, String subject,
+                         String body, String messageId) {
         try {
-            ChannelAccountEntity account = resolveEmailAccount();
+            ChannelAccountEntity account = accountId == null ? null
+                    : ownerId == null
+                    ? channelAccountMapper.selectById(accountId)
+                    : channelAccountMapper.findByIdAndOwner(accountId, ownerId);
+            return persistOutboundForAccount(account, to, subject, body, messageId);
+        } catch (Exception e) {
+            log.error("Failed to persist outbound email to DB", e);
+            return null;
+        }
+    }
+
+    private UUID persistOutboundForAccount(ChannelAccountEntity account, String to,
+                                            String subject, String body, String messageId) {
+        try {
             if (account == null) {
                 log.warn("No email channel account found, skipping DB persist");
                 return null;
             }
-            ContactIdentityEntity identity = resolveOrCreateIdentity(to);
+            ContactIdentityEntity identity = resolveOrCreateIdentity(to,
+                    account.getId().toString());
             ConversationEntity conversation = resolveOrCreateConversation(identity.getId(), account.getId());
             MessageEntity entity = new MessageEntity();
             entity.setId(UUID.randomUUID());
@@ -193,11 +252,15 @@ public class EmailSendService {
     }
 
     private ContactIdentityEntity resolveOrCreateIdentity(String email) {
+        return resolveOrCreateIdentity(email, "email");
+    }
+
+    private ContactIdentityEntity resolveOrCreateIdentity(String email, String identityScope) {
         String normalized = ContactPointUtil.extractEmail(email);
         List<ContactIdentityEntity> existing = contactIdentityMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ContactIdentityEntity>()
                         .eq(ContactIdentityEntity::getChannelType, "email")
-                        .eq(ContactIdentityEntity::getIdentityScope, "email")
+                        .eq(ContactIdentityEntity::getIdentityScope, identityScope)
                         .eq(ContactIdentityEntity::getIdentityValue, normalized));
         if (!existing.isEmpty()) {
             return existing.get(0);
@@ -205,7 +268,7 @@ public class EmailSendService {
         ContactIdentityEntity identity = new ContactIdentityEntity();
         identity.setId(UUID.randomUUID());
         identity.setChannelType("email");
-        identity.setIdentityScope("email");
+        identity.setIdentityScope(identityScope);
         identity.setIdentityValue(normalized);
         identity.setDisplayName(ContactPointUtil.extractName(email, normalized));
         identity.setCreatedAt(Instant.now());
@@ -232,19 +295,19 @@ public class EmailSendService {
         return conversation;
     }
 
-    private Properties smtpProperties(SmtpEndpoint endpoint) {
+    private Properties smtpProperties(SmtpEndpoint endpoint, SmtpSettings settings) {
         Properties props = new Properties();
         props.put("mail.smtp.auth", "true");
         props.put("mail.smtp.host", endpoint.connectHost());
-        props.put("mail.smtp.port", Integer.toString(smtpPort()));
-        props.put("mail.smtp.ssl.enable", Boolean.toString(config.smtpSsl()));
-        props.put("mail.smtp.starttls.enable", Boolean.toString(config.smtpStartTls()));
-        props.put("mail.smtp.from", mailFrom());
-        String localhost = config.smtpLocalhost();
+        props.put("mail.smtp.port", Integer.toString(settings.port()));
+        props.put("mail.smtp.ssl.enable", Boolean.toString(settings.ssl()));
+        props.put("mail.smtp.starttls.enable", Boolean.toString(settings.startTls()));
+        props.put("mail.smtp.from", settings.from());
+        String localhost = settings.localhost();
         if (localhost != null && !localhost.isBlank()) {
             props.put("mail.smtp.localhost", localhost);
         }
-        if (!endpoint.connectHost().equalsIgnoreCase(endpoint.serverName()) && config.smtpSsl()) {
+        if (!endpoint.connectHost().equalsIgnoreCase(endpoint.serverName()) && settings.ssl()) {
             props.put("mail.smtp.ssl.socketFactory", new SniSocketFactory(endpoint.serverName()));
         }
         props.put("mail.smtp.connectiontimeout", "15000");
@@ -270,17 +333,63 @@ public class EmailSendService {
         return port != null && !port.isBlank() ? Integer.parseInt(port) : 465;
     }
 
-    private SmtpEndpoint smtpEndpoint() throws Exception {
-        String configuredHost = config.smtpHost();
-        String serverName = smtpServername(configuredHost, config.smtpUser());
+    private SmtpEndpoint smtpEndpoint(SmtpSettings settings) throws Exception {
+        String configuredHost = settings.host();
+        String serverName = smtpServername(configuredHost, settings.user());
         String connectHost = configuredHost;
-        if (config.smtpResolveIpv4() && configuredHost != null && !isIpAddress(configuredHost)) {
+        if (settings.resolveIpv4() && configuredHost != null && !isIpAddress(configuredHost)) {
             connectHost = firstIpv4Address(List.of(InetAddress.getAllByName(configuredHost)));
             if (connectHost.isBlank()) {
                 connectHost = configuredHost;
             }
         }
         return new SmtpEndpoint(connectHost, serverName);
+    }
+
+    private ChannelAccountEntity requireOwnedEmailAccount(UUID ownerId) {
+        List<ChannelAccountEntity> accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "email");
+        if (accounts.size() != 1) {
+            throw new EmailException("CHANNEL_ACCOUNT_REQUIRED", "Exactly one active email channel account is required");
+        }
+        return accounts.get(0);
+    }
+
+    private Map<String, String> decrypt(ChannelAccountEntity account) {
+        if (credentialCipher == null || account.getEncryptedConfig() == null
+                || account.getEncryptedConfig().isBlank() || "{}".equals(account.getEncryptedConfig().trim())) {
+            return Map.of();
+        }
+        try {
+            return credentialCipher.decrypt(account.getEncryptedConfig());
+        } catch (CredentialCipher.CredentialDecryptionException e) {
+            throw new EmailException("CHANNEL_ACCOUNT_CREDENTIALS_UNAVAILABLE", "Email account credentials unavailable", e);
+        }
+    }
+
+    private record SmtpSettings(String host, int port, boolean ssl, boolean startTls,
+                                String user, String password, String from, String fromName,
+                                boolean resolveIpv4, String localhost) {
+        static SmtpSettings from(AppConfig config, Map<String, String> saved) {
+            String host = value(saved, "smtpHost", config.smtpHost());
+            String user = value(saved, "smtpUser", config.smtpUser());
+            String password = value(saved, "smtpPassword", config.smtpPassword());
+            String from = value(saved, "mailFrom", config.mailFrom());
+            if (from == null || from.isBlank()) from = user == null ? "" : user;
+            int port = integer(saved, "smtpPort", config.smtpPort(), 465);
+            boolean ssl = bool(saved, "smtpSsl", config.smtpSsl());
+            boolean startTls = bool(saved, "smtpStartTls", config.smtpStartTls());
+            return new SmtpSettings(host, port, ssl, startTls, user, password, from,
+                    config.mailFromName(), config.smtpResolveIpv4(), config.smtpLocalhost());
+        }
+        private static String value(Map<String,String> saved, String key, String fallback) {
+            String v = saved.get(key); return v == null || v.isBlank() ? fallback : v;
+        }
+        private static int integer(Map<String,String> saved, String key, String fallback, int defaultValue) {
+            try { return Integer.parseInt(value(saved, key, fallback)); } catch (Exception e) { return defaultValue; }
+        }
+        private static boolean bool(Map<String,String> saved, String key, boolean fallback) {
+            String v = saved.get(key); return v == null || v.isBlank() ? fallback : Boolean.parseBoolean(v);
+        }
     }
 
     static String required(String value, String name) {

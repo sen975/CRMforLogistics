@@ -1,13 +1,10 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
-import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateDisplayName;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateScopeGate;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,36 +20,27 @@ import java.util.UUID;
 public class ChatAppTemplateService {
 
     private final TemplateMapper templateMapper;
-    private final ChannelAccountMapper accountMapper;
-    private final WhatsAppTemplateScopeGate scopeGate;
     private final TemplateMessageTextResolver templateTextResolver;
     private final ObjectMapper objectMapper;
 
-    public ChatAppTemplateService(TemplateMapper templateMapper, ChannelAccountMapper accountMapper,
-                                  WhatsAppTemplateScopeGate scopeGate,
+    public ChatAppTemplateService(TemplateMapper templateMapper,
                                   TemplateMessageTextResolver templateTextResolver,
                                   ObjectMapper objectMapper) {
         this.templateMapper = Objects.requireNonNull(templateMapper);
-        this.accountMapper = Objects.requireNonNull(accountMapper);
-        this.scopeGate = Objects.requireNonNull(scopeGate);
         this.templateTextResolver = Objects.requireNonNull(templateTextResolver);
         this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
     public List<TemplateResponse> listAll() {
-        return templateMapper.findSharedSendableForScope(scopeGate.requireReady()).stream()
+        return templateMapper.findGloballySendable().stream()
                 .filter(ChatAppTemplateService::isSendable)
                 .map(this::toResponse)
                 .toList();
     }
 
     public List<TemplateResponse> listForAccount(UUID accountId) {
-        ChannelAccountEntity account = accountId == null ? null : accountMapper.selectById(accountId);
-        if (account == null || account.getProviderScopeId() == null) {
-            return List.of();
-        }
-        return templateMapper.findSharedSendableForScope(account.getProviderScopeId()).stream()
-                .filter(ChatAppTemplateService::isSendable)
+        return templateMapper.findSendableForChannelAccount(accountId).stream()
+                .filter(template -> isSendableBy(accountId, template))
                 .map(this::toResponse)
                 .toList();
     }
@@ -99,6 +87,13 @@ public class ChatAppTemplateService {
         } catch (Exception e) {
             return Map.of();
         }
+    }
+
+    private static boolean isSendableBy(UUID accountId, TemplateEntity template) {
+        return accountId != null && accountId.equals(template.getChannelAccountId())
+                && "APPROVED".equalsIgnoreCase(template.getStatus())
+                && Boolean.TRUE.equals(template.getAllowSend())
+                && template.getDeletedAt() == null;
     }
 
     private static boolean isSendable(TemplateEntity template) {

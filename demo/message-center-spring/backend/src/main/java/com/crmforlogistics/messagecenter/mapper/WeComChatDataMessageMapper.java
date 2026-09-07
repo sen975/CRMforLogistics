@@ -66,10 +66,11 @@ public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMess
                                      @Param("userId") UUID userId);
 
     @Insert("INSERT INTO wecom_chatdata_messages (id, installation_id, source_conversation_id, sender_party_id, "
-            + "receiver_party_ids, msgid, secret_key, external_userid, userid, send_time, msgtype, direction, ingest_status) "
+            + "receiver_party_ids, msgid, secret_key, external_userid, userid, send_time, msgtype, media_json, direction, ingest_status) "
             + "VALUES (#{id}, #{installationId}, #{sourceConversationId}, #{senderPartyId}, "
             + "CAST(COALESCE(#{receiverPartyIds}, '[]') AS jsonb), "
-            + "#{msgid}, #{secretKey}, #{externalUserid}, #{userid}, #{sendTime}, #{msgtype}, #{direction}, "
+            + "#{msgid}, #{secretKey}, #{externalUserid}, #{userid}, #{sendTime}, #{msgtype}, "
+            + "CAST(NULLIF(#{mediaJson}, '') AS jsonb), #{direction}, "
             + "COALESCE(#{ingestStatus}, 'stored')) "
             + "ON CONFLICT DO NOTHING")
     int insertIgnore(WeComChatDataMessageEntity entity);
@@ -83,6 +84,7 @@ public interface WeComChatDataMessageMapper extends BaseMapper<WeComChatDataMess
             + "LEFT JOIN wecom_message_summary_jobs j "
             + "ON j.installation_id = m.installation_id AND j.msgid = m.msgid "
             + "WHERE m.installation_id = #{installationId} AND j.id IS NULL "
+            + "AND (m.msgtype = '1' OR lower(m.msgtype) = 'text') "
             + "ORDER BY m.send_time, m.id LIMIT #{limit}")
     List<WeComChatDataMessageEntity> findForSummaryBackfill(@Param("installationId") UUID installationId,
                                                             @Param("limit") int limit);

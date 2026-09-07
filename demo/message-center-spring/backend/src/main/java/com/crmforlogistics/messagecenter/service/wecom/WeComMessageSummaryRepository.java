@@ -16,10 +16,10 @@ public interface WeComMessageSummaryRepository {
     void markCompleted(UUID jobId, String summary, String rawResponseJson,
                        String validationStage, Instant now);
 
-    void markRetry(UUID jobId, String code, String rawResponseJson,
+    void markRetry(UUID jobId, String code, String rawResponseJson, String errorDiagnostic,
                    String validationStage, Instant nextAttemptAt);
 
-    void markFailed(UUID jobId, String code, String state, String rawResponseJson,
+    void markFailed(UUID jobId, String code, String state, String rawResponseJson, String errorDiagnostic,
                     String validationStage, Instant now);
 
     boolean exists(UUID installationId, String msgid);
@@ -38,7 +38,7 @@ public interface WeComMessageSummaryRepository {
     record JobView(boolean messageExists, UUID id, UUID installationId, String authCorpId,
                    UUID sourceConversationId, String msgid, long sendTime, String status,
                    String wecomJobId, String summary, String rawRequestJson, String rawResponseJson,
-                   String validationStage, String lastErrorCode, String failureState,
+                   String validationStage, String lastErrorCode, String lastErrorDiagnostic, String failureState,
                    int attemptCount, Instant nextAttemptAt, Instant createdAt, Instant updatedAt,
                    Instant submittedAt, Instant completedAt) {}
 

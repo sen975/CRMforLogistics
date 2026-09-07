@@ -177,7 +177,7 @@ public class ChannelAccountService {
         channelAccountMapper.updateSyncStatusOwned(ownerId, id, "syncing", null);
         try {
             Object result = switch (entity.getChannelType().toLowerCase()) {
-                case "email" -> emailSyncService.receiveLatest();
+                case "email" -> emailSyncService.receiveLatest(id, ownerId);
                 case "chatapp", "whatsapp" -> {
                     var msgResult = chatAppMessageSyncService.runAccount(id);
                     var tplResult = chatAppTemplateSyncService.runAccount(id);

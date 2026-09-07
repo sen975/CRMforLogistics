@@ -8,6 +8,7 @@ const hooks = vi.hoisted(() => ({
   useContacts: vi.fn(),
   useUnifiedConversations: vi.fn(),
   useMergeContacts: vi.fn(),
+  useConversationPreference: vi.fn(),
   useSse: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock('../hooks/useContacts', () => ({
   useContacts: hooks.useContacts,
   useUnifiedConversations: hooks.useUnifiedConversations,
   useMergeContacts: hooks.useMergeContacts,
+  useConversationPreference: hooks.useConversationPreference,
 }));
 vi.mock('../hooks/useSse', () => ({ useSse: hooks.useSse }));
 vi.mock('../components/ContactCard', () => ({ default: () => <div>联系人</div> }));
@@ -24,6 +26,7 @@ beforeEach(() => {
   hooks.useContacts.mockReturnValue({ data: { records: [], total: 0, current: 1, pages: 1 }, isLoading: false });
   hooks.useUnifiedConversations.mockReturnValue({ data: { records: [], total: 0, current: 1, pages: 1 }, isLoading: false });
   hooks.useMergeContacts.mockReturnValue({ mutate: vi.fn() });
+  hooks.useConversationPreference.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 
 describe('ContactsPage', () => {

@@ -1,7 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.chatapp.template;
 
 import com.aliyun.auth.credentials.Credential;
-import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
 import com.aliyun.auth.credentials.provider.ICredentialProvider;
 import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
 import com.aliyun.sdk.service.cams20200606.AsyncClient;
@@ -29,7 +28,11 @@ import com.aliyun.sdk.service.cams20200606.models.ModifyChatappTemplateResponseB
 import com.aliyun.sdk.gateway.pop.exception.PopClientException;
 import com.aliyun.sdk.gateway.pop.exception.PopServerException;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOssMediaUploader;
-import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateGateway;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels;
@@ -71,29 +74,48 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     private static final String TEMPLATE_TYPE = "WHATSAPP";
     private static final Duration DEFAULT_AWAIT_TIMEOUT = Duration.ofSeconds(75);
 
-    private final AppConfig config;
     private final AsyncClient client;
+    private final String fixedCustSpaceId;
     private final ChatAppOssMediaUploader uploader;
+    private final ChannelAccountMapper accountMapper;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
     private final Duration awaitTimeout;
 
-    public AliyunChatAppTemplateGateway(AppConfig config) {
-        this(config, createClient(config), new ChatAppOssMediaUploader());
-    }
-
     @Autowired
-    public AliyunChatAppTemplateGateway(AppConfig config, ChatAppOssMediaUploader uploader) {
-        this(config, createClient(config), uploader);
+    public AliyunChatAppTemplateGateway(ChatAppOssMediaUploader uploader,
+                                        ChannelAccountMapper accountMapper,
+                                        ChatAppAccountCredentialsResolver credentialsResolver) {
+        this(null, uploader, DEFAULT_AWAIT_TIMEOUT, null, accountMapper, credentialsResolver);
     }
 
-    AliyunChatAppTemplateGateway(AppConfig config, AsyncClient client, ChatAppOssMediaUploader uploader) {
-        this(config, client, uploader, DEFAULT_AWAIT_TIMEOUT);
+    AliyunChatAppTemplateGateway(AsyncClient client, ChatAppOssMediaUploader uploader,
+                                 String custSpaceId) {
+        this(client, uploader, DEFAULT_AWAIT_TIMEOUT, custSpaceId, null, null);
     }
 
-    AliyunChatAppTemplateGateway(AppConfig config, AsyncClient client, ChatAppOssMediaUploader uploader,
-                                 Duration awaitTimeout) {
-        this.config = Objects.requireNonNull(config);
-        this.client = Objects.requireNonNull(client);
+    AliyunChatAppTemplateGateway(AsyncClient client, ChatAppOssMediaUploader uploader,
+                                 Duration awaitTimeout, String custSpaceId) {
+        this(client, uploader, awaitTimeout, custSpaceId, null, null);
+    }
+
+    private AliyunChatAppTemplateGateway(AsyncClient client, ChatAppOssMediaUploader uploader,
+                                         Duration awaitTimeout, String fixedCustSpaceId,
+                                         ChannelAccountMapper accountMapper,
+                                         ChatAppAccountCredentialsResolver credentialsResolver) {
+        this.client = client;
+        this.fixedCustSpaceId = fixedCustSpaceId;
         this.uploader = Objects.requireNonNull(uploader);
+        this.accountMapper = accountMapper;
+        this.credentialsResolver = credentialsResolver;
+        if ((accountMapper == null) != (credentialsResolver == null)) {
+            throw new IllegalArgumentException("account mapper and credentials resolver must be provided together");
+        }
+        if (client == null && credentialsResolver == null) {
+            throw new IllegalArgumentException("client or account credentials resolver is required");
+        }
+        if (client != null && (fixedCustSpaceId == null || fixedCustSpaceId.isBlank())) {
+            throw new IllegalArgumentException("custSpaceId is required with a fixed client");
+        }
         this.awaitTimeout = Objects.requireNonNull(awaitTimeout).compareTo(DEFAULT_AWAIT_TIMEOUT) > 0
                 ? DEFAULT_AWAIT_TIMEOUT : awaitTimeout;
         if (awaitTimeout.isNegative() || awaitTimeout.isZero()) {
@@ -104,10 +126,10 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public CreateResult create(UUID accountId, TemplateCommand command) {
         try {
-            CreateChatappTemplateResponse response = await("create", client.createChatappTemplate(CreateChatappTemplateRequest.builder()
-                    .custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE).name(command.name()).language(command.language())
+            CreateChatappTemplateResponse response = withClient(accountId, sdk -> await("create", sdk.createChatappTemplate(CreateChatappTemplateRequest.builder()
+                    .custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE).name(command.name()).language(command.language())
                     .category(command.category()).components(createComponents(command.components()))
-                    .example(flattenExamples(command.examples())).messageSendTtlSeconds(command.messageSendTtlSeconds()).build()));
+                    .example(flattenExamples(command.examples())).messageSendTtlSeconds(command.messageSendTtlSeconds()).build())));
             CreateChatappTemplateResponseBody body = response == null ? null : response.getBody();
             ensureCode("create", body, false);
             CreateChatappTemplateResponseBody.Data data = body.getData();
@@ -123,11 +145,11 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public ModifyResult modify(UUID accountId, String templateCode, String language, TemplateCommand command) {
         try {
-            ModifyChatappTemplateResponse response = await("modify", client.modifyChatappTemplate(ModifyChatappTemplateRequest.builder()
-                    .custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE).templateCode(templateCode)
+            ModifyChatappTemplateResponse response = withClient(accountId, sdk -> await("modify", sdk.modifyChatappTemplate(ModifyChatappTemplateRequest.builder()
+                    .custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE).templateCode(templateCode)
                     .templateName(command.name()).language(language).category(command.category())
                     .components(modifyComponents(command.components())).example(flattenExamples(command.examples()))
-                    .messageSendTtlSeconds(command.messageSendTtlSeconds()).build()));
+                    .messageSendTtlSeconds(command.messageSendTtlSeconds()).build())));
             ModifyChatappTemplateResponseBody body = response == null ? null : response.getBody();
             ensureCode("modify", body, false);
             ModifyChatappTemplateResponseBody.Data data = body.getData();
@@ -143,9 +165,9 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public PropertyResult setSendPermission(UUID accountId, String templateCode, String language, boolean allowSend) {
         try {
-            ModifyChatappTemplatePropertiesResponse response = await("setSendPermission", client.modifyChatappTemplateProperties(
-                    ModifyChatappTemplatePropertiesRequest.builder().custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE)
-                            .templateCode(templateCode).language(language).allowSend(allowSend).build()));
+            ModifyChatappTemplatePropertiesResponse response = withClient(accountId, sdk -> await("setSendPermission", sdk.modifyChatappTemplateProperties(
+                    ModifyChatappTemplatePropertiesRequest.builder().custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE)
+                            .templateCode(templateCode).language(language).allowSend(allowSend).build())));
             ModifyChatappTemplatePropertiesResponseBody body = response == null ? null : response.getBody();
             ensureCode("setSendPermission", body, true);
             return new PropertyResult(allowSend, body.getRequestId());
@@ -159,8 +181,8 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public DeleteResult delete(UUID accountId, String templateCode, String language) {
         try {
-            DeleteChatappTemplateResponse response = await("delete", client.deleteChatappTemplate(DeleteChatappTemplateRequest.builder()
-                    .custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE).templateCode(templateCode).language(language).build()));
+            DeleteChatappTemplateResponse response = withClient(accountId, sdk -> await("delete", sdk.deleteChatappTemplate(DeleteChatappTemplateRequest.builder()
+                    .custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE).templateCode(templateCode).language(language).build())));
             DeleteChatappTemplateResponseBody body = response == null ? null : response.getBody();
             ensureCode("delete", body, true);
             return new DeleteResult(true, body.getRequestId());
@@ -174,9 +196,9 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public ProviderTemplatePage list(UUID accountId, int page, int size) {
         try {
-            ListChatappTemplateResponse response = await("list", client.listChatappTemplate(ListChatappTemplateRequest.builder()
-                    .custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE)
-                    .page(ListChatappTemplateRequest.Page.builder().index(page).size(size).build()).build()));
+            ListChatappTemplateResponse response = withClient(accountId, sdk -> await("list", sdk.listChatappTemplate(ListChatappTemplateRequest.builder()
+                    .custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE)
+                    .page(ListChatappTemplateRequest.Page.builder().index(page).size(size).build()).build())));
             ListChatappTemplateResponseBody body = response == null ? null : response.getBody();
             ensureCode("list", body, true);
             List<ListChatappTemplateResponseBody.ListTemplate> rows = body.getListTemplate() == null
@@ -197,8 +219,8 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public Optional<TemplateSnapshot> detail(UUID accountId, String templateCode, String language) {
         try {
-            GetChatappTemplateDetailResponse response = await("detail", client.getChatappTemplateDetail(GetChatappTemplateDetailRequest.builder()
-                    .custSpaceId(requiredSpace()).templateType(TEMPLATE_TYPE).templateCode(templateCode).language(language).build()));
+            GetChatappTemplateDetailResponse response = withClient(accountId, sdk -> await("detail", sdk.getChatappTemplateDetail(GetChatappTemplateDetailRequest.builder()
+                    .custSpaceId(requiredSpace(accountId)).templateType(TEMPLATE_TYPE).templateCode(templateCode).language(language).build())));
             GetChatappTemplateDetailResponseBody body = response == null ? null : response.getBody();
             ensureCode("detail", body, false);
             GetChatappTemplateDetailResponseBody.Data data = body.getData();
@@ -217,8 +239,8 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
     @Override
     public UploadedMedia upload(UUID accountId, HeaderFormat format, byte[] bytes, String fileName, String contentType) {
         try {
-            GetChatappUploadAuthorizationResponse response = await("upload", client.getChatappUploadAuthorization(
-                    GetChatappUploadAuthorizationRequest.builder().custSpaceId(requiredSpace()).build()));
+            GetChatappUploadAuthorizationResponse response = withClient(accountId, sdk -> await("upload", sdk.getChatappUploadAuthorization(
+                    GetChatappUploadAuthorizationRequest.builder().custSpaceId(requiredSpace(accountId)).build())));
             GetChatappUploadAuthorizationResponseBody body = response == null ? null : response.getBody();
             ensureCode("upload", body, false);
             GetChatappUploadAuthorizationResponseBody.Data authorization = body.getData();
@@ -232,11 +254,38 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
         }
     }
 
-    private String requiredSpace() {
-        if (config.custSpaceId() == null || config.custSpaceId().isBlank()) {
-            throw new IllegalArgumentException("custSpaceId is required");
+    private String requiredSpace(UUID accountId) {
+        if (credentialsResolver != null) {
+            return required(credentialsResolver.resolve(requireActiveAccount(accountId)).custSpaceId(), "custSpaceId");
         }
-        return config.custSpaceId().trim();
+        return required(fixedCustSpaceId, "custSpaceId");
+    }
+
+    @FunctionalInterface
+    private interface ClientOperation<T> {
+        T apply(AsyncClient client) throws Exception;
+    }
+
+    private <T> T withClient(UUID accountId, ClientOperation<T> operation) throws Exception {
+        if (credentialsResolver == null) {
+            return operation.apply(Objects.requireNonNull(client));
+        }
+        ChatAppAccountCredentials credentials = credentialsResolver.resolve(requireActiveAccount(accountId));
+        try (AsyncClient accountClient = createClient(credentials)) {
+            return operation.apply(accountClient);
+        }
+    }
+
+    private ChannelAccountEntity requireActiveAccount(UUID accountId) {
+        ChannelAccountEntity account = accountId == null || accountMapper == null
+                ? null : accountMapper.selectById(accountId);
+        if (account == null || account.getDeletedAt() != null
+                || !("chatapp".equalsIgnoreCase(account.getChannelType())
+                || "whatsapp".equalsIgnoreCase(account.getChannelType()))
+                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        return account;
     }
 
     private static List<CreateChatappTemplateRequest.Components> createComponents(List<TemplateComponent> components) {
@@ -384,10 +433,26 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
 
     private static WhatsAppTemplateException providerError(String operation, Throwable error, String requestId) {
         Throwable cause = error instanceof ExecutionException && error.getCause() != null ? error.getCause() : error;
+        ChatAppAccountCredentialsException credentialsError = credentialsError(cause);
+        if (credentialsError != null) {
+            return new WhatsAppTemplateException(credentialsError.code(), org.springframework.http.HttpStatus.CONFLICT,
+                    credentialsError.code(), Map.of(), null, false);
+        }
         String providerRequestId = requestId == null ? requestId(cause) : requestId;
         return new WhatsAppTemplateException("TEMPLATE_PROVIDER_ERROR", org.springframework.http.HttpStatus.BAD_GATEWAY,
                 operation + " failed: " + (cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage()),
                 Map.of(), providerRequestId, true);
+    }
+
+    private static ChatAppAccountCredentialsException credentialsError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof ChatAppAccountCredentialsException credentialsError) {
+                return credentialsError;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private static String requestId(Throwable error) {
@@ -421,23 +486,22 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
         }
     }
 
-    private static AsyncClient createClient(AppConfig config) {
-        return AsyncClient.builder().region(defaulted(config.camsRegion(), "ap-southeast-1"))
-                .credentialsProvider(credentials(config))
+    private static AsyncClient createClient(ChatAppAccountCredentials credentials) {
+        return AsyncClient.builder().region(credentials.region())
+                .credentialsProvider(credentials(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(defaulted(config.camsEndpoint(), "cams.ap-southeast-1.aliyuncs.com"))).build();
+                        .setEndpointOverride(credentials.endpoint())).build();
     }
 
-    private static ICredentialProvider credentials(AppConfig config) {
-        if (config.aliyunAccessKeyId() != null && !config.aliyunAccessKeyId().isBlank()
-                && config.aliyunAccessKeySecret() != null && !config.aliyunAccessKeySecret().isBlank()) {
-            return StaticCredentialProvider.create(Credential.builder().accessKeyId(config.aliyunAccessKeyId())
-                    .accessKeySecret(config.aliyunAccessKeySecret()).build());
+    private static ICredentialProvider credentials(ChatAppAccountCredentials credentials) {
+        return StaticCredentialProvider.create(Credential.builder().accessKeyId(credentials.accessKeyId())
+                .accessKeySecret(credentials.accessKeySecret()).build());
+    }
+
+    private static String required(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required");
         }
-        return DefaultCredentialProvider.builder().build();
-    }
-
-    private static String defaulted(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
+        return value.trim();
     }
 }

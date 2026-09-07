@@ -11,6 +11,11 @@ public final class SyncMessageAbility {
     private static final int MAX_INPUT_BYTES = 4096;
     private static final int MAX_SDK_RESPONSE_BYTES = 1_048_576;
     private static final Set<String> INPUT_FIELDS = Set.of("cursor", "limit");
+    private static final Set<String> MEDIA_OBJECT_FIELDS = Set.of(
+            "image", "voice", "video", "file", "emotion", "chatrecord");
+    private static final Set<String> MEDIA_DESCRIPTOR_FIELDS = Set.of(
+            "media_id", "sdkfileid", "md5sum", "filesha256", "format", "filename",
+            "fileext", "filesize", "aeskey", "duration", "play_length");
     private final SdkInvoker sdk;
 
     public SyncMessageAbility(SdkInvoker sdk) {
@@ -78,6 +83,8 @@ public final class SyncMessageAbility {
             int msgType = requiredInt(message, "msgtype");
             projected.put("send_time", sendTime);
             projected.put("msgtype", msgType);
+            JSONObject media = mediaDescriptor(message);
+            if (!media.isEmpty()) projected.put("media", media);
             JSONObject projectedEncryption = new JSONObject();
             projectedEncryption.put("encrypted_secret_key",
                     requiredBoundedString(encryption, "encrypted_secret_key", 4096));
@@ -94,6 +101,32 @@ public final class SyncMessageAbility {
         output.put("next_cursor", nextCursor);
         output.put("msg_list", projectedMessages);
         return output.toJSONString();
+    }
+
+    /**
+     * Keep only provider file identifiers and bounded metadata. Message bodies and
+     * arbitrary extension fields must remain inside the official zone program.
+     */
+    private static JSONObject mediaDescriptor(JSONObject source) {
+        JSONObject result = new JSONObject();
+        for (String objectField : MEDIA_OBJECT_FIELDS) {
+            JSONObject object = source.getJSONObject(objectField);
+            if (object == null) continue;
+            result.putIfAbsent("kind", objectField);
+            for (String field : MEDIA_DESCRIPTOR_FIELDS) {
+                Object value = object.get(field);
+                if (value instanceof String text && text.length() <= 4096) {
+                    result.put(field, text);
+                } else if (value instanceof Number number && number.longValue() >= 0) {
+                    result.put(field, number);
+                }
+            }
+        }
+        Object sdkFileId = source.get("sdkfileid");
+        if (sdkFileId instanceof String text && text.length() <= 4096) {
+            result.put("sdkfileid", text);
+        }
+        return result;
     }
 
     private static JSONObject party(JSONObject source) {

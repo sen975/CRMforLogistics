@@ -37,7 +37,7 @@ class OpenAiCompatibleTopicGatewayTest {
                 Instant.parse("2026-08-01T00:00:00Z"), "inbound", "报价", "请报价");
         var request = OpenAiCompatibleTopicGateway.buildRequest(
                 "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", ownerId), List.of(source), List.of(), false),
-                new ObjectMapper().findAndRegisterModules());
+                new ObjectMapper().findAndRegisterModules(), 0.65);
 
         assertThat(request).doesNotContainKey("response_format");
         assertThat(request).containsKeys("model", "messages");
@@ -51,7 +51,7 @@ class OpenAiCompatibleTopicGatewayTest {
                 Instant.parse("2026-08-01T00:00:00Z"), "inbound", "", "官方会话概要");
         var request = OpenAiCompatibleTopicGateway.buildRequest(
                 "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("WECOM_GROUP", ownerId), List.of(source), List.of(), false),
-                new ObjectMapper().findAndRegisterModules());
+                new ObjectMapper().findAndRegisterModules(), 0.65);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
         var payload = new ObjectMapper().readTree((String) messages.get(1).get("content"));
@@ -66,11 +66,47 @@ class OpenAiCompatibleTopicGatewayTest {
     void systemPromptInstructsChineseTopics() {
         var request = OpenAiCompatibleTopicGateway.buildRequest(
                 "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("CONTACT", UUID.randomUUID()), List.of(), List.of(), false),
-                new ObjectMapper());
+                new ObjectMapper(), 0.65);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
         assertThat(messages.get(0).get("role")).isEqualTo("system");
         assertThat((String) messages.get(0).get("content")).contains("Chinese", "WeCom summaries");
+    }
+
+    @Test
+    void systemPromptAllowsWhatsAppSourceMessages() {
+        var request = OpenAiCompatibleTopicGateway.buildRequest(
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("CONTACT", UUID.randomUUID()), List.of(), List.of(), false),
+                new ObjectMapper(), 0.65);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
+
+        assertThat((String) messages.get(0).get("content")).contains("WhatsApp");
+    }
+
+    @Test
+    void systemPromptTiesExistingTopicReferencesToConfiguredThreshold() {
+        var request = OpenAiCompatibleTopicGateway.buildRequest(
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("CONTACT", UUID.randomUUID()), List.of(), List.of(), false),
+                new ObjectMapper(), 0.65);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
+        String content = (String) messages.get(0).get("content");
+
+        assertThat(content).contains("relevance is at least 0.65");
+        assertThat(content).contains("below 0.65");
+        assertThat(content).contains("create a new topic with a new key instead");
+        assertThat(content).contains("never reference the existing topic's UUID with a low relevance");
+    }
+
+    @Test
+    void systemPromptReflectsLowerConfiguredThreshold() {
+        var request = OpenAiCompatibleTopicGateway.buildRequest(
+                "model", new GenerationInput(new AiTopicOwnerService.OwnerRef("CONTACT", UUID.randomUUID()), List.of(), List.of(), false),
+                new ObjectMapper(), 0.4);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) request.get("messages");
+        assertThat((String) messages.get(0).get("content")).contains("relevance is at least 0.40", "below 0.40");
     }
 
     @Test

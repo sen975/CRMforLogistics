@@ -81,7 +81,8 @@ public class CallRecordController {
             @PathVariable UUID contactId,
             @RequestParam(value = "cursor", required = false) String cursor,
             @RequestParam(value = "limit", defaultValue = "20") int limit) {
-        return ResponseEntity.ok(timelineService.timeline(contactId, cursor, limit));
+        return ResponseEntity.ok(timelineService.timeline(
+                SecurityUtil.currentUserId(), contactId, cursor, limit));
     }
 
     @PostMapping("/api/v1/contacts/{contactId}/call-records")
@@ -102,7 +103,7 @@ public class CallRecordController {
                 contentType != null ? contentType : "audio/mpeg",
                 userId.toString(), note != null ? note : "");
         try (InputStream input = file.getInputStream()) {
-            CallRecordEntity entity = callRecordService.create(command, input);
+            CallRecordEntity entity = callRecordService.create(userId, command, input);
             return ResponseEntity.status(202).body(Map.of(
                     "callRecordId", entity.getId().toString(),
                     "state", entity.getTranscriptionState()));
@@ -111,7 +112,7 @@ public class CallRecordController {
 
     @GetMapping("/api/v1/call-records/{callRecordId}")
     public ResponseEntity<CallRecordResponse> detail(@PathVariable UUID callRecordId) {
-        CallRecordEntity entity = callRecordService.detail(callRecordId);
+        CallRecordEntity entity = callRecordService.detail(SecurityUtil.currentUserId(), callRecordId);
         return ResponseEntity.ok(toResponse(entity));
     }
 
@@ -119,6 +120,7 @@ public class CallRecordController {
     public ResponseEntity<Void> createAudioSession(
             @PathVariable UUID callRecordId) {
         UUID userId = SecurityUtil.currentUserId();
+        callRecordService.detail(userId, callRecordId);
         CallAudioSessionService.AudioSessionCookie cookie = sessionService.create(
                 userId.toString(), callRecordId);
         return ResponseEntity.noContent()
@@ -132,8 +134,10 @@ public class CallRecordController {
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
         String cookieValue = extractAudioCookie(request);
-        sessionService.authorize(cookieValue, callRecordId);
-        CallRecordEntity entity = callRecordService.detail(callRecordId);
+        CallAudioSessionService.AudioAuthorization authorization =
+                sessionService.authorize(cookieValue, callRecordId);
+        CallRecordEntity entity = callRecordService.detail(
+                UUID.fromString(authorization.actor()), callRecordId);
         MinioAudioStore.AudioAsset asset = new MinioAudioStore.AudioAsset(
                 entity.getAudioRelativePath(),
                 entity.getAudioOriginalFileName(),
@@ -162,7 +166,7 @@ public class CallRecordController {
             @RequestBody RetryCallRecordRequest request) {
         UUID userId = SecurityUtil.currentUserId();
         CallRecordEntity entity = callRecordService.retry(
-                callRecordId, userId.toString(), request.clientRequestId());
+                userId, callRecordId, userId.toString(), request.clientRequestId());
         return ResponseEntity.ok(toResponse(entity));
     }
 
@@ -172,7 +176,7 @@ public class CallRecordController {
             @RequestBody ReviseTranscriptRequest request) {
         UUID userId = SecurityUtil.currentUserId();
         CallRecordEntity entity = callRecordService.revise(
-                callRecordId, request.text(), userId.toString(), request.expectedVersion());
+                userId, callRecordId, request.text(), userId.toString(), request.expectedVersion());
         return ResponseEntity.ok(toResponse(entity));
     }
 
@@ -181,7 +185,7 @@ public class CallRecordController {
             @PathVariable UUID callRecordId,
             @RequestBody ReviseNoteRequest request) {
         CallRecordEntity entity = callRecordService.reviseNote(
-                callRecordId, request.note(), request.expectedVersion());
+                SecurityUtil.currentUserId(), callRecordId, request.note(), request.expectedVersion());
         return ResponseEntity.ok(toResponse(entity));
     }
 
@@ -189,7 +193,7 @@ public class CallRecordController {
     public ResponseEntity<Map<String, String>> bindPhoneContact(
             @RequestBody BindPhoneContactRequest request) {
         PhoneContactBindingResponse binding = contactService.bindPhone(
-                request.contactId(), request.contactName(), request.phoneNumber());
+                SecurityUtil.currentUserId(), request.contactId(), request.contactName(), request.phoneNumber());
         return ResponseEntity.ok(Map.of(
                 "contactId", binding.contactId(),
                 "phonePointId", binding.phonePointId(),
@@ -202,7 +206,8 @@ public class CallRecordController {
             @RequestParam(value = "limit", defaultValue = "20") int limit,
             @RequestParam(value = "query", required = false) String query) {
         int safeLimit = Math.min(100, Math.max(1, limit <= 0 ? 20 : limit));
-        List<CallRecordEntity> all = callRecordMapper.searchPhoneRepository(query);
+        UUID ownerId = SecurityUtil.currentUserId();
+        List<CallRecordEntity> all = callRecordMapper.searchPhoneRepositoryByOwner(ownerId, query);
         List<CallRecordEntity> entities = all.size() > safeLimit
                 ? all.subList(0, safeLimit) : all;
         int totalCount = entities.size();
@@ -212,14 +217,14 @@ public class CallRecordController {
             String contactId = "";
             if (e.getContactAnchorPointId() != null) {
                 try {
-                    var identities = contactIdentityMapper.findByNormalizedValue("phone",
-                            e.getContactAnchorPointId().startsWith("phone:")
-                                    ? e.getContactAnchorPointId().substring(6) : e.getContactAnchorPointId());
-                    if (identities.isPresent()) {
-                        contactDisplayName = identities.get().getDisplayName() != null
-                                ? identities.get().getDisplayName() : "";
-                        contactId = identities.get().getContactId() != null
-                                ? identities.get().getContactId().toString() : "";
+                    var identities = e.getContactId() == null ? List.<com.crmforlogistics.messagecenter.entity.ContactIdentityEntity>of()
+                            : contactIdentityMapper.findByContactIdAndOwner(e.getContactId(), ownerId);
+                    var identity = identities.stream().filter(item -> "phone".equals(item.getChannelType())).findFirst();
+                    if (identity.isPresent()) {
+                        contactDisplayName = identity.get().getDisplayName() != null
+                                ? identity.get().getDisplayName() : "";
+                        contactId = identity.get().getContactId() != null
+                                ? identity.get().getContactId().toString() : "";
                     }
                 } catch (Exception ignored) {
                 }

@@ -44,11 +44,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class ChatAppBroadcastApplicationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-14T06:00:00Z");
-    private static final UUID SCOPE_ID = UUID.fromString("20000000-0000-0000-0000-000000000001");
 
     @Mock ChatAppBroadcastMapper broadcastMapper;
     @Mock ChatAppBroadcastRecipientMapper recipientMapper;
@@ -70,6 +70,21 @@ class ChatAppBroadcastApplicationServiceTest {
         lenient().when(broadcastMapper.insertIfAbsent(any(ChatAppBroadcastEntity.class))).thenReturn(1);
     }
 
+    @Test
+    void sendableTemplatesRejectAnotherUsersAccountBeforeReadingBusinessData() {
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        when(accountResolver.requireOwnedAccount(actorId, accountId))
+                .thenThrow(new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE"));
+
+        assertThatThrownBy(() -> service.sendableTemplates(accountId, actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+
+        verify(identityMapper, never()).canAccessChatAppAccount(any(), any());
+        verify(chatAppTemplateService, never()).listForAccount(any());
+    }
+
     @ParameterizedTest
     @EnumSource(value = ChatAppBroadcastModels.BroadcastStatus.class,
             names = {"SUBMITTED", "RECONCILING", "STATUS_UNKNOWN"})
@@ -82,7 +97,7 @@ class ChatAppBroadcastApplicationServiceTest {
         broadcast.setStatus(status.name());
         broadcast.setProviderGroupMessageId("group-1");
         when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         when(jobMapper.insertReconcileIfAbsent(any())).thenReturn(1);
 
         assertThat(service.requestReconciliation(broadcastId, actorId).id()).isEqualTo(broadcastId);
@@ -100,7 +115,7 @@ class ChatAppBroadcastApplicationServiceTest {
         ChatAppBroadcastEntity broadcast = existingBroadcast(broadcastId, accountId, actorId);
         broadcast.setStatus("STATUS_UNKNOWN");
         when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
 
         assertThatThrownBy(() -> service.requestReconciliation(broadcastId, actorId))
                 .isInstanceOf(ChatAppBroadcastException.class)
@@ -126,7 +141,7 @@ class ChatAppBroadcastApplicationServiceTest {
         broadcast.setStatus("STATUS_UNKNOWN");
         broadcast.setProviderGroupMessageId("group-1");
         when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         when(jobMapper.insertReconcileIfAbsent(any())).thenReturn(0);
 
         assertThat(service.requestReconciliation(broadcastId, actorId).id()).isEqualTo(broadcastId);
@@ -161,7 +176,7 @@ class ChatAppBroadcastApplicationServiceTest {
                 new ChatAppBroadcastReconciliationEvidenceEntity();
         diagnostic.setDiagnosticCode("CHATAPP_PROVIDER_SUCCESS_FLAG_CONFLICT");
         when(broadcastMapper.selectById(broadcastId)).thenReturn(broadcast);
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(recipient));
         when(evidenceMapper.countByBroadcastId(broadcastId)).thenReturn(3L);
         when(evidenceMapper.countMatched(broadcastId)).thenReturn(2L);
@@ -189,8 +204,7 @@ class ChatAppBroadcastApplicationServiceTest {
                 "shipping_notice", "Shipping Notice", "发货提醒（Shipping Notice）",
                 "zh_CN", "订单 $(order) 已发货", List.of("order"), "UTILITY",
                 new ObjectMapper().createArrayNode(), Map.of("order", List.of("SO-1")));
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
-        when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(true);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         when(chatAppTemplateService.listForAccount(accountId)).thenReturn(List.of(template));
 
         assertThat(service.sendableTemplates(accountId, actorId)).containsExactly(template);
@@ -201,12 +215,12 @@ class ChatAppBroadcastApplicationServiceTest {
     void rejectsTemplateListingWhenActorCannotAccessTheAccount() {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
-        when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(false);
+        when(accountResolver.requireOwnedAccount(actorId, accountId))
+                .thenThrow(new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE"));
 
         assertThatThrownBy(() -> service.sendableTemplates(accountId, actorId))
-                .isInstanceOf(ChatAppBroadcastException.class)
-                .hasMessage("CHATAPP_BROADCAST_ACCOUNT_FORBIDDEN");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
         verify(chatAppTemplateService, never()).listForAccount(accountId);
     }
 
@@ -266,9 +280,8 @@ class ChatAppBroadcastApplicationServiceTest {
     void rejectsTemplatesThatAreNotApprovedForSending() {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
-        when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(true);
-        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
+        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(command(accountId,
@@ -364,7 +377,7 @@ class ChatAppBroadcastApplicationServiceTest {
         assertThatThrownBy(() -> service.create(changed, actorId))
                 .isInstanceOf(ChatAppBroadcastException.class)
                 .hasMessage("CHATAPP_BROADCAST_IDEMPOTENCY_CONFLICT");
-        verify(accountResolver, never()).requireCurrentAccount(accountId);
+        verify(accountResolver, times(2)).requireOwnedAccount(actorId, accountId);
     }
 
     @Test
@@ -439,7 +452,6 @@ class ChatAppBroadcastApplicationServiceTest {
         UUID broadcastId = UUID.randomUUID();
         ChatAppBroadcastEntity existing = existingBroadcast(broadcastId, accountId, ownerId);
         when(broadcastMapper.selectById(broadcastId)).thenReturn(existing);
-        when(broadcastMapper.isAdmin(actorId)).thenReturn(false);
 
         assertThatThrownBy(() -> service.detail(broadcastId, actorId))
                 .isInstanceOf(ChatAppBroadcastException.class)
@@ -456,9 +468,7 @@ class ChatAppBroadcastApplicationServiceTest {
     void nonAdminListingIsScopedToBroadcastsCreatedByTheActor() {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
-        when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(true);
-        when(broadcastMapper.isAdmin(actorId)).thenReturn(false);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         when(broadcastMapper.selectCount(any())).thenReturn(0L);
 
         service.list(accountId, 1, 20, actorId);
@@ -529,8 +539,7 @@ class ChatAppBroadcastApplicationServiceTest {
     }
 
     private TemplateEntity prepareAccountAndTemplate(UUID accountId, UUID actorId) {
-        when(accountResolver.requireCurrentAccount(accountId)).thenReturn(account(accountId));
-        when(identityMapper.canAccessChatAppAccount(accountId, actorId)).thenReturn(true);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
         TemplateEntity template = new TemplateEntity();
         template.setChannelAccountId(accountId);
         template.setProviderTemplateId("shipping_notice");
@@ -539,7 +548,7 @@ class ChatAppBroadcastApplicationServiceTest {
         template.setStatus("APPROVED");
         template.setAllowSend(true);
         template.setBody("Shipping notice");
-        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
+        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.of(template));
         return template;
     }
@@ -550,7 +559,6 @@ class ChatAppBroadcastApplicationServiceTest {
         account.setChannelType("chatapp");
         account.setAuthStatus("active");
         account.setAccountIdentifier("60199999999");
-        account.setProviderScopeId(SCOPE_ID);
         return account;
     }
 

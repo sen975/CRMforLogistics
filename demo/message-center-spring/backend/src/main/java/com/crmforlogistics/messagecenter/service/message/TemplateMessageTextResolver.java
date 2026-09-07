@@ -2,8 +2,6 @@ package com.crmforlogistics.messagecenter.service.message;
 
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
-import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,13 +29,10 @@ public class TemplateMessageTextResolver {
                     + "|\\{\\{\\s*([A-Za-z][A-Za-z0-9_.-]*)\\s*}}");
 
     private final TemplateMapper templateMapper;
-    private final ChannelAccountMapper accountMapper;
     private final ObjectMapper objectMapper;
 
-    public TemplateMessageTextResolver(TemplateMapper templateMapper, ChannelAccountMapper accountMapper,
-                                       ObjectMapper objectMapper) {
+    public TemplateMessageTextResolver(TemplateMapper templateMapper, ObjectMapper objectMapper) {
         this.templateMapper = Objects.requireNonNull(templateMapper);
-        this.accountMapper = Objects.requireNonNull(accountMapper);
         this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
@@ -48,9 +43,8 @@ public class TemplateMessageTextResolver {
             throw new IllegalArgumentException("CHATAPP_TEMPLATE_CODE_REQUIRED");
         }
         String language = firstNonBlank(languageCode, "en_US");
-        Optional<TemplateEntity> template = providerScopeId(channelAccountId)
-                .flatMap(scopeId -> templateMapper.findSharedForSend(scopeId, code, language));
-        if (template.isEmpty() || !isSendable(template.get())
+        Optional<TemplateEntity> template = templateMapper.findForSend(channelAccountId, code, language);
+        if (template.isEmpty() || !isSendableBy(channelAccountId, template.get())
                 || value(template.get().getBody()).isBlank()) {
             throw new IllegalArgumentException("CHATAPP_TEMPLATE_NOT_SYNCED");
         }
@@ -98,7 +92,8 @@ public class TemplateMessageTextResolver {
                 return stored;
             }
             String language = firstNonBlank(value(metadata.get("languageCode")), "en_US");
-            Optional<TemplateEntity> template = findSharedForDisplay(message.getChannelAccountId(), code, language);
+            Optional<TemplateEntity> template = templateMapper.findForDisplay(
+                    message.getChannelAccountId(), code, language);
             if (template.isEmpty() || value(template.get().getBody()).isBlank()) {
                 return stored;
             }
@@ -107,24 +102,6 @@ public class TemplateMessageTextResolver {
         } catch (RuntimeException e) {
             return stored;
         }
-    }
-
-    public Optional<String> findDisplayBody(UUID channelAccountId, String templateCode, String languageCode) {
-        return findSharedForDisplay(channelAccountId, templateCode, languageCode).map(TemplateEntity::getBody)
-                .filter(body -> body != null && !body.isBlank());
-    }
-
-    private Optional<TemplateEntity> findSharedForDisplay(UUID channelAccountId, String code, String language) {
-        return providerScopeId(channelAccountId)
-                .flatMap(scopeId -> templateMapper.findSharedForDisplay(scopeId, code, language));
-    }
-
-    private Optional<UUID> providerScopeId(UUID channelAccountId) {
-        if (channelAccountId == null) {
-            return Optional.empty();
-        }
-        ChannelAccountEntity account = accountMapper.selectById(channelAccountId);
-        return account == null ? Optional.empty() : Optional.ofNullable(account.getProviderScopeId());
     }
 
     private Map<String, Object> readMap(String json) {
@@ -174,8 +151,9 @@ public class TemplateMessageTextResolver {
         return "";
     }
 
-    private static boolean isSendable(TemplateEntity template) {
-        return "APPROVED".equalsIgnoreCase(value(template.getStatus()))
+    private static boolean isSendableBy(UUID channelAccountId, TemplateEntity template) {
+        return channelAccountId != null && channelAccountId.equals(template.getChannelAccountId())
+                && "APPROVED".equalsIgnoreCase(value(template.getStatus()))
                 && Boolean.TRUE.equals(template.getAllowSend())
                 && template.getDeletedAt() == null;
     }

@@ -6,7 +6,7 @@ import java.util.UUID;
 /** Independent WeCom group thread; it is never merged into a contact. */
 public record WeComGroupThreadResponse(
         UUID sourceConversationId,
-        String providerConversationKey,
+        String groupChatId,
         String displayName,
         String avatarUrl,
         String openClientUrl,

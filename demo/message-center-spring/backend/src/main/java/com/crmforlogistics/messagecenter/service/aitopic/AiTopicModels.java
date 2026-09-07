@@ -13,6 +13,7 @@ public final class AiTopicModels {
     public enum GenerationStatus { NOT_STARTED, GENERATING, READY, FAILED }
     public enum TopicOperationKind { EDIT, MERGE, STORE, RESTORE, REJECT_STORE }
     public enum TopicOperationStatus { PENDING, PROCESSING, COMPLETED, FAILED }
+    public enum TopicReviewOrigin { MERGE_SOURCE, SPLIT_SOURCE, MANUAL_SELECTION }
 
     public record SourceItem(UUID id, SourceType sourceType, String channelType, Instant occurredAt,
                              String direction, String subject, String text) {}
@@ -35,7 +36,8 @@ public final class AiTopicModels {
                                   int sourceCount, List<TopicSourceItem> sourceItems, long version, UUID contactId,
                                   String contactName, String contactRemark, String contactChannelType,
                                   String contactChannelNickname, OwnerType ownerType, UUID ownerId,
-                                  String ownerLabel, boolean isReferencedGroupTopic) {}
+                                  String ownerLabel, boolean isReferencedGroupTopic,
+                                  TopicReviewOrigin reviewOrigin, String reviewSourceTopicTitle) {}
     public record GenerationProjection(GenerationStatus status, UUID jobId, String errorCode, Instant updatedAt) {}
     public record TopicOperationProjection(UUID id, TopicOperationKind kind, TopicOperationStatus status,
                                            String errorCode, Instant createdAt, Instant completedAt) {}
@@ -44,4 +46,6 @@ public final class AiTopicModels {
                                               Instant createdAt) {}
     public record TopicTimelineResponse(UUID contactId, GenerationProjection generation,
                                         List<TopicProjection> topics, boolean weComUnsupported) {}
+    public record GroupTopicTimelineResponse(UUID sourceConversationId, GenerationProjection generation,
+                                             List<TopicProjection> topics, boolean weComUnsupported) {}
 }

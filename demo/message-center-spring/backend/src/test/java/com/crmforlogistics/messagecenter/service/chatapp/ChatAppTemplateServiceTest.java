@@ -1,12 +1,9 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.dto.response.TemplateResponse;
-import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
-import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateScopeGate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,66 +14,58 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ChatAppTemplateServiceTest {
-    private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
-    private static final UUID SCOPE_ID = UUID.fromString("20000000-0000-0000-0000-000000000001");
 
     @Mock TemplateMapper templateMapper;
-    @Mock ChannelAccountMapper accountMapper;
-    @Mock WhatsAppTemplateScopeGate scopeGate;
     @Mock TemplateMessageTextResolver templateTextResolver;
 
     @Test
-    void selectorUsesTheReadySharedScope() {
+    void selectorReturnsOnlyTheMapperApprovedAndSendableVersions() {
+        UUID fixedAccountId = UUID.randomUUID();
         TemplateEntity approved = template("delivery_ready", "APPROVED", true);
+        approved.setChannelAccountId(fixedAccountId);
         approved.setName("delivery_notice");
         approved.setRemark("发货提醒");
+        TemplateEntity rejected = template("delivery_rejected", "REJECTED", true);
+        TemplateEntity pending = template("delivery_pending", "PENDING", true);
+        TemplateEntity suspended = template("delivery_suspended", "SUSPENDED", true);
+        TemplateEntity paused = template("delivery_paused", "APPROVED", false);
+        TemplateEntity deleted = template("delivery_deleted", "APPROVED", true);
+        deleted.setDeletedAt(java.time.Instant.now());
+        TemplateEntity wrongAccount = template("delivery_wrong_account", "APPROVED", true);
+        wrongAccount.setChannelAccountId(UUID.randomUUID());
+
+        when(templateMapper.findGloballySendable()).thenReturn(List.of(
+                approved, rejected, pending, suspended, paused, deleted, wrongAccount));
         approved.setCategory("UTILITY");
-        approved.setComponentsJsonb("[{\"type\":\"BODY\",\"text\":\"Hello $(customer)\"}]");
-        approved.setExamplesJsonb("{\"customer\":[\"Alice\"]}");
-        when(scopeGate.requireReady()).thenReturn(SCOPE_ID);
-        when(templateMapper.findSharedSendableForScope(SCOPE_ID)).thenReturn(List.of(approved));
+        approved.setComponentsJsonb("[{\"type\":\"HEADER\",\"headerFormat\":\"TEXT\","
+                + "\"text\":\"Order $(orderNo)\"},{\"type\":\"BODY\","
+                + "\"text\":\"Hello $(customer)\"}]");
+        approved.setExamplesJsonb("{\"orderNo\":[\"A-17\"],\"customer\":[\"Alice\"]}");
 
-        List<TemplateResponse> response = service().listAll();
+        ChatAppTemplateService service = new ChatAppTemplateService(
+                templateMapper, templateTextResolver, new ObjectMapper());
 
-        assertThat(response).extracting(TemplateResponse::templateCode).containsExactly("delivery_ready");
+        List<TemplateResponse> response = service.listAll();
+
+        assertThat(response).extracting(TemplateResponse::templateCode)
+                .containsExactly("delivery_ready", "delivery_wrong_account");
+        assertThat(response.get(0).templateName()).isEqualTo("delivery_notice");
         assertThat(response.get(0).displayName()).isEqualTo("发货提醒（delivery_notice）");
-        assertThat(response.get(0).placeholders()).containsExactly("customer");
-        verify(templateMapper).findSharedSendableForScope(SCOPE_ID);
-    }
-
-    @Test
-    void accountSelectorUsesThatAccountsSharedScope() {
-        ChannelAccountEntity account = new ChannelAccountEntity();
-        account.setId(ACCOUNT_ID);
-        account.setProviderScopeId(SCOPE_ID);
-        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
-        when(templateMapper.findSharedSendableForScope(SCOPE_ID))
-                .thenReturn(List.of(template("shipping_notice", "APPROVED", true)));
-
-        assertThat(service().listForAccount(ACCOUNT_ID))
-                .extracting(TemplateResponse::templateCode)
-                .containsExactly("shipping_notice");
-
-        verify(templateMapper).findSharedSendableForScope(SCOPE_ID);
-    }
-
-    @Test
-    void accountSelectorHidesTemplatesWhenTheAccountHasNoProviderScope() {
-        ChannelAccountEntity account = new ChannelAccountEntity();
-        account.setId(ACCOUNT_ID);
-        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
-
-        assertThat(service().listForAccount(ACCOUNT_ID)).isEmpty();
-    }
-
-    private ChatAppTemplateService service() {
-        return new ChatAppTemplateService(templateMapper, accountMapper, scopeGate,
-                templateTextResolver, new ObjectMapper());
+        assertThat(response.get(0).category()).isEqualTo("UTILITY");
+        assertThat(response.get(0).components().toString()).contains("BODY");
+        assertThat(response.get(0).placeholders()).containsExactly("orderNo", "customer");
+        assertThat(response.get(0).variableDefinitions())
+                .containsEntry("orderNo", List.of("A-17"))
+                .containsEntry("customer", List.of("Alice"));
+        verify(templateMapper).findGloballySendable();
+        verify(templateMapper, never()).selectList(any());
     }
 
     private static TemplateEntity template(String code, String status, boolean allowSend) {

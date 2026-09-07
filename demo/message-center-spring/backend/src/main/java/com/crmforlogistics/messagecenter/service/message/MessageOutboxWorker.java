@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.message;
 
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOutboundGateway;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
@@ -140,6 +141,14 @@ public class MessageOutboxWorker {
         } catch (ChatAppOutboundGateway.RetryableException e) {
             transactions.executeWithoutResult(status ->
                     retryOrFail(job, message, attempt, "PROVIDER_RETRYABLE", safeMessage(e)));
+            publishMessageChanged();
+        } catch (ChatAppAccountCredentialsException e) {
+            transactions.executeWithoutResult(status -> {
+                if (!markJobDeadIfOwned(job, e.code(), safeMessage(e))) {
+                    throw leaseLost();
+                }
+                updateMessageStatus(message, "failed", Instant.now(), e.code(), safeMessage(e));
+            });
             publishMessageChanged();
         } catch (IllegalArgumentException e) {
             transactions.executeWithoutResult(status -> {

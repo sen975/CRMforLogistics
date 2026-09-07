@@ -44,6 +44,10 @@ export interface WeComOpenDataFrame {
   dispose: () => void;
 }
 
+export interface WeComScrollViewContext {
+  scrollTo: (options: { top?: number; left?: number }) => void;
+}
+
 export interface WeComOpenDataFrameOptions {
   el: HTMLElement;
   template: string;
@@ -65,6 +69,7 @@ export interface WeComViewerSdk {
   register: (options: WeComRegisterOptions) => void;
   initOpenData: () => Promise<unknown>;
   createOpenDataFrameFactory: () => WeComOpenDataFrameFactory;
+  createScrollViewContext?: (frame: WeComOpenDataFrame, refName: string) => Promise<WeComScrollViewContext | undefined>;
 }
 
 declare global {
@@ -151,7 +156,14 @@ export function loadWeComViewerSdk(): Promise<WeComViewerSdk> {
     };
     const handleLoad = () => {
       cleanup();
-      resolve(weComViewerSdk as unknown as WeComViewerSdk);
+      resolve({
+        register: weComViewerSdk.register,
+        initOpenData: weComViewerSdk.initOpenData,
+        createOpenDataFrameFactory: weComViewerSdk.createOpenDataFrameFactory,
+        createScrollViewContext: weComViewerSdk.createScrollViewContext
+          ? (frame, refName) => weComViewerSdk.createScrollViewContext!(frame as never, refName) as Promise<WeComScrollViewContext | undefined>
+          : undefined,
+      });
     };
     const handleError = () => fail('企业微信会话组件加载失败');
 

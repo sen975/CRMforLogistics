@@ -228,12 +228,13 @@ public class WeComChatDataStore {
                 entity.setUserid(candidate.userId());
                 entity.setSendTime(candidate.sendTime());
                 entity.setMsgtype(candidate.msgType());
+                entity.setMediaJson(candidate.mediaJson());
                 entity.setDirection(candidate.direction());
                 entity.setIngestStatus(candidate.direction().isBlank() ? "stored" : "direct");
                 entity.setInstallationId(parseUuid(key.installationId()));
                 if (messageMapper.insertIgnore(entity) > 0) {
                     enqueueSummary(key, entity.getSourceConversationId(), candidate.msgid(),
-                            candidate.sendTime());
+                            candidate.sendTime(), candidate.msgType());
                     stored++;
                 } else {
                     duplicates++;
@@ -285,12 +286,14 @@ public class WeComChatDataStore {
                 ? normalized.sender().providerPartyId() : null);
         entity.setSendTime(normalized.sendTime());
         entity.setMsgtype(Integer.toString(normalized.msgType()));
+        entity.setMediaJson(item.message().mediaJson());
         entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("group");
         profileTargets.add(normalized.sender());
         profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
-        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime());
+        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime(),
+                Integer.toString(normalized.msgType()));
         if ("GROUP".equals(normalized.conversationType())) {
             projector.projectGroup(new WeComMessageProjector.WeComProjectedGroupMessage(
                     normalized.msgid(), sourceId, normalized.sendTime(), entity.getDirection()));
@@ -338,12 +341,14 @@ public class WeComChatDataStore {
                 ? normalized.contactParty().providerPartyId() : null);
         entity.setSendTime(normalized.sendTime());
         entity.setMsgtype(Integer.toString(normalized.msgType()));
+        entity.setMediaJson(item.message().mediaJson());
         entity.setDirection(directionFor(normalized, key.viewerWecomUserId()));
         entity.setIngestStatus("direct");
         profileTargets.add(normalized.sender());
         profileTargets.addAll(normalized.receivers());
         if (messageMapper.insertIgnore(entity) == 0) return false;
-        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime());
+        enqueueSummary(key, sourceId, normalized.msgid(), normalized.sendTime(),
+                Integer.toString(normalized.msgType()));
         projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
                 normalized.msgid(), sourceId, installationId, normalized.authCorpId(),
                 new WeComMessageProjector.ContactParty(normalized.contactParty().partyType(),
@@ -351,8 +356,12 @@ public class WeComChatDataStore {
         return true;
     }
 
-    private void enqueueSummary(SyncKey key, UUID sourceConversationId, String msgid, long sendTime) {
+    private void enqueueSummary(SyncKey key, UUID sourceConversationId, String msgid, long sendTime,
+                                String msgType) {
         if (summaryRepository == null) return;
+        // The official summary ability only accepts textual message references. Media
+        // messages are retained as ChatData metadata and must not occupy the summary queue.
+        if (!isTextMessageType(msgType)) return;
         String authCorpId = key.authCorpId();
         if (authCorpId == null || authCorpId.isBlank()) {
             throw new IllegalArgumentException("auth corp id required for message summary");
@@ -364,6 +373,11 @@ public class WeComChatDataStore {
         summaryRepository.enqueueIfAbsent(new WeComMessageSummaryRepository.EnqueueCommand(
                 installationId, authCorpId, sourceConversationId, msgid, sendTime,
                 requestSnapshot, Instant.now()));
+    }
+
+    private static boolean isTextMessageType(String msgType) {
+        return msgType == null || msgType.isBlank() || "1".equals(msgType)
+                || "text".equalsIgnoreCase(msgType);
     }
 
     private static String escapeJson(String value) {
@@ -475,7 +489,7 @@ public class WeComChatDataStore {
                 || message.sendTime() < 0) return null;
         String direction = message.sender().type() == 1 ? "outbound" : "inbound";
         return new Candidate(message.msgid(), decrypted.secretKey(), externalUserId, userId,
-                message.sendTime(), Integer.toString(message.msgType()), direction);
+                message.sendTime(), Integer.toString(message.msgType()), direction, message.mediaJson());
     }
 
     private static ResolvedInstallation installationForNormalization(ResolvedInstallation installation,
@@ -595,5 +609,5 @@ public class WeComChatDataStore {
                                          UUID sourceConversationId, String conversationType) {}
 
     private record Candidate(String msgid, String secretKey, String externalUserId, String userId,
-                             long sendTime, String msgType, String direction) {}
+                             long sendTime, String msgType, String direction, String mediaJson) {}
 }

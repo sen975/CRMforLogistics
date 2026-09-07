@@ -104,27 +104,29 @@ public class MyBatisWeComMessageSummaryRepository implements WeComMessageSummary
 
     @Override
     @Transactional
-    public void markRetry(UUID jobId, String code, String rawResponseJson,
+    public void markRetry(UUID jobId, String code, String rawResponseJson, String errorDiagnostic,
                           String validationStage, Instant nextAttemptAt) {
         requireText(code, 100, "code");
         requireBytes(rawResponseJson, 1_048_576, "rawResponseJson");
+        requireDiagnostic(errorDiagnostic);
         requireText(validationStage, 40, "validationStage");
         Objects.requireNonNull(nextAttemptAt, "nextAttemptAt");
-        if (mapper.updateRetry(jobId, code, rawResponseJson, validationStage, nextAttemptAt, 100) != 1) {
+        if (mapper.updateRetry(jobId, code, rawResponseJson, errorDiagnostic, validationStage, nextAttemptAt, 100) != 1) {
             throw new IllegalStateException("summary retry transition rejected");
         }
     }
 
     @Override
     @Transactional
-    public void markFailed(UUID jobId, String code, String state, String rawResponseJson,
+    public void markFailed(UUID jobId, String code, String state, String rawResponseJson, String errorDiagnostic,
                            String validationStage, Instant now) {
         requireText(code, 100, "code");
         requireText(state, 32, "state");
         requireBytes(rawResponseJson, 1_048_576, "rawResponseJson");
+        requireDiagnostic(errorDiagnostic);
         requireText(validationStage, 40, "validationStage");
         Objects.requireNonNull(now, "now");
-        if (mapper.updateFailed(jobId, code, state, rawResponseJson, validationStage, now) != 1) {
+        if (mapper.updateFailed(jobId, code, state, rawResponseJson, errorDiagnostic, validationStage, now) != 1) {
             throw new IllegalStateException("summary failure transition rejected");
         }
     }
@@ -152,12 +154,12 @@ public class MyBatisWeComMessageSummaryRepository implements WeComMessageSummary
         boolean messageExists = messageMapper != null
                 && messageMapper.findSummaryReference(installationId, msgid) != null;
         if (entity == null) return messageExists ? Optional.of(new JobView(true, null, installationId,
-                null, null, msgid, 0L, "NOT_ENQUEUED", null, null, null, null, null, null, null,
+                null, null, msgid, 0L, "NOT_ENQUEUED", null, null, null, null, null, null, null, null,
                 0, null, null, null, null, null)) : Optional.empty();
         return Optional.of(new JobView(messageExists, entity.getId(), entity.getInstallationId(), entity.getAuthCorpId(),
                 entity.getSourceConversationId(), entity.getMsgid(), entity.getSendTime(), entity.getStatus(),
                 entity.getWecomJobId(), entity.getSummary(), entity.getRawRequestJson(), entity.getRawResponseJson(),
-                entity.getValidationStage(), entity.getLastErrorCode(), entity.getFailureState(),
+                entity.getValidationStage(), entity.getLastErrorCode(), entity.getLastErrorDiagnostic(), entity.getFailureState(),
                 entity.getAttemptCount(), entity.getNextAttemptAt(), entity.getCreatedAt(), entity.getUpdatedAt(),
                 entity.getSubmittedAt(), entity.getCompletedAt()));
     }
@@ -185,7 +187,7 @@ public class MyBatisWeComMessageSummaryRepository implements WeComMessageSummary
         return new JobView(messageExists, entity.getId(), entity.getInstallationId(), entity.getAuthCorpId(),
                 entity.getSourceConversationId(), entity.getMsgid(), entity.getSendTime(), entity.getStatus(),
                 entity.getWecomJobId(), entity.getSummary(), entity.getRawRequestJson(), entity.getRawResponseJson(),
-                entity.getValidationStage(), entity.getLastErrorCode(), entity.getFailureState(),
+                entity.getValidationStage(), entity.getLastErrorCode(), entity.getLastErrorDiagnostic(), entity.getFailureState(),
                 entity.getAttemptCount(), entity.getNextAttemptAt(), entity.getCreatedAt(), entity.getUpdatedAt(),
                 entity.getSubmittedAt(), entity.getCompletedAt());
     }
@@ -210,6 +212,12 @@ public class MyBatisWeComMessageSummaryRepository implements WeComMessageSummary
                     || normalized.contains("private_key") || normalized.contains("content")) {
                 throw new IllegalArgumentException(name + " contains sensitive field");
             }
+        }
+    }
+
+    private static void requireDiagnostic(String value) {
+        if (value == null || value.length() > 1_000) {
+            throw new IllegalArgumentException("errorDiagnostic invalid");
         }
     }
 }

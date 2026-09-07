@@ -30,23 +30,25 @@ class CallRecordControllerTest {
         CallRecordService callRecordService = mock(CallRecordService.class);
         MinioAudioStore audioStore = mock(MinioAudioStore.class);
         CallRecordEntity entity = audioEntity(callRecordId);
-        when(callRecordService.detail(callRecordId)).thenReturn(entity);
+        UUID ownerId = UUID.randomUUID();
+        when(callRecordService.detail(ownerId, callRecordId)).thenReturn(entity);
         when(audioStore.open(any())).thenThrow(new CallRecordException(
                 "CALL_AUDIO_NOT_FOUND", 404, "Call audio does not exist", false));
 
-        CallRecordController controller = new CallRecordController(
-                callRecordService,
-                mock(ContactTimelineService.class),
-                mock(CallAudioSessionService.class),
-                audioStore,
-                mock(CallRecordMapper.class),
-                mock(CallTranscriptRevisionMapper.class),
-                mock(ContactIdentityMapper.class),
-                mock(ContactService.class));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
+        var request = new MockHttpServletRequest();
+        request.addHeader("Cookie", "mc_call_audio=session-token");
+        var sessionService = mock(CallAudioSessionService.class);
+        when(sessionService.authorize("session-token", callRecordId)).thenReturn(
+                new CallAudioSessionService.AudioAuthorization(ownerId.toString(), callRecordId, 1L));
+        CallRecordController controller = new CallRecordController(callRecordService, mock(ContactTimelineService.class),
+                sessionService, audioStore, mock(CallRecordMapper.class),
+                mock(CallTranscriptRevisionMapper.class), mock(ContactIdentityMapper.class),
+                mock(ContactService.class));
+
         assertThrows(CallRecordException.class, () -> controller.streamAudio(
-                callRecordId, new MockHttpServletRequest(), response));
+                callRecordId, request, response));
 
         assertNull(response.getContentType());
     }

@@ -17,6 +17,10 @@ public class UserEntity {
     private String usernameNormalized;
     private String passwordHash;
     private String displayName;
+    private String avatarObjectKey;
+    private String avatarMimeType;
+    private Long avatarSizeBytes;
+    private Instant avatarUpdatedAt;
     private String status;
     private Instant lastLoginAt;
     private Instant createdAt;
@@ -62,6 +66,15 @@ public class UserEntity {
     public void setDisplayName(String displayName) {
         this.displayName = displayName;
     }
+
+    public String getAvatarObjectKey() { return avatarObjectKey; }
+    public void setAvatarObjectKey(String avatarObjectKey) { this.avatarObjectKey = avatarObjectKey; }
+    public String getAvatarMimeType() { return avatarMimeType; }
+    public void setAvatarMimeType(String avatarMimeType) { this.avatarMimeType = avatarMimeType; }
+    public Long getAvatarSizeBytes() { return avatarSizeBytes; }
+    public void setAvatarSizeBytes(Long avatarSizeBytes) { this.avatarSizeBytes = avatarSizeBytes; }
+    public Instant getAvatarUpdatedAt() { return avatarUpdatedAt; }
+    public void setAvatarUpdatedAt(Instant avatarUpdatedAt) { this.avatarUpdatedAt = avatarUpdatedAt; }
 
     public String getStatus() {
         return status;

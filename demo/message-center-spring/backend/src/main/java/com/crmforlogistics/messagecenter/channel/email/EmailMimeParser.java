@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.channel.email;
 
 import jakarta.mail.Multipart;
 import jakarta.mail.Part;
+import org.springframework.web.util.HtmlUtils;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -80,9 +81,10 @@ public final class EmailMimeParser {
     }
 
     private static String htmlToText(String html) {
-        return html.replaceAll("(?is)<(script|style)[^>]*>.*?</\\1>", " ")
-                .replaceAll("(?i)<br\\s*/?>", "\\n")
-                .replaceAll("(?i)</p\\s*>", "\\n")
-                .replaceAll("<[^>]+>", " ");
+        return HtmlUtils.htmlUnescape(html.replaceAll("(?is)<(script|style)[^>]*>.*?</\\1>", " ")
+                .replaceAll("(?i)<br\\s*/?>", "\n")
+                .replaceAll("(?i)</p\\s*>", "\n")
+                .replaceAll("<[^>]+>", " "))
+                .replace('\u00A0', ' ');
     }
 }

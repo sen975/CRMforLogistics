@@ -106,3 +106,20 @@ describe('MessageBubble media', () => {
     await waitFor(() => expect(revokeObjectUrl).toHaveBeenCalledWith('blob:broken'));
   });
 });
+
+describe('MessageBubble email text', () => {
+  it('decodes HTML entities in legacy plain-text email bodies', () => {
+    render(<MessageBubble message={{
+      ...message(),
+      id: 'email-1',
+      kind: 'email',
+      channelType: 'email',
+      bodyText: '品名：LED&nbsp;灯带&nbsp;&amp;&nbsp;数量：800',
+      bodyHtml: '',
+      attachments: [],
+    }} isActive={false} onClick={() => undefined} />);
+
+    expect(screen.getByText('品名：LED 灯带 & 数量：800')).toBeInTheDocument();
+    expect(screen.queryByText(/&nbsp;/)).not.toBeInTheDocument();
+  });
+});

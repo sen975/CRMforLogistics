@@ -1,7 +1,11 @@
 package com.crmforlogistics.messagecenter.channel.chatapp.template;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.aliyun.teaopenapi.Client;
 import com.aliyun.tea.TeaException;
@@ -17,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 import static com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.*;
 
@@ -27,29 +32,43 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
     private static final String DEFAULT_ENDPOINT = "cams.ap-southeast-1.aliyuncs.com";
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 
-    private final AppConfig config;
     private final ObjectMapper objectMapper;
-    private final Client client;
+    private final ChannelAccountMapper accountMapper;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
+    private final Client fixedClient;
+    private final String fixedCustSpaceId;
     private final Duration timeout;
 
     @Autowired
-    public AliyunChatAppPublicTemplateGateway(AppConfig config, ObjectMapper objectMapper) {
-        this(config, objectMapper, createClient(config), DEFAULT_TIMEOUT);
+    public AliyunChatAppPublicTemplateGateway(ObjectMapper objectMapper,
+                                              ChannelAccountMapper accountMapper,
+                                              ChatAppAccountCredentialsResolver credentialsResolver) {
+        this.objectMapper = Objects.requireNonNull(objectMapper);
+        this.accountMapper = Objects.requireNonNull(accountMapper);
+        this.credentialsResolver = Objects.requireNonNull(credentialsResolver);
+        this.fixedClient = null;
+        this.fixedCustSpaceId = null;
+        this.timeout = DEFAULT_TIMEOUT;
     }
 
-    AliyunChatAppPublicTemplateGateway(AppConfig config, ObjectMapper objectMapper, Client client,
-                                       Duration timeout) {
-        this.config = Objects.requireNonNull(config);
+    AliyunChatAppPublicTemplateGateway(ObjectMapper objectMapper, Client client,
+                                       Duration timeout, String custSpaceId) {
         this.objectMapper = Objects.requireNonNull(objectMapper);
-        this.client = Objects.requireNonNull(client);
+        this.accountMapper = null;
+        this.credentialsResolver = null;
+        this.fixedClient = Objects.requireNonNull(client);
+        this.fixedCustSpaceId = required(custSpaceId, "custSpaceId");
         this.timeout = Objects.requireNonNull(timeout);
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
     }
 
     @Override
-    public Page list(Query query) {
-        Map<String, String> request = listQuery(query);
+    public Page list(UUID accountId, Query query) {
         try {
+            ChatAppAccountCredentials credentials = fixedClient == null ? credentialsFor(accountId) : null;
+            String custSpaceId = fixedClient == null ? credentials.custSpaceId() : fixedCustSpaceId;
+            Client client = fixedClient == null ? createClient(credentials) : fixedClient;
+            Map<String, String> request = listQuery(query, custSpaceId, objectMapper);
             Map<String, ?> response = client.callApi(params("ListBaseTemplate"),
                     new OpenApiRequest().setQuery(request), runtime());
             return PublicTemplateResponseParser.parse(body(response), query.page(), query.size());
@@ -84,8 +103,16 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
         }
     }
 
-    private Map<String, String> listQuery(Query query) {
-        return listQuery(query, requiredSpace(), objectMapper);
+    private ChatAppAccountCredentials credentialsFor(UUID accountId) {
+        ChannelAccountEntity account = accountId == null || accountMapper == null
+                ? null : accountMapper.selectById(accountId);
+        if (account == null || account.getDeletedAt() != null
+                || !("chatapp".equalsIgnoreCase(account.getChannelType())
+                || "whatsapp".equalsIgnoreCase(account.getChannelType()))
+                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+        }
+        return credentialsResolver.resolve(account);
     }
 
     private static Params params(String action) {
@@ -102,22 +129,19 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
         return new RuntimeOptions().setReadTimeout(millis).setConnectTimeout(millis).setMaxAttempts(1);
     }
 
-    private static Client createClient(AppConfig config) {
-        String region = config.camsRegion() == null || config.camsRegion().isBlank() ? DEFAULT_REGION : config.camsRegion().trim();
-        String endpoint = config.camsEndpoint() == null || config.camsEndpoint().isBlank()
-                ? "cams." + region + ".aliyuncs.com" : config.camsEndpoint().trim();
+    private static Client createClient(ChatAppAccountCredentials credentials) {
+        String region = credentials.region() == null || credentials.region().isBlank()
+                ? DEFAULT_REGION : credentials.region().trim();
+        String endpoint = credentials.endpoint() == null || credentials.endpoint().isBlank()
+                ? "cams." + region + ".aliyuncs.com" : credentials.endpoint().trim();
         try {
-            Config sdk = new Config().setAccessKeyId(config.aliyunAccessKeyId())
-                    .setAccessKeySecret(config.aliyunAccessKeySecret()).setRegionId(region)
+            Config sdk = new Config().setAccessKeyId(required(credentials.accessKeyId(), "accessKeyId"))
+                    .setAccessKeySecret(required(credentials.accessKeySecret(), "accessKeySecret")).setRegionId(region)
                     .setEndpoint(endpoint).setProtocol("https");
             return new Client(sdk);
         } catch (Exception e) {
             throw new IllegalStateException("Unable to initialize official CAMS OpenAPI client", e);
         }
-    }
-
-    private String requiredSpace() {
-        return required(config.custSpaceId(), "custSpaceId");
     }
 
     private static String required(String value, String field) {
@@ -142,6 +166,11 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
     private static String text(Object value) { return value == null ? null : String.valueOf(value); }
 
     private static WhatsAppTemplateException providerFailure(String code, Exception cause) {
+        ChatAppAccountCredentialsException credentialsError = credentialsError(cause);
+        if (credentialsError != null) {
+            return new WhatsAppTemplateException(credentialsError.code(), org.springframework.http.HttpStatus.CONFLICT,
+                    credentialsError.code(), Map.of(), null, false);
+        }
         TeaException providerError = teaException(cause);
         String providerCode = providerError == null ? null : bounded(providerError.getCode(), 128);
         String providerRequestId = providerError == null ? null : providerRequestId(providerError.getData());
@@ -159,6 +188,18 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
         if (diagnostic != null) message += ": " + diagnostic;
         return new WhatsAppTemplateException(code, org.springframework.http.HttpStatus.BAD_GATEWAY,
                 message, Map.of(), providerRequestId, retryable);
+    }
+
+    private static ChatAppAccountCredentialsException credentialsError(Throwable error) {
+        Throwable current = error;
+        for (int depth = 0; current != null && depth < 16; depth++) {
+            if (current instanceof ChatAppAccountCredentialsException credentialsException) {
+                return credentialsException;
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return null;
     }
 
     private static TeaException teaException(Throwable error) {

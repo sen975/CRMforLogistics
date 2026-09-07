@@ -8,6 +8,8 @@ import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserBindingService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -30,6 +32,8 @@ class WeComP0ControllerSecurityTest {
     @MockitoBean WeComAppChatService appChats;
     @MockitoBean WeComExternalContactService externalContacts;
     @MockitoBean WeComDirectoryService directory;
+    @MockitoBean WeComProfileBackfillService profileBackfill;
+    @MockitoBean WeComUserBindingService bindings;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 

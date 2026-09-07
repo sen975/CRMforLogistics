@@ -22,6 +22,13 @@ public interface AiTopicGenerationJobMapper extends BaseMapper<AiTopicGeneration
                                 @Param("jobKind") String jobKind, @Param("fingerprint") String fingerprint,
                                 @Param("now") Instant now);
 
+    @Insert("insert into ai_topic_generation_jobs (id, contact_id, owner_type, owner_id, wecom_group_source_conversation_id, created_by_user_id, trigger_source, job_kind, input_fingerprint, status, attempt_count, next_attempt_at) "
+            + "values (gen_random_uuid(), null, 'WECOM_GROUP', #{sourceConversationId}::uuid, #{sourceConversationId}::uuid, #{userId}::uuid, 'MANUAL', #{jobKind}, #{fingerprint}, 'PENDING', 0, #{now}) "
+            + "on conflict (owner_type, owner_id, input_fingerprint) do nothing")
+    int insertGroupRetryIfAbsent(@Param("sourceConversationId") UUID sourceConversationId,
+                                 @Param("userId") UUID userId, @Param("jobKind") String jobKind,
+                                 @Param("fingerprint") String fingerprint, @Param("now") Instant now);
+
     @Select("select * from ai_topic_generation_jobs where owner_type=#{ownerType} and owner_id=#{ownerId}::uuid and input_fingerprint=#{fingerprint} limit 1")
     AiTopicGenerationJobEntity findByOwnerFingerprint(@Param("ownerType") String ownerType,
                                                       @Param("ownerId") UUID ownerId,
@@ -42,6 +49,6 @@ public interface AiTopicGenerationJobMapper extends BaseMapper<AiTopicGeneration
     @Update("update ai_topic_generation_jobs set status=#{status}, last_error_code=#{errorCode}, last_error_message=#{errorMessage}, next_attempt_at=#{nextAttemptAt}, completed_at=#{completedAt}, lease_owner=null, lease_until=null, updated_at=now() where id=#{id}::uuid and lease_owner=#{owner} and status='PROCESSING'")
     int finish(UUID id, String owner, String status, String errorCode, String errorMessage, Instant nextAttemptAt, Instant completedAt);
 
-    @Update("update ai_topic_generation_jobs set status='PENDING', last_error_code=null, last_error_message=null, next_attempt_at=#{now}, completed_at=null, attempt_count=0, updated_at=now() where id=#{id}::uuid and status='FAILED'")
-    int requeueFailed(UUID id, Instant now);
+    @Update("update ai_topic_generation_jobs set status='PENDING', last_error_code=null, last_error_message=null, next_attempt_at=#{now}, completed_at=null, attempt_count=0, updated_at=now() where id=#{id}::uuid and status in ('FAILED', 'COMPLETED')")
+    int requeueTerminal(UUID id, Instant now);
 }

@@ -63,7 +63,7 @@ public class WeComMessageSummaryController {
         return new WeComMessageSummaryResponse(view.messageExists(), view.id(), view.installationId(),
                 view.authCorpId(), view.sourceConversationId(), view.msgid(), view.sendTime(), view.status(),
                 view.wecomJobId(), view.summary(), view.rawRequestJson(), view.rawResponseJson(),
-                view.validationStage(), view.lastErrorCode(), view.failureState(), view.attemptCount(),
+                view.validationStage(), view.lastErrorCode(), view.lastErrorDiagnostic(), view.failureState(), view.attemptCount(),
                 view.nextAttemptAt(), view.createdAt(), view.updatedAt(), view.submittedAt(), view.completedAt());
     }
 }

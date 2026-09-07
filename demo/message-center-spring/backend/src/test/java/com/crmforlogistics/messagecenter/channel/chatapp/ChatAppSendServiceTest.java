@@ -5,47 +5,42 @@ import com.aliyun.sdk.service.cams20200606.models.GetChatappUploadAuthorizationR
 import com.aliyun.sdk.service.cams20200606.models.GetChatappUploadAuthorizationResponseBody;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageResponseBody;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class ChatAppSendServiceTest {
 
-    @Mock
-    AppConfig appConfig;
-
     @Test
-    void shouldConstructWithAppConfig() {
-        ChatAppSendService service = new ChatAppSendService(appConfig);
+    void shouldConstructWithMediaUploader() {
+        ChatAppSendService service = new ChatAppSendService(mock(ChatAppOssMediaUploader.class));
         assertNotNull(service);
     }
 
     @Test
-    void shouldRejectNullAppConfig() {
+    void shouldRejectNullMediaUploader() {
         assertThrows(NullPointerException.class, () -> new ChatAppSendService(null));
     }
 
     @Test
-    void shouldRetainDefaultConstructorForExistingMessageSenders() {
-        assertNotNull(new ChatAppSendService(appConfig));
+    void exposesOnlyCredentialScopedProviderSendMethods() {
+        assertThat(Arrays.stream(ChatAppSendService.class.getDeclaredMethods())
+                .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
+                .filter(method -> method.getName().matches("send(Text|Template|Media)")))
+                .allSatisfy(method -> assertThat(method.getParameterTypes()[0])
+                        .isEqualTo(ChatAppAccountCredentials.class));
     }
 
     @Test
     void mediaSendRejectsMissingCamsMessageId() throws Exception {
-        when(appConfig.custSpaceId()).thenReturn("space");
-        when(appConfig.chatappFrom()).thenReturn("from");
         AsyncClient client = mock(AsyncClient.class);
         when(client.getChatappUploadAuthorization(any())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(
                 GetChatappUploadAuthorizationResponse.create().toBuilder().body(GetChatappUploadAuthorizationResponseBody.builder()
@@ -57,9 +52,13 @@ class ChatAppSendServiceTest {
         ChatAppOssMediaUploader uploader = mock(ChatAppOssMediaUploader.class);
         when(uploader.upload(any(), any(), any(), any())).thenReturn(
                 new ChatAppOssMediaUploader.UploadedObject("dir/a.png", "https://bucket.oss.example.com/dir/a.png"));
-        ChatAppSendService service = new ChatAppSendService(appConfig, uploader, () -> client);
+        ChatAppSendService service = new ChatAppSendService(uploader, () -> client);
+        ChatAppAccountCredentials credentials = new ChatAppAccountCredentials(
+                "access-key", "access-secret", "space", "from",
+                "ap-southeast-1", "cams.ap-southeast-1.aliyuncs.com");
 
         assertThrows(IllegalStateException.class,
-                () -> service.sendMedia("to", "image", new byte[]{1}, "a.png", "image/png", null, null));
+                () -> service.sendMedia(credentials, "from", "to", "image", new byte[]{1},
+                        "a.png", "image/png", null, null));
     }
 }

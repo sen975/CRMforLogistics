@@ -4,6 +4,8 @@ import {
   fetchWeComInstallations,
   fetchWeComAppChat,
   listWeComDirectoryMembers,
+  createWeComViewerTargetSession,
+  previewTopicFusion,
 } from './endpoints';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }));
@@ -27,5 +29,38 @@ describe('WeCom P0 endpoints', () => {
     expect(http.get).toHaveBeenCalledWith('/v1/wecom/installations/corp-1/directory/members', {
       params: { departmentId: 7, fetchChild: true },
     });
+  });
+
+  it('does not send frame-only group chat metadata to the strict viewer-session contract', async () => {
+    http.post.mockResolvedValue({ data: { viewerSessionId: 'session-1', expiresIn: 60 } });
+    await createWeComViewerTargetSession(
+      { targetType: 'WECOM_GROUP', targetId: 'group-1', chatId: 'chat-1' } as any,
+      ['message-1'],
+      'viewer-token',
+    );
+    expect(http.post).toHaveBeenCalledWith(
+      '/v1/wecom/conversation-view/sessions',
+      { targetType: 'WECOM_GROUP', targetId: 'group-1', messageIds: ['message-1'] },
+      { headers: { 'X-WeCom-Viewer-Token': 'viewer-token' }, signal: undefined },
+    );
+  });
+
+  it('sends only fusion fields accepted by the strict preview contract', async () => {
+    http.post.mockResolvedValue({ data: {} });
+
+    const legacyMergePayload = {
+      contactId: 'contact-1',
+      topicIds: ['topic-1', 'topic-2'],
+      expectedVersions: { 'topic-1': 3, 'topic-2': 3 },
+    };
+    await previewTopicFusion('contact-1', legacyMergePayload);
+
+    expect(http.post).toHaveBeenCalledWith(
+      '/v1/contacts/contact-1/topic-fusion/preview',
+      {
+        topicIds: ['topic-1', 'topic-2'],
+        expectedVersions: { 'topic-1': 3, 'topic-2': 3 },
+      },
+    );
   });
 });

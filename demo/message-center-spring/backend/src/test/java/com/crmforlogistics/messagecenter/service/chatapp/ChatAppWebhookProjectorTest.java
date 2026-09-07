@@ -1,11 +1,13 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.entity.ChannelEventEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
@@ -17,8 +19,10 @@ import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -34,6 +38,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class ChatAppWebhookProjectorTest {
@@ -47,6 +52,20 @@ class ChatAppWebhookProjectorTest {
     @Mock ChatAppBroadcastRecipientMapper broadcastRecipientMapper;
     @Mock ChatAppBroadcastMessageProjector broadcastMessageProjector;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
+    @Mock ChannelAccountMapper channelAccountMapper;
+    @Mock ChannelAddressBookService addressBookService;
+
+    @BeforeEach
+    void allowOwnedActiveAccounts() {
+        lenient().when(channelAccountMapper.selectById(any(UUID.class))).thenAnswer(invocation -> {
+            ChannelAccountEntity account = new ChannelAccountEntity();
+            account.setId(invocation.getArgument(0, UUID.class));
+            account.setOwnerUserId(UUID.randomUUID());
+            account.setChannelType("chatapp");
+            account.setAuthStatus("active");
+            return account;
+        });
+    }
 
     @Test
     void inboundMessageRecordsTopicActivityAfterMessagePersistence() {
@@ -57,9 +76,10 @@ class ChatAppWebhookProjectorTest {
         conversation.setId(UUID.randomUUID());
         when(messageMapper.findByProviderMessageId(accountId, "inbound-1"))
                 .thenReturn(Optional.empty());
-        when(contactIdentityMapper.findByNormalizedValueInScope(
-                "chatapp", accountId.toString(), "60123456789"))
-                .thenReturn(Optional.of(identity));
+        when(addressBookService.resolveOrCreateInbound(
+                any(UUID.class), eq("chatapp"), eq(accountId), eq("60123456789"), any(String.class)))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), identity.getId(), false));
         when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
                 .thenReturn(conversation);
         ChannelEventEntity event = new ChannelEventEntity();
@@ -89,12 +109,7 @@ class ChatAppWebhookProjectorTest {
         event.setPayloadJsonb(
                 "{\"MessageId\":\"wamid-1\",\"Status\":\"DELIVERED\"}");
 
-        ChatAppWebhookProjector projector = new ChatAppWebhookProjector(
-                channelEventMapper, messageMapper, statusEventMapper,
-                contactIdentityMapper, contactMapper, conversationMapper,
-                eventHub, new ObjectMapper(), broadcastRecipientMapper,
-                broadcastMessageProjector);
-        var result = projector.project(event);
+        var result = projector().project(event);
 
         assertThat(result.type()).isEqualTo("status");
         assertThat(message.getCurrentStatus()).isEqualTo("delivered");
@@ -200,9 +215,10 @@ class ChatAppWebhookProjectorTest {
         conversation.setId(UUID.randomUUID());
         when(messageMapper.findByProviderMessageId(accountId, "wamid-orphan-1"))
                 .thenReturn(Optional.empty());
-        when(contactIdentityMapper.findByNormalizedValueInScope(
-                "chatapp", accountId.toString(), "60123456789"))
-                .thenReturn(Optional.of(identity));
+        when(addressBookService.resolveOrCreateInbound(
+                any(UUID.class), eq("chatapp"), eq(accountId), eq("60123456789"), any(String.class)))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), identity.getId(), false));
         when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
                 .thenReturn(conversation);
         ChannelEventEntity event = new ChannelEventEntity();
@@ -235,9 +251,9 @@ class ChatAppWebhookProjectorTest {
     private ChatAppWebhookProjector projector() {
         return new ChatAppWebhookProjector(
                 channelEventMapper, messageMapper, statusEventMapper,
-                contactIdentityMapper, contactMapper, conversationMapper,
-                eventHub, new ObjectMapper(), broadcastRecipientMapper,
-                broadcastMessageProjector, topicActivityRecorder);
+                conversationMapper, eventHub, new ObjectMapper(), broadcastRecipientMapper,
+                broadcastMessageProjector, topicActivityRecorder, channelAccountMapper,
+                addressBookService);
     }
 
     private static MessageEntity messageWithStatus(String status) {

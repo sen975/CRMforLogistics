@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 import com.crmforlogistics.messagecenter.entity.AiTopicEntity;
 import com.crmforlogistics.messagecenter.entity.AiTopicGenerationJobEntity;
 import com.crmforlogistics.messagecenter.entity.AiTopicItemEntity;
+import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.mapper.AiTopicGenerationJobMapper;
 import com.crmforlogistics.messagecenter.mapper.AiTopicItemMapper;
 import com.crmforlogistics.messagecenter.mapper.AiTopicMapper;
@@ -34,17 +35,25 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.crmforlogistics.messagecenter.dto.request.AiTopicManualReviewRequest;
+import com.crmforlogistics.messagecenter.dto.request.AiTopicFusionRequest;
+import com.crmforlogistics.messagecenter.dto.response.AiTopicManualReviewResponse;
+import com.crmforlogistics.messagecenter.mapper.AiTopicReviewMapper;
 
 @Service
-public class AiTopicService {
+public class AiTopicService implements AiTopicSplitReconciler {
     private final ContactService contactService;
     private final AiTopicInputService inputService;
     private final AiTopicMapper topicMapper;
@@ -58,7 +67,9 @@ public class AiTopicService {
     private final EventHub eventHub;
     private final AiTopicGenerationAuditService generationAudit;
     private final com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper attemptMapper;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final AiTopicReviewMapper reviewMapper;
+    private final TopicAiGateway topicAiGateway;
+    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     public AiTopicService(ContactService contactService, AiTopicInputService inputService,
                           AiTopicMapper topicMapper, AiTopicItemMapper itemMapper,
@@ -71,6 +82,19 @@ public class AiTopicService {
                 contactIdentityMapper, operationJobMapper, null, eventHub, generationAudit, attemptMapper);
     }
 
+    public AiTopicService(ContactService contactService, AiTopicInputService inputService,
+                          AiTopicMapper topicMapper, AiTopicItemMapper itemMapper,
+                          AiTopicGenerationJobMapper jobMapper, AiTopicVersionMapper versionMapper,
+                          AiTopicConfigHolder configHolder, ContactIdentityMapper contactIdentityMapper,
+                          AiTopicOperationJobMapper operationJobMapper, AiTopicInboxRequestMapper inboxRequestMapper,
+                          EventHub eventHub, AiTopicGenerationAuditService generationAudit,
+                          com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper attemptMapper,
+                          AiTopicReviewMapper reviewMapper) {
+        this(contactService, inputService, topicMapper, itemMapper, jobMapper, versionMapper, configHolder,
+                contactIdentityMapper, operationJobMapper, inboxRequestMapper, eventHub, generationAudit,
+                attemptMapper, reviewMapper, null);
+    }
+
     @Autowired
     public AiTopicService(ContactService contactService, AiTopicInputService inputService,
                           AiTopicMapper topicMapper, AiTopicItemMapper itemMapper,
@@ -78,7 +102,8 @@ public class AiTopicService {
                           AiTopicConfigHolder configHolder, ContactIdentityMapper contactIdentityMapper,
                           AiTopicOperationJobMapper operationJobMapper, AiTopicInboxRequestMapper inboxRequestMapper,
                           EventHub eventHub, AiTopicGenerationAuditService generationAudit,
-                          com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper attemptMapper) {
+                          com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper attemptMapper,
+                          AiTopicReviewMapper reviewMapper, TopicAiGateway topicAiGateway) {
         this.contactService = contactService;
         this.inputService = inputService;
         this.topicMapper = topicMapper;
@@ -92,6 +117,8 @@ public class AiTopicService {
         this.eventHub = eventHub;
         this.generationAudit = generationAudit;
         this.attemptMapper = attemptMapper;
+        this.reviewMapper = reviewMapper;
+        this.topicAiGateway = topicAiGateway;
     }
 
     public AiTopicService(ContactService contactService, AiTopicInputService inputService,
@@ -100,6 +127,18 @@ public class AiTopicService {
                           AiTopicConfigHolder configHolder, ContactIdentityMapper contactIdentityMapper) {
         this(contactService, inputService, topicMapper, itemMapper, jobMapper, versionMapper, configHolder,
                 contactIdentityMapper, null, null, null, null, null);
+    }
+
+    public AiTopicService(ContactService contactService, AiTopicInputService inputService,
+                          AiTopicMapper topicMapper, AiTopicItemMapper itemMapper,
+                          AiTopicGenerationJobMapper jobMapper, AiTopicVersionMapper versionMapper,
+                          AiTopicConfigHolder configHolder, ContactIdentityMapper contactIdentityMapper,
+                          AiTopicOperationJobMapper operationJobMapper, AiTopicInboxRequestMapper inboxRequestMapper,
+                          EventHub eventHub, AiTopicGenerationAuditService generationAudit,
+                          com.crmforlogistics.messagecenter.mapper.AiTopicGenerationAttemptMapper attemptMapper) {
+        this(contactService, inputService, topicMapper, itemMapper, jobMapper, versionMapper, configHolder,
+                contactIdentityMapper, operationJobMapper, inboxRequestMapper, eventHub, generationAudit,
+                attemptMapper, null);
     }
 
     public TopicTimelineResponse getTopics(UUID userId, UUID contactId) {
@@ -130,12 +169,32 @@ public class AiTopicService {
                 topics.stream().map(this::project).toList(), false);
     }
 
+    public List<TopicProjection> getReviewPendingTopics(UUID userId, UUID contactId) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        return topicMapper.listReviewPendingForContact(contactId).stream().map(this::project).toList();
+    }
+
+    @Transactional
+    public TopicProjection keepPending(UUID userId, UUID topicId) {
+        AiTopicEntity topic = requireTopic(userId, topicId);
+        if (!"REVIEW_PENDING".equals(topic.getStatus())) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+        if (topicMapper.transitionStatus(topicId, "REVIEW_PENDING", "READY") == 0) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+        topic.setStatus("READY"); topic.setVersion((topic.getVersion() == null ? 1L : topic.getVersion()) + 1L);
+        return project(topic);
+    }
+
+    @Transactional
+    public TopicProjection storePending(UUID userId, UUID topicId) {
+        AiTopicEntity topic = requireTopic(userId, topicId);
+        if (!"REVIEW_PENDING".equals(topic.getStatus())) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+        if (topicMapper.transitionStatus(topicId, "REVIEW_PENDING", "STORED") == 0) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+        topic.setStatus("STORED"); topic.setVersion((topic.getVersion() == null ? 1L : topic.getVersion()) + 1L);
+        return project(topic);
+    }
+
     /** Reads the independent group owner timeline without creating generation work. */
     public GroupTopicTimelineResponse getGroupTopics(UUID userId, UUID sourceConversationId) {
-        boolean admin = topicMapper.isAdmin(userId);
-        if (!admin && !topicMapper.canAccessGroupOwner(sourceConversationId, userId)) {
-            throw new AiTopicException("TOPIC_FORBIDDEN", false);
-        }
+        requireGroupTopicAccess(userId, sourceConversationId);
         AiTopicOwnerService.OwnerRef owner = AiTopicOwnerService.group(sourceConversationId);
         InputBatch batch = inputService.collect(owner, null, java.util.Optional.empty());
         List<AiTopicEntity> topics = topicMapper.listReadyGroupTopics(sourceConversationId);
@@ -149,6 +208,32 @@ public class AiTopicService {
         return new GroupTopicTimelineResponse(sourceConversationId,
                 new GenerationProjection(status, job == null ? null : job.getId(), job == null ? null : job.getLastErrorCode(), job == null ? null : job.getUpdatedAt()),
                 topics.stream().map(this::project).toList(), false);
+    }
+
+    @Transactional
+    public GenerationProjection retryGroupGeneration(UUID userId, UUID sourceConversationId) {
+        requireGroupTopicAccess(userId, sourceConversationId);
+        AiTopicOwnerService.OwnerRef owner = AiTopicOwnerService.group(sourceConversationId);
+        InputBatch batch = inputService.collect(owner, null, java.util.Optional.empty());
+        if (batch.items().isEmpty()) {
+            return new GenerationProjection(GenerationStatus.NOT_STARTED, null, null, Instant.now());
+        }
+        AiTopicGenerationJobEntity job = jobMapper.findByOwnerFingerprint(owner.type(), owner.id(), batch.fingerprint());
+        if (job != null && ("FAILED".equals(job.getStatus()) || "COMPLETED".equals(job.getStatus()))) {
+            jobMapper.requeueTerminal(job.getId(), Instant.now());
+        } else if (job == null) {
+            String jobKind = topicMapper.listReadyByOwner(owner.type(), owner.id()).isEmpty() ? "INITIAL" : "INCREMENTAL";
+            jobMapper.insertGroupRetryIfAbsent(sourceConversationId, userId, jobKind, batch.fingerprint(), Instant.now());
+            job = jobMapper.findByOwnerFingerprint(owner.type(), owner.id(), batch.fingerprint());
+        }
+        return new GenerationProjection(GenerationStatus.GENERATING, job == null ? null : job.getId(), null, Instant.now());
+    }
+
+    private void requireGroupTopicAccess(UUID userId, UUID sourceConversationId) {
+        boolean admin = topicMapper.isAdmin(userId);
+        if (!admin && !topicMapper.canAccessGroupOwner(sourceConversationId, userId)) {
+            throw new AiTopicException("TOPIC_FORBIDDEN", false);
+        }
     }
 
     /** Creates work only from the owner quiet-window worker, never from a timeline read. */
@@ -175,33 +260,54 @@ public class AiTopicService {
 
     @Transactional
     public List<TopicProjection> mergeTopics(UUID userId, List<UUID> topicIds, Map<UUID, Long> expectedVersions) {
-        if (topicIds == null || topicIds.size() < 2 || topicIds.size() > 20 || topicIds.stream().anyMatch(Objects::isNull) || topicIds.stream().distinct().count() != topicIds.size()
-                || expectedVersions == null || topicIds.stream().anyMatch(id -> !expectedVersions.containsKey(id))) throw new AiTopicException("TOPIC_MERGE_INVALID", false);
-        List<AiTopicEntity> topics = topicIds.stream().map(id -> requireTopic(userId, id)).sorted(Comparator.comparing(AiTopicEntity::getFirstOccurredAt).thenComparing(AiTopicEntity::getId)).toList();
-        UUID contactId = topics.get(0).getContactId();
-        if (topics.stream().anyMatch(t -> !contactId.equals(t.getContactId()))) throw new AiTopicException("TOPIC_MERGE_INVALID", false);
-        AiTopicEntity target = topics.get(0);
-        List<AiTopicItemEntity> allItems = new ArrayList<>();
-        for (AiTopicEntity topic : topics) {
-            Long expected = expectedVersions.get(topic.getId());
-            if (!Objects.equals(expected, topic.getVersion())) throw new AiTopicException("TOPIC_VERSION_CONFLICT", false);
-            allItems.addAll(itemMapper.listByTopic(topic.getId()));
-            if (!topic.getId().equals(target.getId())) topicMapper.archive(topic.getId());
-        }
-        for (AiTopicItemEntity item : allItems) { item.setTopicId(target.getId()); itemMapper.updateById(item); }
-        Instant last = allItems.stream().map(AiTopicItemEntity::getOccurredAt).max(Instant::compareTo).orElse(target.getLastOccurredAt());
-        target.setLastOccurredAt(last); target.setVersion(target.getVersion() + 1);
-        topicMapper.updateById(target);
+        List<AiTopicEntity> topics = requireFusionTopics(userId, topicIds, expectedVersions);
+        AiTopicManualReviewResponse.Assignment fusion = generateFusionAssignment(topics);
+        return List.of(applyFusion(userId, topics, expectedVersions, fusion.title(), fusion.summary()));
+    }
+
+    private TopicProjection applyFusion(UUID userId, List<AiTopicEntity> topics,
+                                        Map<UUID, Long> expectedVersions,
+                                        String title, String summary) {
+        AiTopicEntity first = topics.get(0);
+        String ownerType = normalizedOwnerType(first);
+        UUID ownerId = normalizedOwnerId(first);
+        List<AiTopicItemEntity> allItems = topics.stream().flatMap(topic -> itemMapper.listByTopic(topic.getId()).stream()).toList();
+        if (allItems.isEmpty()) throw new AiTopicException("TOPIC_MERGE_INVALID", false);
+        UUID mergedId = UUID.randomUUID();
+        AiTopicEntity target = new AiTopicEntity();
+        target.setId(mergedId);
+        target.setOwnerType(ownerType);
+        target.setOwnerId(ownerId);
+        target.setContactId("CONTACT".equals(ownerType) ? ownerId : null);
+        target.setWecomGroupSourceConversationId("WECOM_GROUP".equals(ownerType) ? ownerId : null);
+        target.setTitle(title);
+        target.setAiSummary(summary);
+        target.setStatus("READY");
+        target.setFirstOccurredAt(allItems.stream().map(AiTopicItemEntity::getOccurredAt).min(Instant::compareTo).orElse(first.getFirstOccurredAt()));
+        target.setLastOccurredAt(allItems.stream().map(AiTopicItemEntity::getOccurredAt).max(Instant::compareTo).orElse(first.getLastOccurredAt()));
+        target.setInputFingerprint(fusionFingerprint(topics));
+        target.setVersion(1L);
+        topicMapper.insert(target);
+        for (AiTopicItemEntity item : allItems) { item.setTopicId(mergedId); itemMapper.updateById(item); }
+        for (AiTopicEntity topic : topics) topicMapper.archiveForFusion(topic.getId());
         final String sourceTopicIds;
         try {
-            sourceTopicIds = objectMapper.writeValueAsString(topicIds);
+            sourceTopicIds = objectMapper.writeValueAsString(topics.stream().map(AiTopicEntity::getId).toList());
         } catch (Exception error) {
             throw new AiTopicException("TOPIC_MERGE_INVALID", false, error);
         }
-        versionMapper.insertVersion(target.getId(), target.getVersion(), "MERGED", target.getTitle(), target.getAiSummary(), sourceTopicIds, userId);
-        return List.of(project(target));
+        versionMapper.insertVersion(mergedId, 1L, "MERGED", target.getTitle(), target.getAiSummary(), sourceTopicIds, userId);
+        String mergedTopicRef;
+        try { mergedTopicRef = objectMapper.writeValueAsString(List.of(mergedId)); }
+        catch (Exception error) { throw new AiTopicException("TOPIC_MERGE_INVALID", false, error); }
+        for (AiTopicEntity topic : topics) {
+            versionMapper.insertVersion(topic.getId(), (topic.getVersion() == null ? 1L : topic.getVersion()) + 1L,
+                    "MERGED_INTO", topic.getTitle(), topic.getAiSummary(), mergedTopicRef, userId);
+        }
+        return project(target);
     }
 
+    @Transactional
     public GenerationProjection retryGeneration(UUID userId, UUID contactId) {
         contactService.getById(userId, contactId);
         InputBatch batch = inputService.collect(contactId, userId, java.util.Optional.empty());
@@ -212,8 +318,8 @@ public class AiTopicService {
             return new GenerationProjection(GenerationStatus.NOT_STARTED, null, null, Instant.now());
         }
         AiTopicGenerationJobEntity job = jobMapper.findByFingerprint(contactId, batch.fingerprint());
-        if (job != null && "FAILED".equals(job.getStatus())) {
-            jobMapper.requeueFailed(job.getId(), Instant.now());
+        if (job != null && ("FAILED".equals(job.getStatus()) || "COMPLETED".equals(job.getStatus()))) {
+            jobMapper.requeueTerminal(job.getId(), Instant.now());
         } else if (job == null) {
             jobMapper.insertIfAbsent(contactId, userId, "INCREMENTAL", batch.fingerprint(), Instant.now());
             job = jobMapper.findByFingerprint(contactId, batch.fingerprint());
@@ -256,7 +362,31 @@ public class AiTopicService {
                         source.occurredAt(), source.channelType());
                 if (inserted == 0) moveArchivedMergedSource(topic, owner, source);
             }
-            topic.setLastOccurredAt(sources.stream().map(AiTopicModels.SourceItem::occurredAt).max(Instant::compareTo).orElse(topic.getLastOccurredAt())); topic.setInputFingerprint(job.getInputFingerprint()); topic.setVersion(topic.getVersion() == null ? 1 : topic.getVersion() + 1); topicMapper.updateById(topic); versionMapper.insertVersion(topic.getId(), topic.getVersion(), "AI_GENERATED", topic.getTitle(), topic.getAiSummary(), "[]", null);
+            if (created) {
+                versionMapper.insertVersion(topic.getId(), topic.getVersion(), "AI_GENERATED",
+                        topic.getTitle(), topic.getAiSummary(), "[]", null);
+            } else {
+                long expectedVersion = topic.getVersion() == null ? 1L : topic.getVersion();
+                Instant firstOccurredAt = sources.stream().map(AiTopicModels.SourceItem::occurredAt)
+                        .min(Instant::compareTo).filter(value -> topic.getFirstOccurredAt() == null
+                                || value.isBefore(topic.getFirstOccurredAt())).orElse(topic.getFirstOccurredAt());
+                Instant lastOccurredAt = sources.stream().map(AiTopicModels.SourceItem::occurredAt)
+                        .max(Instant::compareTo).filter(value -> topic.getLastOccurredAt() == null
+                                || value.isAfter(topic.getLastOccurredAt())).orElse(topic.getLastOccurredAt());
+                if (topicMapper.updateAiGenerated(topic.getId(), assignment.title(), assignment.summary(),
+                        firstOccurredAt, lastOccurredAt, job.getInputFingerprint(), expectedVersion) == 0) {
+                    throw new AiTopicException("TOPIC_VERSION_CONFLICT", false);
+                }
+                topic.setTitle(assignment.title());
+                topic.setAiSummary(assignment.summary());
+                topic.setConfirmedSummary(null);
+                topic.setFirstOccurredAt(firstOccurredAt);
+                topic.setLastOccurredAt(lastOccurredAt);
+                topic.setInputFingerprint(job.getInputFingerprint());
+                topic.setVersion(expectedVersion + 1);
+                versionMapper.insertVersion(topic.getId(), topic.getVersion(), "AI_GENERATED",
+                        topic.getTitle(), topic.getAiSummary(), "[]", null);
+            }
           }
           if (auditContext != null && generationAudit != null) generationAudit.outcome(auditContext, "BUSINESS_APPLY", "SUCCEEDED", null, null, null, safeJson(output), null, null, configHolder.get());
         } catch (AiTopicException e) {
@@ -269,6 +399,64 @@ public class AiTopicService {
           if (auditContext != null && generationAudit != null) generationAudit.outcome(auditContext, "BUSINESS_APPLY", "FAILED", null, null, null, null, "AI_GENERATION_FAILED", e.getMessage(), configHolder.get());
           throw e;
         }
+    }
+
+    @Override
+    @Transactional
+    public void recomputeAfterSourceSplit(UUID topicId) {
+        if (reviewMapper == null || topicAiGateway == null || configHolder == null || versionMapper == null) {
+            throw new AiTopicException("TOPIC_SPLIT_RECONCILE_UNAVAILABLE", false);
+        }
+        AiTopicEntity topic = topicMapper.selectById(topicId);
+        if (topic == null || !"CONTACT".equals(normalizedOwnerType(topic)) || !"READY".equals(topic.getStatus())) {
+            throw new AiTopicException("TOPIC_SPLIT_RECONCILE_INVALID", false);
+        }
+        AiTopicOwnerService.OwnerRef owner = AiTopicOwnerService.contact(normalizedOwnerId(topic));
+        List<AiTopicModels.SourceItem> sources = AiTopicInputService.filterSupportedSources(
+                reviewMapper.listTopicSources(List.of(topicId)).stream()
+                        .map(this::sourceOption).map(this::manualReviewSource).toList());
+        if (sources.isEmpty() || sources.size() > configHolder.get().maxInputRecords()
+                || requiredJson(sources).getBytes(StandardCharsets.UTF_8).length > configHolder.get().maxInputBytes()) {
+            throw new AiTopicException("TOPIC_SPLIT_RECONCILE_INPUT_INVALID", false);
+        }
+        TopicContext context = new TopicContext(topic.getId(), topic.getTitle(),
+                topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary(),
+                topic.getFirstOccurredAt(), topic.getLastOccurredAt(),
+                sources.stream().map(AiTopicModels.SourceItem::id).toList());
+        AiTopicModels.GenerationOutput output = topicAiGateway.fuse(
+                new AiTopicModels.GenerationInput(owner, sources, List.of(context), false));
+        Set<UUID> expectedSourceIds = sources.stream().map(AiTopicModels.SourceItem::id)
+                .collect(java.util.stream.Collectors.toSet());
+        if (output == null || output.assignments() == null || output.assignments().size() != 1) {
+            throw new AiTopicException("TOPIC_SPLIT_RECONCILE_RESPONSE_INVALID", false);
+        }
+        AiTopicModels.TopicAssignment assignment = output.assignments().get(0);
+        if (assignment.title() == null || assignment.title().isBlank()
+                || assignment.summary() == null || assignment.summary().isBlank()
+                || assignment.sourceIds() == null
+                || assignment.sourceIds().size() != expectedSourceIds.size()
+                || !new HashSet<>(assignment.sourceIds()).equals(expectedSourceIds)) {
+            throw new AiTopicException("TOPIC_SPLIT_RECONCILE_RESPONSE_INVALID", false);
+        }
+        Instant firstOccurredAt = sources.stream().map(AiTopicModels.SourceItem::occurredAt)
+                .min(Instant::compareTo).orElseThrow();
+        Instant lastOccurredAt = sources.stream().map(AiTopicModels.SourceItem::occurredAt)
+                .max(Instant::compareTo).orElseThrow();
+        String fingerprint = AiTopicInputService.fingerprint(owner, sources);
+        long expectedVersion = topic.getVersion() == null ? 1L : topic.getVersion();
+        if (topicMapper.updateAfterSplit(topicId, assignment.title(), assignment.summary(), firstOccurredAt,
+                lastOccurredAt, fingerprint, expectedVersion) == 0) {
+            throw new AiTopicException("TOPIC_VERSION_CONFLICT", false);
+        }
+        topic.setTitle(assignment.title());
+        topic.setAiSummary(assignment.summary());
+        topic.setConfirmedSummary(null);
+        topic.setFirstOccurredAt(firstOccurredAt);
+        topic.setLastOccurredAt(lastOccurredAt);
+        topic.setInputFingerprint(fingerprint);
+        topic.setVersion(expectedVersion + 1);
+        versionMapper.insertVersion(topicId, topic.getVersion(), "AI_GENERATED", topic.getTitle(),
+                topic.getAiSummary(), "[]", null);
     }
 
     private String safeJson(Object value) {
@@ -357,7 +545,7 @@ public class AiTopicService {
     public TopicOperationProjection submitStore(UUID userId, UUID topicId, String idempotencyKey) {
         validateIdempotencyKey(idempotencyKey);
         AiTopicEntity topic = requireTopic(userId, topicId);
-        if (!"READY".equals(topic.getStatus())) throw new AiTopicException("TOPIC_STORE_NOT_READY", false);
+        if (!("READY".equals(topic.getStatus()) || "REVIEW_PENDING".equals(topic.getStatus()))) throw new AiTopicException("TOPIC_STORE_NOT_READY", false);
         AiTopicOwnerService.OwnerRef owner = ownerOf(topic);
         if ("CONTACT".equals(owner.type())) {
             return operationProjection(enqueueOperation(userId, owner, TopicOperationKind.STORE,
@@ -459,7 +647,8 @@ public class AiTopicService {
                 AiTopicEntity topic = requireTopic(actor, topicId);
                 if (kind == TopicOperationKind.STORE) {
                     if ("WECOM_GROUP".equals(topic.getOwnerType())) ensureApprovedGroupStore(actor, topicId, payload);
-                    if (topicMapper.transitionStatus(topicId, "READY", "STORED") == 0) throw new AiTopicException("TOPIC_OPERATION_CONFLICT", false);
+                    String fromStatus = "REVIEW_PENDING".equals(topic.getStatus()) ? "REVIEW_PENDING" : "READY";
+                    if (topicMapper.transitionStatus(topicId, fromStatus, "STORED") == 0) throw new AiTopicException("TOPIC_OPERATION_CONFLICT", false);
                     versionMapper.insertVersion(topicId, topic.getVersion() + 1, "STORED", topic.getTitle(), topic.getAiSummary(), "[]", actor);
                 } else if (kind == TopicOperationKind.RESTORE) {
                     if ("WECOM_GROUP".equals(topic.getOwnerType())) requireAdmin(actor);
@@ -525,6 +714,470 @@ public class AiTopicService {
         return listStored(userId, search, null, page, size);
     }
 
+    @Transactional
+    public AiTopicManualReviewResponse.FusionPreviewResponse previewTopicFusion(UUID userId, UUID contactId,
+                                                                                 AiTopicFusionRequest request) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        if (request == null || reviewMapper == null || topicAiGateway == null) {
+            throw new AiTopicException("TOPIC_FUSION_UNAVAILABLE", false);
+        }
+        List<AiTopicEntity> topics = requireFusionTopics(userId, request.topicIds(), request.expectedVersions());
+        if (topics.stream().anyMatch(topic -> !"CONTACT".equals(normalizedOwnerType(topic))
+                || !contactId.equals(normalizedOwnerId(topic)))) {
+            throw new AiTopicException("TOPIC_MERGE_INVALID", false);
+        }
+        AiTopicManualReviewResponse.Assignment result = generateFusionAssignment(topics);
+        UUID previewId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(900);
+        reviewMapper.insertFusionPreview(previewId, "CONTACT", contactId, requiredJson(request.topicIds()),
+                requiredJson(result), requiredJson(request.expectedVersions()), userId, expiresAt);
+        return new AiTopicManualReviewResponse.FusionPreviewResponse(previewId, List.copyOf(request.topicIds()),
+                result.title(), result.summary(), result.sourceIds().size(),
+                Map.copyOf(request.expectedVersions()), expiresAt);
+    }
+
+    @Transactional
+    public TopicProjection applyTopicFusion(UUID userId, UUID contactId, UUID previewId,
+                                            String idempotencyKey) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        validateIdempotencyKey(idempotencyKey);
+        if (reviewMapper == null) throw new AiTopicException("TOPIC_FUSION_UNAVAILABLE", false);
+        AiTopicReviewMapper.FusionPreviewRow existing = reviewMapper.findFusionByIdempotency(userId, idempotencyKey);
+        if (existing != null) {
+            if (!previewId.equals(existing.id()) || existing.resultTopicId() == null) {
+                throw new AiTopicException("TOPIC_FUSION_CONFLICT", false);
+            }
+            return project(requireTopic(userId, existing.resultTopicId()));
+        }
+        AiTopicReviewMapper.FusionPreviewRow preview = reviewMapper.findFusionPreview(previewId);
+        if (preview == null || !"CONTACT".equals(preview.ownerType()) || !contactId.equals(preview.ownerId())
+                || !userId.equals(preview.createdByUserId())) {
+            throw new AiTopicException("TOPIC_FUSION_NOT_FOUND", false);
+        }
+        if (!"PENDING".equals(preview.status()) || preview.expiresAt() == null
+                || !preview.expiresAt().isAfter(Instant.now())) {
+            throw new AiTopicException("TOPIC_FUSION_EXPIRED", false);
+        }
+        List<UUID> topicIds = parseUuidList(preview.topicIds(), "TOPIC_FUSION_SNAPSHOT_INVALID");
+        Map<UUID, Long> expectedVersions = parseExpectedVersions(preview.expectedVersions());
+        AiTopicManualReviewResponse.Assignment result = parseFusionResult(preview.resultSnapshot());
+        List<AiTopicEntity> topics = requireFusionTopics(userId, topicIds, expectedVersions);
+        TopicProjection merged = applyFusion(userId, topics, expectedVersions, result.title(), result.summary());
+        if (reviewMapper.markFusionApplied(previewId, merged.id(), idempotencyKey) == 0) {
+            throw new AiTopicException("TOPIC_FUSION_CONFLICT", false);
+        }
+        return merged;
+    }
+
+    private List<AiTopicEntity> requireFusionTopics(UUID userId, List<UUID> topicIds,
+                                                     Map<UUID, Long> expectedVersions) {
+        if (topicIds == null || topicIds.size() < 2 || topicIds.size() > 20
+                || topicIds.stream().anyMatch(Objects::isNull)
+                || topicIds.stream().distinct().count() != topicIds.size()
+                || expectedVersions == null || topicIds.stream().anyMatch(id -> !expectedVersions.containsKey(id))) {
+            throw new AiTopicException("TOPIC_MERGE_INVALID", false);
+        }
+        List<AiTopicEntity> topics = topicIds.stream().map(id -> requireTopic(userId, id))
+                .sorted(Comparator.comparing(AiTopicEntity::getFirstOccurredAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(AiTopicEntity::getId)).toList();
+        AiTopicEntity first = topics.get(0);
+        String ownerType = normalizedOwnerType(first);
+        UUID ownerId = normalizedOwnerId(first);
+        for (AiTopicEntity topic : topics) {
+            if (!("READY".equals(topic.getStatus()) || "REVIEW_PENDING".equals(topic.getStatus()))
+                    || !ownerType.equals(normalizedOwnerType(topic))
+                    || !Objects.equals(ownerId, normalizedOwnerId(topic))) {
+                throw new AiTopicException("TOPIC_MERGE_INVALID", false);
+            }
+            if (!Objects.equals(expectedVersions.get(topic.getId()), topic.getVersion())) {
+                throw new AiTopicException("TOPIC_VERSION_CONFLICT", false);
+            }
+        }
+        return topics;
+    }
+
+    private AiTopicManualReviewResponse.Assignment generateFusionAssignment(List<AiTopicEntity> topics) {
+        if (reviewMapper == null || topicAiGateway == null || configHolder == null) {
+            throw new AiTopicException("TOPIC_FUSION_UNAVAILABLE", false);
+        }
+        List<UUID> topicIds = topics.stream().map(AiTopicEntity::getId).toList();
+        List<AiTopicModels.SourceItem> sources = reviewMapper.listTopicSources(topicIds).stream()
+                .map(this::sourceOption).map(this::manualReviewSource).toList();
+        if (sources.isEmpty() || sources.size() > configHolder.get().maxInputRecords()
+                || requiredJson(sources).getBytes(StandardCharsets.UTF_8).length > configHolder.get().maxInputBytes()) {
+            throw new AiTopicException("TOPIC_FUSION_INPUT_TOO_LARGE", false);
+        }
+        List<TopicContext> contexts = topics.stream().map(topic -> new TopicContext(topic.getId(), topic.getTitle(),
+                topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary(),
+                topic.getFirstOccurredAt(), topic.getLastOccurredAt(), itemMapper.listByTopic(topic.getId()).stream()
+                .map(item -> item.getMessageId() != null ? item.getMessageId()
+                        : item.getCallRecordId() != null ? item.getCallRecordId() : item.getWecomMessageSummaryJobId())
+                .filter(Objects::nonNull).toList())).toList();
+        AiTopicModels.GenerationOutput output = topicAiGateway.fuse(new AiTopicModels.GenerationInput(
+                new AiTopicOwnerService.OwnerRef(normalizedOwnerType(topics.get(0)), normalizedOwnerId(topics.get(0))),
+                sources, contexts, false));
+        Set<UUID> expectedSourceIds = sources.stream().map(AiTopicModels.SourceItem::id)
+                .collect(java.util.stream.Collectors.toSet());
+        if (output == null || output.assignments() == null || output.assignments().size() != 1) {
+            throw new AiTopicException("TOPIC_FUSION_RESPONSE_INVALID", false);
+        }
+        AiTopicModels.TopicAssignment assignment = output.assignments().get(0);
+        if (assignment.title() == null || assignment.title().isBlank() || assignment.summary() == null
+                || assignment.summary().isBlank() || assignment.sourceIds() == null
+                || !new HashSet<>(assignment.sourceIds()).equals(expectedSourceIds)
+                || assignment.sourceIds().size() != expectedSourceIds.size()) {
+            throw new AiTopicException("TOPIC_FUSION_RESPONSE_INVALID", false);
+        }
+        return new AiTopicManualReviewResponse.Assignment("fusion", assignment.title(), assignment.summary(),
+                1d, List.copyOf(assignment.sourceIds()));
+    }
+
+    private AiTopicManualReviewResponse.Assignment parseFusionResult(String json) {
+        try { return objectMapper.readValue(json, AiTopicManualReviewResponse.Assignment.class); }
+        catch (Exception error) { throw new AiTopicException("TOPIC_FUSION_SNAPSHOT_INVALID", false, error); }
+    }
+
+    private List<UUID> parseUuidList(String json, String errorCode) {
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory().constructCollectionType(List.class, UUID.class));
+        } catch (Exception error) {
+            throw new AiTopicException(errorCode, false, error);
+        }
+    }
+
+    private String normalizedOwnerType(AiTopicEntity topic) {
+        return topic.getOwnerType() == null ? "CONTACT" : topic.getOwnerType();
+    }
+
+    private UUID normalizedOwnerId(AiTopicEntity topic) {
+        return topic.getOwnerId() == null ? topic.getContactId() : topic.getOwnerId();
+    }
+
+    public AiTopicManualReviewResponse.SourceListResponse listManualReviewSources(UUID userId, UUID contactId,
+                                                                                    Instant from, Instant to) {
+        return listManualReviewSources(userId, contactId, null, from, to);
+    }
+
+    public AiTopicManualReviewResponse.SourceListResponse listManualReviewSources(UUID userId, UUID contactId,
+                                                                                    UUID contactIdentityId,
+                                                                                    Instant from, Instant to) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        if (reviewMapper == null) throw new AiTopicException("TOPIC_REVIEW_UNAVAILABLE", false);
+        List<AiTopicManualReviewResponse.SourceOption> queried = reviewMapper
+                .listSources(contactId, contactIdentityId, from, to, 201).stream()
+                .map(this::sourceOption).toList();
+        boolean hasMore = queried.size() > 200;
+        List<AiTopicManualReviewResponse.SourceOption> options = hasMore ? queried.subList(0, 200) : queried;
+        List<ContactIdentityEntity> identities =
+                contactIdentityMapper == null ? List.of() : contactIdentityMapper.findByContactId(contactId);
+        boolean hasWeCom = identities.stream().anyMatch(identity ->
+                "wecom".equalsIgnoreCase(identity.getChannelType()));
+        boolean requestedWeCom = contactIdentityId == null || identities.stream().anyMatch(identity ->
+                contactIdentityId.equals(identity.getId()) && "wecom".equalsIgnoreCase(identity.getChannelType()));
+        boolean hasWeComSummary = options.stream().anyMatch(option -> "wecom".equalsIgnoreCase(option.channelType()) && option.selectable());
+        return new AiTopicManualReviewResponse.SourceListResponse(contactId, List.copyOf(options), hasMore,
+                requestedWeCom && hasWeCom && !hasWeComSummary ? "WECOM_SUMMARY_NOT_COMPLETED" : null);
+    }
+
+    @Transactional
+    public AiTopicManualReviewResponse.PreviewResponse previewManualReview(UUID userId, UUID contactId,
+                                                                             AiTopicManualReviewRequest request) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        if (reviewMapper == null || topicAiGateway == null || request == null || request.contactIdentityId() == null
+                || request.sourceIds() == null || request.sourceIds().isEmpty()
+                || (request.from() != null && request.to() != null && !request.from().isBefore(request.to()))
+                || request.sourceIds().size() > 200 || request.sourceIds().stream().anyMatch(Objects::isNull)
+                || request.sourceIds().stream().distinct().count() != request.sourceIds().size()) {
+            throw new AiTopicException("TOPIC_REVIEW_INVALID", false);
+        }
+        List<AiTopicManualReviewResponse.SourceOption> available = reviewMapper
+                .listSources(contactId, request.contactIdentityId(), request.from(), request.to(), 201).stream()
+                .map(this::sourceOption).toList();
+        Map<UUID, AiTopicManualReviewResponse.SourceOption> byId = available.stream()
+                .collect(java.util.stream.Collectors.toMap(AiTopicManualReviewResponse.SourceOption::id, x -> x));
+        List<AiTopicManualReviewResponse.SourceOption> selected = request.sourceIds().stream().map(byId::get).toList();
+        if (selected.stream().anyMatch(source -> source == null || !source.selectable())) {
+            throw new AiTopicException("TOPIC_REVIEW_SOURCE_NOT_AVAILABLE", false);
+        }
+        String fingerprint = manualReviewFingerprint(selected);
+        if (request.sourceFingerprint() != null && !request.sourceFingerprint().isBlank()
+                && !MessageDigest.isEqual(fingerprint.getBytes(StandardCharsets.UTF_8), request.sourceFingerprint().getBytes(StandardCharsets.UTF_8))) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_CONFLICT", false);
+        }
+        List<TopicContext> contexts = readyTopicContexts(contactId);
+        List<AiTopicModels.SourceItem> sources = selected.stream().map(this::manualReviewSource).toList();
+        AiTopicModels.GenerationOutput output = topicAiGateway.generate(new AiTopicModels.GenerationInput(
+                AiTopicOwnerService.contact(contactId), sources, contexts, !contexts.isEmpty()));
+        Map<UUID, AiTopicModels.SourceItem> bySourceId = sources.stream()
+                .collect(java.util.stream.Collectors.toMap(AiTopicModels.SourceItem::id, source -> source));
+        validateAssignments(output, bySourceId, contexts);
+        List<AiTopicManualReviewResponse.Assignment> assignments = output.assignments().stream()
+                .map(assignment -> new AiTopicManualReviewResponse.Assignment(assignment.topicKey(), assignment.title(),
+                        assignment.summary(), assignment.relevance(), assignment.sourceIds()))
+                .toList();
+        Map<UUID, Long> expectedVersions = topicMapper.listReadyByOwner("CONTACT", contactId).stream()
+                .collect(java.util.stream.Collectors.toMap(AiTopicEntity::getId, AiTopicEntity::getVersion));
+        UUID previewId = UUID.randomUUID();
+        Instant expiresAt = Instant.now().plusSeconds(900);
+        reviewMapper.insertPreview(previewId, contactId, fingerprint, requiredJson(selected), requiredJson(assignments),
+                requiredJson(expectedVersions), request.from(), request.to(), userId, expiresAt);
+        return new AiTopicManualReviewResponse.PreviewResponse(previewId, contactId, fingerprint,
+                assignments, expectedVersions, expiresAt);
+    }
+
+    @Transactional
+    public AiTopicManualReviewResponse.ApplyResponse applyManualReview(UUID userId, UUID contactId, UUID previewId,
+                                                                        AiTopicManualReviewRequest request,
+                                                                        String idempotencyKey) {
+        if (contactService != null) contactService.getById(userId, contactId);
+        validateIdempotencyKey(idempotencyKey);
+        if (reviewMapper == null) throw new AiTopicException("TOPIC_REVIEW_UNAVAILABLE", false);
+        AiTopicReviewMapper.PreviewRow existingByKey = reviewMapper.findByIdempotency(userId, idempotencyKey);
+        if (existingByKey != null) {
+            if (!previewId.equals(existingByKey.id())) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+            return appliedResponse(existingByKey);
+        }
+        AiTopicReviewMapper.PreviewRow preview = reviewMapper.findPreview(previewId);
+        if (preview == null || !contactId.equals(preview.contactId()) || !userId.equals(preview.createdByUserId())) {
+            throw new AiTopicException("TOPIC_REVIEW_NOT_FOUND", false);
+        }
+        if (!"PENDING".equals(preview.status()) || preview.expiresAt() == null || !preview.expiresAt().isAfter(Instant.now())) {
+            throw new AiTopicException("TOPIC_REVIEW_EXPIRED", false);
+        }
+        String requestedFingerprint = request == null ? null : request.sourceFingerprint();
+        if (requestedFingerprint != null && !requestedFingerprint.isBlank() && !requestedFingerprint.equals(preview.sourceFingerprint())) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_CONFLICT", false);
+        }
+        List<AiTopicManualReviewResponse.SourceOption> selected;
+        try {
+            selected = objectMapper.readValue(preview.sourceSnapshot(), objectMapper.getTypeFactory().constructCollectionType(List.class, AiTopicManualReviewResponse.SourceOption.class));
+        } catch (Exception e) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_INVALID", false, e);
+        }
+        if (selected.isEmpty()) throw new AiTopicException("TOPIC_REVIEW_INVALID", false);
+        UUID identityId = selected.get(0).contactIdentityId();
+        if (identityId == null || selected.stream().anyMatch(source -> !identityId.equals(source.contactIdentityId()))) {
+            throw new AiTopicException("TOPIC_REVIEW_SOURCE_SCOPE_CONFLICT", false);
+        }
+        List<AiTopicManualReviewResponse.SourceOption> current = reviewMapper
+                .listSourcesByIds(contactId, identityId, selected.stream().map(AiTopicManualReviewResponse.SourceOption::id).toList())
+                .stream().map(this::sourceOption).toList();
+        if (current.size() != selected.size() || current.stream().anyMatch(source -> !source.selectable())
+                || !preview.sourceFingerprint().equals(manualReviewFingerprint(current))) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_CONFLICT", false);
+        }
+        Map<UUID, Long> expectedVersions = parseExpectedVersions(preview.expectedVersions());
+        List<AiTopicManualReviewResponse.Assignment> assignments = request != null && request.assignments() != null
+                && !request.assignments().isEmpty()
+                ? request.assignments().stream().map(assignment -> new AiTopicManualReviewResponse.Assignment(
+                        assignment.topicKey(), assignment.title(), assignment.summary(), assignment.relevance(), assignment.sourceIds())).toList()
+                : parseAssignments(preview.assignmentSnapshot());
+        validateManualAssignments(assignments, current, expectedVersions);
+        Map<UUID, AiTopicManualReviewResponse.SourceOption> sourcesById = current.stream()
+                .collect(java.util.stream.Collectors.toMap(AiTopicManualReviewResponse.SourceOption::id, source -> source));
+        List<UUID> resultTopicIds = new ArrayList<>();
+        Set<UUID> sourceTopicsToRecompute = new LinkedHashSet<>();
+        for (AiTopicManualReviewResponse.Assignment assignment : assignments) {
+            List<AiTopicManualReviewResponse.SourceOption> assignedSources = assignment.sourceIds().stream()
+                    .map(sourcesById::get).toList();
+            UUID targetTopicId = applyManualAssignment(userId, contactId, preview.sourceFingerprint(), assignment,
+                    assignedSources, expectedVersions);
+            resultTopicIds.add(targetTopicId);
+            assignedSources.stream().map(AiTopicManualReviewResponse.SourceOption::assignedTopicId)
+                    .filter(Objects::nonNull).filter(sourceTopicId -> !sourceTopicId.equals(targetTopicId))
+                    .forEach(sourceTopicsToRecompute::add);
+        }
+        for (UUID sourceTopicId : sourceTopicsToRecompute) {
+            if (itemMapper.countByTopic(sourceTopicId) == 0) {
+                if (topicMapper.archiveIfEmptyAfterSplit(sourceTopicId) != 1) {
+                    throw new AiTopicException("TOPIC_REVIEW_SOURCE_CONFLICT", false);
+                }
+            } else {
+                recomputeAfterSourceSplit(sourceTopicId);
+            }
+        }
+        String topicIds = requiredJson(resultTopicIds);
+        if (reviewMapper.markApplied(previewId, topicIds, idempotencyKey) == 0) throw new AiTopicException("TOPIC_REVIEW_CONFLICT", false);
+        return new AiTopicManualReviewResponse.ApplyResponse(previewId, List.copyOf(resultTopicIds), true);
+    }
+
+    private AiTopicManualReviewResponse.ApplyResponse appliedResponse(AiTopicReviewMapper.PreviewRow row) {
+        try {
+            List<UUID> ids = objectMapper.readValue(row.resultTopicIds(), objectMapper.getTypeFactory().constructCollectionType(List.class, UUID.class));
+            return new AiTopicManualReviewResponse.ApplyResponse(row.id(), ids, true);
+        } catch (Exception e) { throw new AiTopicException("TOPIC_REVIEW_RESULT_INVALID", false, e); }
+    }
+
+    private AiTopicManualReviewResponse.SourceOption sourceOption(AiTopicReviewMapper.SourceRow row) {
+        return new AiTopicManualReviewResponse.SourceOption(row.id(), row.contactIdentityId(),
+                SourceType.valueOf(row.sourceType()), row.channelType(), row.occurredAt(), row.direction(),
+                row.subject(), row.text(), row.selectable(), row.excludedReason(), row.assignedTopicId(),
+                row.assignedTopicTitle());
+    }
+
+    static String manualReviewFingerprint(List<AiTopicManualReviewResponse.SourceOption> sources) {
+        String canonical = sources.stream().sorted(Comparator.comparing(AiTopicManualReviewResponse.SourceOption::id))
+                .map(s -> s.id() + "|" + s.contactIdentityId() + "|" + s.sourceType() + "|" + s.occurredAt()
+                        + "|" + s.assignedTopicId())
+                .collect(java.util.stream.Collectors.joining("\n"));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder(64); for (byte b : digest) out.append(String.format("%02x", b)); return out.toString();
+        } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+    }
+
+    private static String fusionFingerprint(List<AiTopicEntity> topics) {
+        String canonical = topics.stream().sorted(Comparator.comparing(AiTopicEntity::getId))
+                .map(topic -> topic.getId() + "|" + (topic.getVersion() == null ? 1L : topic.getVersion()))
+                .collect(java.util.stream.Collectors.joining("\n"));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder(64); for (byte b : digest) out.append(String.format("%02x", b)); return out.toString();
+        } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+    }
+
+    private List<TopicContext> readyTopicContexts(UUID contactId) {
+        return topicMapper.listReadyByOwner("CONTACT", contactId).stream().map(topic -> new TopicContext(
+                topic.getId(), topic.getTitle(), topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary(),
+                topic.getFirstOccurredAt(), topic.getLastOccurredAt(), itemMapper.listByTopic(topic.getId()).stream()
+                .map(item -> item.getMessageId() != null ? item.getMessageId()
+                        : item.getCallRecordId() != null ? item.getCallRecordId() : item.getWecomMessageSummaryJobId())
+                .filter(Objects::nonNull).toList())).toList();
+    }
+
+    private AiTopicModels.SourceItem manualReviewSource(AiTopicManualReviewResponse.SourceOption source) {
+        return new AiTopicModels.SourceItem(source.id(), source.sourceType(), source.channelType(), source.occurredAt(),
+                source.direction() == null ? "" : source.direction(), source.subject() == null ? "" : source.subject(),
+                source.text() == null ? "" : source.text());
+    }
+
+    private Map<UUID, Long> parseExpectedVersions(String json) {
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory().constructMapType(Map.class, UUID.class, Long.class));
+        } catch (Exception error) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_INVALID", false, error);
+        }
+    }
+
+    private List<AiTopicManualReviewResponse.Assignment> parseAssignments(String json) {
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory().constructCollectionType(
+                    List.class, AiTopicManualReviewResponse.Assignment.class));
+        } catch (Exception error) {
+            throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_INVALID", false, error);
+        }
+    }
+
+    private void validateManualAssignments(List<AiTopicManualReviewResponse.Assignment> assignments,
+                                           List<AiTopicManualReviewResponse.SourceOption> sources,
+                                           Map<UUID, Long> expectedVersions) {
+        if (assignments == null || assignments.isEmpty() || assignments.size() > 20) {
+            throw new AiTopicException("TOPIC_REVIEW_ASSIGNMENT_INVALID", false);
+        }
+        Set<UUID> allowedSourceIds = sources.stream().map(AiTopicManualReviewResponse.SourceOption::id)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<UUID> assignedSourceIds = new HashSet<>();
+        Set<String> topicKeys = new HashSet<>();
+        for (AiTopicManualReviewResponse.Assignment assignment : assignments) {
+            if (assignment == null || assignment.topicKey() == null || assignment.topicKey().isBlank()
+                    || !topicKeys.add(assignment.topicKey()) || assignment.title() == null || assignment.title().isBlank()
+                    || assignment.title().codePointCount(0, assignment.title().length()) > 200
+                    || assignment.summary() == null || assignment.summary().isBlank()
+                    || assignment.summary().codePointCount(0, assignment.summary().length()) > 4000
+                    || assignment.sourceIds() == null || assignment.sourceIds().isEmpty()) {
+                throw new AiTopicException("TOPIC_REVIEW_ASSIGNMENT_INVALID", false);
+            }
+            try {
+                UUID topicId = UUID.fromString(assignment.topicKey());
+                if (!expectedVersions.containsKey(topicId)) throw new AiTopicException("TOPIC_REVIEW_TOPIC_CONFLICT", false);
+            } catch (IllegalArgumentException ignored) {
+                // Opaque keys represent new topics.
+            }
+            for (UUID sourceId : assignment.sourceIds()) {
+                if (sourceId == null || !allowedSourceIds.contains(sourceId) || !assignedSourceIds.add(sourceId)) {
+                    throw new AiTopicException("TOPIC_REVIEW_ASSIGNMENT_INVALID", false);
+                }
+            }
+        }
+        if (!assignedSourceIds.equals(allowedSourceIds)) throw new AiTopicException("TOPIC_REVIEW_ASSIGNMENT_INVALID", false);
+    }
+
+    private UUID applyManualAssignment(UUID userId, UUID contactId, String fingerprint,
+                                       AiTopicManualReviewResponse.Assignment assignment,
+                                       List<AiTopicManualReviewResponse.SourceOption> sources,
+                                       Map<UUID, Long> expectedVersions) {
+        UUID existingTopicId = null;
+        try { existingTopicId = UUID.fromString(assignment.topicKey()); }
+        catch (IllegalArgumentException ignored) { }
+        if (existingTopicId == null) {
+            AiTopicEntity created = new AiTopicEntity();
+            created.setId(UUID.randomUUID()); created.setOwnerType("CONTACT"); created.setOwnerId(contactId);
+            created.setContactId(contactId); created.setTitle(assignment.title()); created.setAiSummary(assignment.summary());
+            created.setStatus("READY"); created.setFirstOccurredAt(minOccurredAt(sources, null));
+            created.setLastOccurredAt(maxOccurredAt(sources, null)); created.setInputFingerprint(fingerprint); created.setVersion(1L);
+            topicMapper.insert(created);
+            applyManualSources(created.getId(), contactId, sources);
+            versionMapper.insertVersion(created.getId(), 1L, "MANUAL_REVIEW_APPLIED", created.getTitle(),
+                    created.getAiSummary(), "[]", userId);
+            return created.getId();
+        }
+        AiTopicEntity existing = topicMapper.selectById(existingTopicId);
+        Long expectedVersion = expectedVersions.get(existingTopicId);
+        if (existing == null || expectedVersion == null || !expectedVersion.equals(existing.getVersion())
+                || !"CONTACT".equals(existing.getOwnerType()) || !contactId.equals(existing.getOwnerId())
+                || !"READY".equals(existing.getStatus())) {
+            throw new AiTopicException("TOPIC_REVIEW_TOPIC_CONFLICT", false);
+        }
+        applyManualSources(existingTopicId, contactId, sources);
+        Instant first = minOccurredAt(sources, existing.getFirstOccurredAt());
+        Instant last = maxOccurredAt(sources, existing.getLastOccurredAt());
+        if (topicMapper.updateAiGenerated(existingTopicId, assignment.title(), assignment.summary(), first, last,
+                fingerprint, expectedVersion) == 0) {
+            throw new AiTopicException("TOPIC_VERSION_CONFLICT", false);
+        }
+        versionMapper.insertVersion(existingTopicId, expectedVersion + 1, "MANUAL_REVIEW_APPLIED",
+                assignment.title(), assignment.summary(), "[]", userId);
+        return existingTopicId;
+    }
+
+    private void applyManualSources(UUID targetTopicId, UUID contactId,
+                                    List<AiTopicManualReviewResponse.SourceOption> sources) {
+        for (AiTopicManualReviewResponse.SourceOption source : sources) {
+            if (targetTopicId.equals(source.assignedTopicId())) {
+                continue;
+            }
+            if (source.assignedTopicId() != null) {
+                int moved = itemMapper.moveCurrentContactSourceToTopic(targetTopicId, contactId,
+                        source.sourceType().name(), source.id());
+                if (moved != 1) throw new AiTopicException("TOPIC_REVIEW_SOURCE_CONFLICT", false);
+                continue;
+            }
+            int inserted = itemMapper.insertIfAbsent(targetTopicId,
+                    source.sourceType() == SourceType.MESSAGE ? source.id() : null,
+                    source.sourceType() == SourceType.CALL_RECORD ? source.id() : null,
+                    source.sourceType() == SourceType.WECOM_SUMMARY ? source.id() : null,
+                    source.occurredAt(), source.channelType());
+            if (inserted != 1) throw new AiTopicException("TOPIC_REVIEW_SOURCE_CONFLICT", false);
+        }
+    }
+
+    private Instant minOccurredAt(List<AiTopicManualReviewResponse.SourceOption> sources, Instant fallback) {
+        return sources.stream().map(AiTopicManualReviewResponse.SourceOption::occurredAt).filter(Objects::nonNull)
+                .min(Instant::compareTo).map(value -> fallback == null || value.isBefore(fallback) ? value : fallback)
+                .orElse(fallback == null ? Instant.now() : fallback);
+    }
+
+    private Instant maxOccurredAt(List<AiTopicManualReviewResponse.SourceOption> sources, Instant fallback) {
+        return sources.stream().map(AiTopicManualReviewResponse.SourceOption::occurredAt).filter(Objects::nonNull)
+                .max(Instant::compareTo).map(value -> fallback == null || value.isAfter(fallback) ? value : fallback)
+                .orElse(fallback == null ? Instant.now() : fallback);
+    }
+
+    private String requiredJson(Object value) {
+        try { return objectMapper.writeValueAsString(value); }
+        catch (Exception error) { throw new AiTopicException("TOPIC_REVIEW_SNAPSHOT_INVALID", false, error); }
+    }
+
     public IPage<TopicProjection> listStored(UUID userId, String search, String ownerType, int page, int size) {
         Page<AiTopicEntity> query = new Page<>(Math.max(1, page), Math.min(100, Math.max(1, size)));
         boolean admin = topicMapper.isAdmin(userId);
@@ -587,7 +1240,9 @@ public class AiTopicService {
         AiTopicModels.OwnerType ownerType = AiTopicModels.OwnerType.valueOf(topic.getOwnerType() == null ? "CONTACT" : topic.getOwnerType());
         boolean referencedGroup = ownerType == AiTopicModels.OwnerType.WECOM_GROUP;
         String ownerLabel = referencedGroup ? topic.getOwnerLabel() : topic.getContactDisplayName();
-        return new TopicProjection(topic.getId(), topic.getTitle(), topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary(), topic.getConfirmedSummary() == null ? "AI" : "EMPLOYEE", topic.getFirstOccurredAt(), topic.getLastOccurredAt(), channels, sources.size(), sources, topic.getVersion(), topic.getContactId(), topic.getContactDisplayName(), topic.getContactRemark(), topic.getContactChannelType(), topic.getContactChannelNickname(), ownerType, topic.getOwnerId(), ownerLabel, referencedGroup);
+        AiTopicModels.TopicReviewOrigin reviewOrigin = topic.getReviewOrigin() == null
+                ? null : AiTopicModels.TopicReviewOrigin.valueOf(topic.getReviewOrigin());
+        return new TopicProjection(topic.getId(), topic.getTitle(), topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary(), topic.getConfirmedSummary() == null ? "AI" : "EMPLOYEE", topic.getFirstOccurredAt(), topic.getLastOccurredAt(), channels, sources.size(), sources, topic.getVersion(), topic.getContactId(), topic.getContactDisplayName(), topic.getContactRemark(), topic.getContactChannelType(), topic.getContactChannelNickname(), ownerType, topic.getOwnerId(), ownerLabel, referencedGroup, reviewOrigin, topic.getReviewSourceTopicTitle());
     }
 
     private boolean contactHasWeCom(UUID contactId) {

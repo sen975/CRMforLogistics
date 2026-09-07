@@ -23,6 +23,7 @@ public class WeComMessageSummaryJobEntity {
     private String rawResponseJson;
     private String validationStage;
     private String lastErrorCode;
+    private String lastErrorDiagnostic;
     private String failureState;
     private Integer attemptCount;
     private Instant nextAttemptAt;
@@ -59,6 +60,8 @@ public class WeComMessageSummaryJobEntity {
     public void setValidationStage(String validationStage) { this.validationStage = validationStage; }
     public String getLastErrorCode() { return lastErrorCode; }
     public void setLastErrorCode(String lastErrorCode) { this.lastErrorCode = lastErrorCode; }
+    public String getLastErrorDiagnostic() { return lastErrorDiagnostic; }
+    public void setLastErrorDiagnostic(String lastErrorDiagnostic) { this.lastErrorDiagnostic = lastErrorDiagnostic; }
     public String getFailureState() { return failureState; }
     public void setFailureState(String failureState) { this.failureState = failureState; }
     public Integer getAttemptCount() { return attemptCount; }

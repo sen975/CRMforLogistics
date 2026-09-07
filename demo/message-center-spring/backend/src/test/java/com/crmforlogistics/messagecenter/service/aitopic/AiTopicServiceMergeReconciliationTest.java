@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -45,6 +46,8 @@ class AiTopicServiceMergeReconciliationTest {
         when(topics.selectById(topicId)).thenReturn(existing);
         when(items.insertIfAbsent(any(), any(), any(), any(), any(), any())).thenReturn(0);
         when(items.moveArchivedMergedSourceToTopic(topicId, contactId, "MESSAGE", sourceId)).thenReturn(1);
+        when(topics.updateAiGenerated(eq(topicId), anyString(), anyString(), any(), any(), anyString(), eq(1L)))
+                .thenReturn(1);
 
         AiTopicInputService input = mock(AiTopicInputService.class);
         when(input.collect(eq(AiTopicOwnerService.contact(contactId)), eq(userId), any()))
@@ -71,5 +74,7 @@ class AiTopicServiceMergeReconciliationTest {
         service.generate(job, userId, gateway);
 
         verify(items).moveArchivedMergedSourceToTopic(topicId, contactId, "MESSAGE", sourceId);
+        verify(topics).updateAiGenerated(eq(topicId), eq("报价"), eq("报价讨论"), any(),
+                eq(Instant.parse("2026-08-02T00:00:00Z")), eq("f".repeat(64)), eq(1L));
     }
 }

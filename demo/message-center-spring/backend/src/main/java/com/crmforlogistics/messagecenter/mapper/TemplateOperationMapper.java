@@ -16,11 +16,11 @@ import java.util.UUID;
 @Mapper
 public interface TemplateOperationMapper extends BaseMapper<TemplateOperationEntity> {
 
-    @Insert("insert into template_operations (id, channel_account_id, template_id, change_request_id, idempotency_key, operation_type, "
+    @Insert("insert into template_operations (id, channel_account_id, idempotency_key, operation_type, "
             + "provider_template_id, language_code, requested_snapshot_jsonb, operation_status, "
             + "provider_request_id, provider_code, error_code, error_message, next_reconcile_at, "
             + "reconcile_attempt_count, actor_user_id, trace_id, lease_owner, lease_until, started_at, completed_at) "
-            + "values (#{id}::uuid, #{channelAccountId}::uuid, #{templateId}::uuid, #{changeRequestId}::uuid, #{idempotencyKey}, #{operationType}, "
+            + "values (#{id}::uuid, #{channelAccountId}::uuid, #{idempotencyKey}, #{operationType}, "
             + "#{providerTemplateId}, #{languageCode}, cast(#{requestedSnapshotJsonb} as jsonb), "
             + "#{operationStatus}, #{providerRequestId}, #{providerCode}, #{errorCode}, #{errorMessage}, "
             + "#{nextReconcileAt}, coalesce(#{reconcileAttemptCount}, 0), #{actorUserId}::uuid, #{traceId}, "

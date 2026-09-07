@@ -26,7 +26,9 @@ public interface WeComMessageSummaryJobMapper extends BaseMapper<WeComMessageSum
             + "WHERE status IN ('PENDING','SUBMITTED','RETRY_WAIT') "
             + "AND next_attempt_at <= #{now} "
             + "AND (lease_until IS NULL OR lease_until <= #{now}) "
-            + "ORDER BY next_attempt_at, created_at, id FOR UPDATE SKIP LOCKED LIMIT 1")
+            + "ORDER BY CASE status WHEN 'PENDING' THEN 0 WHEN 'SUBMITTED' THEN 1 "
+            + "WHEN 'RETRY_WAIT' THEN 2 ELSE 3 END, next_attempt_at, created_at, id "
+            + "FOR UPDATE SKIP LOCKED LIMIT 1")
     UUID leaseCandidate(@Param("now") Instant now);
 
     @Update("UPDATE wecom_message_summary_jobs SET lease_owner=#{owner}, lease_until=#{leaseUntil}, updated_at=#{now} "
@@ -51,27 +53,30 @@ public interface WeComMessageSummaryJobMapper extends BaseMapper<WeComMessageSum
 
     @Update("UPDATE wecom_message_summary_jobs SET status='COMPLETED', summary=#{summary}, "
             + "raw_response_json=#{rawResponseJson}, validation_stage=#{validationStage}, "
+            + "last_error_code=NULL, last_error_diagnostic=NULL, failure_state=NULL, "
             + "lease_owner=NULL, lease_until=NULL, completed_at=#{now}, updated_at=#{now} "
-            + "WHERE id=#{jobId} AND status='SUBMITTED'")
+            + "WHERE id=#{jobId} AND status IN ('SUBMITTED','RETRY_WAIT') "
+            + "AND wecom_job_id IS NOT NULL")
     int updateCompleted(@Param("jobId") UUID jobId, @Param("summary") String summary,
                         @Param("rawResponseJson") String rawResponseJson,
                         @Param("validationStage") String validationStage, @Param("now") Instant now);
 
     @Update("UPDATE wecom_message_summary_jobs SET status='RETRY_WAIT', attempt_count=attempt_count+1, "
-            + "next_attempt_at=#{nextAttemptAt}, raw_response_json=#{rawResponseJson}, "
-            + "validation_stage=#{validationStage}, last_error_code=#{code}, lease_owner=NULL, lease_until=NULL, updated_at=now() "
+            + "next_attempt_at=#{nextAttemptAt}, raw_response_json=CASE WHEN coalesce(#{rawResponseJson}, '') = '' THEN raw_response_json ELSE #{rawResponseJson} END, "
+            + "validation_stage=#{validationStage}, last_error_code=#{code}, last_error_diagnostic=#{errorDiagnostic}, lease_owner=NULL, lease_until=NULL, updated_at=now() "
             + "WHERE id=#{jobId} AND status IN ('PENDING','SUBMITTED','RETRY_WAIT') AND attempt_count < #{maxAttempts}")
     int updateRetry(@Param("jobId") UUID jobId, @Param("code") String code,
-                    @Param("rawResponseJson") String rawResponseJson,
+                    @Param("rawResponseJson") String rawResponseJson, @Param("errorDiagnostic") String errorDiagnostic,
                     @Param("validationStage") String validationStage,
                     @Param("nextAttemptAt") Instant nextAttemptAt, @Param("maxAttempts") int maxAttempts);
 
     @Update("UPDATE wecom_message_summary_jobs SET status='FAILED', last_error_code=#{code}, failure_state=#{state}, "
-            + "raw_response_json=#{rawResponseJson}, validation_stage=#{validationStage}, "
+            + "raw_response_json=CASE WHEN coalesce(#{rawResponseJson}, '') = '' THEN raw_response_json ELSE #{rawResponseJson} END, validation_stage=#{validationStage}, "
+            + "last_error_diagnostic=#{errorDiagnostic}, "
             + "lease_owner=NULL, lease_until=NULL, completed_at=#{now}, updated_at=#{now} "
             + "WHERE id=#{jobId} AND status IN ('PENDING','SUBMITTED','RETRY_WAIT')")
     int updateFailed(@Param("jobId") UUID jobId, @Param("code") String code, @Param("state") String state,
-                     @Param("rawResponseJson") String rawResponseJson,
+                     @Param("rawResponseJson") String rawResponseJson, @Param("errorDiagnostic") String errorDiagnostic,
                      @Param("validationStage") String validationStage, @Param("now") Instant now);
 
     @Select("SELECT EXISTS (SELECT 1 FROM wecom_message_summary_jobs WHERE installation_id=#{installationId} AND msgid=#{msgid})")

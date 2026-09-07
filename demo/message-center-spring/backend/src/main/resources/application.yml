@@ -99,6 +99,7 @@ app:
   wecom-chatdata-public-key-auto-register: ${WECOM_CHATDATA_PUBLIC_KEY_AUTO_REGISTER:false}
   wecom-chatdata-auto-sync-enabled: ${WECOM_CHATDATA_AUTO_SYNC_ENABLED:true}
   wecom-chatdata-auto-sync-interval-seconds: ${WECOM_CHATDATA_AUTO_SYNC_INTERVAL_SECONDS:60}
+  wecom-external-group-sync-poll-interval-seconds: ${WECOM_EXTERNAL_GROUP_SYNC_POLL_INTERVAL_SECONDS:60}
 
   # 企业微信审计自动保留与分批清理
   wecom-audit-retention-days: ${WECOM_AUDIT_RETENTION_DAYS:7}

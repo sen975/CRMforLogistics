@@ -23,6 +23,7 @@ public class WeComChatDataMessageEntity {
     private String userid;
     private Long sendTime;
     private String msgtype;
+    private String mediaJson;
     private String direction;
     private String ingestStatus;
     private Instant createdAt;
@@ -63,6 +64,9 @@ public class WeComChatDataMessageEntity {
 
     public String getMsgtype() { return msgtype; }
     public void setMsgtype(String msgtype) { this.msgtype = msgtype; }
+
+    public String getMediaJson() { return mediaJson; }
+    public void setMediaJson(String mediaJson) { this.mediaJson = mediaJson; }
 
     public String getDirection() { return direction; }
     public void setDirection(String direction) { this.direction = direction; }

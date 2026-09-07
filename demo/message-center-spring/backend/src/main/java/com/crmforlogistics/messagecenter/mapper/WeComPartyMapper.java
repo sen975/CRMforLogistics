@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import com.crmforlogistics.messagecenter.entity.WeComPartyEntity;
 
 import java.util.UUID;
+import java.util.Optional;
 
 @Mapper
 public interface WeComPartyMapper extends BaseMapper<WeComPartyEntity> {
@@ -27,4 +28,14 @@ public interface WeComPartyMapper extends BaseMapper<WeComPartyEntity> {
             + "order by last_seen_at desc, id limit #{limit}")
     java.util.List<WeComPartyEntity> listProfileBackfillCandidates(
             @Param("installationId") UUID installationId, @Param("limit") int limit);
+
+    @Select("select nullif(trim(p.avatar_url), '') from wecom_parties p "
+            + "join wecom_installations i on i.id = p.installation_id "
+            + "where i.suite_id = #{suiteId} and i.auth_corp_id = #{authCorpId} "
+            + "and i.auth_status = 'ACTIVE' and i.deleted_at is null "
+            + "and p.party_type = 'EMPLOYEE' and p.provider_party_id = #{wecomUserId} "
+            + "and nullif(trim(p.avatar_url), '') is not null order by p.updated_at desc limit 1")
+    Optional<String> findEmployeeAvatarUrl(@Param("suiteId") String suiteId,
+                                           @Param("authCorpId") String authCorpId,
+                                           @Param("wecomUserId") String wecomUserId);
 }

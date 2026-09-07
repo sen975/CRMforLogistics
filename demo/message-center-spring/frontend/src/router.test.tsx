@@ -8,5 +8,6 @@ describe('canonical conversation routes', () => {
     expect(paths).toContain('conversations/contact/:contactId');
     expect(paths).toContain('conversations/wecom-group/:sourceConversationId');
     expect(paths).toContain('thread/:contactId');
+    expect(paths).toContain('settings/users');
   });
 });

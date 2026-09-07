@@ -3,7 +3,9 @@ package com.crmforlogistics.messagecenter.service.aitopic;
 import com.crmforlogistics.messagecenter.config.AiTopicConfig;
 import com.crmforlogistics.messagecenter.entity.AiTopicGenerationJobEntity;
 import com.crmforlogistics.messagecenter.mapper.AiTopicGenerationJobMapper;
+import com.crmforlogistics.messagecenter.service.wecom.WeComGroupNameRefreshService;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Instant;
 import java.util.List;
@@ -14,6 +16,7 @@ import org.mockito.ArgumentCaptor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -38,6 +41,32 @@ class AiTopicGenerationWorkerTest {
         new AiTopicGenerationWorker(jobs, service, gateway, config).runOnce();
 
         verify(service).generate(job, actor, gateway);
+    }
+
+    @Test
+    void successfulWeComGroupTopicQueuesANameRefreshWithoutChangingTopicCompletion() {
+        AiTopicGenerationJobMapper jobs = mock(AiTopicGenerationJobMapper.class);
+        AiTopicService service = mock(AiTopicService.class);
+        TopicAiGateway gateway = mock(TopicAiGateway.class);
+        WeComGroupNameRefreshService refresh = mock(WeComGroupNameRefreshService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WeComGroupNameRefreshService> refreshProvider = mock(ObjectProvider.class);
+        when(refreshProvider.getIfAvailable()).thenReturn(refresh);
+        AiTopicConfigHolder config = new AiTopicConfigHolder(
+                new AiTopicConfig("https://provider.example", "key", "model", 30, 200, 262144, .65, 1, 3, 120, 30));
+        AiTopicGenerationJobEntity job = new AiTopicGenerationJobEntity();
+        UUID groupId = UUID.randomUUID();
+        job.setId(UUID.randomUUID());
+        job.setOwnerType("WECOM_GROUP");
+        job.setOwnerId(groupId);
+        job.setAttemptCount(0);
+        when(jobs.listRunnable(any(Instant.class), eq(1))).thenReturn(List.of(job));
+        when(jobs.claim(eq(job.getId()), any(String.class), any(Instant.class))).thenReturn(1);
+
+        new AiTopicGenerationWorker(jobs, service, gateway, config, refreshProvider).runOnce();
+
+        verify(jobs).finish(eq(job.getId()), any(String.class), eq("COMPLETED"), isNull(), isNull(), any(), any());
+        verify(refresh).requestAfterTopicUpdated(groupId);
     }
 
     @Test

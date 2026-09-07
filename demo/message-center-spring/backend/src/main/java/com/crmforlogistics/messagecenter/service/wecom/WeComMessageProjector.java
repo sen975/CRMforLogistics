@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -35,6 +36,7 @@ public class WeComMessageProjector {
     private final MessageMapper messages;
     private final WeComExternalContactService externalContacts;
     private final WeComPartyMapper parties;
+    private final WeComSourceConversationMapper sourceConversations;
 
     @Autowired
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -43,7 +45,8 @@ public class WeComMessageProjector {
                                  ConversationMapper conversations,
                                  MessageMapper messages,
                                  WeComExternalContactService externalContacts,
-                                 WeComPartyMapper parties) {
+                                 WeComPartyMapper parties,
+                                 WeComSourceConversationMapper sourceConversations) {
         this.accountMapper = channelAccounts;
         this.identities = identities;
         this.contacts = contacts;
@@ -51,6 +54,7 @@ public class WeComMessageProjector {
         this.messages = messages;
         this.externalContacts = externalContacts;
         this.parties = parties;
+        this.sourceConversations = sourceConversations;
     }
 
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -58,7 +62,7 @@ public class WeComMessageProjector {
                           ContactMapper contacts,
                           ConversationMapper conversations,
                           MessageMapper messages) {
-        this(channelAccounts, identities, contacts, conversations, messages, null, null);
+        this(channelAccounts, identities, contacts, conversations, messages, null, null, null);
     }
 
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -67,7 +71,17 @@ public class WeComMessageProjector {
                                  ConversationMapper conversations,
                                  MessageMapper messages,
                                  WeComExternalContactService externalContacts) {
-        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, null);
+        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, null, null);
+    }
+
+    public WeComMessageProjector(ChannelAccountMapper channelAccounts,
+                                 ContactIdentityMapper identities,
+                                 ContactMapper contacts,
+                                 ConversationMapper conversations,
+                                 MessageMapper messages,
+                                 WeComExternalContactService externalContacts,
+                                 WeComPartyMapper parties) {
+        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, parties, null);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -140,10 +154,12 @@ public class WeComMessageProjector {
         }
         ChannelAccountEntity account = accountMapper.selectSingleActiveByChannelType("wecom");
         if (messages.findByProviderMessageId(account.getId(), item.msgid()).isPresent()) {
-            findOrCreateDirectIdentity(account, item, item.contactParty());
+            ContactIdentityEntity identity = findOrCreateDirectIdentity(account, item, item.contactParty());
+            bindDirectSourceConversation(item.sourceConversationId(), identity);
             return new ProjectionResult(false);
         }
         ContactIdentityEntity identity = findOrCreateDirectIdentity(account, item, item.contactParty());
+        bindDirectSourceConversation(item.sourceConversationId(), identity);
         ConversationEntity conversation = conversations.getOrCreateConversation(account.getId(), identity.getId());
         Instant occurredAt = Instant.ofEpochSecond(item.sendTime());
         MessageEntity message = new MessageEntity();
@@ -161,6 +177,12 @@ public class WeComMessageProjector {
         message.setMetadataJsonb("{\"wecomReference\":true,\"conversationType\":\"DIRECT\"}");
         messages.insertWithSequence(message);
         return new ProjectionResult(true);
+    }
+
+    private void bindDirectSourceConversation(UUID sourceConversationId, ContactIdentityEntity identity) {
+        if (sourceConversations == null || sourceConversationId == null || identity == null
+                || identity.getId() == null) return;
+        sourceConversations.bindContactIdentity(sourceConversationId, identity.getId());
     }
 
     private ContactIdentityEntity findOrCreateDirectIdentity(ChannelAccountEntity account,

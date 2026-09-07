@@ -1,7 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.chatapp;
 
 import com.aliyun.auth.credentials.Credential;
-import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
 import com.aliyun.auth.credentials.provider.ICredentialProvider;
 import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
 import com.aliyun.sdk.service.cams20200606.AsyncClient;
@@ -11,7 +10,8 @@ import com.aliyun.sdk.service.cams20200606.models.SendChatappMassMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMassMessageResponseBody;
 import com.aliyun.sdk.gateway.pop.exception.PopClientException;
 import com.aliyun.sdk.gateway.pop.exception.PopServerException;
-import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageStatusNormalizer;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastException;
@@ -36,35 +36,36 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Supplier;
 
 @Component
 public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
     private static final int PROVIDER_TIMEOUT_SECONDS = 30;
     private static final Logger LOG = LoggerFactory.getLogger(AliyunChatAppBroadcastGateway.class);
 
-    private final AppConfig config;
-    private final Supplier<AsyncClient> clientSupplier;
+    private final ChannelAccountMapper accountMapper;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
 
     @Autowired
-    public AliyunChatAppBroadcastGateway(AppConfig config) {
-        this(config, () -> createClient(config));
-    }
-
-    AliyunChatAppBroadcastGateway(AppConfig config, Supplier<AsyncClient> clientSupplier) {
-        this.config = Objects.requireNonNull(config);
-        this.clientSupplier = Objects.requireNonNull(clientSupplier);
+    public AliyunChatAppBroadcastGateway(ChannelAccountMapper accountMapper,
+                                         ChatAppAccountCredentialsResolver credentialsResolver) {
+        this.accountMapper = Objects.requireNonNull(accountMapper);
+        this.credentialsResolver = Objects.requireNonNull(credentialsResolver);
     }
 
     @Override
     public SubmissionResult submit(BroadcastSubmission command) {
-        SendChatappMassMessageRequest request = buildSubmitRequest(command, required(config.custSpaceId()));
-        try (AsyncClient client = clientSupplier.get()) {
+        try {
+            ChatAppAccountCredentials credentials = credentials(command.channelAccountId());
+            SendChatappMassMessageRequest request = buildSubmitRequest(command, credentials.custSpaceId());
+            try (AsyncClient client = createClient(credentials)) {
             var response = client.sendChatappMassMessage(request)
                     .get(PROVIDER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             return parseSubmission(response == null ? null : response.getBody());
+            }
         } catch (ChatAppBroadcastException e) {
             throw e;
+        } catch (ChatAppAccountCredentialsException e) {
+            throw accountCredentialFailure(e);
         } catch (Exception e) {
             ChatAppBroadcastException mapped = submissionFailure(e);
             LOG.warn("ChatApp broadcast submission failed: providerCode={}, requestId={}",
@@ -75,13 +76,18 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
 
     @Override
     public ReconciliationPage reconcile(BroadcastQuery query) {
-        ListChatappMessageRequest request = buildQueryRequest(query, required(config.custSpaceId()));
-        try (AsyncClient client = clientSupplier.get()) {
+        try {
+            ChatAppAccountCredentials credentials = credentials(query.channelAccountId());
+            ListChatappMessageRequest request = buildQueryRequest(query, credentials.custSpaceId());
+            try (AsyncClient client = createClient(credentials)) {
             var response = client.listChatappMessage(request)
                     .get(PROVIDER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             return parseReconciliation(response == null ? null : response.getBody(), query.page(), query.size());
+            }
         } catch (ChatAppBroadcastException e) {
             throw e;
+        } catch (ChatAppAccountCredentialsException e) {
+            throw accountCredentialFailure(e);
         } catch (Exception e) {
             ChatAppBroadcastException mapped = reconciliationFailure(e);
             LOG.warn("ChatApp broadcast reconciliation failed: providerCode={}, requestId={}",
@@ -177,6 +183,12 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
                 "CHATAPP_BROADCAST_RECONCILIATION_UNAVAILABLE", HttpStatus.BAD_GATEWAY,
                 false, reconciliationRetryable(error, failure), failure.code(),
                 failure.requestId(), failure.message(), error);
+    }
+
+    private static ChatAppBroadcastException accountCredentialFailure(
+            ChatAppAccountCredentialsException error) {
+        return new ChatAppBroadcastException(error.code(), HttpStatus.CONFLICT,
+                false, false, error.code(), "", error.code(), error);
     }
 
     static ReconciliationPage parseReconciliation(
@@ -299,24 +311,25 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
         }
     }
 
-    private static AsyncClient createClient(AppConfig config) {
-        String region = defaulted(config.camsRegion(), "ap-southeast-1");
-        return AsyncClient.builder()
-                .region(region)
-                .credentialsProvider(credentials(config))
-                .overrideConfiguration(ClientOverrideConfiguration.create().setEndpointOverride(
-                        defaulted(config.camsEndpoint(), "cams." + region + ".aliyuncs.com")))
-                .build();
+    private ChatAppAccountCredentials credentials(java.util.UUID accountId) {
+        ChannelAccountEntity account = accountId == null ? null : accountMapper.selectById(accountId);
+        if (account == null || account.getDeletedAt() != null
+                || !("chatapp".equalsIgnoreCase(account.getChannelType())
+                || "whatsapp".equalsIgnoreCase(account.getChannelType()))
+                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
+            throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
+        }
+        return credentialsResolver.resolve(account);
     }
 
-    private static ICredentialProvider credentials(AppConfig config) {
-        if (config.aliyunAccessKeyId() != null && !config.aliyunAccessKeyId().isBlank()
-                && config.aliyunAccessKeySecret() != null && !config.aliyunAccessKeySecret().isBlank()) {
-            return StaticCredentialProvider.create(Credential.builder()
-                    .accessKeyId(config.aliyunAccessKeyId())
-                    .accessKeySecret(config.aliyunAccessKeySecret()).build());
-        }
-        return DefaultCredentialProvider.builder().build();
+    private static AsyncClient createClient(ChatAppAccountCredentials credentials) {
+        return AsyncClient.builder()
+                .region(credentials.region())
+                .credentialsProvider(StaticCredentialProvider.create(Credential.builder()
+                        .accessKeyId(credentials.accessKeyId())
+                        .accessKeySecret(credentials.accessKeySecret()).build()))
+                .overrideConfiguration(ClientOverrideConfiguration.create().setEndpointOverride(credentials.endpoint()))
+                .build();
     }
 
     private static String required(String value) {

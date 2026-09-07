@@ -4,6 +4,8 @@ import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMassMessageResponseBody;
 import com.aliyun.sdk.gateway.pop.exception.PopServerException;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastException;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.BroadcastQuery;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.BroadcastSubmission;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastGateway.ReconciliationItem;
@@ -23,8 +25,37 @@ import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAp
 import static com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus.SENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AliyunChatAppBroadcastGatewayTest {
+
+    @Test
+    void mapsMissingAccountCredentialsWithoutClaimingSubmissionIsUnknown() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        ChatAppAccountCredentialsResolver credentialsResolver = mock(ChatAppAccountCredentialsResolver.class);
+        UUID accountId = UUID.randomUUID();
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(accountId);
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        account.setAccountIdentifier("60199999999");
+        when(accountMapper.selectById(accountId)).thenReturn(account);
+        when(credentialsResolver.resolve(account)).thenThrow(
+                new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"));
+        AliyunChatAppBroadcastGateway gateway = new AliyunChatAppBroadcastGateway(
+                accountMapper, credentialsResolver);
+        BroadcastSubmission command = new BroadcastSubmission(
+                accountId, "60199999999", "shipping_notice", "Shipping Notice", "zh_CN", "task-1",
+                List.of(new SubmissionRecipient("60111111111", Map.of())));
+
+        assertThatThrownBy(() -> gateway.submit(command))
+                .isInstanceOfSatisfying(ChatAppBroadcastException.class, error -> {
+                    assertThat(error.getMessage()).isEqualTo("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+                    assertThat(error.resultUnknown()).isFalse();
+                    assertThat(error.retryable()).isFalse();
+                });
+    }
 
     @Test
     void buildsTheOfficialMassMessageRequestFromFrozenSnapshots() {

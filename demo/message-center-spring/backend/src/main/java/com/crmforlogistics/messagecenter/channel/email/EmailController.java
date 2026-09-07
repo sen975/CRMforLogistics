@@ -1,5 +1,8 @@
 package com.crmforlogistics.messagecenter.channel.email;
 
+import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -34,7 +37,9 @@ public class EmailController {
             String to = body.get("to");
             String subject = body.getOrDefault("subject", "");
             String emailBody = body.getOrDefault("body", "");
-            EmailSendService.SendResult result = sendService.send(to, subject, emailBody);
+            EmailSendService.SendResult result = currentUserIdOrNull() == null
+                    ? sendService.send(to, subject, emailBody)
+                    : sendService.send(SecurityUtil.currentUserId(), to, subject, emailBody);
             return ResponseEntity.ok(result);
         } catch (EmailException exception) {
             throw exception;
@@ -54,13 +59,20 @@ public class EmailController {
                         file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename(),
                         file.getContentType(), file.getSize(), file::getInputStream))
                 .toList();
-        return ResponseEntity.ok(sendService.send(to, subject, body, inputs));
+        var ownerId = currentUserIdOrNull();
+        return ResponseEntity.ok(ownerId == null
+                ? sendService.send(to, subject, body, inputs)
+                : sendService.send(ownerId, to, subject, body, inputs));
     }
 
     @PostMapping("/sync")
     public ResponseEntity<?> sync() {
         try {
-            EmailSyncService.SyncResult result = syncService.receiveLatest();
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            EmailSyncService.SyncResult result = auth == null || !auth.isAuthenticated()
+                    || "anonymousUser".equals(auth.getName())
+                    ? syncService.receiveLatest()
+                    : syncService.receiveLatest(SecurityUtil.currentUserId());
             return ResponseEntity.ok(result);
         } catch (EmailException exception) {
             throw exception;
@@ -69,4 +81,11 @@ public class EmailController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
+    private java.util.UUID currentUserIdOrNull() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) return null;
+        return SecurityUtil.currentUserId();
+    }
+
 }

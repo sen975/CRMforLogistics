@@ -98,7 +98,7 @@ public class ChatAppBroadcastApplicationService {
 
     @Transactional(readOnly = true)
     public List<TemplateResponse> sendableTemplates(UUID channelAccountId, UUID actorUserId) {
-        requireAccountAccess(channelAccountId, actorUserId, false);
+        requireAccountAccess(channelAccountId, actorUserId);
         return chatAppTemplateService.listForAccount(channelAccountId);
     }
 
@@ -112,11 +112,9 @@ public class ChatAppBroadcastApplicationService {
             return idempotentResult(existing.orElseThrow(), requestFingerprint, actorUserId);
         }
 
-        requireAccountAccess(command.channelAccountId(), actorUserId, false);
-        var account = accountResolver.requireCurrentAccount(command.channelAccountId());
-        TemplateEntity template = java.util.Optional.ofNullable(account.getProviderScopeId())
-                .flatMap(scopeId -> templateMapper.findSharedForSend(
-                        scopeId, command.templateCode(), command.languageCode()))
+        requireAccountAccess(command.channelAccountId(), actorUserId);
+        TemplateEntity template = templateMapper.findForSend(
+                        command.channelAccountId(), command.templateCode(), command.languageCode())
                 .orElseThrow(() -> error(
                         "CHATAPP_BROADCAST_TEMPLATE_NOT_SENDABLE", HttpStatus.CONFLICT));
         if (template.getBody() == null || template.getBody().isBlank()) {
@@ -231,22 +229,21 @@ public class ChatAppBroadcastApplicationService {
 
     @Transactional(readOnly = true)
     public BroadcastPage list(UUID channelAccountId, int page, int size, UUID actorUserId) {
-        requireAccountAccess(channelAccountId, actorUserId, true);
-        boolean isAdmin = broadcastMapper.isAdmin(actorUserId);
+        requireAccountAccess(channelAccountId, actorUserId);
         int safePage = Math.max(page, 1);
         if (size < 1 || size > 100) {
             throw error("CHATAPP_BROADCAST_PAGE_INVALID", HttpStatus.BAD_REQUEST);
         }
         QueryWrapper<ChatAppBroadcastEntity> countQuery = new QueryWrapper<ChatAppBroadcastEntity>()
                 .eq("channel_account_id", channelAccountId)
-                .eq(!isAdmin, "created_by_user_id", actorUserId);
+                .eq("created_by_user_id", actorUserId);
         long total = broadcastMapper.selectCount(countQuery);
         List<BroadcastView> records = List.of();
         if (total > 0) {
             long offset = (long) (safePage - 1) * size;
             QueryWrapper<ChatAppBroadcastEntity> pageQuery = new QueryWrapper<ChatAppBroadcastEntity>()
                     .eq("channel_account_id", channelAccountId)
-                    .eq(!isAdmin, "created_by_user_id", actorUserId)
+                    .eq("created_by_user_id", actorUserId)
                     .orderByDesc("created_at").orderByDesc("id")
                     .last("LIMIT " + size + " OFFSET " + offset);
             records = broadcastMapper.selectList(pageQuery).stream().map(ChatAppBroadcastApplicationService::view)
@@ -259,7 +256,7 @@ public class ChatAppBroadcastApplicationService {
     public BroadcastDetail detail(UUID broadcastId, UUID actorUserId) {
         ChatAppBroadcastEntity broadcast = requireBroadcast(broadcastId);
         requireBroadcastAccess(broadcast, actorUserId);
-        accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        accountResolver.requireOwnedAccount(actorUserId, broadcast.getChannelAccountId());
         List<RecipientView> recipients = recipientMapper.findByBroadcastId(broadcastId).stream()
                 .map(this::recipientView).toList();
         String diagnostic = evidenceMapper.findLatestDiagnostic(broadcastId)
@@ -277,7 +274,7 @@ public class ChatAppBroadcastApplicationService {
         ChatAppBroadcastEntity broadcast = broadcastMapper.findByIdForUpdate(broadcastId)
                 .orElseThrow(() -> error("CHATAPP_BROADCAST_NOT_FOUND", HttpStatus.NOT_FOUND));
         requireBroadcastAccess(broadcast, actorUserId);
-        accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        accountResolver.requireOwnedAccount(actorUserId, broadcast.getChannelAccountId());
         if (!Set.of(BroadcastStatus.SUBMITTED, BroadcastStatus.RECONCILING,
                 BroadcastStatus.STATUS_UNKNOWN).contains(BroadcastStatus.valueOf(broadcast.getStatus()))) {
             throw error("CHATAPP_BROADCAST_RECONCILIATION_NOT_ALLOWED", HttpStatus.CONFLICT);
@@ -304,7 +301,7 @@ public class ChatAppBroadcastApplicationService {
     public RecipientPage failures(UUID broadcastId, int page, int size, UUID actorUserId) {
         ChatAppBroadcastEntity broadcast = requireBroadcast(broadcastId);
         requireBroadcastAccess(broadcast, actorUserId);
-        accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        accountResolver.requireOwnedAccount(actorUserId, broadcast.getChannelAccountId());
         int safePage = Math.max(page, 1);
         if (size < 1 || size > 100) {
             throw error("CHATAPP_BROADCAST_PAGE_INVALID", HttpStatus.BAD_REQUEST);
@@ -323,7 +320,7 @@ public class ChatAppBroadcastApplicationService {
         ChatAppBroadcastEntity original = broadcastMapper.findByIdForUpdate(broadcastId)
                 .orElseThrow(() -> error("CHATAPP_BROADCAST_NOT_FOUND", HttpStatus.NOT_FOUND));
         requireBroadcastAccess(original, actorUserId);
-        accountResolver.requireCurrentAccount(original.getChannelAccountId());
+        accountResolver.requireOwnedAccount(actorUserId, original.getChannelAccountId());
         List<ChatAppBroadcastRecipientEntity> failed =
                 recipientMapper.findFailures(broadcastId, 1000, 0);
         if (failed.isEmpty()) {
@@ -375,32 +372,25 @@ public class ChatAppBroadcastApplicationService {
     private BroadcastView idempotentResult(
             ChatAppBroadcastEntity existing, String requestFingerprint, UUID actorUserId) {
         requireBroadcastAccess(existing, actorUserId);
+        accountResolver.requireOwnedAccount(actorUserId, existing.getChannelAccountId());
         if (!requestFingerprint.equals(existing.getRequestFingerprint())) {
             throw error("CHATAPP_BROADCAST_IDEMPOTENCY_CONFLICT", HttpStatus.CONFLICT);
         }
         return view(existing);
     }
 
-    private void requireAccountAccess(
-            UUID channelAccountId, UUID actorUserId, boolean allowHistoricalCreator) {
+    private void requireAccountAccess(UUID channelAccountId, UUID actorUserId) {
         if (channelAccountId == null || actorUserId == null) {
             throw error("CHATAPP_BROADCAST_REQUEST_INVALID", HttpStatus.BAD_REQUEST);
         }
-        accountResolver.requireCurrentAccount(channelAccountId);
-        boolean accessible = identityMapper.canAccessChatAppAccount(channelAccountId, actorUserId);
-        if (!accessible && allowHistoricalCreator) {
-            accessible = broadcastMapper.existsCreatedByAccount(channelAccountId, actorUserId);
-        }
-        if (!accessible) {
-            throw error("CHATAPP_BROADCAST_ACCOUNT_FORBIDDEN", HttpStatus.FORBIDDEN);
-        }
+        accountResolver.requireOwnedAccount(actorUserId, channelAccountId);
     }
 
     private void requireBroadcastAccess(ChatAppBroadcastEntity broadcast, UUID actorUserId) {
         if (actorUserId == null) {
             throw error("CHATAPP_BROADCAST_REQUEST_INVALID", HttpStatus.BAD_REQUEST);
         }
-        if (!actorUserId.equals(broadcast.getCreatedByUserId()) && !broadcastMapper.isAdmin(actorUserId)) {
+        if (!actorUserId.equals(broadcast.getCreatedByUserId())) {
             throw error("CHATAPP_BROADCAST_FORBIDDEN", HttpStatus.FORBIDDEN);
         }
     }

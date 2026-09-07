@@ -11,6 +11,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class EmailMimeParserTest {
     @Test
+    void decodesHtmlEntitiesWhenProjectingHtmlToPlainText() throws Exception {
+        MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
+        message.setContent("<p>品名：LED&nbsp;灯带&nbsp;&amp;&nbsp;数量：800</p>", "text/html; charset=UTF-8");
+        message.saveChanges();
+
+        var parsed = new EmailMimeParser().parse(message);
+
+        assertEquals("品名：LED 灯带 & 数量：800", parsed.bodyText());
+    }
+
+    @Test
     void selectsPlainBodyAndReturnsOnlyOrdinaryAttachments() throws Exception {
         MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
         var mixed = new MimeMultipart("mixed");

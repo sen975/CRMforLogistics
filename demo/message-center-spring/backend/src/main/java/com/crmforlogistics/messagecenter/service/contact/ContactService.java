@@ -302,6 +302,46 @@ public class ContactService {
                 contactUuid.toString(), phonePoint, identity.getDisplayName());
     }
 
+    public PhoneContactBindingResponse bindPhone(UUID ownerId, String contactId, String contactName,
+                                                  String phoneNumber) {
+        Objects.requireNonNull(ownerId, "ownerId");
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            throw new IllegalArgumentException("phoneNumber is required");
+        }
+        UUID contactUuid = UUID.fromString(contactId);
+        contactMapper.findByIdAndOwner(contactUuid, ownerId)
+                .orElseThrow(() -> new IllegalArgumentException("Contact not found: " + contactUuid));
+        String digits = phoneNumber.replaceAll("[^0-9+]", "");
+        if (digits.startsWith("+")) digits = digits.substring(1);
+        String scope = ownerId.toString();
+        Optional<ContactIdentityEntity> existing = contactIdentityMapper
+                .findByNormalizedValueInScope("phone", scope, digits);
+        if (existing.isPresent()) {
+            ContactIdentityEntity found = existing.get();
+            return new PhoneContactBindingResponse(found.getContactId().toString(),
+                    found.getIdentityValue(), found.getDisplayName());
+        }
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(contactUuid);
+        identity.setChannelType("phone");
+        identity.setIdentityScope(scope);
+        identity.setIdentityValue("phone:" + digits);
+        identity.setNormalizedValue(digits);
+        identity.setDisplayName(contactName != null ? contactName : phoneNumber);
+        identity.setIsPrimary(false);
+        identity.setVerifyStatus("unverified");
+        identity.setSource("manual");
+        identity.setCreatedAt(Instant.now());
+        identity.setUpdatedAt(Instant.now());
+        identity.setVersion(1L);
+        if (contactIdentityMapper.insertIfAbsent(identity) != 1) {
+            throw new IllegalArgumentException("Phone identity already exists");
+        }
+        return new PhoneContactBindingResponse(contactUuid.toString(),
+                identity.getIdentityValue(), identity.getDisplayName());
+    }
+
     private static int clampSize(int size) {
         if (size <= 0) {
             return 20;

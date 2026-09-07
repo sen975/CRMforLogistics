@@ -13,6 +13,69 @@
 - 不允许通过并发 `setData()` 实现 latest-wins；官方 frame 的更新必须串行提交。
 - 联系人与群聊切换不得创建新的 OpenDataFrame。
 
+## 2026-08-27 需求变更记录：资料 API 与 frame 消息元数据
+
+### 2026-08-28 在线官方文档复核记录
+
+本轮通过企业微信开发者中心“服务商代开发”文档页面在线复核以下请求与字段，证据页面已按文档编号保存于本次验收记录：
+
+- [96255 读取成员](https://developer.work.weixin.qq.com/document/path/96255)：`GET /cgi-bin/user/get?access_token=ACCESS_TOKEN&userid=USERID`，返回成员 `name` 和受授权条件约束的 `avatar`。
+- [96442 获取访问用户身份](https://developer.work.weixin.qq.com/document/path/96442)：`snsapi_privateinfo` 且成员在应用可见范围时返回 `user_ticket`，有效期 1800 秒。
+- [96443 获取访问用户敏感信息](https://developer.work.weixin.qq.com/document/path/96443)：`POST /cgi-bin/auth/getuserdetail?access_token=ACCESS_TOKEN`，JSON body 为 `{"user_ticket":"USER_TICKET"}`，要求成员在应用可见范围内。
+- [96314 获取客户列表](https://developer.work.weixin.qq.com/document/path/96314)：`GET /cgi-bin/externalcontact/list?access_token=ACCESS_TOKEN&userid=USERID`；代开发应用需客户基础信息权限，未配置客户联系功能或成员不可见时不能承诺有数据。
+- [96315 获取客户详情](https://developer.work.weixin.qq.com/document/path/96315)：`GET /cgi-bin/externalcontact/get?access_token=ACCESS_TOKEN&external_userid=EXTERNAL_USERID`；姓名字段可从详情响应读取，头像字段为空是合法结果，不能把头像作为代开发应用必得能力。
+- [96338 获取客户群详情](https://developer.work.weixin.qq.com/document/path/96338)：`POST /cgi-bin/externalcontact/groupchat/get`，请求 `need_name=1` 才返回 `member_list.name`；返回 `group_chat.name` 和成员类型/姓名，要求客户基础信息权限且群主在应用可见范围内。该接口仅适用于客户群，不适用于 ChatData 企业内部群。
+
+因此本项目的 A（员工本人资料授权）链路使用 `getuserinfo -> user_ticket -> getuserdetail`，B（员工名下客户）链路使用 `externalcontact/list -> externalcontact/get`；两条链路均继续使用安装实例代开发 access token。官方文档没有提供“代开发应用无条件获取所有员工/客户真实头像”的证据，空头像必须进入默认头像降级态，不能伪造 URL。
+
+本次变更确认并记录以下产品合同，后续实现和验收不得把它们降级为“接口有数据就展示”：
+
+### 代开发 API 准入与字段边界
+
+| 展示内容 | 唯一数据源 | 代开发调用 | 可确认的字段/限制 |
+| --- | --- | --- | --- |
+| 企业员工昵称、头像 | 员工资料投影 `wecom_parties` | 安装实例 token 调用 `GET /cgi-bin/user/get`（官方文档 96255） | `name` 可在企业授权范围内返回；`avatar` 属于敏感资料，不能假定代开发应用无条件取得，需满足企业配置和成员授权 |
+| 外部联系人昵称 | 外部联系人资料投影 `wecom_parties` | 安装实例 token 调用 `GET /cgi-bin/externalcontact/get`（官方文档 96315） | 从 `external_contact.remark/name/nickname/alias` 取名；服务商代开发应用不得把该接口当作客户头像的无条件来源 |
+| 外部联系人头像 | `wecom_parties.avatar_url`，允许为空 | 同上 | 当前代开发权限合同明确：客户头像不能由该详情接口无条件获取；为空时必须使用默认头像，不伪造 URL |
+| 当前账号客户列表 | 当前登录账号的企业微信绑定身份 | `GET /cgi-bin/externalcontact/list`，`userid` 由服务端从当前账号绑定关系解析 | 客户联系页面只查询当前 CRM 账号绑定的 `wecomUserId`；忽略客户端传入的员工 ID，不依赖通讯录 `simplelist` |
+| 客户群名称、客户群成员快照 | 群源会话和参与者投影 | `POST /cgi-bin/externalcontact/groupchat/get`（官方文档 96338） | 仅适用于客户群；读取 `group_chat.name` 和 `member_list` 中上游实际返回的成员资料，受客户基础信息权限和群主可见范围约束 |
+| 企业内部群名称、成员关系 | ChatData 源会话投影 | 专区 SDK `get_group_chat`（官方文档 100025） | 仅能在已关联的数据与智能专区程序中调用；不能用客户群接口替代，也不能用 `receiver_list` 猜测完整成员 |
+| 会话正文 | 企业微信官方展示组件 | `ww.register`、`ww.initOpenData`、`ww.createOpenDataFrameFactory`、`ww-open-message`（官方文档 100049、94325） | SDK 负责受保护正文解析；应用自己的昵称、头像、时间必须作为外层模板数据渲染，不得声称是 `ww-open-message` 返回字段 |
+
+以上接口均使用当前企业安装实例的代开发应用 token。禁止用 suite token、普通自建应用 secret 或通讯录同步 secret 替代。群名或头像为空是合法的上游结果，服务端返回空值/资料状态，前端显示“企业微信群”或默认头像，不显示 chat ID、userid 等长技术标识。
+
+### Frame 消息投影与 UI 布局合同
+
+每个 `msgList` 项在进入单一 OpenDataFrame 前必须完成以下投影：
+
+```text
+FrameMessage {
+  msgid: string
+  secretKey: string
+  direction: inbound | outbound
+  occurredAt: string       // 服务端 MessageResponse.occurredAt，格式化后显示
+  senderDisplayName?: string
+  senderAvatarUrl?: string
+}
+```
+
+- 单聊和群聊的每条消息都必须显示 `occurredAt`；时间是消息气泡外层的应用 UI 元数据，不等待 SDK 正文解析。
+- 群聊每条消息的气泡上方必须显示 `senderDisplayName`，并在气泡同层左侧/右侧显示 `senderAvatarUrl`；头像与气泡顶部对齐，不嵌入气泡内部。
+- 群消息的昵称只能来自该条消息的结构化 `sender.displayName`，不能按 userid、方向、上一条消息或群成员顺序推断；A、B、A、B 交替发言时每条气泡独立绑定自己的 sender。
+- `sender.displayName` 为空时显示“未获取昵称”；`senderAvatarUrl` 为空或加载失败时显示昵称首字占位头像（无昵称时使用“未”）；员工、外部联系人和机器人使用不同的颜色区分，任何情况下不显示完整 `providerPartyId`。
+- 单聊不显示发送者昵称，但仍显示消息时间和头像占位/真实头像；群聊显示昵称、头像和时间。
+- 群标题优先使用 `WeComGroupThread.displayName`；为空时显示“企业微信群”，不得把群 ID 当标题。
+- OpenDataFrame 自定义模板只使用官方支持的 `view`、`span`、`image` 等标签；昵称和时间使用 `span`，禁止使用不在组件白名单内的 `text` 标签，否则 SDK 可能只渲染正文占位符而丢失外层元数据。
+- 会话 frame 使用 `scroll-view` 承载消息列表；每次单 frame 清空并重填完成后，通过 `createScrollViewContext(...).scrollTo({top})` 定位到底部，打开联系人或群聊时默认展示最新消息。
+
+### 本次变更验收门禁
+
+- 后端群详情 JSON 中，每条 `items[]` 同时具备 `occurredAt` 和 `sender`（允许 `avatarUrl` 为空），群标题为空时前端显示“企业微信群”。
+- 前端 frame 的 `setData` 入参逐项包含 `occurredAt`、群消息 `senderDisplayName`、`senderAvatarUrl`；模板中昵称位于气泡上方，头像与气泡顶部同层对齐。
+- 至少用 A、B、A、B 四条交替发送者 fixture 验证昵称/头像不串位；用缺头像、缺昵称、缺群名 fixture 验证默认态文案。
+- 真实服务器验收需分别记录：`groupchat/get` 或 `get_group_chat` 的上游字段、`wecom_parties` 写入统计、群线程 JSON 和浏览器 frame 渲染截图；不能只依据 HTTP 200。
+- 官方文档在线复核门禁：服务器具备 DNS/网络后，重新打开文档 96255、96315、96338、100025、100049、94325，逐项核对代开发应用准入、响应字段和权限名称；在线复核完成前，本记录以仓库现有审计结论为准，不扩大 API 白名单。
+
 ## 问题与目标
 
 当前实现暴露四个相互关联的问题：
@@ -140,7 +203,7 @@ WeComPartyView
   isCurrentViewer: boolean
 ```
 
-群详情的 `participants` 使用同一结构。`displayName` 和 `avatarUrl` 来自 `wecom_parties` 的资料投影；资料不可用时返回结构化不可用状态，UI 可安全回退到脱敏 ID，不伪造昵称。
+群详情的 `participants` 使用同一结构。`displayName` 和 `avatarUrl` 来自 `wecom_parties` 的资料投影；资料不可用时返回结构化不可用状态，UI 使用昵称首字占位头像和类型颜色，不显示 provider ID 或其他长技术标识。
 
 `contactId` 只有在 party 已映射到真实 CRM 联系人且当前 CRM 用户可访问该联系人时才返回；同时 `contactAccessible=true`。内部员工没有对应 CRM 联系人时只返回姓名和头像，不提供跳转，也不创建联系人。当前登录成员与其他参与者遵守同一访问规则，不由前端增加特殊例外。
 

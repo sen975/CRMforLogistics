@@ -9,6 +9,7 @@ import {
   recordWeComViewerEvent,
 } from '../api/endpoints';
 import type {
+  WeComJsSdkConfig,
   WeComViewerMessage,
   WeComViewerTarget,
 } from '../api/types';
@@ -87,16 +88,26 @@ export function useWeComViewer(): WeComViewerHandle {
       sdkRef.current = Promise.all([
         loadWeComViewerSdk(),
         fetchWeComJsSdkConfig(pageUrl, viewerAuthToken),
-      ]).then(async ([sdk, config]) => {
+      ]).then(async ([sdk, initialConfig]) => {
         if (!sdk.register || !sdk.initOpenData || !sdk.createOpenDataFrameFactory) {
           throw new Error('企业微信会话组件不可用');
         }
+        const configCache = new Map<string, Promise<WeComJsSdkConfig>>([[pageUrl, Promise.resolve(initialConfig)]]);
+        const configForUrl = (url?: string) => {
+          const targetUrl = (url?.trim() || window.location.href).split('#')[0];
+          let configPromise = configCache.get(targetUrl);
+          if (!configPromise) {
+            configPromise = fetchWeComJsSdkConfig(targetUrl, viewerAuthToken);
+            configCache.set(targetUrl, configPromise);
+          }
+          return configPromise;
+        };
         sdk.register({
-          corpId: config.corpId,
-          agentId: config.agentId,
-          jsApiList: config.jsApiList,
-          getConfigSignature: async () => config.configSignature,
-          getAgentConfigSignature: async () => config.agentConfigSignature,
+          corpId: initialConfig.corpId,
+          agentId: initialConfig.agentId,
+          jsApiList: initialConfig.jsApiList,
+          getConfigSignature: async (url?: string) => (await configForUrl(url)).configSignature,
+          getAgentConfigSignature: async (url?: string) => (await configForUrl(url)).agentConfigSignature,
         });
         await sdk.initOpenData();
         return sdk;

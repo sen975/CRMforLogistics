@@ -2,6 +2,7 @@ import { Typography, Tag, Space } from 'antd';
 import { MailOutlined, MessageOutlined, WechatOutlined, PhoneOutlined, PictureOutlined, VideoCameraOutlined, FileOutlined } from '@ant-design/icons';
 import type { MessageResponse } from '../api/types';
 import MessageMedia from './MessageMedia';
+import { decodeHtmlEntities } from '../utils/htmlEntities';
 
 const { Text } = Typography;
 
@@ -57,11 +58,10 @@ function renderBody(message: MessageResponse) {
       );
     }
     if (message.bodyText) {
+      const plainText = decodeHtmlEntities(message.bodyText);
       return (
         <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>
-          {message.bodyText.length > 120
-            ? message.bodyText.slice(0, 120) + '...'
-            : message.bodyText}
+          {plainText.length > 120 ? plainText.slice(0, 120) + '...' : plainText}
         </Text>
       );
     }

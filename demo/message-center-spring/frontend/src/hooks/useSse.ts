@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useAuth } from './useAuth';
 
-export function useSse(onMessage: () => void) {
+export interface SseEventPayload {
+  type: string;
+  data: unknown;
+}
+
+export function useSse(onMessage: (event?: SseEventPayload) => void, eventNames?: string[]) {
   const { token, isAuthenticated } = useAuth();
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
@@ -21,21 +26,15 @@ export function useSse(onMessage: () => void) {
         retries = 0;
       };
 
-      es.onmessage = () => {
-        onMessageRef.current();
-      };
-
-      es.addEventListener('templates-changed', () => {
-        onMessageRef.current();
-      });
-
-      es.addEventListener('message-new', () => {
-        onMessageRef.current();
-      });
-
-      es.addEventListener('broadcast-updated', () => {
-        onMessageRef.current();
-      });
+      if (!eventNames) es.onmessage = (event) => onMessageRef.current(toPayload('message', event));
+      for (const eventName of (eventNames ?? [
+        'templates-changed',
+        'message-new',
+        'broadcast-updated',
+        'wecom-group-kind-sync-completed',
+      ])) {
+        es.addEventListener(eventName, (event) => onMessageRef.current(toPayload(eventName, event)));
+      }
 
       es.onerror = () => {
         es.close();
@@ -52,4 +51,14 @@ export function useSse(onMessage: () => void) {
       clearTimeout(reconnectTimer);
     };
   }, [isAuthenticated, token]);
+}
+
+function toPayload(type: string, event: Event): SseEventPayload {
+  const raw = (event as MessageEvent<string>).data;
+  if (typeof raw !== 'string') return { type, data: {} };
+  try {
+    return { type, data: JSON.parse(raw) as unknown };
+  } catch {
+    return { type, data: {} };
+  }
 }

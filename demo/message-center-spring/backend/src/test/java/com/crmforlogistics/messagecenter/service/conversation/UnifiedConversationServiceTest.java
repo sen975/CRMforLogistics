@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.service.conversation;
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.crmforlogistics.messagecenter.dto.response.ConversationListItemResponse;
+import com.crmforlogistics.messagecenter.dto.response.ConversationPageResponse;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import org.junit.jupiter.api.Test;
 
@@ -21,24 +21,24 @@ class UnifiedConversationServiceTest {
         UUID userId = UUID.randomUUID();
         ConversationMapper mapper = mock(ConversationMapper.class);
         ConversationListItemResponse contact = ConversationListItemResponse.contact(
-                UUID.randomUUID(), "客户 A", Instant.parse("2026-08-25T10:00:00Z"), "a", 4, 1);
+                UUID.randomUUID(), "客户 A", "重点客户", Instant.parse("2026-08-25T10:00:00Z"), "a", 4, 1);
         ConversationListItemResponse groupA = ConversationListItemResponse.group(
                 UUID.randomUUID(), "群 A", "chat-a", Instant.parse("2026-08-25T09:00:00Z"), "ga", 2, 3, 0);
         ConversationListItemResponse groupB = ConversationListItemResponse.group(
                 UUID.randomUUID(), "群 B", "chat-b", Instant.parse("2026-08-25T08:00:00Z"), "gb", 2, 1, 0);
-        when(mapper.listUnified(eq(userId), eq(null), eq(null), eq(null), eq(10)))
+        when(mapper.listUnified(eq(userId), eq(null), eq(null), eq(null), eq(null), eq(null), eq(11)))
                 .thenReturn(List.of(
-                        new ConversationMapper.UnifiedConversationRow(contact.type(), contact.id(), contact.displayName(), null, "", contact.lastMessageAt(), contact.lastText(), contact.messageCount(), contact.unreadCount(), null, 0),
+                        new ConversationMapper.UnifiedConversationRow(contact.type(), contact.id(), contact.displayName(), contact.remark(), null, "", contact.lastMessageAt(), contact.lastText(), contact.messageCount(), contact.unreadCount(), null, 0, false),
                         new ConversationMapper.UnifiedConversationRow(groupA.type(), groupA.id(), groupA.displayName(), null, "wecom", groupA.lastMessageAt(), groupA.lastText(), groupA.messageCount(), groupA.unreadCount(), groupA.providerConversationKey(), groupA.participantCount()),
                         new ConversationMapper.UnifiedConversationRow(groupB.type(), groupB.id(), groupB.displayName(), null, "wecom", groupB.lastMessageAt(), groupB.lastText(), groupB.messageCount(), groupB.unreadCount(), groupB.providerConversationKey(), groupB.participantCount())));
 
         UnifiedConversationService service = new UnifiedConversationService(mapper);
-        Page<ConversationListItemResponse> result = service.list(userId, null, null, 10);
+        ConversationPageResponse result = service.list(userId, null, null, 10);
 
-        assertThat(result.getRecords()).containsExactly(contact, groupA, groupB);
-        assertThat(result.getRecords()).extracting(ConversationListItemResponse::type)
+        assertThat(result.records()).containsExactly(contact, groupA, groupB);
+        assertThat(result.records()).extracting(ConversationListItemResponse::type)
                 .containsExactly("CONTACT", "WECOM_GROUP", "WECOM_GROUP");
-        assertThat(result.getRecords()).extracting(ConversationListItemResponse::id)
+        assertThat(result.records()).extracting(ConversationListItemResponse::id)
                 .doesNotHaveDuplicates();
     }
 
@@ -46,13 +46,20 @@ class UnifiedConversationServiceTest {
     void passesCursorAndSearchToServerSideQuery() {
         UUID userId = UUID.randomUUID();
         ConversationMapper mapper = mock(ConversationMapper.class);
-        when(mapper.listUnified(eq(userId), eq("alice"), eq("2026-08-25T10:00:00Z"), eq("CONTACT:"), eq(20)))
+        UUID rowId = UUID.randomUUID();
+        Instant sortAt = Instant.parse("2026-08-25T10:00:00Z");
+        var cursorRow = new ConversationMapper.UnifiedConversationRow(
+                "CONTACT", rowId, "Alice", null, null, "email", sortAt, "a",
+                1, 0, null, 0, true, 7L, sortAt, "CONTACT:" + rowId);
+        String cursor = UnifiedConversationService.encodeCursor(cursorRow);
+        when(mapper.listUnified(eq(userId), eq("alice"), eq(true), eq(7L),
+                eq("2026-08-25T10:00:00Z"), eq("CONTACT:" + rowId), eq(21)))
                 .thenReturn(List.of());
 
         UnifiedConversationService service = new UnifiedConversationService(mapper);
-        service.list(userId, "alice", "2026-08-25T10:00:00Z|CONTACT:", 20);
+        service.list(userId, "alice", cursor, 20);
 
         org.mockito.Mockito.verify(mapper).listUnified(
-                userId, "alice", "2026-08-25T10:00:00Z", "CONTACT:", 20);
+                userId, "alice", true, 7L, "2026-08-25T10:00:00Z", "CONTACT:" + rowId, 21);
     }
 }

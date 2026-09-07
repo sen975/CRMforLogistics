@@ -1,7 +1,6 @@
 package com.crmforlogistics.messagecenter.channel.chatapp;
 
 import com.aliyun.auth.credentials.Credential;
-import com.aliyun.auth.credentials.provider.DefaultCredentialProvider;
 import com.aliyun.auth.credentials.provider.ICredentialProvider;
 import com.aliyun.auth.credentials.provider.StaticCredentialProvider;
 import com.aliyun.sdk.service.cams20200606.AsyncClient;
@@ -10,7 +9,6 @@ import com.aliyun.sdk.service.cams20200606.models.GetChatappUploadAuthorizationR
 import com.aliyun.sdk.service.cams20200606.models.GetChatappUploadAuthorizationResponseBody;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageResponse;
-import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import darabonba.core.client.ClientOverrideConfiguration;
@@ -31,59 +29,43 @@ public class ChatAppSendService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatAppSendService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String CHANNEL_TYPE = "whatsapp";
 
-    private final AppConfig config;
     private final ChatAppOssMediaUploader ossMediaUploader;
     private final Supplier<AsyncClient> clientFactory;
 
-    public ChatAppSendService(AppConfig config) {
-        this(config, new ChatAppOssMediaUploader(), null);
-    }
-
     @Autowired
-    public ChatAppSendService(AppConfig config, ChatAppOssMediaUploader ossMediaUploader) {
-        this(config, ossMediaUploader, null);
+    public ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader) {
+        this(ossMediaUploader, null);
     }
 
-    ChatAppSendService(AppConfig config, ChatAppOssMediaUploader ossMediaUploader,
-                       Supplier<AsyncClient> clientFactory) {
-        this.config = Objects.requireNonNull(config);
+    ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader, Supplier<AsyncClient> clientFactory) {
         this.ossMediaUploader = Objects.requireNonNull(ossMediaUploader);
         this.clientFactory = clientFactory;
     }
 
-    public SendResult sendText(String to, String text, String clientRequestId) throws Exception {
-        return sendText(chatappFrom(), to, text, clientRequestId);
-    }
-
-    public SendResult sendText(String from, String to, String text, String clientRequestId) throws Exception {
+    public SendResult sendText(ChatAppAccountCredentials credentials, String from, String to,
+                               String text, String clientRequestId) throws Exception {
         String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String cleanText = text == null ? "" : text;
         String content = MAPPER.writeValueAsString(Map.of("text", cleanText));
 
-        SendChatappMessageRequest.Builder builder = baseBuilder(cleanFrom, cleanTo)
+        SendChatappMessageRequest.Builder builder = baseBuilder(credentials, cleanFrom, cleanTo)
                 .messageType("text")
                 .content(content);
         putIfNotBlank(clientRequestId, builder::taskId);
 
-        try (AsyncClient client = createClient()) {
+        try (AsyncClient client = createClient(credentials)) {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
             return new SendResult(messageId, cleanFrom, cleanTo, cleanText, "Submitted");
         }
     }
 
-    public SendResult sendTemplate(String to, String templateCode, String templateName,
-                                    String languageCode, Map<String, String> params,
-                                    String clientRequestId) throws Exception {
-        return sendTemplate(chatappFrom(), to, templateCode, templateName, languageCode, params,
-                clientRequestId);
-    }
-
-    public SendResult sendTemplate(String from, String to, String templateCode, String templateName,
-                                   String languageCode, Map<String, String> params,
-                                   String clientRequestId) throws Exception {
+    public SendResult sendTemplate(ChatAppAccountCredentials credentials, String from, String to,
+                                   String templateCode, String templateName, String languageCode,
+                                   Map<String, String> params, String clientRequestId) throws Exception {
         String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String code = required(templateCode, "templateCode");
@@ -91,10 +73,10 @@ public class ChatAppSendService {
         Map<String, String> safeParams = params == null ? Map.of() : params;
 
         SendChatappMessageRequest.Builder builder = SendChatappMessageRequest.builder()
-                .custSpaceId(required(config.custSpaceId(), "custSpaceId"))
+                .custSpaceId(required(credentials.custSpaceId(), "custSpaceId"))
                 .from(cleanFrom)
                 .to(cleanTo)
-                .channelType(defaulted(config.chatappChannelType(), "whatsapp"))
+                .channelType(CHANNEL_TYPE)
                 .type("template")
                 .templateCode(code)
                 .language(language)
@@ -102,7 +84,7 @@ public class ChatAppSendService {
         putIfNotBlank(templateName, builder::templateName);
         putIfNotBlank(clientRequestId, builder::taskId);
 
-        try (AsyncClient client = createClient()) {
+        try (AsyncClient client = createClient(credentials)) {
             SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
             String messageId = responseMessageId(response);
             String text = templateRenderPreview(code, templateName, safeParams);
@@ -110,16 +92,9 @@ public class ChatAppSendService {
         }
     }
 
-    public SendResult sendMedia(String to, String mediaType, byte[] fileBytes,
-                                 String fileName, String contentType, String caption,
-                                 String clientRequestId) throws Exception {
-        return sendMedia(chatappFrom(), to, mediaType, fileBytes, fileName, contentType, caption,
-                clientRequestId);
-    }
-
-    public SendResult sendMedia(String from, String to, String mediaType, byte[] fileBytes,
-                                String fileName, String contentType, String caption,
-                                String clientRequestId) throws Exception {
+    public SendResult sendMedia(ChatAppAccountCredentials credentials, String from, String to,
+                                String mediaType, byte[] fileBytes, String fileName,
+                                String contentType, String caption, String clientRequestId) throws Exception {
         String cleanFrom = required(from, "from");
         String cleanTo = required(to, "to");
         String normalizedType = normalizeMediaType(mediaType);
@@ -129,10 +104,10 @@ public class ChatAppSendService {
         String mimeType = firstNonBlank(contentType, guessContentType(fileName), "application/octet-stream");
         validateMediaMime(normalizedType, mimeType);
 
-        try (AsyncClient client = createClient()) {
+        try (AsyncClient client = createClient(credentials)) {
             GetChatappUploadAuthorizationResponse authResponse = client.getChatappUploadAuthorization(
                     GetChatappUploadAuthorizationRequest.builder()
-                            .custSpaceId(required(config.custSpaceId(), "custSpaceId"))
+                            .custSpaceId(required(credentials.custSpaceId(), "custSpaceId"))
                             .build()
             ).get();
             GetChatappUploadAuthorizationResponseBody.Data auth =
@@ -146,7 +121,7 @@ public class ChatAppSendService {
             String mediaUrl = uploaded.url();
 
             String content = mediaContentJson(normalizedType, mediaUrl, caption, fileName);
-            SendChatappMessageRequest.Builder builder = baseBuilder(cleanFrom, cleanTo)
+            SendChatappMessageRequest.Builder builder = baseBuilder(credentials, cleanFrom, cleanTo)
                     .messageType(normalizedType)
                     .content(content);
             putIfNotBlank(clientRequestId, builder::taskId);
@@ -185,21 +160,14 @@ public class ChatAppSendService {
 
     // --- private helpers ---
 
-    private SendChatappMessageRequest.Builder baseBuilder(String to) {
-        return baseBuilder(chatappFrom(), to);
-    }
-
-    private SendChatappMessageRequest.Builder baseBuilder(String from, String to) {
+    private SendChatappMessageRequest.Builder baseBuilder(ChatAppAccountCredentials credentials,
+                                                          String from, String to) {
         return SendChatappMessageRequest.builder()
-                .custSpaceId(required(config.custSpaceId(), "custSpaceId"))
+                .custSpaceId(required(credentials.custSpaceId(), "custSpaceId"))
                 .from(required(from, "from"))
                 .to(required(to, "to"))
-                .channelType(defaulted(config.chatappChannelType(), "whatsapp"))
+                .channelType(CHANNEL_TYPE)
                 .type("message");
-    }
-
-    private String chatappFrom() {
-        return required(config.chatappFrom(), "chatappFrom");
     }
 
     private String responseMessageId(SendChatappMessageResponse response) {
@@ -210,28 +178,23 @@ public class ChatAppSendService {
         return messageId;
     }
 
-    private AsyncClient createClient() {
+    private AsyncClient createClient(ChatAppAccountCredentials credentials) {
         if (clientFactory != null) {
             return clientFactory.get();
         }
         return AsyncClient.builder()
-                .region(defaulted(config.camsRegion(), "ap-southeast-1"))
-                .credentialsProvider(createCredentialsProvider())
+                .region(credentials.region())
+                .credentialsProvider(createCredentialsProvider(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(defaulted(config.camsEndpoint(), "cams.ap-southeast-1.aliyuncs.com")))
+                        .setEndpointOverride(credentials.endpoint()))
                 .build();
     }
 
-    private ICredentialProvider createCredentialsProvider() {
-        String keyId = config.aliyunAccessKeyId();
-        String keySecret = config.aliyunAccessKeySecret();
-        if (keyId != null && !keyId.isBlank() && keySecret != null && !keySecret.isBlank()) {
-            return StaticCredentialProvider.create(Credential.builder()
-                    .accessKeyId(keyId)
-                    .accessKeySecret(keySecret)
-                    .build());
-        }
-        return DefaultCredentialProvider.builder().build();
+    private ICredentialProvider createCredentialsProvider(ChatAppAccountCredentials credentials) {
+        return StaticCredentialProvider.create(Credential.builder()
+                .accessKeyId(credentials.accessKeyId())
+                .accessKeySecret(credentials.accessKeySecret())
+                .build());
     }
 
     private String mediaContentJson(String mediaType, String link, String caption, String fileName) {
@@ -321,10 +284,6 @@ public class ChatAppSendService {
     static String required(String value, String name) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
         return value.trim();
-    }
-
-    static String defaulted(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     static String firstNonBlank(String... values) {

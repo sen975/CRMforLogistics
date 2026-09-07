@@ -168,7 +168,7 @@ public final class CredentialCipher {
 
     public static final class CredentialDecryptionException extends Exception {
         private final String code;
-        CredentialDecryptionException(String code) {
+        public CredentialDecryptionException(String code) {
             super("Unable to decrypt channel credentials");
             this.code = code;
         }

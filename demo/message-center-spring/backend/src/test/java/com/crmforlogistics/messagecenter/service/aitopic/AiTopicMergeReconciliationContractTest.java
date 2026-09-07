@@ -30,7 +30,7 @@ class AiTopicMergeReconciliationContractTest {
     }
 
     @Test
-    void archivedMessageCandidatesBelongToContactsMergedIntoTarget() throws Exception {
+    void legacyArchivedMessageCandidatesBelongToContactsMergedIntoTarget() throws Exception {
         Method method = MessageMapper.class.getMethod("listArchivedMergedContactMessages", UUID.class, int.class);
         String sql = sql(method.getAnnotation(Select.class).value());
 
@@ -42,7 +42,7 @@ class AiTopicMergeReconciliationContractTest {
     }
 
     @Test
-    void personalWeComReconciliationExcludesGroupSummaries() throws Exception {
+    void legacyPersonalWeComReconciliationExcludesGroupSummaries() throws Exception {
         Method method = WeComMessageSummaryJobMapper.class.getMethod(
                 "listArchivedMergedContactSummaries", UUID.class, int.class);
         String sql = sql(method.getAnnotation(Select.class).value());
@@ -54,7 +54,7 @@ class AiTopicMergeReconciliationContractTest {
     }
 
     @Test
-    void migratedSourceCanOnlyMoveFromArchivedMergedContactTopic() throws Exception {
+    void legacyMigratedSourceCanOnlyMoveFromArchivedMergedContactTopic() throws Exception {
         Method method = AiTopicItemMapper.class.getMethod("moveArchivedMergedSourceToTopic",
                 UUID.class, UUID.class, String.class, UUID.class);
         String sql = sql(method.getAnnotation(Update.class).value());
@@ -75,6 +75,17 @@ class AiTopicMergeReconciliationContractTest {
                 .contains("t.contact_id=#{contactid}::uuid")
                 .contains("t.status='ready'")
                 .doesNotContain("t.status='archived'");
+    }
+
+    @Test
+    void futureContactMergeTransfersReadyTopicsInsteadOfArchivingThem() throws Exception {
+        Method method = AiTopicMapper.class.getMethod("transferReadyByContact", UUID.class, UUID.class);
+        String sql = sql(method.getAnnotation(Update.class).value());
+
+        assertThat(sql)
+                .contains("owner_id=#{targetcontactid}::uuid", "contact_id=#{targetcontactid}::uuid")
+                .contains("owner_type='contact'", "owner_id=#{sourcecontactid}::uuid", "status='ready'")
+                .doesNotContain("status='archived'");
     }
 
     private static String sql(String[] fragments) {

@@ -23,6 +23,7 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -117,17 +118,18 @@ class ChatAppControllerTest {
 
     @Test
     void shouldTriggerMessageSync() throws Exception {
-        when(messageSyncService.runOnce())
+        when(messageSyncService.runOwnedAccount(actorId))
                 .thenReturn(new ChatAppMessageSyncService.SyncResultRecord(2, 10, 5, 3, 150));
 
         mvc.perform(post("/api/chatapp/sync/messages"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fetched").value(10));
+        verify(messageSyncService).runOwnedAccount(actorId);
     }
 
     @Test
     void shouldTriggerTemplateSync() throws Exception {
-        when(templateSyncService.runOnce())
+        when(templateSyncService.runOwnedAccount(actorId))
                 .thenReturn(new ChatAppTemplateSyncService.SyncResultRecord(1, 3, 3, 200));
 
         mvc.perform(post("/api/chatapp/sync/templates"))

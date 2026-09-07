@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   fetchContacts,
   updateContactRemark,
+  updateContactTags,
   mergeContacts,
   splitContact,
   toggleConversationPinned,
@@ -82,12 +83,32 @@ export function useUpdateContactRemark() {
   });
 }
 
+export function useUpdateContactTags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, tags }: { id: string; tags: Array<{ name: string; color?: string | null }> }) =>
+      updateContactTags(id, tags),
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['contact', variables.id] }),
+        qc.invalidateQueries({ queryKey: ['contacts'] }),
+        qc.invalidateQueries({ queryKey: ['conversations'] }),
+      ]);
+    },
+  });
+}
+
 export function useMergeContacts() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { sourceContactId: string; targetContactId: string }) =>
       mergeContacts(vars.sourceContactId, vars.targetContactId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['contacts'] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['contacts'] }),
+        qc.invalidateQueries({ queryKey: ['conversations'] }),
+      ]);
+    },
   });
 }
 
@@ -96,6 +117,33 @@ export function useSplitContact() {
   return useMutation({
     mutationFn: (vars: { identityId: string; newContactName?: string }) =>
       splitContact(vars.identityId, vars.newContactName),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['contacts'] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['contacts'] }),
+        qc.invalidateQueries({ queryKey: ['conversations'] }),
+      ]);
+    },
+  });
+}
+
+export function useConversationPreference() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars:
+      | { action: 'pin' | 'delete'; targetType: ConversationTargetType; targetId: string }
+      | ({ action: 'order' } & ConversationOrderRequest)) => {
+      if (vars.action === 'pin') return toggleConversationPinned(vars.targetType, vars.targetId);
+      if (vars.action === 'delete') return hideConversation(vars.targetType, vars.targetId);
+      if (vars.action === 'order') {
+        return reorderConversations({
+          sourceType: vars.sourceType,
+          sourceId: vars.sourceId,
+          targetType: vars.targetType,
+          targetId: vars.targetId,
+          placement: vars.placement,
+        });
+      }
+    },
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['conversations'] }); },
   });
 }

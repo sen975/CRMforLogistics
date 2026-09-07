@@ -6,6 +6,8 @@ import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import org.slf4j.Logger;
 
 import java.util.Map;
+import java.util.List;
+import java.util.LinkedHashSet;
 
 /** Effective email settings: channel-account values override process defaults. */
 record EmailSyncSettings(
@@ -20,6 +22,21 @@ record EmailSyncSettings(
         String opensslBin,
         String inboxFolder,
         String sentFolder) {
+
+    List<String> sentFolderCandidates() {
+        var candidates = new LinkedHashSet<String>();
+        addFolder(candidates, sentFolder);
+        addFolder(candidates, "Sent");
+        addFolder(candidates, "已发送");
+        addFolder(candidates, "Sent Items");
+        addFolder(candidates, "INBOX.Sent");
+        addFolder(candidates, "INBOX/已发送");
+        return List.copyOf(candidates);
+    }
+
+    private static void addFolder(LinkedHashSet<String> folders, String folder) {
+        if (folder != null && !folder.isBlank()) folders.add(folder.trim());
+    }
 
     static EmailSyncSettings from(AppConfig config, ChannelAccountEntity account,
                                   CredentialCipher cipher, Logger log) {

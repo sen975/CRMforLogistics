@@ -42,9 +42,14 @@ public class ContactTimelineService {
         this.contactIdentityMapper = Objects.requireNonNull(contactIdentityMapper, "contactIdentityMapper");
     }
 
-    public TimelineResponse timeline(UUID contactId, String cursor, int limit) {
+    public TimelineResponse timeline(UUID ownerId, UUID contactId, String cursor, int limit) {
+        Objects.requireNonNull(ownerId, "ownerId");
         int safeLimit = normalizeLimit(limit);
-        List<ContactIdentityEntity> identities = contactIdentityMapper.findByContactId(contactId);
+        List<ContactIdentityEntity> identities = contactIdentityMapper.findByContactIdAndOwner(contactId, ownerId);
+        if (identities.isEmpty()) {
+            throw new CallRecordException("CONTACT_NOT_FOUND", 404,
+                    "Contact does not exist", false);
+        }
         Set<String> anchors = new LinkedHashSet<>();
         for (var identity : identities) {
             if (identity.getNormalizedValue() != null && !identity.getNormalizedValue().isBlank()) {
@@ -54,23 +59,14 @@ public class ContactTimelineService {
 
         List<TimelineItem> all = new ArrayList<>();
 
-        for (var identity : identities) {
-            List<MessageEntity> messages = messageMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MessageEntity>()
-                            .eq(MessageEntity::getConversationId, identity.getId())
-                            .orderByDesc(MessageEntity::getOccurredAt)
-                            .last("LIMIT " + (safeLimit * 2)));
-            for (MessageEntity message : messages) {
-                String sortId = message.getId() != null ? message.getId().toString() : "";
-                if (!sortId.isBlank()) {
-                    all.add(TimelineItem.message(message, sortId));
-                }
+        for (MessageEntity message : messageMapper.listByContactAndOwner(ownerId, contactId, safeLimit * 2)) {
+            String sortId = message.getId() != null ? message.getId().toString() : "";
+            if (!sortId.isBlank()) {
+                all.add(TimelineItem.message(message, sortId));
             }
         }
 
-        List<CallRecordEntity> records = anchors.isEmpty()
-                ? List.of()
-                : callRecordMapper.listByAnchors(anchors);
+        List<CallRecordEntity> records = callRecordMapper.listByOwnerAndContact(ownerId, contactId);
         for (CallRecordEntity record : records) {
             all.add(TimelineItem.call(record));
         }

@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -105,7 +106,7 @@ class WeComAuthorizationGatewaySecurityTest {
         });
         server.createContext("/cgi-bin/auth/getuserinfo", exchange -> {
             identityQuery.set(exchange.getRequestURI().getRawQuery());
-            respond(exchange, "{\"errcode\":0,\"errmsg\":\"ok\",\"userid\":\"member-1\"}");
+            respond(exchange, "{\"errcode\":0,\"errmsg\":\"ok\",\"userid\":\"member-1\",\"user_ticket\":\"ticket-1\"}");
         });
         server.start();
 
@@ -116,9 +117,28 @@ class WeComAuthorizationGatewaySecurityTest {
                 "corp-1", token.accessToken(), "login-code", Duration.ofSeconds(1));
 
         assertThat(token.accessToken()).isEqualTo("corp-token");
-        assertThat(identity).isEqualTo(new WeComAuthorizationGateway.LoginIdentity("corp-1", "member-1"));
+        assertThat(identity).isEqualTo(new WeComAuthorizationGateway.LoginIdentity("corp-1", "member-1", "ticket-1"));
         assertThat(tokenQuery).hasValue("corpid=corp-1&corpsecret=permanent-code");
         assertThat(identityQuery).hasValue("access_token=corp-token&code=login-code");
+    }
+
+    @Test
+    void userDetailUsesOfficialPostContractAndUserTicket() throws Exception {
+        AtomicReference<String> detailQuery = new AtomicReference<>();
+        AtomicReference<String> detailBody = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/cgi-bin/auth/getuserdetail", exchange -> {
+            detailQuery.set(exchange.getRequestURI().getRawQuery());
+            detailBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, "{\"errcode\":0,\"userid\":\"member-1\",\"avatar\":\"https://avatar/a.png\"}");
+        });
+        server.start();
+
+        JsonNode result = gateway(2).getUserDetail("corp-token", "ticket-1", Duration.ofSeconds(1));
+
+        assertThat(result.path("userid").asText()).isEqualTo("member-1");
+        assertThat(detailQuery).hasValue("access_token=corp-token");
+        assertThat(detailBody).hasValue("{\"user_ticket\":\"ticket-1\"}");
     }
 
     @Test

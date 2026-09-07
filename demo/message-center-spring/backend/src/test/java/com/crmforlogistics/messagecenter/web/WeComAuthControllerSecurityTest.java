@@ -37,7 +37,8 @@ class WeComAuthControllerSecurityTest {
                         "CorpApp", "corp", "agent", "http://localhost/", "state", 300));
         mvc.perform(post("/api/auth/wecom/attempts"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.state").value("state"));
+                .andExpect(jsonPath("$.state").value("state"))
+                .andExpect(jsonPath("$.scope").doesNotExist());
     }
 
     @Test

@@ -6,8 +6,12 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.mapper.AiTopicMapper;
+import com.crmforlogistics.messagecenter.mapper.AiTopicItemMapper;
+import com.crmforlogistics.messagecenter.entity.AiTopicEntity;
+import com.crmforlogistics.messagecenter.entity.AiTopicItemEntity;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerActivityService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerService;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicSplitReconciler;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -33,24 +37,42 @@ public class ContactGroupService {
     private final ContactIdentityMapper contactIdentityMapper;
     private final ContactTagMapper contactTagMapper;
     private final AiTopicMapper aiTopicMapper;
+    private final AiTopicItemMapper aiTopicItemMapper;
     private final AiTopicOwnerActivityService aiTopicActivities;
+    private final AiTopicSplitReconciler aiTopicSplitReconciler;
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper) {
-        this(contactMapper, contactIdentityMapper, null, null, null);
+        this(contactMapper, contactIdentityMapper, (ContactTagMapper) null, null, null, null, null);
     }
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper,
                                ContactTagMapper contactTagMapper) {
-        this(contactMapper, contactIdentityMapper, contactTagMapper, null, null);
+        this(contactMapper, contactIdentityMapper, contactTagMapper, null, null, null, null);
     }
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper,
                                AiTopicMapper aiTopicMapper,
                                AiTopicOwnerActivityService aiTopicActivities) {
-        this(contactMapper, contactIdentityMapper, null, aiTopicMapper, aiTopicActivities);
+        this(contactMapper, contactIdentityMapper, null, aiTopicMapper, null, aiTopicActivities, null);
+    }
+
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               ContactTagMapper contactTagMapper,
+                               AiTopicMapper aiTopicMapper,
+                               AiTopicOwnerActivityService aiTopicActivities) {
+        this(contactMapper, contactIdentityMapper, contactTagMapper, aiTopicMapper, null, aiTopicActivities, null);
+    }
+
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               AiTopicMapper aiTopicMapper,
+                               AiTopicItemMapper aiTopicItemMapper,
+                               AiTopicOwnerActivityService aiTopicActivities) {
+        this(contactMapper, contactIdentityMapper, null, aiTopicMapper, aiTopicItemMapper, aiTopicActivities, null);
     }
 
     @Autowired
@@ -58,12 +80,16 @@ public class ContactGroupService {
                                ContactIdentityMapper contactIdentityMapper,
                                ContactTagMapper contactTagMapper,
                                AiTopicMapper aiTopicMapper,
-                               AiTopicOwnerActivityService aiTopicActivities) {
+                               AiTopicItemMapper aiTopicItemMapper,
+                               AiTopicOwnerActivityService aiTopicActivities,
+                               AiTopicSplitReconciler aiTopicSplitReconciler) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.contactTagMapper = contactTagMapper;
         this.aiTopicMapper = aiTopicMapper;
+        this.aiTopicItemMapper = aiTopicItemMapper;
         this.aiTopicActivities = aiTopicActivities;
+        this.aiTopicSplitReconciler = aiTopicSplitReconciler;
     }
 
     /**
@@ -83,16 +109,18 @@ public class ContactGroupService {
             throw new IllegalArgumentException("Contacts must differ");
         }
 
+        ContactEntity source = requireContact(sourceContactId, userId);
+        ContactEntity target = requireContact(targetContactId, userId);
+        if (source.getOwnerUserId() != null && target.getOwnerUserId() != null
+                && !source.getOwnerUserId().equals(target.getOwnerUserId())) {
+            throw new IllegalArgumentException("Contacts must have the same owner");
+        }
         // Move all identities from source to target
         contactIdentityMapper.updateContactId(targetContactId, sourceContactId);
 
         // Mark source contact as merged
-        ContactEntity source = contactMapper.selectById(sourceContactId);
-        if (source == null) {
-            throw new IllegalArgumentException("Source contact not found: " + sourceContactId);
-        }
         if (aiTopicMapper != null) {
-            aiTopicMapper.archiveReadyByContact(sourceContactId);
+            aiTopicMapper.transferReadyByContact(sourceContactId, targetContactId);
         }
         source.setStatus("merged");
         source.setMergedToId(targetContactId);
@@ -146,7 +174,40 @@ public class ContactGroupService {
                     "Contact identity not found or already moved: " + identityId);
         }
 
+        reconcileTopicsAfterSplit(sourceContactId, newContact.getId(), identityId);
+
         return newContact.getId();
+    }
+
+    private void reconcileTopicsAfterSplit(UUID sourceContactId, UUID newContactId, UUID identityId) {
+        if (aiTopicMapper == null || aiTopicItemMapper == null) return;
+        UUID operationId = UUID.randomUUID();
+        for (AiTopicEntity topic : aiTopicMapper.listSplitCandidates(sourceContactId)) {
+            List<AiTopicItemEntity> moved = aiTopicItemMapper.listByTopicAndIdentity(topic.getId(), identityId);
+            if (moved.isEmpty()) continue;
+            int total = aiTopicItemMapper.countByTopic(topic.getId());
+            if (moved.size() == total) {
+                aiTopicMapper.moveTopicToSplitPending(topic.getId(), newContactId, sourceContactId, operationId);
+                continue;
+            }
+            UUID pendingId = UUID.randomUUID();
+            Instant first = moved.stream().map(AiTopicItemEntity::getOccurredAt).filter(Objects::nonNull).min(Instant::compareTo).orElse(topic.getFirstOccurredAt());
+            Instant last = moved.stream().map(AiTopicItemEntity::getOccurredAt).filter(Objects::nonNull).max(Instant::compareTo).orElse(topic.getLastOccurredAt());
+            aiTopicMapper.createSplitPendingTopic(pendingId, newContactId, topic.getTitle(), topic.getAiSummary(),
+                    topic.getConfirmedSummary(), topic.getInputFingerprint(), sourceContactId, topic.getId(), operationId, first, last);
+            for (AiTopicItemEntity item : moved) {
+                item.setTopicId(pendingId);
+                aiTopicItemMapper.updateById(item);
+            }
+            aiTopicMapper.archiveIfEmptyAfterSplit(topic.getId());
+            if ("READY".equals(topic.getStatus()) && aiTopicSplitReconciler != null) {
+                aiTopicSplitReconciler.recomputeAfterSourceSplit(topic.getId());
+            }
+        }
+        if (aiTopicActivities != null) {
+            aiTopicActivities.recordActivity(AiTopicOwnerService.contact(sourceContactId), Instant.now());
+            aiTopicActivities.recordActivity(AiTopicOwnerService.contact(newContactId), Instant.now());
+        }
     }
 
     /**
@@ -159,7 +220,7 @@ public class ContactGroupService {
      */
     public void updateRemark(UUID contactId, String remark, UUID userId) {
         Objects.requireNonNull(contactId, "contactId");
-        ContactEntity contact = requireContact(contactId);
+        ContactEntity contact = requireContact(contactId, userId);
         contact.setRemark(remark == null || remark.isBlank() ? null : remark.trim());
         contact.setUpdatedAt(Instant.now());
         contactMapper.updateById(contact);
@@ -173,8 +234,7 @@ public class ContactGroupService {
         if (contactTagMapper == null) {
             throw new IllegalStateException("Contact tag support is unavailable");
         }
-        contactMapper.findAccessibleById(contactId, userId, ContactService.isCurrentUserAdmin())
-                .orElseThrow(() -> new IllegalArgumentException("Contact not found: " + contactId));
+        ContactEntity contact = requireContact(contactId, userId);
 
         LinkedHashMap<String, ContactTagsRequest.ContactTagInput> unique = new LinkedHashMap<>();
         List<ContactTagsRequest.ContactTagInput> normalizedInputs = inputs == null
@@ -192,13 +252,28 @@ public class ContactGroupService {
                     new ContactTagsRequest.ContactTagInput(name, color));
         }
 
-        contactTagMapper.deleteByContactId(contactId);
+        if (contact.getOwnerUserId() != null) {
+            contactTagMapper.deleteByContactIdAndOwner(contactId, userId);
+        } else {
+            contactTagMapper.deleteByContactId(contactId);
+        }
         for (ContactTagsRequest.ContactTagInput input : unique.values()) {
-            contactTagMapper.insertTag(input.name(), input.color());
+            if (contact.getOwnerUserId() != null) {
+                contactTagMapper.insertTagForOwner(userId, input.name(), input.color());
+            } else {
+                contactTagMapper.insertTag(input.name(), input.color());
+            }
             ContactTagMapper tagMapper = contactTagMapper;
-            var tag = tagMapper.findActiveByName(input.name())
+            var tag = contact.getOwnerUserId() != null
+                    ? tagMapper.findActiveByNameAndOwner(input.name(), userId)
+                    : tagMapper.findActiveByName(input.name());
+            var resolvedTag = tag
                     .orElseThrow(() -> new IllegalStateException("Contact tag was not created"));
-            tagMapper.insertTagging(contactId, tag.id());
+            if (contact.getOwnerUserId() != null) {
+                tagMapper.insertTaggingForOwner(contactId, resolvedTag.id(), userId);
+            } else {
+                tagMapper.insertTagging(contactId, resolvedTag.id());
+            }
         }
     }
 
@@ -214,7 +289,7 @@ public class ContactGroupService {
     public void updateProfile(UUID contactId, String displayName,
                                String roleTitle, UUID userId) {
         Objects.requireNonNull(contactId, "contactId");
-        ContactEntity contact = requireContact(contactId);
+        ContactEntity contact = requireContact(contactId, userId);
 
         if (displayName != null && !displayName.isBlank()) {
             String cleaned = displayName.trim();
@@ -233,8 +308,9 @@ public class ContactGroupService {
         contactMapper.updateById(contact);
     }
 
-    private ContactEntity requireContact(UUID contactId) {
-        ContactEntity contact = contactMapper.selectById(contactId);
+    private ContactEntity requireContact(UUID contactId, UUID userId) {
+        ContactEntity contact = userId == null ? contactMapper.selectById(contactId)
+                : contactMapper.findByIdAndOwner(contactId, userId).orElse(null);
         if (contact == null) {
             throw new IllegalArgumentException("Contact not found: " + contactId);
         }

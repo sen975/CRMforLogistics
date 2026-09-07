@@ -11,6 +11,7 @@ import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserBindingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,7 @@ class WeComP0ControllerTest {
     @MockitoBean WeComExternalContactService externalContacts;
     @MockitoBean WeComDirectoryService directory;
     @MockitoBean WeComProfileBackfillService profileBackfill;
+    @MockitoBean WeComUserBindingService bindings;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -127,8 +129,11 @@ class WeComP0ControllerTest {
     @Test
     @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void mapsExternalContactAndCustomerGroupEndpoints() throws Exception {
+        when(bindings.requireByUserId(ADMIN_ID)).thenReturn(new WeComUserBindingService.BoundIdentity(
+                ADMIN_ID, "suite-1", "corp-1", "bound-member", "BOUND_EXISTING", null, "admin"));
         mvc.perform(get("/api/v1/wecom/installations/corp-1/external-contacts")
-                        .param("userId", "member-1").header("X-Trace-Id", "trace-contact-list"))
+                        .param("userId", "forged-member")
+                        .header("X-Trace-Id", "trace-contact-list"))
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/wecom/installations/corp-1/external-contacts/external-1")
                         .param("cursor", "next-1").header("X-Trace-Id", "trace-contact-get"))
@@ -150,7 +155,7 @@ class WeComP0ControllerTest {
                         .param("needName", "true").header("X-Trace-Id", "trace-group-get"))
                 .andExpect(status().isOk());
 
-        verify(externalContacts).list("corp-1", "member-1",
+        verify(externalContacts).list("corp-1", "bound-member",
                 new WeComApiActor(ADMIN_ID, "trace-contact-list"));
         verify(externalContacts).get("corp-1", "external-1", "next-1",
                 new WeComApiActor(ADMIN_ID, "trace-contact-get"));

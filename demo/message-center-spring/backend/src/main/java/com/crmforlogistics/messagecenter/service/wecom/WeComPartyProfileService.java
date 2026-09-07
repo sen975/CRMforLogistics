@@ -57,10 +57,14 @@ public class WeComPartyProfileService {
         try {
             response = directory.getMember(installation, required(userId), timeout);
         } catch (RuntimeException failure) {
-            return upsert(installation, "EMPLOYEE", userId, "", "", "DEGRADED", failureCode(failure));
+            WeComPartyEntity existing = findExisting(installation, "EMPLOYEE", userId);
+            return upsert(installation, "EMPLOYEE", userId,
+                    existing == null ? "" : bounded(existing.getDisplayName(), 512),
+                    existing == null ? "" : bounded(existing.getAvatarUrl(), 2048),
+                    "DEGRADED", failureCode(failure));
         }
         ProfileResult result = upsertProfile(installation, "EMPLOYEE", userId,
-                response.path("name").asText(""), response.path("avatar").asText(""), "");
+                response.path("name").asText(""), avatarText(response), "");
         refreshExistingCrmIdentity(installation, userId, result.displayName());
         return result;
     }
@@ -81,8 +85,9 @@ public class WeComPartyProfileService {
                 .eq(WeComPartyEntity::getInstallationId, UUID.fromString(installation.installationId()))
                 .eq(WeComPartyEntity::getPartyType, "EMPLOYEE")
                 .eq(WeComPartyEntity::getProviderPartyId, employee));
-        String name = existing == null ? "" : bounded(existing.getDisplayName(), 512);
-        String avatar = bounded(detail.path("avatar").asText(""), 2048);
+        String name = firstText(detail, "name");
+        if (name.isBlank() && existing != null) name = bounded(existing.getDisplayName(), 512);
+        String avatar = avatarText(detail);
         if (avatar.isBlank() && existing != null) avatar = bounded(existing.getAvatarUrl(), 2048);
         return upsertProfile(installation, "EMPLOYEE", employee, name, avatar, "");
     }
@@ -93,13 +98,16 @@ public class WeComPartyProfileService {
         try {
             response = externalContacts.get(installation, required(externalUserId), "", timeout);
         } catch (RuntimeException failure) {
-            return upsert(installation, "EXTERNAL_CONTACT", externalUserId, "", "", "DEGRADED",
-                    failureCode(failure));
+            WeComPartyEntity existing = findExisting(installation, "EXTERNAL_CONTACT", externalUserId);
+            return upsert(installation, "EXTERNAL_CONTACT", externalUserId,
+                    existing == null ? "" : bounded(existing.getDisplayName(), 512),
+                    existing == null ? "" : bounded(existing.getAvatarUrl(), 2048),
+                    "DEGRADED", failureCode(failure));
         }
         JsonNode profile = response.path("external_contact");
         String name = firstText(profile, "remark", "name", "nickname", "alias");
         ProfileResult result = upsertProfile(installation, "EXTERNAL_CONTACT", externalUserId, name,
-                profile.path("avatar").asText(""), "");
+                avatarText(profile), "");
         refreshExistingCrmIdentity(installation, externalUserId, result.displayName());
         return result;
     }
@@ -123,6 +131,20 @@ public class WeComPartyProfileService {
             }
         }
         return upsertProfile(installation, partyType, providerPartyId, name, avatar, "");
+    }
+
+    /** Returns the cached provider nickname without triggering a directory request. */
+    public String displayNameFor(String installationId, String partyType,
+                                String providerPartyId) {
+        if (installationId == null || installationId.isBlank() || partyType == null
+                || providerPartyId == null || providerPartyId.isBlank()) {
+            return "";
+        }
+        WeComPartyEntity entity = parties.selectOne(new LambdaQueryWrapper<WeComPartyEntity>()
+                .eq(WeComPartyEntity::getInstallationId, UUID.fromString(installationId))
+                .eq(WeComPartyEntity::getPartyType, partyType)
+                .eq(WeComPartyEntity::getProviderPartyId, providerPartyId.trim()));
+        return entity == null ? "" : bounded(entity.getDisplayName(), 512);
     }
 
     /**
@@ -205,9 +227,27 @@ public class WeComPartyProfileService {
                                         String displayName, String avatar, String errorCode) {
         String safeName = bounded(displayName, 512);
         String safeAvatar = bounded(avatar, 2048);
+        WeComPartyEntity existing = findExisting(installation, type, providerId);
+        // A partial upstream response must not erase a previously usable profile field.
+        if (existing != null) {
+            if (safeName.isBlank()) safeName = bounded(existing.getDisplayName(), 512);
+            if (safeAvatar.isBlank()) safeAvatar = bounded(existing.getAvatarUrl(), 2048);
+        }
         String status = safeName.isBlank() && safeAvatar.isBlank() ? "PARTIAL"
                 : safeName.isBlank() || safeAvatar.isBlank() ? "PARTIAL" : "READY";
-        return upsert(installation, type, providerId, safeName, safeAvatar, status, errorCode);
+        String diagnostic = errorCode == null || errorCode.isBlank()
+                ? missingProfileFieldCode(safeName, safeAvatar) : errorCode;
+        return upsert(installation, type, providerId, safeName, safeAvatar, status, diagnostic);
+    }
+
+    private WeComPartyEntity findExisting(ResolvedInstallation installation, String type, String providerId) {
+        if (installation == null || installation.installationId() == null
+                || installation.installationId().isBlank() || type == null || providerId == null
+                || providerId.isBlank()) return null;
+        return parties.selectOne(new LambdaQueryWrapper<WeComPartyEntity>()
+                .eq(WeComPartyEntity::getInstallationId, UUID.fromString(installation.installationId()))
+                .eq(WeComPartyEntity::getPartyType, type)
+                .eq(WeComPartyEntity::getProviderPartyId, providerId.trim()));
     }
 
     private ProfileResult upsert(ResolvedInstallation installation, String type, String providerId,
@@ -246,6 +286,22 @@ public class WeComPartyProfileService {
             String value = bounded(node.path(field).asText(""), 512);
             if (!value.isBlank()) return value;
         }
+        return "";
+    }
+
+    private static String avatarText(JsonNode node) {
+        if (node == null || !node.isObject()) return "";
+        for (String field : new String[]{"avatar", "thumb_avatar"}) {
+            String value = bounded(node.path(field).asText(""), 2048);
+            if (!value.isBlank()) return value;
+        }
+        return "";
+    }
+
+    private static String missingProfileFieldCode(String name, String avatar) {
+        if (name.isBlank() && avatar.isBlank()) return "WECOM_PROFILE_FIELDS_EMPTY";
+        if (name.isBlank()) return "WECOM_PROFILE_NAME_EMPTY";
+        if (avatar.isBlank()) return "WECOM_PROFILE_AVATAR_EMPTY";
         return "";
     }
 

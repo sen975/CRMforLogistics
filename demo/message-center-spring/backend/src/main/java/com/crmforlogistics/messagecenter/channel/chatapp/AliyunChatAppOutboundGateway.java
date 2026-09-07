@@ -18,40 +18,47 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
     private final MinioStorage minioStorage;
     private final AttachmentMapper attachmentMapper;
     private final ChannelAccountMapper channelAccountMapper;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
 
     public AliyunChatAppOutboundGateway(ChatAppSendService sendService,
                                         MinioStorage minioStorage,
                                         AttachmentMapper attachmentMapper,
-                                        ChannelAccountMapper channelAccountMapper) {
+                                        ChannelAccountMapper channelAccountMapper,
+                                        ChatAppAccountCredentialsResolver credentialsResolver) {
         this.sendService = sendService;
         this.minioStorage = minioStorage;
         this.attachmentMapper = attachmentMapper;
         this.channelAccountMapper = channelAccountMapper;
+        this.credentialsResolver = credentialsResolver;
     }
 
     @Override
     public Submission submit(Command command) throws Exception {
         try {
-            String from = requireActiveSender(command.channelAccountId());
+            ChannelAccountEntity account = requireActiveAccount(command.channelAccountId());
+            ChatAppAccountCredentials credentials = credentialsResolver.resolve(account);
+            String from = account.getAccountIdentifier().trim();
             ChatAppSendService.SendResult result = switch (command.kind()) {
                 case "text" -> sendService.sendText(
-                        from,
+                        credentials, from,
                         required(command.content(), "to"),
                         stringValue(command.content().get("text")),
                         command.clientRequestId());
                 case "template" -> sendService.sendTemplate(
-                        from,
+                        credentials, from,
                         required(command.content(), "to"),
                         required(command.content(), "templateCode"),
                         stringValue(command.content().get("templateName")),
                         stringValue(command.content().get("languageCode")),
                         stringMap(command.content().get("templateParams")),
                         command.clientRequestId());
-                case "image", "video", "document" -> sendMedia(from, command);
+                case "image", "video", "document" -> sendMedia(credentials, from, command);
                 default -> throw new IllegalArgumentException(
                         "CHATAPP_OUTBOX_KIND_NOT_SUPPORTED: " + command.kind());
             };
             return new Submission(result.messageId());
+        } catch (ChatAppAccountCredentialsException e) {
+            throw e;
         } catch (Exception e) {
             Throwable cause = rootCause(e);
             if (cause instanceof SocketTimeoutException || cause instanceof TimeoutException) {
@@ -67,7 +74,8 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
         }
     }
 
-    private ChatAppSendService.SendResult sendMedia(String from, Command command) throws Exception {
+    private ChatAppSendService.SendResult sendMedia(ChatAppAccountCredentials credentials,
+                                                    String from, Command command) throws Exception {
         String objectKey = required(command.content(), "objectKey");
         if (!attachmentMapper.existsReadyForMessage(command.messageId(), objectKey)) {
             throw new IllegalArgumentException("CHATAPP_MEDIA_ATTACHMENT_NOT_READY");
@@ -80,7 +88,7 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
             throw new IllegalArgumentException("CHATAPP_MEDIA_TOO_LARGE");
         }
         return sendService.sendMedia(
-                from,
+                credentials, from,
                 required(command.content(), "to"),
                 command.kind(),
                 bytes,
@@ -90,7 +98,7 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
                 command.clientRequestId());
     }
 
-    private String requireActiveSender(java.util.UUID channelAccountId) {
+    private ChannelAccountEntity requireActiveAccount(java.util.UUID channelAccountId) {
         ChannelAccountEntity account = channelAccountMapper.selectById(channelAccountId);
         if (account == null || account.getDeletedAt() != null
                 || !("chatapp".equalsIgnoreCase(account.getChannelType())
@@ -102,7 +110,7 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
         if (sender == null || sender.isBlank()) {
             throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_IDENTIFIER_REQUIRED");
         }
-        return sender.trim();
+        return account;
     }
 
     private static String required(Map<String, Object> content, String key) {

@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -15,15 +16,26 @@ public class AiTopicEntity {
     private String ownerType;
     private UUID ownerId;
     private UUID wecomGroupSourceConversationId;
+    @TableField(exist = false)
     private String ownerLabel;
+    @TableField(exist = false)
     private String contactDisplayName;
+    @TableField(exist = false)
     private String contactRemark;
+    @TableField(exist = false)
     private String contactChannelType;
+    @TableField(exist = false)
     private String contactChannelNickname;
     private String title;
     private String aiSummary;
     private String confirmedSummary;
     private String status;
+    private String reviewOrigin;
+    private UUID reviewSourceContactId;
+    private UUID reviewSourceTopicId;
+    @TableField(exist = false)
+    private String reviewSourceTopicTitle;
+    private UUID reviewOperationId;
     private Instant firstOccurredAt;
     private Instant lastOccurredAt;
     private String inputFingerprint;
@@ -59,6 +71,16 @@ public class AiTopicEntity {
     public void setConfirmedSummary(String confirmedSummary) { this.confirmedSummary = confirmedSummary; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getReviewOrigin() { return reviewOrigin; }
+    public void setReviewOrigin(String reviewOrigin) { this.reviewOrigin = reviewOrigin; }
+    public UUID getReviewSourceContactId() { return reviewSourceContactId; }
+    public void setReviewSourceContactId(UUID reviewSourceContactId) { this.reviewSourceContactId = reviewSourceContactId; }
+    public UUID getReviewSourceTopicId() { return reviewSourceTopicId; }
+    public void setReviewSourceTopicId(UUID reviewSourceTopicId) { this.reviewSourceTopicId = reviewSourceTopicId; }
+    public String getReviewSourceTopicTitle() { return reviewSourceTopicTitle; }
+    public void setReviewSourceTopicTitle(String reviewSourceTopicTitle) { this.reviewSourceTopicTitle = reviewSourceTopicTitle; }
+    public UUID getReviewOperationId() { return reviewOperationId; }
+    public void setReviewOperationId(UUID reviewOperationId) { this.reviewOperationId = reviewOperationId; }
     public Instant getFirstOccurredAt() { return firstOccurredAt; }
     public void setFirstOccurredAt(Instant firstOccurredAt) { this.firstOccurredAt = firstOccurredAt; }
     public Instant getLastOccurredAt() { return lastOccurredAt; }

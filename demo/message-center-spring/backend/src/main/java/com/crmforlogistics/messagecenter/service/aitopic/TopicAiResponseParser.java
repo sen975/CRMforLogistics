@@ -30,7 +30,7 @@ public class TopicAiResponseParser {
                 String key = text(topic, "topicKey", 100);
                 String title = text(topic, "title", 200);
                 String summary = text(topic, "summary", 4000);
-                double relevance = topic.path("relevance").asDouble(-1);
+                double relevance = relevance(topic.get("relevance"));
                 JsonNode sourceIds = topic.get("sourceIds");
                 if (key.isBlank() || title.isBlank() || summary.isBlank() || relevance < 0 || relevance > 1
                         || sourceIds == null || !sourceIds.isArray()) throw invalid();
@@ -69,6 +69,22 @@ public class TopicAiResponseParser {
         JsonNode value = node.get(field);
         if (value == null || !value.isTextual() || value.asText().codePointCount(0, value.asText().length()) > max) return "";
         return value.asText().trim();
+    }
+
+    private static double relevance(JsonNode value) {
+        if (value == null || value.isNull()) return -1;
+        if (value.isNumber()) return value.asDouble(-1);
+        if (!value.isTextual()) return -1;
+        String normalized = value.asText().trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "high", "高" -> 0.9d;
+            case "medium", "中" -> 0.5d;
+            case "low", "低" -> 0.1d;
+            default -> {
+                try { yield Double.parseDouble(normalized); }
+                catch (NumberFormatException ignored) { yield -1; }
+            }
+        };
     }
 
     private static AiTopicException invalid() { return new AiTopicException("AI_RESPONSE_INVALID", false); }

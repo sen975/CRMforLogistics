@@ -158,6 +158,42 @@ public class WeComExternalContactService {
         }
     }
 
+    /** Name-only lookup for the asynchronous group-name refresh worker. */
+    public String groupNameForSync(ResolvedInstallation installation, String chatId) {
+        String group = required(chatId, "chatId", 128);
+        if (installation == null || installation.authCorpId() == null || installation.authCorpId().isBlank()) {
+            throw new WeComException("WECOM_INSTALLATION_INVALID", 503, "企业微信授权配置不可用");
+        }
+        JsonNode response = gateway.groupGet(installation, group, true, timeout());
+        return firstText(response.path("group_chat"), "name");
+    }
+
+    /** Reads one bounded customer-group page for the durable group-kind projection. */
+    public ExternalGroupPage externalGroupPageForSync(ResolvedInstallation installation, String cursor) {
+        if (installation == null || installation.authCorpId() == null || installation.authCorpId().isBlank()) {
+            throw new WeComException("WECOM_INSTALLATION_INVALID", 503, "企业微信授权配置不可用");
+        }
+        String normalizedCursor = cursor == null || cursor.isBlank() ? "" : bounded(cursor, "cursor", 1024);
+        JsonNode response = gateway.groupList(installation, null, List.of(), normalizedCursor, 1000, timeout());
+        JsonNode groups = response.path("group_chat_list");
+        if (!groups.isArray() || groups.size() > 1000) {
+            throw new WeComException("WECOM_EXTERNAL_GROUP_LIST_INVALID", 502, "企业微信客户群列表格式无效");
+        }
+        LinkedHashSet<String> chatIds = new LinkedHashSet<>();
+        for (JsonNode group : groups) {
+            String chatId = group.path("chat_id").asText("").trim();
+            if (chatId.isBlank() || chatId.length() > 128) {
+                throw new WeComException("WECOM_EXTERNAL_GROUP_LIST_INVALID", 502, "企业微信客户群标识无效");
+            }
+            chatIds.add(chatId);
+        }
+        String nextCursor = response.path("next_cursor").asText("").trim();
+        if (nextCursor.length() > 1024) {
+            throw new WeComException("WECOM_EXTERNAL_GROUP_LIST_INVALID", 502, "企业微信客户群游标无效");
+        }
+        return new ExternalGroupPage(List.copyOf(chatIds), nextCursor);
+    }
+
     /**
      * Sync-only profile lookup. It deliberately does not use the interactive API audit owner,
      * because chat-data projection runs without an authenticated CRM user.
@@ -273,4 +309,6 @@ public class WeComExternalContactService {
 
     public record GroupMemberSnapshot(boolean available, String displayName, List<GroupMember> members,
                                       String errorCode) {}
+
+    public record ExternalGroupPage(List<String> chatIds, String nextCursor) {}
 }

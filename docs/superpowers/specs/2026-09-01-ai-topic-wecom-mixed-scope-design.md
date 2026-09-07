@@ -134,13 +134,13 @@ latest_event_at = max(当前 latest_event_at, occurred_at)
 
 联系方式绑定或联系人合并成功后，必须触发一次目标 `CONTACT` owner 的增量重算。该事件不是单条消息事件；它代表新联系方式的历史消息已经进入目标联系人范围。
 
-合并事务先迁移联系方式归属，并将来源联系人的 `READY` Topic 标记为 `ARCHIVED`；已有 `ai_topic_items` 暂时保留在这些归档 Topic 上，直到目标联系人增量重算成功：
+合并事务先迁移联系方式归属，并将来源联系人的 `READY` Topic 原位转移到目标联系人；不归档、不复制来源，也不等待 AI 重算才能显示：
 
-1. 来源 Topic 的版本、人工编辑记录、操作审计和原有来源关联保持可追溯；不得先把来源直接塞进任意目标 Topic。
-2. 目标联系人已有 `READY` Topic 继续作为候选上下文；来源 Topic 的标题和摘要不会未经 AI 重算直接覆盖目标 Topic。
-3. 合并完成后，目标联系人进入现有静默队列。到期时收集目标联系人范围内全部尚未归类来源，以及仍挂在本次已合并来源联系人归档 Topic 下的来源；包括新联系方式的历史消息，而不是只收集合并时间之后的新消息。
-4. AI 对这些候选来源逐条与目标联系人 `READY` Topic 做关联度判断。达到阈值的来源追加到已有 Topic；低于阈值的来源创建独立 Topic。每个来源必须且只能归属一个目标 Topic。
-5. 只有 AI 输出通过整批校验后，才在同一事务内将旧 `ai_topic_items` 原位转移到选定的目标 Topic；不复制来源记录，也不改变消息、电话记录或企业微信摘要的来源 ID。新来源按现有唯一约束插入。
+1. Topic 的 ID、版本、人工编辑记录、操作审计和原有 `ai_topic_items` 关联保持不变，仅更新联系人 owner 到目标联系人。
+2. 目标联系人已有 `READY` Topic 与转移过来的 Topic 同时保留，避免合并后历史 Topic 从活动时间轴消失。
+3. 合并完成后仍记录目标联系人 owner 活动，供后续新消息触发增量 AI 重算；重算只处理尚未归类来源，不会删除或隐藏已转移 Topic。
+4. 已经处于 `ARCHIVED`/`STORED` 的来源 Topic 不因合并被自动恢复，继续保留在 Topic 仓库中，确保生命周期和审计语义不变。
+5. 群 Topic 不迁移到个人 Topic；其他联系人的 Topic 不得作为候选。重复的合并事件按 owner 更新和来源唯一约束幂等处理。
 
 合并和增量重算必须在同一联系人 owner 边界内执行。群 Topic 不迁移到个人 Topic；其他联系人的 Topic 不得作为候选。重复的合并事件按来源唯一约束和 owner 活动版本幂等处理。
 
@@ -185,6 +185,7 @@ latest_event_at = max(当前 latest_event_at, occurred_at)
 
 - `GET /api/v1/contacts/{contactId}/topics`：返回个人 Topic 和可引用的群 Topic；只返回 `READY` 活跃快照及生成状态。
 - 群 Topic 查询使用群会话 owner 的权限校验。
+- `POST /api/v1/contacts/{contactId}/topics/retry` 与 `POST /api/v1/wecom/groups/{sourceConversationId}/topics/retry` 均将当前输入指纹对应的失败任务，或已完成但未生成 Topic 的空结果任务，重置为可领取的 `PENDING`；前端失败卡片必须提供重试按钮，并在请求期间禁用该按钮。
 - 个人入库使用统一 Topic operation endpoint；群入库先创建审批申请，管理员批准后再执行入库任务。
 - Topic 仓库分页检索同时支持联系人和群 owner，并返回原归属投影。
 - 所有变更端点返回 `202 Accepted` 和任务投影，不等待 AI 或审批完成。

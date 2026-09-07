@@ -34,8 +34,9 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(useAuth).mockReturnValue({
-    token: 'token', username: 'admin', roles: ['ADMIN'], wecomViewerAuthToken: null,
-    login: vi.fn(), loginWithWeCom: vi.fn(), logout: vi.fn(),
+    token: 'token', username: 'admin', roles: ['ADMIN'], profile: null, wecomViewerAuthToken: null,
+    login: vi.fn(), register: vi.fn(), loginWithWeCom: vi.fn(), logout: vi.fn(),
+    refreshProfile: vi.fn(), replaceSession: vi.fn(),
     isAuthenticated: true, isAdmin: true, canBroadcast: true,
   });
   api.fetchWeComInstallations.mockResolvedValue([{
@@ -57,8 +58,9 @@ describe('WeComManagementPage', () => {
 
   it('does not render management data for a non-admin user', () => {
     vi.mocked(useAuth).mockReturnValue({
-      token: 'token', username: 'agent', roles: ['AGENT'], wecomViewerAuthToken: null,
-      login: vi.fn(), loginWithWeCom: vi.fn(), logout: vi.fn(),
+      token: 'token', username: 'agent', roles: ['AGENT'], profile: null, wecomViewerAuthToken: null,
+      login: vi.fn(), register: vi.fn(), loginWithWeCom: vi.fn(), logout: vi.fn(),
+      refreshProfile: vi.fn(), replaceSession: vi.fn(),
       isAuthenticated: true, isAdmin: false, canBroadcast: false,
     });
     renderPage();

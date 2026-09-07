@@ -22,4 +22,10 @@ describe('ContactCard channel icons', () => {
     expect(screen.getByRole('img', { name: 'phone' })).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'message' })).not.toBeInTheDocument();
   });
+
+  it('shows a labelled pin icon for a pinned contact', () => {
+    render(<ContactCard contact={{ ...contact, pinned: true }} isActive={false} onClick={() => undefined} />);
+
+    expect(screen.getByLabelText('已置顶')).toBeInTheDocument();
+  });
 });

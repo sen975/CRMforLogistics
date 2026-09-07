@@ -24,8 +24,21 @@ public interface WeComSourceConversationMapper extends BaseMapper<WeComSourceCon
     java.util.List<WeComSourceConversationEntity> listGroupBackfillCandidates(
             @Param("installationId") UUID installationId, @Param("limit") int limit);
 
-    @Update("update wecom_source_conversations set display_name = #{displayName}, updated_at = now() "
+    @Update("update wecom_source_conversations set display_name = #{displayName}, group_kind='EXTERNAL', updated_at = now() "
             + "where id = #{sourceConversationId}::uuid")
     int updateDisplayName(@Param("sourceConversationId") UUID sourceConversationId,
                           @Param("displayName") String displayName);
+
+    @Update("update wecom_source_conversations set contact_identity_id=#{contactIdentityId}::uuid, updated_at=now() "
+            + "where id=#{sourceConversationId}::uuid and conversation_type='DIRECT' "
+            + "and contact_identity_id is null")
+    int bindContactIdentity(@Param("sourceConversationId") UUID sourceConversationId,
+                            @Param("contactIdentityId") UUID contactIdentityId);
+
+    @Update("update wecom_source_conversations set display_name=coalesce(nullif(#{displayName}, ''), display_name), group_kind=case when #{status}='RESOLVED' then 'EXTERNAL' else group_kind end, name_resolution_status=#{status}, last_name_checked_at=#{checkedAt}, name_next_retry_at=#{nextRetryAt}, name_error_code=#{errorCode}, updated_at=now() where id=#{sourceConversationId}::uuid")
+    int updateNameResolution(@Param("sourceConversationId") UUID sourceConversationId,
+                             @Param("displayName") String displayName, @Param("status") String status,
+                             @Param("checkedAt") java.time.Instant checkedAt,
+                             @Param("nextRetryAt") java.time.Instant nextRetryAt,
+                             @Param("errorCode") String errorCode);
 }

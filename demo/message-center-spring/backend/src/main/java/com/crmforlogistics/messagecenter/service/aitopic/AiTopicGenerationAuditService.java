@@ -41,7 +41,7 @@ public class AiTopicGenerationAuditService {
         entity.setAttemptNumber((job.getAttemptCount() == null ? 0 : job.getAttemptCount()) + 1);
         entity.setProviderHost(safeHost(config.baseUrl()));
         entity.setModel(config.model());
-        String payload = redact(serialize(OpenAiCompatibleTopicGateway.buildRequest(config.model(), input, objectMapper)));
+        String payload = redact(serialize(OpenAiCompatibleTopicGateway.buildRequest(config.model(), input, objectMapper, config.matchThreshold())));
         String bounded = boundJson(payload, config.auditMaxRequestBytes());
         entity.setRequestPayload(bounded);
         entity.setRequestTruncated(!bounded.equals(payload));

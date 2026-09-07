@@ -56,13 +56,23 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
 
     @Override
     public GenerationOutput generate(GenerationInput input, AiTopicGenerationAuditService.Context auditContext) {
+        return execute(input, auditContext, systemPrompt(config.matchThreshold()));
+    }
+
+    @Override
+    public GenerationOutput fuse(GenerationInput input) {
+        return execute(input, null, fusionPrompt());
+    }
+
+    private GenerationOutput execute(GenerationInput input, AiTopicGenerationAuditService.Context auditContext,
+                                     String instruction) {
         String rawResponse = null;
         Integer responseStatus = null;
         String responseHeaders = null;
         try {
             if (config.baseUrl().isBlank()) throw new AiTopicException("AI_NOT_CONFIGURED", false, "BASE_URL_MISSING", null);
             Map<String, Object> request = new LinkedHashMap<>();
-            request.putAll(buildRequest(config.model(), input, mapper));
+            request.putAll(buildRequest(config.model(), input, mapper, instruction));
             RestClient.RequestBodySpec call = client.post().body(request);
             if (!config.apiKey().isBlank()) call.header("Authorization", "Bearer " + config.apiKey());
             HttpResult http = call.exchange((req, res) -> new HttpResult(res.getStatusCode().value(),
@@ -126,12 +136,18 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
         return "CLIENT_ERROR";
     }
 
-    static Map<String, Object> buildRequest(String model, GenerationInput input, ObjectMapper mapper) {
+    static Map<String, Object> buildRequest(String model, GenerationInput input, ObjectMapper mapper,
+                                            double matchThreshold) {
+        return buildRequest(model, input, mapper, systemPrompt(matchThreshold));
+    }
+
+    private static Map<String, Object> buildRequest(String model, GenerationInput input, ObjectMapper mapper,
+                                                    String instruction) {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("model", model);
         request.put("temperature", 0.1);
         request.put("messages", List.of(
-                Map.of("role", "system", "content", systemPrompt()),
+                Map.of("role", "system", "content", instruction),
                 Map.of("role", "user", "content", writePayload(input, mapper))));
         return request;
     }
@@ -158,7 +174,17 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
                 "incremental", input.incremental(), "sources", sources, "existingTopics", topics);
     }
 
-    private static String systemPrompt() {
-        return "Group only supplied ChatApp, email, phone, and WeCom summaries into business topics. WeCom summaries contain the official summary only, never infer an unavailable original message. All supplied sources and existing topics share one owner scope; never associate another owner. Return JSON only: {topics:[{topicKey,title,summary,relevance,sourceIds:[uuid]}]}. Every topic MUST have a non-empty sourceIds array; assign every supplied source to exactly one topic, never leave a source ungrouped, and never emit a topic with an empty sourceIds. For an existing topic, topicKey MUST be its exact existingTopics.id UUID; for a new topic, use a new opaque key that is not a UUID. Never invent sources or include unsupported channels. Write title and summary in Chinese.";
+    private static String systemPrompt(double matchThreshold) {
+        String threshold = String.format(java.util.Locale.ROOT, "%.2f", matchThreshold);
+        return "Group only supplied ChatApp, email, WhatsApp, phone, and WeCom summaries into business topics. WeCom summaries contain the official summary only, never infer an unavailable original message. All supplied sources and existing topics share one owner scope; never associate another owner. Return JSON only: {topics:[{topicKey,title,summary,relevance,sourceIds:[uuid]}]}. relevance MUST be a JSON number from 0 to 1, not a word or quoted string, and expresses confidence that the source continues an existing topic. Every topic MUST have a non-empty sourceIds array; assign every supplied source to exactly one topic, never leave a source ungrouped, and never emit a topic with an empty sourceIds. For an existing topic, topicKey MUST be its exact existingTopics.id UUID; for a new topic, use a new opaque key that is not a UUID. Only set an existing topic's UUID when relevance is at least " + threshold + "; when relevance would fall below " + threshold + ", create a new topic with a new key instead, never reference the existing topic's UUID with a low relevance. Never invent sources or include unsupported channels. Write title and summary in Chinese.";
+    }
+
+    private static String fusionPrompt() {
+        return "Fuse all supplied business sources and existing topic context into exactly one coherent topic. "
+                + "Return JSON only: {topics:[{topicKey,title,summary,relevance,sourceIds:[uuid]}]}. "
+                + "Return exactly one topics entry, use the opaque topicKey fusion, set relevance to 1, "
+                + "include every supplied source ID exactly once, and do not invent any source. "
+                + "The title and summary must synthesize the complete discussion rather than copy one existing topic. "
+                + "Write title and summary in Chinese.";
     }
 }

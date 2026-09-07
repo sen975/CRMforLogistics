@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.message;
 
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOutboundGateway;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
@@ -94,6 +95,24 @@ class MessageOutboxWorkerTest {
                 eq(fixture.job.getId()), eq("worker-1"), eq("SUBMISSION_UNKNOWN"),
                 eq("timeout"), any());
         verify(statusEventMapper).insertIgnore(any());
+    }
+
+    @Test
+    void missingAccountCredentialsFailsTheMessageWithItsOriginalCode() throws Exception {
+        Fixture fixture = fixture(0, 3);
+        when(messageMapper.selectById(fixture.message.getId())).thenReturn(fixture.message);
+        when(gateway.submit(any())).thenThrow(
+                new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"));
+        when(outboxJobMapper.markDeadIfOwned(any(), any(), any(), any(), any())).thenReturn(1);
+
+        worker().process(fixture.job);
+
+        assertThat(fixture.job.getStatus()).isEqualTo("dead");
+        assertThat(fixture.message.getCurrentStatus()).isEqualTo("failed");
+        verify(outboxJobMapper).markDeadIfOwned(
+                eq(fixture.job.getId()), eq("worker-1"),
+                eq("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"),
+                eq("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"), any());
     }
 
     @Test

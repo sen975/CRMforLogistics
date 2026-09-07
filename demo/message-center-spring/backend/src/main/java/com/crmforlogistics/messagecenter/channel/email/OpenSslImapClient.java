@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.channel.email;
 
 import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
+import com.sun.mail.imap.protocol.BASE64MailboxEncoder;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -40,7 +41,7 @@ final class OpenSslImapClient {
                 throw new EmailException("EMAIL_IMAP_AUTHENTICATION_FAILED",
                         cleanLoginFailure(login));
             }
-            String select = command(input, output, "A003 SELECT \"" + escape(folderName) + "\"");
+            String select = command(input, output, "A003 SELECT \"" + escapeMailbox(folderName) + "\"");
             if (!select.contains("A003 OK")) return List.of();
             int count = messageCount(select);
             if (count <= 0) return List.of();
@@ -136,6 +137,10 @@ final class OpenSslImapClient {
 
     private static String escape(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String escapeMailbox(String value) {
+        return escape(BASE64MailboxEncoder.encode(value == null ? "" : value));
     }
 
     private static String cleanLoginFailure(String response) {

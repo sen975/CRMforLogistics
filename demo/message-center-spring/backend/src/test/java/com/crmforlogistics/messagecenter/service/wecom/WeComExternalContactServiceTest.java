@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -79,6 +80,22 @@ class WeComExternalContactServiceTest {
                 .containsExactly("EMPLOYEE", "EXTERNAL_CONTACT");
         assertThat(result.members().get(0).displayName()).isEqualTo("员工一");
         assertThat(result.members().get(0).avatarUrl()).isEqualTo("https://img/1");
+    }
+
+    @Test
+    void externalGroupSyncParsesOneStrictBoundedPage() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.gateway.groupList(eq(INSTALLATION), isNull(), eq(List.of()), eq("cursor-1"), eq(1000), any()))
+                .thenReturn(new ObjectMapper().readTree("""
+                        {"errcode":0,"group_chat_list":[
+                          {"chat_id":"chat-a"},{"chat_id":"chat-b"},{"chat_id":"chat-a"}],
+                         "next_cursor":"cursor-2"}
+                        """));
+
+        var page = fixture.service.externalGroupPageForSync(INSTALLATION, "cursor-1");
+
+        assertThat(page.chatIds()).containsExactly("chat-a", "chat-b");
+        assertThat(page.nextCursor()).isEqualTo("cursor-2");
     }
 
     private static Fixture fixture() {

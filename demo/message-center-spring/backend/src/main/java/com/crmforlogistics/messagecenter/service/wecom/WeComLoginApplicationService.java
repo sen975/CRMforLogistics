@@ -110,15 +110,14 @@ public class WeComLoginApplicationService {
                 context.installationBinding().suiteId(), upstream.corpId(), upstream.userId(),
                 upstream.userId(), context.installationBinding());
         var bound = bindings.bind(currentUserId, identity);
-        return new WeComBindingResponse(bound.userId(), bound.authCorpId(), bound.wecomUserId(),
-                bound.provisioningSource(), true);
+        return bindingResponse(bound);
     }
 
     public WeComBindingResponse bindingStatus(UUID currentUserId) {
         try {
             var bound = bindings.requireByUserId(currentUserId);
-            return new WeComBindingResponse(bound.userId(), bound.authCorpId(), bound.wecomUserId(),
-                    bound.provisioningSource(), true);
+            refreshBoundProfile(bound);
+            return bindingResponse(bound);
         } catch (WeComException exception) {
             if ("WECOM_USER_NOT_BOUND".equals(exception.code())) {
                 return new WeComBindingResponse(currentUserId, null, null, null, false);
@@ -127,24 +126,88 @@ public class WeComLoginApplicationService {
         }
     }
 
+    private void refreshBoundProfile(WeComUserBindingService.BoundIdentity bound) {
+        if (bound == null || bound.installationBinding() == null) return;
+        try {
+            var installation = installations.resolveInstallation(bound.suiteId(), bound.authCorpId());
+            hydrateAuthorizedProfile(installation,
+                    new WeComAuthorizationGateway.LoginIdentity(bound.authCorpId(), bound.wecomUserId()),
+                    Duration.ofSeconds(config.wecomApiTimeoutSeconds()));
+        } catch (RuntimeException failure) {
+            log.warn("event=wecom.employee.profile_status_refresh_failed userId={} code={}",
+                    bound.wecomUserId(), failure instanceof WeComException exception
+                            ? exception.code() : "UNEXPECTED");
+        }
+    }
+
     @Transactional
     public void unbind(UUID currentUserId) {
         bindings.unbind(currentUserId);
     }
 
+    private WeComBindingResponse bindingResponse(WeComUserBindingService.BoundIdentity bound) {
+        String corpName = "";
+        if (bound != null && bound.suiteId() != null && bound.authCorpId() != null) {
+            var installation = installations.find(bound.suiteId(), bound.authCorpId());
+            if (installation != null && installation.getCorpName() != null) {
+                corpName = installation.getCorpName().trim();
+            }
+        }
+        String displayName = "";
+        if (profiles != null && bound != null && bound.installationBinding() != null) {
+            displayName = profiles.displayNameFor(bound.installationBinding().installationId(),
+                    "EMPLOYEE", bound.wecomUserId());
+        }
+        return new WeComBindingResponse(bound.userId(), bound.authCorpId(), bound.wecomUserId(),
+                bound.provisioningSource(), true,
+                displayName.isBlank() ? null : displayName,
+                corpName.isBlank() ? null : corpName);
+    }
+
     private void hydrateAuthorizedProfile(com.crmforlogistics.messagecenter.channel.wecom.ResolvedInstallation installation,
                                          WeComAuthorizationGateway.LoginIdentity identity, Duration timeout) {
-        if (profiles == null || identity == null || identity.userTicket() == null
-                || identity.userTicket().isBlank()) return;
+        if (profiles == null || identity == null || identity.userId() == null
+                || identity.userId().isBlank()) return;
+        String userTicket = identity.userTicket();
         try {
-            var accessToken = accessTokens.accessToken(installation, timeout);
-            profiles.syncAuthorizedEmployee(installation, identity.userId(),
-                    gateway.getUserDetail(accessToken, identity.userTicket(), timeout));
+            if (userTicket != null && !userTicket.isBlank()) {
+                var accessToken = accessTokens.accessToken(installation, timeout);
+                var result = profiles.syncAuthorizedEmployee(installation, identity.userId(),
+                        gateway.getUserDetail(accessToken, userTicket, timeout));
+                logProfileSync(identity.userId(), "/cgi-bin/auth/getuserdetail", result);
+                return;
+            }
+            var result = profiles.syncEmployee(installation, identity.userId(), timeout);
+            logProfileSync(identity.userId(), "/cgi-bin/user/get", result);
         } catch (RuntimeException failure) {
             log.warn("event=wecom.employee.profile_authorization_failed userId={} code={}",
                     identity.userId(), failure instanceof WeComException exception
                             ? exception.code() : "UNEXPECTED");
+            if (userTicket != null && !userTicket.isBlank()) {
+                try {
+                    var result = profiles.syncEmployee(installation, identity.userId(), timeout);
+                    logProfileSync(identity.userId(), "/cgi-bin/user/get", result);
+                } catch (RuntimeException fallbackFailure) {
+                    log.warn("event=wecom.employee.profile_directory_fallback_failed userId={} code={}",
+                            identity.userId(), fallbackFailure instanceof WeComException exception
+                                    ? exception.code() : "UNEXPECTED");
+                }
+            }
         }
+    }
+
+    private static void logProfileSync(String userId, String path,
+                                       WeComPartyProfileService.ProfileResult result) {
+        if (result == null) {
+            log.warn("event=wecom.employee.profile_sync_result userId={} path={} status=EMPTY avatarPresent=false",
+                    userId, path);
+            return;
+        }
+        log.info("event=wecom.employee.profile_sync_result userId={} path={} status={} avatarPresent={} errorCode={}",
+                userId, path, result.profileStatus(),
+                result.avatarUrl() != null && !result.avatarUrl().isBlank(),
+                result.profileErrorCode() == null || result.profileErrorCode().isBlank()
+                        ? "NONE" : result.profileErrorCode());
     }
 
     private static void validateCorp(WeComLoginAttemptService.AttemptContext context, String corpId) {

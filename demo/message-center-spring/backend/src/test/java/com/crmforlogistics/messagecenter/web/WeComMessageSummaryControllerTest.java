@@ -32,7 +32,7 @@ class WeComMessageSummaryControllerTest {
                 new WeComMessageSummaryRepository.JobView(true, UUID.randomUUID(), installationId, "corp", null,
                         "m-1", 100L, "FAILED", "job-1", null,
                         "{\"operation\":\"submit\",\"msgid\":\"m-1\"}", "{\"status\":1}",
-                        "RESPONSE_DATA", "AI_RESPONSE_INVALID", "RETRY_EXHAUSTED", 20,
+                        "RESPONSE_DATA", "AI_RESPONSE_INVALID", "official result is missing a non-empty summary", "RETRY_EXHAUSTED", 20,
                         Instant.now(), Instant.now(), Instant.now(), Instant.now(), Instant.now())));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
                 new WeComMessageSummaryController(config, installations, repository)).build();
@@ -41,6 +41,7 @@ class WeComMessageSummaryControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("FAILED"))
                 .andExpect(jsonPath("$.validationStage").value("RESPONSE_DATA"))
+                .andExpect(jsonPath("$.lastErrorDiagnostic").value("official result is missing a non-empty summary"))
                 .andExpect(jsonPath("$.secretKey").doesNotExist())
                 .andExpect(jsonPath("$.rawRequestJson").value(
                         "{\"operation\":\"submit\",\"msgid\":\"m-1\"}"));
