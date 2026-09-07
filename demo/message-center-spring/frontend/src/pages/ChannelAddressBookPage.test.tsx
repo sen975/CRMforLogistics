@@ -79,6 +79,23 @@ describe('ChannelAddressBookPage', () => {
     await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('email', '', 2));
   });
 
+  it('shows enterprise WeCom when it is an additional contact channel', () => {
+    hooks.useChannelAddressBook.mockReturnValueOnce({
+      data: {
+        items: [{
+          contactId: 'contact-wecom', identityId: 'identity-wecom', displayName: '企业客户', remark: null,
+          channelType: 'chatapp', address: '+8613800000000', channelDisplayName: 'WhatsApp',
+          additionalChannelTypes: ['wecom'], source: 'synced', lastContactAt: null,
+          hasActivity: false, canDelete: false,
+        }], page: 1, size: 20, hasMore: false,
+      }, isLoading: false,
+    });
+    renderPage();
+
+    expect(screen.getByText('【企业微信】')).toBeInTheDocument();
+    expect(screen.queryByText('【】')).not.toBeInTheDocument();
+  });
+
   it('saves a manual phone contact and opens its read-only channel timeline', async () => {
     const create = vi.fn();
     hooks.useCreateManualChannelContact.mockReturnValue({ mutate: create, isPending: false });
