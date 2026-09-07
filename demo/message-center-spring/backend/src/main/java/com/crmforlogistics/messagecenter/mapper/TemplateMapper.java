@@ -227,3 +227,6 @@ public interface TemplateMapper extends BaseMapper<TemplateEntity> {
                @Param("metadataJsonb") String metadataJsonb,
                @Param("lastSyncedAt") Instant lastSyncedAt);
 }
+
+    @Update("update message_templates set remark = #{remark}, updated_at = now() where id = #{templateId}::uuid")
+    int updateRemark(@Param("templateId") UUID templateId, @Param("remark") String remark);

@@ -102,9 +102,10 @@ export default function TemplateEditorDrawer({
   submitting?: boolean;
   uploadMedia: (format: 'IMAGE' | 'VIDEO' | 'DOCUMENT', file: File, clientRequestId: string, signal: AbortSignal) => Promise<TemplateMediaAsset>;
   onClose: () => void;
-  onSubmit: (command: ReturnType<typeof buildCommand>, editing: boolean) => Promise<void>;
+  onSubmit: (command: ReturnType<typeof buildCommand>, editing: boolean, remark?: string) => Promise<void>;
 }) {
   const [name, setName] = useState('');
+  const [remark, setRemark] = useState('');
   const [language, setLanguage] = useState('');
   const [category, setCategory] = useState<TemplateCategory | null>('UTILITY');
   const [body, setBody] = useState('');
@@ -136,6 +137,7 @@ export default function TemplateEditorDrawer({
     }
     const value = initialValue ?? initialValueForTemplate(template);
     setName(value.name);
+    setRemark(template?.remark ?? '');
     setLanguage(value.language);
     setCategory(value.category);
     const bodyText = value.body;
@@ -224,7 +226,7 @@ export default function TemplateEditorDrawer({
 
   async function submit() {
     if (blockers.length > 0 || category === null) return;
-    await onSubmit(buildCommand({ name: effectiveName, language, category, body, headerFormat, headerText, mediaAssetId, footer, buttons: [...buttons, ...sourceButtons], examples }), !!template);
+    await onSubmit(buildCommand({ name: effectiveName, language, category, body, headerFormat, headerText, mediaAssetId, footer, buttons: [...buttons, ...sourceButtons], examples }), !!template, template ? remark : undefined);
   }
 
   function handleClose() {
@@ -233,7 +235,8 @@ export default function TemplateEditorDrawer({
   }
 
   const form = <Form layout="vertical">
-        <Form.Item label="模板名称" required><Input aria-label="模板名称" value={effectiveName} readOnly={Boolean(template)} onChange={template ? undefined : (event) => setName(event.target.value)} /></Form.Item>
+        <Form.Item label="模板名称" required>{template ? <Typography.Text aria-label="模板名称" strong>{effectiveName}</Typography.Text> : <Input aria-label="模板名称" value={effectiveName} onChange={(event) => setName(event.target.value)} />}</Form.Item>
+        {template && <Form.Item label="业务备注"><Input.TextArea aria-label="业务备注" value={remark} onChange={(event) => setRemark(event.target.value)} rows={2} placeholder="仅用于系统内识别，不会提交给 WhatsApp" /></Form.Item>}
         <Form.Item label="语言" required><Select aria-label="语言" value={language || undefined} onChange={setLanguage} options={WHATSAPP_TEMPLATE_LANGUAGE_OPTIONS} placeholder="选择语言" showSearch optionFilterProp="label" /></Form.Item>
         <Form.Item label="模板类别" required><Select aria-label="模板类别" value={category ?? undefined} onChange={setCategory} options={[{ value: 'UTILITY', label: '工具' }, { value: 'MARKETING', label: '营销' }]} placeholder="选择模板类别" /></Form.Item>
         <Form.Item label="正文" required><Input.TextArea aria-label="正文" value={body} onChange={(event) => setBody(event.target.value)} rows={5} /></Form.Item>

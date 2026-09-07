@@ -127,7 +127,7 @@ describe('TemplateEditorDrawer public-template drafts', () => {
 });
 
 describe('TemplateEditorDrawer existing templates', () => {
-  it('keeps the official template name read-only and submits the original name', async () => {
+  it('shows the official name as text and submits an editable business remark', async () => {
     const user = userEvent.setup();
     const submit = vi.fn().mockResolvedValue(undefined);
     const template: SharedTemplate = {
@@ -164,12 +164,14 @@ describe('TemplateEditorDrawer existing templates', () => {
       </ConfigProvider>,
     );
 
-    const nameInput = screen.getByLabelText('模板名称');
-    expect(nameInput).toHaveAttribute('readonly');
-    await user.type(nameInput, '_changed');
-    expect(nameInput).toHaveValue('official_welcome');
+    expect(screen.getByText('official_welcome')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '模板名称' })).not.toBeInTheDocument();
+    const remarkInput = screen.getByRole('textbox', { name: '业务备注' });
+    expect(remarkInput).toHaveValue('客户欢迎');
+    await user.clear(remarkInput);
+    await user.type(remarkInput, '新客户欢迎');
 
     await user.click(screen.getByRole('button', { name: '提交修改' }));
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: 'official_welcome' }), true);
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ name: 'official_welcome' }), true, '新客户欢迎');
   });
 });
