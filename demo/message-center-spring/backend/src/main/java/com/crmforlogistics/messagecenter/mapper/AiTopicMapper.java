@@ -24,7 +24,7 @@ public interface AiTopicMapper extends BaseMapper<AiTopicEntity> {
 
     @Select("select t.* from ai_topics t join contacts c on c.id=t.contact_id "
             + "where t.id=#{topicId}::uuid and (t.owner_type is null or t.owner_type='CONTACT') "
-            + "and c.owner_user_id=#{ownerId}::uuid and c.deleted_at is null and c.status&lt;&gt;'merged' limit 1")
+            + "and c.created_by=#{ownerId}::uuid and c.deleted_at is null and c.status<>'merged' limit 1")
     AiTopicEntity findContactTopicByIdAndOwner(@Param("topicId") UUID topicId, @Param("ownerId") UUID ownerId);
 
     @Select("select * from ai_topics where id=#{topicId}::uuid and owner_type='WECOM_GROUP' limit 1")
@@ -33,11 +33,11 @@ public interface AiTopicMapper extends BaseMapper<AiTopicEntity> {
     @Select("select exists (select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=#{userId}::uuid and r.code='admin')")
     boolean isAdmin(@Param("userId") UUID userId);
 
-    @Select("select exists (select 1 from ai_topics t join wecom_source_conversation_participants p on p.source_conversation_id=t.owner_id and p.participant_status='OBSERVED' join wecom_parties party on party.id=p.party_id join contact_identities ci on ci.channel_type='wecom' and ci.identity_value=party.provider_party_id and ci.deleted_at is null join contacts c on c.id=ci.contact_id and c.deleted_at is null and c.status&lt;&gt;'merged' where t.id=#{topicId}::uuid and t.owner_type='WECOM_GROUP' and (#{isAdmin}=true or c.created_by=#{userId}::uuid or exists (select 1 from conversations cv where cv.contact_identity_id=ci.id and (cv.assigned_user_id=#{userId}::uuid or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{userId}::uuid) or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at&gt;now()))))))")
+    @Select("select exists (select 1 from ai_topics t join wecom_source_conversation_participants p on p.source_conversation_id=t.owner_id and p.participant_status='OBSERVED' join wecom_parties party on party.id=p.party_id join contact_identities ci on ci.channel_type='wecom' and ci.identity_value=party.provider_party_id and ci.deleted_at is null join contacts c on c.id=ci.contact_id and c.deleted_at is null and c.status<>'merged' where t.id=#{topicId}::uuid and t.owner_type='WECOM_GROUP' and (#{isAdmin}=true or c.created_by=#{userId}::uuid or exists (select 1 from conversations cv where cv.contact_identity_id=ci.id and (cv.assigned_user_id=#{userId}::uuid or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{userId}::uuid) or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at>now()))))))")
     boolean canAccessGroupTopic(@Param("topicId") UUID topicId, @Param("userId") UUID userId,
                                 @Param("isAdmin") boolean isAdmin);
 
-    @Select("select exists (select 1 from wecom_source_conversation_participants p join wecom_parties party on party.id=p.party_id join contact_identities ci on ci.channel_type='wecom' and ci.identity_value=party.provider_party_id and ci.deleted_at is null join contacts c on c.id=ci.contact_id and c.deleted_at is null and c.status&lt;&gt;'merged' where p.source_conversation_id=#{sourceConversationId}::uuid and p.participant_status='OBSERVED' and (c.created_by=#{userId}::uuid or exists (select 1 from conversations cv where cv.contact_identity_id=ci.id and (cv.assigned_user_id=#{userId}::uuid or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{userId}::uuid) or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at&gt;now()))))))")
+    @Select("select exists (select 1 from wecom_source_conversation_participants p join wecom_parties party on party.id=p.party_id join contact_identities ci on ci.channel_type='wecom' and ci.identity_value=party.provider_party_id and ci.deleted_at is null join contacts c on c.id=ci.contact_id and c.deleted_at is null and c.status<>'merged' where p.source_conversation_id=#{sourceConversationId}::uuid and p.participant_status='OBSERVED' and (c.created_by=#{userId}::uuid or exists (select 1 from conversations cv where cv.contact_identity_id=ci.id and (cv.assigned_user_id=#{userId}::uuid or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{userId}::uuid) or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at>now()))))))")
     boolean canAccessGroupOwner(@Param("sourceConversationId") UUID sourceConversationId, @Param("userId") UUID userId);
 
     @Select("select t.*, c.display_name as contact_display_name, c.remark as contact_remark, ci.channel_type as contact_channel_type, coalesce(nullif(ci.display_name, ''), nullif(ci.identity_value, '')) as contact_channel_nickname from ai_topics t join contacts c on c.id=t.contact_id left join lateral (select channel_type, display_name, identity_value from contact_identities where contact_id=t.contact_id and deleted_at is null and channel_type in ('chatapp', 'email', 'phone') order by case when channel_type in (select distinct channel_type from ai_topic_items where topic_id=t.id and channel_type in ('chatapp', 'email', 'phone')) then 0 else 1 end, is_primary desc nulls last, created_at, id limit 1) ci on true where t.contact_id=#{contactId}::uuid and t.status='READY' and c.deleted_at is null order by t.last_occurred_at desc, t.id")
@@ -104,6 +104,17 @@ public interface AiTopicMapper extends BaseMapper<AiTopicEntity> {
             + "where owner_type='CONTACT' and owner_id=#{sourceContactId}::uuid and status='READY'")
     int transferReadyByContact(@Param("sourceContactId") UUID sourceContactId,
                                @Param("targetContactId") UUID targetContactId);
+
+    @Update("update ai_topics set owner_id=#{targetContactId}::uuid, contact_id=#{targetContactId}::uuid, "
+            + "review_origin='MERGE_SOURCE', review_source_contact_id=#{sourceContactId}::uuid, "
+            + "review_source_topic_id=id, version=version+1, updated_at=now() "
+            + "where owner_type='CONTACT' and owner_id=#{sourceContactId}::uuid and status='REVIEW_PENDING'")
+    int transferReviewPendingByContact(@Param("sourceContactId") UUID sourceContactId,
+                                       @Param("targetContactId") UUID targetContactId);
+
+    @Select("select * from ai_topics where owner_type='CONTACT' and owner_id=#{contactId}::uuid "
+            + "and status in ('READY','REVIEW_PENDING') order by last_occurred_at, id")
+    List<AiTopicEntity> listContactMergeCandidates(@Param("contactId") UUID contactId);
 
     @Update("update ai_topics set status=#{toStatus}, version=version+1, updated_at=now() where id=#{id}::uuid and status=#{fromStatus}")
     int transitionStatus(@Param("id") UUID id, @Param("fromStatus") String fromStatus,

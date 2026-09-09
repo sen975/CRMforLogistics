@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.entity.AiTopicItemEntity;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerActivityService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicSplitReconciler;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicContactMergeReconciler;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -40,6 +41,7 @@ public class ContactGroupService {
     private final AiTopicItemMapper aiTopicItemMapper;
     private final AiTopicOwnerActivityService aiTopicActivities;
     private final AiTopicSplitReconciler aiTopicSplitReconciler;
+    private final AiTopicContactMergeReconciler aiTopicContactMergeReconciler;
 
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper) {
@@ -75,7 +77,6 @@ public class ContactGroupService {
         this(contactMapper, contactIdentityMapper, null, aiTopicMapper, aiTopicItemMapper, aiTopicActivities, null);
     }
 
-    @Autowired
     public ContactGroupService(ContactMapper contactMapper,
                                ContactIdentityMapper contactIdentityMapper,
                                ContactTagMapper contactTagMapper,
@@ -83,6 +84,19 @@ public class ContactGroupService {
                                AiTopicItemMapper aiTopicItemMapper,
                                AiTopicOwnerActivityService aiTopicActivities,
                                AiTopicSplitReconciler aiTopicSplitReconciler) {
+        this(contactMapper, contactIdentityMapper, contactTagMapper, aiTopicMapper, aiTopicItemMapper,
+                aiTopicActivities, aiTopicSplitReconciler, null);
+    }
+
+    @Autowired
+    public ContactGroupService(ContactMapper contactMapper,
+                               ContactIdentityMapper contactIdentityMapper,
+                               ContactTagMapper contactTagMapper,
+                               AiTopicMapper aiTopicMapper,
+                               AiTopicItemMapper aiTopicItemMapper,
+                               AiTopicOwnerActivityService aiTopicActivities,
+                               AiTopicSplitReconciler aiTopicSplitReconciler,
+                               AiTopicContactMergeReconciler aiTopicContactMergeReconciler) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.contactTagMapper = contactTagMapper;
@@ -90,6 +104,7 @@ public class ContactGroupService {
         this.aiTopicItemMapper = aiTopicItemMapper;
         this.aiTopicActivities = aiTopicActivities;
         this.aiTopicSplitReconciler = aiTopicSplitReconciler;
+        this.aiTopicContactMergeReconciler = aiTopicContactMergeReconciler;
     }
 
     /**
@@ -109,17 +124,18 @@ public class ContactGroupService {
             throw new IllegalArgumentException("Contacts must differ");
         }
 
-        ContactEntity source = requireContact(sourceContactId, userId);
-        ContactEntity target = requireContact(targetContactId, userId);
-        if (source.getOwnerUserId() != null && target.getOwnerUserId() != null
-                && !source.getOwnerUserId().equals(target.getOwnerUserId())) {
-            throw new IllegalArgumentException("Contacts must have the same owner");
-        }
+        // Merge must use the same visibility contract as the unified contact list.
+        // Legacy email/WhatsApp contacts can have owner_user_id = NULL while
+        // remaining owned by their creator (or accessible through an assignment).
+        ContactEntity source = requireAccessibleContact(sourceContactId, userId);
+        ContactEntity target = requireAccessibleContact(targetContactId, userId);
         // Move all identities from source to target
         contactIdentityMapper.updateContactId(targetContactId, sourceContactId);
 
         // Mark source contact as merged
-        if (aiTopicMapper != null) {
+        if (aiTopicContactMergeReconciler != null) {
+            aiTopicContactMergeReconciler.reconcileAfterContactMerge(sourceContactId, targetContactId, userId);
+        } else if (aiTopicMapper != null) {
             aiTopicMapper.transferReadyByContact(sourceContactId, targetContactId);
         }
         source.setStatus("merged");
@@ -156,7 +172,6 @@ public class ContactGroupService {
         // Create new contact
         ContactEntity newContact = new ContactEntity();
         newContact.setId(UUID.randomUUID());
-        newContact.setOwnerUserId(sourceContact.getOwnerUserId());
         newContact.setDisplayName(name);
         newContact.setStatus("active");
         if (userId != null) {
@@ -252,28 +267,14 @@ public class ContactGroupService {
                     new ContactTagsRequest.ContactTagInput(name, color));
         }
 
-        if (contact.getOwnerUserId() != null) {
-            contactTagMapper.deleteByContactIdAndOwner(contactId, userId);
-        } else {
-            contactTagMapper.deleteByContactId(contactId);
-        }
+        contactTagMapper.deleteByContactIdAndOwner(contactId, userId);
         for (ContactTagsRequest.ContactTagInput input : unique.values()) {
-            if (contact.getOwnerUserId() != null) {
-                contactTagMapper.insertTagForOwner(userId, input.name(), input.color());
-            } else {
-                contactTagMapper.insertTag(input.name(), input.color());
-            }
+            contactTagMapper.insertTagForOwner(userId, input.name(), input.color());
             ContactTagMapper tagMapper = contactTagMapper;
-            var tag = contact.getOwnerUserId() != null
-                    ? tagMapper.findActiveByNameAndOwner(input.name(), userId)
-                    : tagMapper.findActiveByName(input.name());
+            var tag = tagMapper.findActiveByNameAndOwner(input.name(), userId);
             var resolvedTag = tag
                     .orElseThrow(() -> new IllegalStateException("Contact tag was not created"));
-            if (contact.getOwnerUserId() != null) {
-                tagMapper.insertTaggingForOwner(contactId, resolvedTag.id(), userId);
-            } else {
-                tagMapper.insertTagging(contactId, resolvedTag.id());
-            }
+            tagMapper.insertTaggingForOwner(contactId, resolvedTag.id(), userId);
         }
     }
 

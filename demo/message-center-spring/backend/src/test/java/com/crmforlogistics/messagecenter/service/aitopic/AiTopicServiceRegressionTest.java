@@ -205,8 +205,8 @@ class AiTopicServiceRegressionTest {
         AiTopicEntity second = topic("second", Instant.parse("2026-08-02T00:00:00Z"));
         second.setId(secondId);
         second.setContactId(contactId);
-        when(topics.selectById(firstId)).thenReturn(first);
-        when(topics.selectById(secondId)).thenReturn(second);
+        when(topics.findContactTopicByIdAndOwner(firstId, userId)).thenReturn(first);
+        when(topics.findContactTopicByIdAndOwner(secondId, userId)).thenReturn(second);
         when(items.listByTopic(firstId)).thenReturn(List.of(item(firstId)));
         when(items.listByTopic(secondId)).thenReturn(List.of(item(secondId)));
 

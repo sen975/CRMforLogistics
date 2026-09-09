@@ -278,6 +278,68 @@ class AiTopicStoreApprovalServiceTest {
         verify(topics, never()).transitionStatus(any(), any(), any());
     }
 
+    @Test
+    void pendingContactStoreFailsWithAStructuredTopicErrorWhenOperationWasNotPersisted() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        UUID topicId = UUID.randomUUID();
+        AiTopicMapper topics = mock(AiTopicMapper.class);
+        AiTopicOperationJobMapper operations = mock(AiTopicOperationJobMapper.class);
+        AiTopicEntity topic = new AiTopicEntity();
+        topic.setId(topicId);
+        topic.setContactId(contactId);
+        topic.setOwnerType("CONTACT");
+        topic.setOwnerId(contactId);
+        topic.setStatus("REVIEW_PENDING");
+        when(topics.findContactTopicByIdAndOwner(topicId, userId)).thenReturn(topic);
+        when(operations.findOrCreate(eq(contactId), eq("CONTACT"), eq(contactId), eq(null), eq(userId),
+                eq("STORE"), any(), eq("{}"), eq("pending-store"), any())).thenReturn(null);
+
+        AiTopicService service = new AiTopicService(
+                mock(com.crmforlogistics.messagecenter.service.contact.ContactService.class),
+                mock(AiTopicInputService.class), topics, mock(AiTopicItemMapper.class),
+                mock(AiTopicGenerationJobMapper.class), mock(AiTopicVersionMapper.class),
+                new AiTopicConfigHolder(new AiTopicConfig("", "", "model", 30, 200, 262144,
+                        .65, 1, 3, 120, 30)), mock(ContactIdentityMapper.class), operations,
+                null, null, null, null);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.submitStore(userId, topicId, "pending-store"))
+                .isInstanceOf(AiTopicException.class)
+                .extracting(error -> ((AiTopicException) error).code())
+                .isEqualTo("TOPIC_OPERATION_UNAVAILABLE");
+    }
+
+    @Test
+    void keepsPendingContactTopicAndReturnsItsProjectedSources() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        UUID topicId = UUID.randomUUID();
+        AiTopicMapper topics = mock(AiTopicMapper.class);
+        AiTopicItemMapper items = mock(AiTopicItemMapper.class);
+        AiTopicEntity topic = new AiTopicEntity();
+        topic.setId(topicId);
+        topic.setContactId(contactId);
+        topic.setOwnerType("CONTACT");
+        topic.setOwnerId(contactId);
+        topic.setStatus("REVIEW_PENDING");
+        topic.setTitle("个人自我介绍与升本规划");
+        topic.setAiSummary("电话录音内容");
+        topic.setVersion(1L);
+        when(topics.findContactTopicByIdAndOwner(topicId, userId)).thenReturn(topic);
+        when(topics.transitionStatus(topicId, "REVIEW_PENDING", "READY")).thenReturn(1);
+        when(items.listByTopic(topicId)).thenReturn(List.of());
+
+        AiTopicService service = new AiTopicService(null, null, topics, items, null, null, null, null);
+
+        var result = service.keepPending(userId, topicId);
+
+        org.assertj.core.api.Assertions.assertThat(result.title()).isEqualTo("个人自我介绍与升本规划");
+        org.assertj.core.api.Assertions.assertThat(result.ownerType()).isEqualTo(AiTopicModels.OwnerType.CONTACT);
+        org.assertj.core.api.Assertions.assertThat(result.version()).isEqualTo(2L);
+        verify(topics).transitionStatus(topicId, "REVIEW_PENDING", "READY");
+    }
+
     private static AiTopicService service(AiTopicMapper topics, AiTopicVersionMapper versions) {
         return service(topics, versions, null);
     }

@@ -31,8 +31,8 @@ class AiTopicFusionMergeTest {
         AiTopicEntity second = topic(secondId, contactId, "交期", "交期讨论", Instant.parse("2026-08-02T00:00:00Z"));
         AiTopicItemEntity firstItem = item(firstId, Instant.parse("2026-08-01T01:00:00Z"));
         AiTopicItemEntity secondItem = item(secondId, Instant.parse("2026-08-02T01:00:00Z"));
-        when(topics.selectById(firstId)).thenReturn(first);
-        when(topics.selectById(secondId)).thenReturn(second);
+        when(topics.findContactTopicByIdAndOwner(firstId, userId)).thenReturn(first);
+        when(topics.findContactTopicByIdAndOwner(secondId, userId)).thenReturn(second);
         when(items.listByTopic(firstId)).thenReturn(List.of(firstItem));
         when(items.listByTopic(secondId)).thenReturn(List.of(secondItem));
         when(reviews.listTopicSources(anyList())).thenReturn(List.of(

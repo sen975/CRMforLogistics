@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -53,7 +54,7 @@ import com.crmforlogistics.messagecenter.dto.response.AiTopicManualReviewRespons
 import com.crmforlogistics.messagecenter.mapper.AiTopicReviewMapper;
 
 @Service
-public class AiTopicService implements AiTopicSplitReconciler {
+public class AiTopicService implements AiTopicSplitReconciler, AiTopicContactMergeReconciler {
     private final ContactService contactService;
     private final AiTopicInputService inputService;
     private final AiTopicMapper topicMapper;
@@ -265,9 +266,46 @@ public class AiTopicService implements AiTopicSplitReconciler {
         return List.of(applyFusion(userId, topics, expectedVersions, fusion.title(), fusion.summary()));
     }
 
+    @Override
+    @Transactional
+    public void reconcileAfterContactMerge(UUID sourceContactId, UUID targetContactId, UUID userId) {
+        topicMapper.transferReadyByContact(sourceContactId, targetContactId);
+        topicMapper.transferReviewPendingByContact(sourceContactId, targetContactId);
+        List<AiTopicEntity> candidates = topicMapper.listContactMergeCandidates(targetContactId);
+        Map<String, List<AiTopicEntity>> groups = candidates.stream()
+                .filter(topic -> "CONTACT".equals(normalizedOwnerType(topic)))
+                .collect(Collectors.groupingBy(topic -> normalizeTitle(topic.getTitle()),
+                        java.util.LinkedHashMap::new, Collectors.toList()));
+        for (List<AiTopicEntity> group : groups.values()) {
+            if (group.size() < 2) continue;
+            List<AiTopicEntity> topics = group.stream()
+                    .sorted(Comparator.comparing(AiTopicEntity::getFirstOccurredAt,
+                            Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(AiTopicEntity::getId))
+                    .toList();
+            Map<UUID, Long> versions = topics.stream().collect(Collectors.toMap(
+                    AiTopicEntity::getId, topic -> topic.getVersion() == null ? 1L : topic.getVersion()));
+            if (sameCurrentContent(topics)) {
+                AiTopicEntity first = topics.get(0);
+                applyFusion(userId, topics, versions, first.getTitle().trim(), effectiveSummary(first),
+                        topics.stream().map(AiTopicEntity::getConfirmedSummary)
+                                .filter(summary -> summary != null && !summary.isBlank())
+                                .map(String::trim).findFirst().orElse(null));
+            } else {
+                AiTopicManualReviewResponse.Assignment fusion = generateFusionAssignment(topics);
+                applyFusion(userId, topics, versions, fusion.title(), fusion.summary());
+            }
+        }
+    }
+
     private TopicProjection applyFusion(UUID userId, List<AiTopicEntity> topics,
                                         Map<UUID, Long> expectedVersions,
                                         String title, String summary) {
+        return applyFusion(userId, topics, expectedVersions, title, summary, null);
+    }
+
+    private TopicProjection applyFusion(UUID userId, List<AiTopicEntity> topics,
+                                        Map<UUID, Long> expectedVersions,
+                                        String title, String summary, String confirmedSummary) {
         AiTopicEntity first = topics.get(0);
         String ownerType = normalizedOwnerType(first);
         UUID ownerId = normalizedOwnerId(first);
@@ -282,6 +320,7 @@ public class AiTopicService implements AiTopicSplitReconciler {
         target.setWecomGroupSourceConversationId("WECOM_GROUP".equals(ownerType) ? ownerId : null);
         target.setTitle(title);
         target.setAiSummary(summary);
+        target.setConfirmedSummary(confirmedSummary);
         target.setStatus("READY");
         target.setFirstOccurredAt(allItems.stream().map(AiTopicItemEntity::getOccurredAt).min(Instant::compareTo).orElse(first.getFirstOccurredAt()));
         target.setLastOccurredAt(allItems.stream().map(AiTopicItemEntity::getOccurredAt).max(Instant::compareTo).orElse(first.getLastOccurredAt()));
@@ -305,6 +344,26 @@ public class AiTopicService implements AiTopicSplitReconciler {
                     "MERGED_INTO", topic.getTitle(), topic.getAiSummary(), mergedTopicRef, userId);
         }
         return project(target);
+    }
+
+    private boolean sameCurrentContent(List<AiTopicEntity> topics) {
+        if (topics.isEmpty()) return false;
+        String title = normalizeTitle(topics.get(0).getTitle());
+        String summary = normalizeSummary(effectiveSummary(topics.get(0)));
+        return topics.stream().allMatch(topic -> title.equals(normalizeTitle(topic.getTitle()))
+                && summary.equals(normalizeSummary(effectiveSummary(topic))));
+    }
+
+    private String effectiveSummary(AiTopicEntity topic) {
+        return topic.getConfirmedSummary() == null ? topic.getAiSummary() : topic.getConfirmedSummary();
+    }
+
+    private String normalizeTitle(String title) {
+        return title == null ? "" : title.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizeSummary(String summary) {
+        return summary == null ? "" : summary.trim();
     }
 
     @Transactional
@@ -630,6 +689,7 @@ public class AiTopicService implements AiTopicSplitReconciler {
     }
 
     private TopicOperationProjection operationProjection(AiTopicOperationJobEntity job) {
+        if (job == null) throw new AiTopicException("TOPIC_OPERATION_UNAVAILABLE", false);
         return new TopicOperationProjection(job.getId(), TopicOperationKind.valueOf(job.getOperationKind()),
                 TopicOperationStatus.valueOf(job.getStatus()), job.getLastErrorCode(), job.getCreatedAt(), job.getCompletedAt());
     }
