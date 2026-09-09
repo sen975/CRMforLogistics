@@ -7,11 +7,13 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.infrastructure.ContactPointUtil;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.PeerReconciliationModels.PeerReconciliationCommand;
 import com.crmforlogistics.messagecenter.service.chatapp.PeerReconciliationModels.PeerReconciliationResult;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
@@ -24,15 +26,26 @@ public class ChatAppMessagePeerReconciliationService {
     private final ConversationMapper conversationMapper;
     private final ContactIdentityMapper identityMapper;
     private final ContactMapper contactMapper;
+    private final ChannelAccountMapper channelAccountMapper;
 
     public ChatAppMessagePeerReconciliationService(MessageMapper messageMapper,
                                                    ConversationMapper conversationMapper,
                                                    ContactIdentityMapper identityMapper,
                                                    ContactMapper contactMapper) {
+        this(messageMapper, conversationMapper, identityMapper, contactMapper, null);
+    }
+
+    @Autowired
+    public ChatAppMessagePeerReconciliationService(MessageMapper messageMapper,
+                                                   ConversationMapper conversationMapper,
+                                                   ContactIdentityMapper identityMapper,
+                                                   ContactMapper contactMapper,
+                                                   ChannelAccountMapper channelAccountMapper) {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.conversationMapper = Objects.requireNonNull(conversationMapper);
         this.identityMapper = Objects.requireNonNull(identityMapper);
         this.contactMapper = Objects.requireNonNull(contactMapper);
+        this.channelAccountMapper = channelAccountMapper;
     }
 
     @Transactional
@@ -140,6 +153,10 @@ public class ChatAppMessagePeerReconciliationService {
 
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
+        if (channelAccountMapper != null) {
+            var account = channelAccountMapper.selectById(accountId);
+            if (account != null) contact.setCreatedBy(account.getOwnerUserId());
+        }
         contact.setDisplayName(normalized);
         contact.setStatus("active");
         contactMapper.insert(contact);

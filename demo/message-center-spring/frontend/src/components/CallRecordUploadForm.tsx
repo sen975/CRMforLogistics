@@ -40,13 +40,15 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
       const targetContactId = values.contactId as string || contact?.id || '';
       let phonePointId = values.phonePointId as string || '';
 
-      if (values.newPhone) {
+      if (values.newPhone && targetContactId) {
         const bindResult = await bindPhoneContact({
           contactId: targetContactId,
           contactName: contact?.displayName,
           phoneNumber: values.newPhone as string,
         });
         phonePointId = bindResult.phonePointId;
+      } else if (values.newPhone) {
+        phonePointId = `phone:${values.newPhone as string}`;
       }
 
       formData.append('phonePointId', phonePointId);
@@ -56,7 +58,7 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
       if (values.note) formData.append('note', values.note as string);
       formData.append('file', mp3File);
 
-      await createCallRecord(targetContactId, formData);
+      await createCallRecord(targetContactId || undefined, formData);
       message.success('录音上传成功，已加入转录队列');
       setMp3File(null);
       onSuccess?.();
@@ -67,10 +69,6 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
     }
   };
 
-  if (!contact && contacts.length === 0) {
-    return <div style={{ padding: 16, color: '#999' }}>暂无联系人数据</div>;
-  }
-
   return (
     <Form
       onFinish={handleSubmit}
@@ -80,11 +78,13 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
         direction: 'inbound',
         occurredAt: dayjs(),
         contactId: contact?.id,
-        phonePointId: phoneIdentities.length > 0 ? phoneIdentities[0].identityValue : undefined,
+        phonePointId: phoneIdentities.length > 0
+          ? `phone:${phoneIdentities[0].identityValue.replace(/[^0-9]/g, '')}`
+          : undefined,
       }}
     >
       {!contact && (
-        <Form.Item name="contactId" label="联系人" rules={[{ required: true, message: '请选择联系人' }]}>
+        <Form.Item name="contactId" label="联系人">
           <Select
             showSearch
             placeholder="选择联系人"
@@ -105,7 +105,7 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
             placeholder="选择电话号码"
             options={phoneIdentities.map((i) => ({
               label: i.displayName ? `${i.displayName} (${i.identityValue})` : i.identityValue,
-              value: i.identityValue,
+              value: `phone:${i.identityValue.replace(/[^0-9]/g, '')}`,
             }))}
           />
         </Form.Item>

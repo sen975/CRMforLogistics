@@ -215,9 +215,7 @@ public class ContactService {
 
         List<ContactTagResponse> tags = contactTagMapper == null
                 ? List.of()
-                : entity.getOwnerUserId() == null
-                        ? contactTagMapper.findActiveByContactId(contactId)
-                        : contactTagMapper.findActiveByContactIdAndOwner(contactId, userId);
+                : contactTagMapper.findActiveByContactIdAndOwner(contactId, userId);
 
         return new ContactResponse(
                 contactId,

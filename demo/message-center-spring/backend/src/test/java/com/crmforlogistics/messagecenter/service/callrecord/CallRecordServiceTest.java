@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
 import com.crmforlogistics.messagecenter.mapper.CallTranscriptRevisionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.transaction.annotation.Transactional;
@@ -134,6 +135,36 @@ class CallRecordServiceTest {
                 current.getContactAnchorPointId(), current.getOccurredAt());
     }
 
+    @Test
+    void createAllowsMissingContactAndUsesPhoneResolver() throws Exception {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
+        MinioAudioStore audioStore = mock(MinioAudioStore.class);
+        ChannelAddressBookService addressBooks = mock(ChannelAddressBookService.class);
+        UUID owner = UUID.randomUUID();
+        UUID contact = UUID.randomUUID();
+        UUID identity = UUID.randomUUID();
+        when(addressBooks.resolvePhone(owner, null, "8613800138000", null))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(contact, identity, true));
+        when(mapper.countPending()).thenReturn(0);
+        MinioAudioStore.StagedAudio staged = mock(MinioAudioStore.StagedAudio.class);
+        MinioAudioStore.AudioAsset asset = new MinioAudioStore.AudioAsset(
+                "audio/test.mp3", "test.mp3", 10L, "sha", "audio/mpeg", 1.0, "call-records/test.mp3");
+        when(audioStore.stage(any(), eq("test.mp3"), eq("audio/mpeg"))).thenReturn(staged);
+        when(audioStore.publish(any(), eq(staged))).thenReturn(asset);
+
+        CallRecordService service = service(mapper, revisionMapper, null, addressBooks, audioStore);
+        CallRecordEntity created = service.create(owner, new CallRecordService.CreateCallRecordCommand(
+                "", "phone:8613800138000", "inbound", NOW, "request-1", "test.mp3",
+                "audio/mpeg", owner.toString(), ""), new java.io.ByteArrayInputStream(new byte[]{1}));
+
+        assertThat(created.getContactId()).isEqualTo(contact);
+        assertThat(created.getOwnerUserId()).isEqualTo(owner);
+        assertThat(created.getContactAnchorPointId()).isEqualTo("phone:8613800138000");
+        verify(addressBooks).resolvePhone(owner, null, "8613800138000", null);
+        verify(mapper).insert(created);
+    }
+
     private static CallRecordService service(CallRecordMapper mapper,
                                              CallTranscriptRevisionMapper revisionMapper) {
         return service(mapper, revisionMapper, null);
@@ -142,17 +173,26 @@ class CallRecordServiceTest {
     private static CallRecordService service(CallRecordMapper mapper,
                                              CallTranscriptRevisionMapper revisionMapper,
                                              AiTopicActivityRecorder topicActivityRecorder) {
+        return service(mapper, revisionMapper, topicActivityRecorder, null, mock(MinioAudioStore.class));
+    }
+
+    private static CallRecordService service(CallRecordMapper mapper,
+                                             CallTranscriptRevisionMapper revisionMapper,
+                                             AiTopicActivityRecorder topicActivityRecorder,
+                                             ChannelAddressBookService addressBooks,
+                                             MinioAudioStore audioStore) {
         return new CallRecordService(
                 mapper,
                 revisionMapper,
-                mock(MinioAudioStore.class),
+                audioStore,
                 mock(ContactIdentityMapper.class),
                 config(),
                 new FunAsrConfig(
                         "http://127.0.0.1:8000", "sensevoice",
                         java.time.Duration.ofSeconds(3), java.time.Duration.ofSeconds(30)),
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                topicActivityRecorder);
+                topicActivityRecorder,
+                addressBooks);
     }
 
     private static CallRecordEntity completedRecord(long version) {

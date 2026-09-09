@@ -85,9 +85,9 @@ public class CallRecordController {
                 SecurityUtil.currentUserId(), contactId, cursor, limit));
     }
 
-    @PostMapping("/api/v1/contacts/{contactId}/call-records")
+    @PostMapping({"/api/v1/contacts/{contactId}/call-records", "/api/v1/call-records"})
     public ResponseEntity<Map<String, Object>> create(
-            @PathVariable String contactId,
+            @PathVariable(value = "contactId", required = false) String contactId,
             @RequestParam("phonePointId") String phonePointId,
             @RequestParam("direction") String direction,
             @RequestParam("occurredAt") Instant occurredAt,
@@ -214,17 +214,21 @@ public class CallRecordController {
         List<PhoneRecordResponse> items = new ArrayList<>();
         for (CallRecordEntity e : entities) {
             String contactDisplayName = "";
-            String contactId = "";
+            // The stored contact_id is authoritative. Older records can have only
+            // the phone anchor, so resolve that anchor as an owner-scoped fallback.
+            String contactId = e.getContactId() != null ? e.getContactId().toString() : "";
             if (e.getContactAnchorPointId() != null) {
                 try {
-                    var identities = e.getContactId() == null ? List.<com.crmforlogistics.messagecenter.entity.ContactIdentityEntity>of()
-                            : contactIdentityMapper.findByContactIdAndOwner(e.getContactId(), ownerId);
-                    var identity = identities.stream().filter(item -> "phone".equals(item.getChannelType())).findFirst();
+                    var identity = e.getContactId() != null
+                            ? contactIdentityMapper.findByContactIdAndOwner(e.getContactId(), ownerId).stream()
+                                .filter(item -> "phone".equals(item.getChannelType())).findFirst()
+                            : contactIdentityMapper.findPhoneByAnchorAndOwner(e.getContactAnchorPointId(), ownerId);
                     if (identity.isPresent()) {
                         contactDisplayName = identity.get().getDisplayName() != null
                                 ? identity.get().getDisplayName() : "";
-                        contactId = identity.get().getContactId() != null
-                                ? identity.get().getContactId().toString() : "";
+                        if (contactId.isBlank() && identity.get().getContactId() != null) {
+                            contactId = identity.get().getContactId().toString();
+                        }
                     }
                 } catch (Exception ignored) {
                 }

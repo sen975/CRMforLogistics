@@ -69,7 +69,6 @@ public class ChannelAddressBookService {
         Instant now = Instant.now();
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
-        contact.setOwnerUserId(ownerId);
         contact.setDisplayName(request.displayName().trim());
         contact.setStatus("active");
         contact.setCreatedBy(ownerId);
@@ -131,7 +130,6 @@ public class ChannelAddressBookService {
         Instant now = Instant.now();
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
-        contact.setOwnerUserId(ownerId);
         contact.setDisplayName(safeDisplayName);
         contact.setStatus("active");
         contact.setCreatedBy(ownerId);
@@ -163,6 +161,87 @@ public class ChannelAddressBookService {
                 new ChannelAddressBookException("CONTACT_IDENTITY_CONFLICT", HttpStatus.CONFLICT));
         contacts.findByIdAndOwner(winner.getContactId(), ownerId).orElseThrow(() ->
                 new ChannelAddressBookException("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND));
+        return new ResolvedContact(winner.getContactId(), winner.getId(), false);
+    }
+
+    /**
+     * Resolve a phone identity in the current user's private scope. An optional
+     * contact id may be supplied by an existing upload; it is always checked for
+     * ownership before a missing phone identity is attached to it.
+     */
+    @Transactional
+    public ResolvedContact resolvePhone(UUID ownerId, UUID optionalContactId,
+                                        String phoneNumber, String displayName) {
+        if (ownerId == null) {
+            throw new ChannelAddressBookException("AUTH_REQUIRED", HttpStatus.UNAUTHORIZED);
+        }
+        String normalized = normalizeAddress("phone", phoneNumber);
+        String scope = ownerId.toString();
+
+        if (optionalContactId != null) {
+            contacts.findByIdAndOwner(optionalContactId, ownerId).orElseThrow(() ->
+                    new ChannelAddressBookException("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND));
+        }
+
+        var existing = identities.findByNormalizedValueInScope("phone", scope, normalized);
+        if (existing.isPresent()) {
+            ContactIdentityEntity identity = existing.get();
+            if (optionalContactId != null && !optionalContactId.equals(identity.getContactId())) {
+                throw new ChannelAddressBookException("CONTACT_IDENTITY_CONFLICT", HttpStatus.CONFLICT);
+            }
+            contacts.findByIdAndOwner(identity.getContactId(), ownerId).orElseThrow(() ->
+                    new ChannelAddressBookException("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND));
+            return new ResolvedContact(identity.getContactId(), identity.getId(), false);
+        }
+
+        UUID contactId = optionalContactId;
+        boolean createdContact = false;
+        Instant now = Instant.now();
+        String safeDisplayName = displayName == null || displayName.isBlank()
+                ? normalized : displayName.trim();
+        if (contactId == null) {
+            ContactEntity contact = new ContactEntity();
+            contactId = UUID.randomUUID();
+            contact.setId(contactId);
+            contact.setDisplayName(safeDisplayName);
+            contact.setStatus("active");
+            contact.setCreatedBy(ownerId);
+            contact.setCreatedAt(now);
+            contact.setUpdatedAt(now);
+            contact.setVersion(0L);
+            contacts.insert(contact);
+            createdContact = true;
+        }
+
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(contactId);
+        identity.setChannelType("phone");
+        identity.setIdentityScope(scope);
+        identity.setIdentityValue(phoneNumber.trim());
+        identity.setNormalizedValue(normalized);
+        identity.setDisplayName(safeDisplayName);
+        identity.setIsPrimary(true);
+        identity.setVerifyStatus("unverified");
+        identity.setSource("synced");
+        identity.setCreatedAt(now);
+        identity.setUpdatedAt(now);
+        identity.setVersion(0L);
+        if (identities.insertIfAbsent(identity) == 1) {
+            return new ResolvedContact(contactId, identity.getId(), createdContact);
+        }
+
+        if (createdContact) {
+            contacts.deleteOwned(ownerId, contactId);
+        }
+        ContactIdentityEntity winner = identities.findByNormalizedValueInScope(
+                "phone", scope, normalized).orElseThrow(() ->
+                new ChannelAddressBookException("CONTACT_IDENTITY_CONFLICT", HttpStatus.CONFLICT));
+        contacts.findByIdAndOwner(winner.getContactId(), ownerId).orElseThrow(() ->
+                new ChannelAddressBookException("RESOURCE_NOT_FOUND", HttpStatus.NOT_FOUND));
+        if (optionalContactId != null && !optionalContactId.equals(winner.getContactId())) {
+            throw new ChannelAddressBookException("CONTACT_IDENTITY_CONFLICT", HttpStatus.CONFLICT);
+        }
         return new ResolvedContact(winner.getContactId(), winner.getId(), false);
     }
 

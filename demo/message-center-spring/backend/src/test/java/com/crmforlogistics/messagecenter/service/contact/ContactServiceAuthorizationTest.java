@@ -44,6 +44,7 @@ class ContactServiceAuthorizationTest {
         UUID userId = UUID.randomUUID();
         UUID contactId = UUID.randomUUID();
         ContactEntity contact = contact(contactId);
+        contact.setCreatedBy(userId);
         ContactIdentityEntity identity = identity(contactId);
         ConversationEntity accessible = conversation(identity.getId(), Instant.parse("2026-08-06T09:00:00Z"));
         ConversationEntity foreign = conversation(identity.getId(), Instant.parse("2026-08-07T09:00:00Z"));
@@ -60,6 +61,8 @@ class ContactServiceAuthorizationTest {
         MessageMapper messageMapper = mock(MessageMapper.class);
         ContactTagMapper tagMapper = mock(ContactTagMapper.class);
         when(tagMapper.findActiveByContactId(contactId)).thenReturn(List.of(
+                new ContactTagResponse(UUID.randomUUID(), "重点跟进", "blue")));
+        when(tagMapper.findActiveByContactIdAndOwner(contactId, userId)).thenReturn(List.of(
                 new ContactTagResponse(UUID.randomUUID(), "重点跟进", "blue")));
 
         Page<ContactEntity> contacts = new Page<>(1, 20);

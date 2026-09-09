@@ -7,18 +7,20 @@ import org.apache.ibatis.annotations.*;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Mapper
 public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
 
-    @Select("SELECT * FROM call_records WHERE id = #{id}::uuid " +
-            "AND owner_user_id = #{ownerId}::uuid")
+    @Select("SELECT cr.* FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id " +
+            "WHERE cr.id = #{id}::uuid AND (c.created_by = #{ownerId}::uuid " +
+            "OR (cr.contact_id IS NULL AND cr.created_by = #{ownerId}::text))")
     Optional<CallRecordEntity> findByIdAndOwner(@Param("id") UUID id,
                                                 @Param("ownerId") UUID ownerId);
 
-    @Select("SELECT * FROM call_records WHERE owner_user_id=#{ownerId}::uuid "
-            + "AND contact_id=#{contactId}::uuid AND client_request_id=#{requestId}")
+    @Select("SELECT cr.* FROM call_records cr JOIN contacts c ON c.id = cr.contact_id "
+            + "WHERE c.created_by=#{ownerId}::uuid AND cr.contact_id=#{contactId}::uuid AND cr.client_request_id=#{requestId}")
     Optional<CallRecordEntity> findByOwnerAndIdempotency(@Param("ownerId") UUID ownerId,
                                                          @Param("contactId") UUID contactId,
                                                          @Param("requestId") String requestId);
@@ -35,10 +37,18 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "</script>")
     List<CallRecordEntity> listByAnchors(@Param("anchors") java.util.Set<String> anchors);
 
-    @Select("SELECT * FROM call_records WHERE owner_user_id=#{ownerId}::uuid "
-            + "AND contact_id=#{contactId}::uuid ORDER BY occurred_at, id")
+    @Select("SELECT cr.* FROM call_records cr JOIN contacts c ON c.id = cr.contact_id "
+            + "WHERE c.created_by=#{ownerId}::uuid AND cr.contact_id=#{contactId}::uuid ORDER BY cr.occurred_at, cr.id")
     List<CallRecordEntity> listByOwnerAndContact(@Param("ownerId") UUID ownerId,
                                                  @Param("contactId") UUID contactId);
+
+    @Select("<script>SELECT cr.* FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id "
+            + "WHERE (c.created_by=#{ownerId}::uuid OR (cr.contact_id IS NULL AND cr.created_by=#{ownerId}::text)) "
+            + "AND cr.contact_anchor_point_id IN "
+            + "<foreach item='a' collection='anchors' open='(' separator=',' close=')'>#{a}</foreach> "
+            + "ORDER BY occurred_at, id</script>")
+    List<CallRecordEntity> listByOwnerAndAnchors(@Param("ownerId") UUID ownerId,
+                                                 @Param("anchors") Set<String> anchors);
 
     @Select("<script>"
             + "SELECT cr.* FROM call_records cr WHERE cr.contact_anchor_point_id IN "
@@ -118,12 +128,29 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "</script>")
     List<CallRecordEntity> searchPhoneRepository(@Param("query") String query);
 
-    @Select("<script>SELECT cr.* FROM call_records cr " +
-            "WHERE cr.owner_user_id = #{ownerId}::uuid " +
+    @Select("<script>SELECT cr.* FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id " +
+            "WHERE (c.created_by = #{ownerId}::uuid OR (cr.contact_id IS NULL AND cr.created_by = #{ownerId}::text)) " +
             "<if test='query != null and query != \"\"'>" +
             "AND (cr.phone_point_id LIKE CONCAT('%', #{query}, '%') " +
             "OR cr.note ILIKE CONCAT('%', #{query}, '%'))" +
             "</if> ORDER BY cr.occurred_at DESC, cr.id DESC</script>")
     List<CallRecordEntity> searchPhoneRepositoryByOwner(@Param("ownerId") UUID ownerId,
                                                          @Param("query") String query);
+
+    @Select("SELECT cr.* FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id WHERE cr.phone_point_id IS NOT NULL "
+            + "AND cr.phone_point_id LIKE 'phone:%' AND (cr.contact_id IS NULL "
+            + "OR NOT EXISTS (SELECT 1 FROM contact_identities ci WHERE ci.contact_id = cr.contact_id "
+            + "AND ci.channel_type = 'phone' AND ci.identity_scope = c.created_by::text "
+            + "AND ci.normalized_value = regexp_replace(cr.phone_point_id, '^phone:', '') "
+            + "AND ci.deleted_at IS NULL)) ORDER BY cr.created_at, cr.id LIMIT #{limit}")
+    List<CallRecordEntity> listContactBackfillCandidates(@Param("limit") int limit);
+
+    @Update("UPDATE call_records SET contact_id = #{contactId}::uuid, "
+            + "contact_anchor_point_id = #{anchor}, phone_point_id = #{anchor}, version = version + 1, updated_at = now() "
+            + "WHERE id = #{id}::uuid AND version = #{expectedVersion} "
+            + "AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = #{contactId}::uuid "
+            + "AND c.created_by = #{ownerId}::uuid AND c.deleted_at IS NULL)")
+    int updateContactBinding(@Param("id") UUID id, @Param("ownerId") UUID ownerId,
+                             @Param("contactId") UUID contactId, @Param("anchor") String anchor,
+                             @Param("expectedVersion") long expectedVersion);
 }

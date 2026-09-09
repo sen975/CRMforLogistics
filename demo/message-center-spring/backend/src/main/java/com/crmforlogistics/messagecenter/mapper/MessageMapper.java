@@ -22,7 +22,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             + "join contact_identities ci on ci.id=cv.contact_identity_id "
             + "join contacts c on c.id=ci.contact_id "
             + "join channel_accounts ca on ca.id=m.channel_account_id "
-            + "where m.id=#{messageId}::uuid and c.owner_user_id=#{ownerId}::uuid "
+            + "where m.id=#{messageId}::uuid and c.created_by=#{ownerId}::uuid "
             + "and ca.owner_user_id=#{ownerId}::uuid limit 1")
     MessageEntity findByIdAndOwner(@Param("messageId") UUID messageId, @Param("ownerId") UUID ownerId);
 
@@ -35,7 +35,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             + "join contact_identities ci on ci.id=cv.contact_identity_id "
             + "join contacts c on c.id=ci.contact_id "
             + "join channel_accounts ca on ca.id=m.channel_account_id "
-            + "where c.id=#{contactId}::uuid and c.owner_user_id=#{ownerId}::uuid "
+            + "where c.id=#{contactId}::uuid and c.created_by=#{ownerId}::uuid "
             + "and ca.owner_user_id=#{ownerId}::uuid "
             + "order by m.occurred_at desc, m.id desc limit #{limit}")
     List<MessageEntity> listByContactAndOwner(@Param("ownerId") UUID ownerId,

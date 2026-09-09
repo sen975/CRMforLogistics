@@ -66,8 +66,20 @@ public class ContactTimelineService {
             }
         }
 
-        List<CallRecordEntity> records = callRecordMapper.listByOwnerAndContact(ownerId, contactId);
-        for (CallRecordEntity record : records) {
+        Map<UUID, CallRecordEntity> recordsById = new LinkedHashMap<>();
+        for (CallRecordEntity record : callRecordMapper.listByOwnerAndContact(ownerId, contactId)) {
+            if (record.getId() != null) recordsById.put(record.getId(), record);
+        }
+        // Legacy records may have owner_user_id/contact_anchor_point_id but a null
+        // contact_id because the owner backfill could not prove the binding. They
+        // are still safe to show here because the anchor is taken from an identity
+        // belonging to this owner-scoped contact and the query is owner-scoped.
+        if (!anchors.isEmpty()) {
+            for (CallRecordEntity record : callRecordMapper.listByOwnerAndAnchors(ownerId, anchors)) {
+                if (record.getId() != null) recordsById.putIfAbsent(record.getId(), record);
+            }
+        }
+        for (CallRecordEntity record : recordsById.values()) {
             all.add(TimelineItem.call(record));
         }
 

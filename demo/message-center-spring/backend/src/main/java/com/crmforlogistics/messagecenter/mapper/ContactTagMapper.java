@@ -17,7 +17,7 @@ public interface ContactTagMapper {
     @Select("select t.id, t.name, t.color from contact_taggings ct "
             + "join contact_tags t on t.id = ct.tag_id "
             + "join contacts c on c.id = ct.contact_id "
-            + "where ct.contact_id = #{contactId}::uuid and c.owner_user_id = #{ownerId}::uuid "
+            + "where ct.contact_id = #{contactId}::uuid and c.created_by = #{ownerId}::uuid "
             + "and t.status = 'active' and t.owner_user_id = #{ownerId}::uuid "
             + "order by lower(t.name), t.id")
     List<ContactTagResponse> findActiveByContactIdAndOwner(@Param("contactId") UUID contactId,
@@ -34,12 +34,12 @@ public interface ContactTagMapper {
                           @Param("color") String color);
 
     @Delete("delete from contact_taggings where contact_id = #{contactId}::uuid "
-            + "and exists (select 1 from contacts c where c.id = #{contactId}::uuid and c.owner_user_id = #{ownerId}::uuid)")
+            + "and exists (select 1 from contacts c where c.id = #{contactId}::uuid and c.created_by = #{ownerId}::uuid)")
     int deleteByContactIdAndOwner(@Param("contactId") UUID contactId, @Param("ownerId") UUID ownerId);
 
     @Insert("insert into contact_taggings (contact_id, tag_id) "
             + "select #{contactId}::uuid, t.id from contact_tags t "
-            + "join contacts c on c.id = #{contactId}::uuid and c.owner_user_id = #{ownerId}::uuid "
+            + "join contacts c on c.id = #{contactId}::uuid and c.created_by = #{ownerId}::uuid "
             + "where t.id = #{tagId}::uuid and t.owner_user_id = #{ownerId}::uuid "
             + "on conflict do nothing")
     int insertTaggingForOwner(@Param("contactId") UUID contactId, @Param("tagId") UUID tagId,

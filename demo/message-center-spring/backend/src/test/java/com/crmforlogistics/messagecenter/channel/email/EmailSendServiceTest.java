@@ -59,6 +59,28 @@ class EmailSendServiceTest {
     }
 
     @Test
+    void persistedOutboundEmailUsesConversationIngestSequence() {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(java.util.UUID.randomUUID());
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(java.util.UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(java.util.UUID.randomUUID());
+        when(channelAccountMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(account));
+        when(contactIdentityMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(identity));
+        when(conversationMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of(conversation));
+
+        EmailSendService service = new EmailSendService(config, messageMapper,
+                conversationMapper, channelAccountMapper, contactIdentityMapper);
+        service.persistOutbound("customer@example.test", "subject", "body", "<message@example.test>");
+
+        verify(messageMapper).insertWithSequence(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void shouldConstructWithDependencies() {
         when(config.smtpHost()).thenReturn("smtp.example.com");
         when(config.smtpUser()).thenReturn("user@example.com");

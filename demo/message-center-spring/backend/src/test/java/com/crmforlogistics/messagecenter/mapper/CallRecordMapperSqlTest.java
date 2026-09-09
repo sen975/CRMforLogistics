@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.mapper;
 
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
 import org.apache.ibatis.annotations.Update;
+import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -17,5 +18,30 @@ class CallRecordMapperSqlTest {
         String sql = replace.getAnnotation(Update.class).value()[0];
 
         assertThat(sql).contains("current_revision_id = #{entity.currentRevisionId}::uuid");
+    }
+
+    @Test
+    void contactAccessQueriesUseCreatedByInsteadOfLegacyContactOwner() throws Exception {
+        for (String methodName : new String[]{"findByIdAndOwner", "listByOwnerAndContact",
+                "listByOwnerAndAnchors", "searchPhoneRepositoryByOwner"}) {
+            Method method = java.util.Arrays.stream(CallRecordMapper.class.getMethods())
+                    .filter(candidate -> candidate.getName().equals(methodName))
+                    .findFirst().orElseThrow();
+            Select select = method.getAnnotation(Select.class);
+            assertThat(select).isNotNull();
+            String sql = String.join(" ", select.value());
+            assertThat(sql).contains("created_by");
+            assertThat(sql).doesNotContain("cr.owner_user_id = #{ownerId}");
+        }
+    }
+
+    @Test
+    void contactBindingDoesNotRewriteLegacyOwnerColumn() throws Exception {
+        Method method = CallRecordMapper.class.getMethod("updateContactBinding",
+                java.util.UUID.class, java.util.UUID.class, java.util.UUID.class,
+                String.class, long.class);
+        String sql = method.getAnnotation(Update.class).value()[0];
+        assertThat(sql).doesNotContain("SET owner_user_id");
+        assertThat(sql).contains("contact_id = #{contactId}::uuid");
     }
 }

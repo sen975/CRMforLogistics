@@ -231,6 +231,7 @@ public class WeComMessageProjector {
         }
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
+        contact.setCreatedBy(account.getOwnerUserId());
         contact.setDisplayName(displayName.isBlank() ? externalUserId : displayName);
         contact.setStatus("active");
         contacts.insert(contact);

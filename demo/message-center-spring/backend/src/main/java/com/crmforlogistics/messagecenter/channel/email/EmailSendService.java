@@ -232,7 +232,7 @@ public class EmailSendService {
             entity.setBodyText(body);
             entity.setOccurredAt(Instant.now());
             entity.setCurrentStatus("sent");
-            messageMapper.insert(entity);
+            messageMapper.insertWithSequence(entity);
             if (topicActivityRecorder != null) {
                 topicActivityRecorder.recordContact(identity.getContactId(), entity.getOccurredAt());
             }

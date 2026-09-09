@@ -27,7 +27,7 @@ public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity>
     int insertIfAbsent(ContactIdentityEntity identity);
 
     @Select("select count(*) from contact_identities where contact_id=#{contactId}::uuid " +
-            "and deleted_at is null and source &lt;&gt; 'manual'")
+            "and deleted_at is null and source <> 'manual'")
     int countNonManualByContactId(@Param("contactId") UUID contactId);
 
     @Select("select count(*) from contact_identities where contact_id=#{contactId}::uuid " +
@@ -61,11 +61,22 @@ public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity>
             + "ci.normalized_value, ci.display_name, ci.is_primary, ci.verify_status, ci.source, "
             + "ci.created_at, ci.updated_at, ci.deleted_at, ci.version "
             + "from contact_identities ci join contacts c on c.id=ci.contact_id "
-            + "where ci.contact_id=#{contactId}::uuid and c.owner_user_id=#{ownerId}::uuid "
-            + "and ci.deleted_at is null and c.deleted_at is null and c.status&lt;&gt;'merged' "
+            + "where ci.contact_id=#{contactId}::uuid and c.created_by=#{ownerId}::uuid "
+            + "and ci.deleted_at is null and c.deleted_at is null and c.status<>'merged' "
             + "order by ci.is_primary desc, ci.created_at, ci.id")
     List<ContactIdentityEntity> findByContactIdAndOwner(@Param("contactId") UUID contactId,
                                                         @Param("ownerId") UUID ownerId);
+
+    @Select("select ci.id, ci.contact_id, ci.channel_type, ci.identity_scope, ci.identity_value, "
+            + "ci.normalized_value, ci.display_name, ci.is_primary, ci.verify_status, ci.source, "
+            + "ci.created_at, ci.updated_at, ci.deleted_at, ci.version "
+            + "from contact_identities ci join contacts c on c.id=ci.contact_id "
+            + "where ci.channel_type='phone' and ci.deleted_at is null and c.deleted_at is null "
+            + "and c.status<>'merged' and c.created_by=#{ownerId}::uuid "
+            + "and ('phone:' || ci.normalized_value)=#{anchor} "
+            + "order by ci.is_primary desc, ci.created_at, ci.id limit 1")
+    Optional<ContactIdentityEntity> findPhoneByAnchorAndOwner(@Param("anchor") String anchor,
+                                                               @Param("ownerId") UUID ownerId);
 
     /**
      * Find a non-deleted identity by normalized value within a channel type.

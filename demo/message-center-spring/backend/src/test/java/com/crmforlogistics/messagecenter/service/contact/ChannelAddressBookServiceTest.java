@@ -62,7 +62,8 @@ class ChannelAddressBookServiceTest {
         var identityCaptor = org.mockito.ArgumentCaptor.forClass(ContactIdentityEntity.class);
         verify(contacts).insert(contactCaptor.capture());
         verify(identities).insertIfAbsent(identityCaptor.capture());
-        assertThat(contactCaptor.getValue().getOwnerUserId()).isEqualTo(owner);
+        assertThat(contactCaptor.getValue().getCreatedBy()).isEqualTo(owner);
+        assertThat(contactCaptor.getValue().getOwnerUserId()).isNull();
         assertThat(identityCaptor.getValue().getIdentityScope()).isEqualTo(accountId.toString());
         assertThat(identityCaptor.getValue().getNormalizedValue()).isEqualTo("buyer@example.test");
         assertThat(identityCaptor.getValue().getSource()).isEqualTo("manual");
@@ -164,6 +165,109 @@ class ChannelAddressBookServiceTest {
         verify(identities).insertIfAbsent(identityCaptor.capture());
         assertThat(identityCaptor.getValue().getIdentityScope()).isEqualTo(accountId.toString());
         assertThat(identityCaptor.getValue().getSource()).isEqualTo("synced");
+    }
+
+    @Test
+    void phoneResolutionReusesExistingOwnerScopedIdentity() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        UUID owner = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(identityId);
+        identity.setContactId(contactId);
+        when(identities.findByNormalizedValueInScope("phone", owner.toString(), "8613800138000"))
+                .thenReturn(Optional.of(identity));
+        when(contacts.findByIdAndOwner(contactId, owner)).thenReturn(Optional.of(new ContactEntity()));
+
+        var result = service(contacts, identities, mock(ChannelAccountMapper.class))
+                .resolvePhone(owner, null, "+86 138 0013 8000", null);
+
+        assertThat(result.contactId()).isEqualTo(contactId);
+        assertThat(result.identityId()).isEqualTo(identityId);
+        assertThat(result.created()).isFalse();
+        verify(contacts, never()).insert(any(ContactEntity.class));
+    }
+
+    @Test
+    void phoneResolutionCreatesNumberNamedContactWhenNoIdentityExists() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        UUID owner = UUID.randomUUID();
+        when(identities.findByNormalizedValueInScope("phone", owner.toString(), "8613800138000"))
+                .thenReturn(Optional.empty());
+        when(identities.insertIfAbsent(any(ContactIdentityEntity.class))).thenReturn(1);
+
+        var result = service(contacts, identities, mock(ChannelAccountMapper.class))
+                .resolvePhone(owner, null, "+86 138 0013 8000", null);
+
+        assertThat(result.created()).isTrue();
+        var contactCaptor = org.mockito.ArgumentCaptor.forClass(ContactEntity.class);
+        verify(contacts).insert(contactCaptor.capture());
+        assertThat(contactCaptor.getValue().getCreatedBy()).isEqualTo(owner);
+        assertThat(contactCaptor.getValue().getOwnerUserId()).isNull();
+        assertThat(contactCaptor.getValue().getDisplayName()).isEqualTo("8613800138000");
+    }
+
+    @Test
+    void phoneResolutionAddsMissingIdentityToExistingOwnerContact() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        UUID owner = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        when(contacts.findByIdAndOwner(contactId, owner)).thenReturn(Optional.of(new ContactEntity()));
+        when(identities.findByNormalizedValueInScope("phone", owner.toString(), "8613800138000"))
+                .thenReturn(Optional.empty());
+        when(identities.insertIfAbsent(any(ContactIdentityEntity.class))).thenReturn(1);
+
+        var result = service(contacts, identities, mock(ChannelAccountMapper.class))
+                .resolvePhone(owner, contactId, "+86 138 0013 8000", "Buyer");
+
+        assertThat(result.contactId()).isEqualTo(contactId);
+        assertThat(result.created()).isFalse();
+        var identityCaptor = org.mockito.ArgumentCaptor.forClass(ContactIdentityEntity.class);
+        verify(identities).insertIfAbsent(identityCaptor.capture());
+        assertThat(identityCaptor.getValue().getContactId()).isEqualTo(contactId);
+        assertThat(identityCaptor.getValue().getIdentityScope()).isEqualTo(owner.toString());
+    }
+
+    @Test
+    void phoneResolutionRejectsCrossOwnerContact() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        UUID owner = UUID.randomUUID();
+        UUID foreignContact = UUID.randomUUID();
+        when(contacts.findByIdAndOwner(foreignContact, owner)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service(contacts, mock(ContactIdentityMapper.class), mock(ChannelAccountMapper.class))
+                .resolvePhone(owner, foreignContact, "8613800138000", null))
+                .isInstanceOf(ChannelAddressBookException.class)
+                .hasMessage("RESOURCE_NOT_FOUND");
+    }
+
+    @Test
+    void phoneResolutionRereadsConcurrentWinner() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        UUID owner = UUID.randomUUID();
+        UUID winnerContact = UUID.randomUUID();
+        UUID winnerIdentity = UUID.randomUUID();
+        ContactIdentityEntity winner = new ContactIdentityEntity();
+        winner.setId(winnerIdentity);
+        winner.setContactId(winnerContact);
+        when(identities.findByNormalizedValueInScope("phone", owner.toString(), "8613800138000"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(winner));
+        when(identities.insertIfAbsent(any(ContactIdentityEntity.class))).thenReturn(0);
+        when(contacts.findByIdAndOwner(winnerContact, owner)).thenReturn(Optional.of(new ContactEntity()));
+
+        var result = service(contacts, identities, mock(ChannelAccountMapper.class))
+                .resolvePhone(owner, null, "8613800138000", null);
+
+        assertThat(result.contactId()).isEqualTo(winnerContact);
+        assertThat(result.identityId()).isEqualTo(winnerIdentity);
+        assertThat(result.created()).isFalse();
+        verify(contacts).deleteOwned(eq(owner), any());
     }
 
     private static ChannelAddressBookService service(ContactMapper contacts,

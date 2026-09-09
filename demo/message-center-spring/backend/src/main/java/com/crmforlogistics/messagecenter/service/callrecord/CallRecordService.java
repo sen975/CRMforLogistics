@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.mapper.CallRecordMapper;
 import com.crmforlogistics.messagecenter.mapper.CallTranscriptRevisionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class CallRecordService {
     private final String model;
     private final Clock clock;
     private final AiTopicActivityRecorder topicActivityRecorder;
+    private final ChannelAddressBookService addressBookService;
 
     public CallRecordService(CallRecordMapper mapper,
                              CallTranscriptRevisionMapper revisionMapper,
@@ -46,7 +48,7 @@ public class CallRecordService {
                              CallRecordConfig config,
                              FunAsrConfig funAsrConfig,
                              Clock clock) {
-        this(mapper, revisionMapper, audioStore, contactIdentityMapper, config, funAsrConfig, clock, null);
+        this(mapper, revisionMapper, audioStore, contactIdentityMapper, config, funAsrConfig, clock, null, null);
     }
 
     @Autowired
@@ -57,7 +59,8 @@ public class CallRecordService {
                              CallRecordConfig config,
                              FunAsrConfig funAsrConfig,
                              Clock clock,
-                             AiTopicActivityRecorder topicActivityRecorder) {
+                             AiTopicActivityRecorder topicActivityRecorder,
+                             ChannelAddressBookService addressBookService) {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.revisionMapper = Objects.requireNonNull(revisionMapper, "revisionMapper");
         this.audioStore = Objects.requireNonNull(audioStore, "audioStore");
@@ -69,6 +72,19 @@ public class CallRecordService {
         this.maxRevisions = config.maxRevisions();
         this.model = funAsrConfig.model();
         this.topicActivityRecorder = topicActivityRecorder;
+        this.addressBookService = addressBookService;
+    }
+
+    public CallRecordService(CallRecordMapper mapper,
+                             CallTranscriptRevisionMapper revisionMapper,
+                             MinioAudioStore audioStore,
+                             ContactIdentityMapper contactIdentityMapper,
+                             CallRecordConfig config,
+                             FunAsrConfig funAsrConfig,
+                             Clock clock,
+                             AiTopicActivityRecorder topicActivityRecorder) {
+        this(mapper, revisionMapper, audioStore, contactIdentityMapper, config, funAsrConfig,
+                clock, topicActivityRecorder, null);
     }
 
     public CallRecordEntity create(CreateCallRecordCommand command, InputStream input) {
@@ -81,13 +97,30 @@ public class CallRecordService {
     public CallRecordEntity create(UUID ownerId, CreateCallRecordCommand command, InputStream input) {
         Objects.requireNonNull(ownerId, "ownerId");
         ValidatedCreate validated = validateCreate(command);
-        UUID contactId;
-        try {
-            contactId = UUID.fromString(validated.contactId());
-        } catch (IllegalArgumentException error) {
-            throw bindingInvalid();
+        if (addressBookService == null) {
+            UUID contactId;
+            try {
+                contactId = UUID.fromString(validated.contactId());
+            } catch (IllegalArgumentException error) {
+                throw bindingInvalid();
+            }
+            Binding binding = resolveBinding(ownerId, contactId, validated.phonePointId());
+            return createPersisted(ownerId, contactId, validated, binding, input);
         }
-        Binding binding = resolveBinding(ownerId, contactId, validated.phonePointId());
+        UUID requestedContact = null;
+        if (!validated.contactId().isBlank()) {
+            try {
+                requestedContact = UUID.fromString(validated.contactId());
+            } catch (IllegalArgumentException error) {
+                throw bindingInvalid();
+            }
+        }
+        String rawPhone = validated.phonePointId().substring("phone:".length());
+        ChannelAddressBookService.ResolvedContact resolved = addressBookService.resolvePhone(
+                ownerId, requestedContact, rawPhone, null);
+        UUID contactId = resolved.contactId();
+        Binding binding = new Binding("phone:" + normalizedPhone(rawPhone),
+                "phone:" + normalizedPhone(rawPhone));
         return createPersisted(ownerId, contactId, validated, binding, input);
     }
 
@@ -282,8 +315,10 @@ public class CallRecordService {
 
     private ValidatedCreate validateCreate(CreateCallRecordCommand command) {
         if (command == null) throw invalidInput("Create command is required");
-        requireText(command.contactId(), MAX_CONTACT_ID_LENGTH,
-                "CALL_RECORD_INPUT_INVALID", "contactId is invalid");
+        String contactId = command.contactId() == null ? "" : command.contactId().trim();
+        if (contactId.length() > MAX_CONTACT_ID_LENGTH || contactId.indexOf('\0') >= 0) {
+            throw invalidInput("contactId is invalid");
+        }
         if (!("inbound".equals(command.direction())
                 || "outbound".equals(command.direction()))) {
             throw invalidInput("direction is invalid");
@@ -313,9 +348,15 @@ public class CallRecordService {
         }
         String note = validateNote(command.note());
         return new ValidatedCreate(
-                command.contactId().trim(), phone, command.direction(), command.occurredAt(),
+                contactId, phone, command.direction(), command.occurredAt(),
                 command.clientRequestId().trim(), command.originalFileName(),
                 command.contentType(), command.actor().trim(), note);
+    }
+
+    private static String normalizedPhone(String rawPhone) {
+        String normalized = rawPhone == null ? "" : rawPhone.replaceAll("[^0-9]", "");
+        if (normalized.length() < 6 || normalized.length() > 20) throw bindingInvalid();
+        return normalized;
     }
 
     private Binding resolveBinding(String contactId, String selectedPhone) {

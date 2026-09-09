@@ -413,7 +413,7 @@ public class EmailSyncService {
 
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
-        contact.setOwnerUserId(ownerId);
+        contact.setCreatedBy(ownerId);
         contact.setDisplayName(ContactPointUtil.extractName(email, normalized));
         if (contact.getDisplayName() == null || contact.getDisplayName().isBlank()) {
             contact.setDisplayName(normalized);
@@ -426,14 +426,10 @@ public class EmailSyncService {
         return identity;
     }
 
-    private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized) {
-        linkToNewContact(identity, email, normalized, null);
-    }
-
     private void linkToNewContact(ContactIdentityEntity identity, String email, String normalized, UUID ownerId) {
         ContactEntity contact = new ContactEntity();
         contact.setId(UUID.randomUUID());
-        contact.setOwnerUserId(ownerId);
+        contact.setCreatedBy(ownerId);
         String displayName = ContactPointUtil.extractName(email, normalized);
         contact.setDisplayName(!displayName.isBlank() ? displayName : normalized);
         contact.setCreatedAt(Instant.now());

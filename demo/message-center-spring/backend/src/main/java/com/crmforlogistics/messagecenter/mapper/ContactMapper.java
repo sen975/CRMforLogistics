@@ -61,7 +61,7 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                    as can_delete
             from contacts c
             join contact_identities ci on ci.contact_id = c.id and ci.deleted_at is null
-            where c.owner_user_id = #{ownerId}::uuid and c.deleted_at is null and c.status &lt;&gt; 'merged'
+            where c.created_by = #{ownerId}::uuid and c.deleted_at is null and c.status &lt;&gt; 'merged'
               and ci.channel_type = #{channelType}
             <if test="query != null and query != ''">
               and (coalesce(c.remark, '') ilike '%' || #{query} || '%'
@@ -91,14 +91,14 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                  or exists (select 1 from contacts where merged_to_id=#{contactId}::uuid)
                  or exists (select 1 from wecom_source_conversations where contact_identity_id in
                        (select id from contact_identities where contact_id=#{contactId}::uuid)))
-            from contacts where id=#{contactId}::uuid and owner_user_id=#{ownerId}::uuid
+            from contacts where id=#{contactId}::uuid and created_by=#{ownerId}::uuid
             """)
     boolean hasBusinessActivity(@Param("ownerId") UUID ownerId, @Param("contactId") UUID contactId);
 
     @Delete("delete from contact_taggings where contact_id=#{contactId}::uuid")
     int deleteTaggingsByContactId(@Param("contactId") UUID contactId);
 
-    @Delete("delete from contacts where id=#{contactId}::uuid and owner_user_id=#{ownerId}::uuid")
+    @Delete("delete from contacts where id=#{contactId}::uuid and created_by=#{ownerId}::uuid")
     int deleteOwned(@Param("ownerId") UUID ownerId, @Param("contactId") UUID contactId);
 
     record ChannelAddressBookRow(UUID contactId, UUID identityId, String displayName, String remark,
@@ -108,9 +108,12 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
 
     @Select("select id, owner_user_id, display_name, role_title, remark, status, merged_to_id, " +
             "created_by, created_at, updated_at, deleted_at, version from contacts " +
-            "where id = #{id}::uuid and owner_user_id = #{ownerId}::uuid " +
+            "where id = #{id}::uuid and created_by = #{ownerId}::uuid " +
             "and deleted_at is null and status <> 'merged' limit 1")
     Optional<ContactEntity> findByIdAndOwner(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
+
+    @Select("select created_by from contacts where id = #{id}::uuid and deleted_at is null limit 1")
+    Optional<UUID> findCreatedBy(@Param("id") UUID id);
 
     /**
      * List contacts visible to a user with permission scoping:
