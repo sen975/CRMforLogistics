@@ -6,7 +6,6 @@ import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookRetryWorker;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationScheduler;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplatePermissionReconciliationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
@@ -21,8 +20,6 @@ class ChatAppWorkerSchedulingTest {
             .withBean(ChatAppWebhookProjector.class, () -> mock(ChatAppWebhookProjector.class))
             .withBean(WhatsAppTemplateReconciliationService.class,
                     () -> mock(WhatsAppTemplateReconciliationService.class))
-            .withBean(WhatsAppTemplatePermissionReconciliationService.class,
-                    () -> mock(WhatsAppTemplatePermissionReconciliationService.class))
             .withUserConfiguration(MessageOutboxScheduler.class, ChatAppWebhookRetryWorker.class,
                     WhatsAppTemplateReconciliationScheduler.class);
 

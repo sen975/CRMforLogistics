@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerActivityService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicSplitReconciler;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicContactMergeReconciler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.beans.factory.support.RootBeanDefinition;
@@ -48,6 +49,7 @@ class ContactServiceBeanInstantiationTest {
         factory.registerSingleton("aiTopicItemMapper", mock(AiTopicItemMapper.class));
         factory.registerSingleton("aiTopicOwnerActivityService", mock(AiTopicOwnerActivityService.class));
         factory.registerSingleton("aiTopicSplitReconciler", mock(AiTopicSplitReconciler.class));
+        factory.registerSingleton("aiTopicContactMergeReconciler", mock(AiTopicContactMergeReconciler.class));
         factory.registerBeanDefinition("contactGroupService", new RootBeanDefinition(ContactGroupService.class));
 
         ContactGroupService service = factory.getBean(ContactGroupService.class);

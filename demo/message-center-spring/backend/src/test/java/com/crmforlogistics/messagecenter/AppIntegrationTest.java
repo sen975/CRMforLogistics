@@ -4,6 +4,7 @@ import io.minio.MinioClient;
 import com.crmforlogistics.messagecentertest.ApplicationIntegrationTestConfiguration;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSyncScheduler;
 import com.crmforlogistics.messagecenter.entity.AuditLogEntity;
+import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
 import com.crmforlogistics.messagecenter.mapper.AuditLogMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
@@ -107,29 +108,29 @@ public class AppIntegrationTest {
     @Test
     void templateUpsertPersistsAuditMetadataAsJsonb() {
         UUID channelAccountId = UUID.randomUUID();
+        UUID providerScopeId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes (id, provider, external_scope_id) VALUES (?, 'aliyun', ?)",
+                providerScopeId, "scope-" + providerScopeId);
         jdbcTemplate.update("""
                 INSERT INTO channel_accounts
                     (id, channel_type, name, account_identifier, account_identifier_normalized,
-                     auth_status, encrypted_config)
-                VALUES (?, 'chatapp', 'Test WhatsApp', ?, ?, 'active', '{}'::jsonb)
-                """, channelAccountId, channelAccountId.toString(), channelAccountId.toString());
+                     auth_status, encrypted_config, provider_scope_id)
+                VALUES (?, 'chatapp', 'Test WhatsApp', ?, ?, 'active', '{}'::jsonb, ?)
+                """, channelAccountId, channelAccountId.toString(), channelAccountId.toString(), providerScopeId);
 
-        templateMapper.upsert(
-                channelAccountId, "welcome_001", "en_US", "welcome", "Hello $(name)",
-                "APPROVED", Instant.parse("2026-08-09T10:15:30Z"),
-                "{\"auditStatus\":\"pass\"}",
-                Instant.parse("2026-08-09T10:16:00Z"));
-        templateMapper.upsert(
-                channelAccountId, "welcome_001", "en_US", "welcome", "",
-                "REJECTED", Instant.parse("2026-08-10T01:59:30Z"),
-                "{\"auditStatus\":\"fail\",\"reason\":\"Variables do not match\"}",
-                Instant.parse("2026-08-10T02:00:00Z"));
+        TemplateEntity shared = sharedTemplate(channelAccountId, providerScopeId, "Hello $(name)", "APPROVED",
+                "{\"auditStatus\":\"pass\"}");
+        templateMapper.upsertShared(shared);
+        shared.setBody("");
+        shared.setStatus("REJECTED");
+        shared.setMetadataJsonb("{\"auditStatus\":\"fail\",\"reason\":\"Variables do not match\"}");
+        templateMapper.upsertShared(shared);
 
         Map<String, Object> stored = jdbcTemplate.queryForMap("""
                 SELECT body, status, metadata_jsonb::text AS metadata
                 FROM message_templates
-                WHERE channel_account_id = ? AND provider_template_id = ? AND language_code = ?
-                """, channelAccountId, "welcome_001", "en_US");
+                WHERE provider_scope_id = ? AND provider_template_id = ? AND language_code = ?
+                """, providerScopeId, "welcome_001", "en_US");
         assertThat(stored.get("body")).isEqualTo("Hello $(name)");
         assertThat(stored.get("status")).isEqualTo("REJECTED");
         assertThat((String) stored.get("metadata"))
@@ -140,12 +141,15 @@ public class AppIntegrationTest {
     @Test
     void templateLifecyclePersistenceEnforcesIdempotencyAndSendEligibility() {
         UUID channelAccountId = UUID.randomUUID();
+        UUID providerScopeId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes (id, provider, external_scope_id) VALUES (?, 'aliyun', ?)",
+                providerScopeId, "scope-" + providerScopeId);
         jdbcTemplate.update("""
                 INSERT INTO channel_accounts
                     (id, channel_type, name, account_identifier, account_identifier_normalized,
-                     auth_status, encrypted_config)
-                VALUES (?, 'chatapp', 'Lifecycle WhatsApp', ?, ?, 'active', '{}'::jsonb)
-                """, channelAccountId, channelAccountId.toString(), channelAccountId.toString());
+                     auth_status, encrypted_config, provider_scope_id)
+                VALUES (?, 'chatapp', 'Lifecycle WhatsApp', ?, ?, 'active', '{}'::jsonb, ?)
+                """, channelAccountId, channelAccountId.toString(), channelAccountId.toString(), providerScopeId);
 
         assertThat(jdbcTemplate.queryForObject("select count(*) from template_operations", Integer.class))
                 .isZero();
@@ -192,14 +196,34 @@ public class AppIntegrationTest {
 
         jdbcTemplate.update("""
                 INSERT INTO message_templates
-                    (id, channel_account_id, provider_template_id, language_code, name, body, status,
+                    (id, channel_account_id, provider_scope_id, provider_template_id, language_code, name, body, status,
                      metadata_jsonb, components_jsonb, allow_send, created_at, updated_at)
-                VALUES (gen_random_uuid(), ?, 'welcome_001', 'en_US', 'welcome', 'Hello $(name)',
+                VALUES (gen_random_uuid(), ?, ?, 'welcome_001', 'en_US', 'welcome', 'Hello $(name)',
                         'APPROVED', '{}'::jsonb, '[{"type":"BODY"}]'::jsonb, false, now(), now())
-                """, channelAccountId);
+                """, channelAccountId, providerScopeId);
 
-        assertThat(templateMapper.findForSend(channelAccountId, "welcome_001", "en_US")).isEmpty();
+        assertThat(templateMapper.findSharedForSend(providerScopeId, "welcome_001", "en_US")).isEmpty();
         assertThat(jdbcTemplate.queryForObject("select count(*) from audit_logs", Integer.class)).isEqualTo(1);
+    }
+
+    private static TemplateEntity sharedTemplate(UUID accountId, UUID scopeId, String body, String status,
+                                                  String metadata) {
+        TemplateEntity template = new TemplateEntity();
+        template.setId(UUID.randomUUID());
+        template.setChannelAccountId(accountId);
+        template.setProviderScopeId(scopeId);
+        template.setProviderTemplateId("welcome_001");
+        template.setLanguageCode("en_US");
+        template.setName("welcome");
+        template.setBody(body);
+        template.setStatus(status);
+        template.setComponentsJsonb("[{\"type\":\"BODY\"}]");
+        template.setExamplesJsonb("{}");
+        template.setMetadataJsonb(metadata);
+        template.setAllowSend(false);
+        template.setCreatedAt(Instant.parse("2026-08-09T10:16:00Z"));
+        template.setUpdatedAt(Instant.parse("2026-08-09T10:16:00Z"));
+        return template;
     }
 
     @Test

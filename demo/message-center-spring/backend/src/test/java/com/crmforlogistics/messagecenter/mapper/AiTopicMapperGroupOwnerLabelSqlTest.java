@@ -14,6 +14,18 @@ class AiTopicMapperGroupOwnerLabelSqlTest {
         assertSafeGroupLabel("listReadyGroupTopics");
     }
 
+    @Test
+    void annotationSqlDoesNotPassXmlEntitiesToPostgres() {
+        for (Method method : AiTopicMapper.class.getDeclaredMethods()) {
+            Select select = method.getAnnotation(Select.class);
+            if (select == null) continue;
+            String sql = String.join(" ", select.value());
+            if (sql.startsWith("<script>")) continue;
+            assertThat(sql)
+                    .doesNotContain("&lt;", "&gt;", "&amp;");
+        }
+    }
+
     private static void assertSafeGroupLabel(String methodName) throws Exception {
         Method method = AiTopicMapper.class.getMethod(methodName, java.util.UUID.class);
         String sql = String.join(" ", method.getAnnotation(Select.class).value()).toLowerCase();
