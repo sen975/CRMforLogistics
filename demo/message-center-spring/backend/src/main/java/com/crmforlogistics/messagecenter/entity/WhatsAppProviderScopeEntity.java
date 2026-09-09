@@ -3,17 +3,27 @@ package com.crmforlogistics.messagecenter.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.crmforlogistics.messagecenter.typehandler.JsonbStringTypeHandler;
+import org.apache.ibatis.type.JdbcType;
 
 import java.time.Instant;
 import java.util.UUID;
 
-@TableName("whatsapp_provider_scopes")
+@TableName(value = "whatsapp_provider_scopes", autoResultMap = true)
 public class WhatsAppProviderScopeEntity {
 
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private String provider;
     private String externalScopeId;
+    private String wabaId;
+    private String scopeType;
+    private UUID ownerUserId;
+    private String identityStatus;
+    @TableField(value = "encrypted_config", jdbcType = JdbcType.OTHER,
+            typeHandler = JsonbStringTypeHandler.class)
+    private String encryptedConfig;
     private String status;
     private Instant createdAt;
     private Instant updatedAt;
@@ -24,6 +34,16 @@ public class WhatsAppProviderScopeEntity {
     public void setProvider(String provider) { this.provider = provider; }
     public String getExternalScopeId() { return externalScopeId; }
     public void setExternalScopeId(String externalScopeId) { this.externalScopeId = externalScopeId; }
+    public String getWabaId() { return wabaId; }
+    public void setWabaId(String wabaId) { this.wabaId = wabaId; }
+    public String getScopeType() { return scopeType; }
+    public void setScopeType(String scopeType) { this.scopeType = scopeType; }
+    public UUID getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
+    public String getIdentityStatus() { return identityStatus; }
+    public void setIdentityStatus(String identityStatus) { this.identityStatus = identityStatus; }
+    public String getEncryptedConfig() { return encryptedConfig; }
+    public void setEncryptedConfig(String encryptedConfig) { this.encryptedConfig = encryptedConfig; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Instant getCreatedAt() { return createdAt; }

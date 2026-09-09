@@ -23,7 +23,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class PublicTemplateApplicationServiceTest {
-    @Mock WhatsAppTemplateApplicationService accountValidator;
+    @Mock WhatsAppProviderScopeService providerScopeService;
     @Mock ChatAppPublicTemplateGateway gateway;
 
     private PublicTemplateApplicationService service;
@@ -42,9 +42,9 @@ class PublicTemplateApplicationServiceTest {
     }
 
     private Object dependencyFor(Class<?> dependencyType) {
-        if (dependencyType == WhatsAppTemplateApplicationService.class) return accountValidator;
         if (dependencyType == ChatAppPublicTemplateGateway.class) return gateway;
         if (dependencyType == Clock.class) return clock;
+        if (dependencyType == WhatsAppProviderScopeService.class) return providerScopeService;
         return mock(dependencyType);
     }
 
@@ -59,7 +59,7 @@ class PublicTemplateApplicationServiceTest {
 
         Page result = service.list(accountId, query);
 
-        verify(accountValidator).validateAccount(accountId);
+        verify(providerScopeService).requireAccount(accountId);
         verify(gateway).list(accountId, query);
         assertThat(result).isEqualTo(providerPage);
     }
@@ -74,8 +74,8 @@ class PublicTemplateApplicationServiceTest {
         assertThat(service.list(accountId, query)).isEqualTo(providerPage);
         assertThat(service.list(secondAccountId, query)).isEqualTo(providerPage);
 
-        verify(accountValidator).validateAccount(accountId);
-        verify(accountValidator).validateAccount(secondAccountId);
+        verify(providerScopeService).requireAccount(accountId);
+        verify(providerScopeService).requireAccount(secondAccountId);
         verify(gateway).list(accountId, query);
         verify(gateway, never()).list(secondAccountId, query);
     }
@@ -111,7 +111,6 @@ class PublicTemplateApplicationServiceTest {
 
         assertThat(constructors).singleElement().satisfies(constructor ->
                 assertThat(constructor.getParameterTypes()).containsExactly(
-                        WhatsAppTemplateApplicationService.class,
                         ChatAppPublicTemplateGateway.class,
                         Clock.class,
                         WhatsAppProviderScopeService.class));

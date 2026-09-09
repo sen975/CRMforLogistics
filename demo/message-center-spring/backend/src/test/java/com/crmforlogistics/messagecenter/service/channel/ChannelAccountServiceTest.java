@@ -134,26 +134,43 @@ class ChannelAccountServiceTest {
     }
 
     @Test
-    void bindingAChatAppAccountChecksAndPersistsItsProviderScope() throws Exception {
+    void rejectsGenericWhatsAppBindingOutsideTheOnboardingServices() {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         CredentialCipher cipher = mock(CredentialCipher.class);
         WhatsAppProviderScopeService scopeService = mock(WhatsAppProviderScopeService.class);
         UUID owner = UUID.randomUUID();
-        when(mapper.countActiveByOwnerAndChannel(owner, "chatapp")).thenReturn(0);
-        when(cipher.encrypt(any())).thenReturn("encrypted");
         ChannelAccountService service = service(mapper, cipher, scopeService);
 
-        service.createOrBind(owner, new com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest(
-                "whatsapp", "Primary WhatsApp", "60111111111", Map.of(
-                "accessKeyId", "key-id",
-                "accessKeySecret", "key-secret",
-                "custSpaceId", "space-1",
-                "chatappFrom", "60111111111")));
+        assertThatThrownBy(() -> service.createOrBind(owner,
+                new com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest(
+                        "whatsapp", "Primary WhatsApp", "60111111111", Map.of())))
+                .isInstanceOf(ChannelAccountException.class)
+                .hasMessage("WHATSAPP_ONBOARDING_REQUIRED");
 
-        verify(scopeService).assertCompatible("space-1");
-        var account = forClass(ChannelAccountEntity.class);
-        verify(mapper).insertOwned(account.capture(), eq(owner));
-        verify(scopeService).bind(account.getValue());
+        verify(mapper, never()).insertOwned(any(), any());
+        verify(scopeService, never()).assertCompatible(any());
+    }
+
+    @Test
+    void rejectsCreatingActiveChatAppAccountWithoutAllCredentials() {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        CredentialCipher cipher = mock(CredentialCipher.class);
+        UUID owner = UUID.randomUUID();
+        when(mapper.countActiveByOwnerAndChannel(owner, "chatapp")).thenReturn(0);
+        ChannelAccountService service = service(mapper, cipher);
+
+        assertThatThrownBy(() -> service.createOrBind(owner,
+                new com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest(
+                        "whatsapp", "Primary WhatsApp", "60111111111", Map.of(
+                        "accessKeyId", "key-id",
+                        "accessKeySecret", "key-secret",
+                        "region", "ap-southeast-1",
+                        "custSpaceId", "space-1",
+                        "chatappFrom", "60111111111"))))
+                .isInstanceOf(ChannelAccountException.class)
+                .hasMessage("CHANNEL_ACCOUNT_INCOMPLETE_CREDENTIALS");
+
+        verify(mapper, never()).insertOwned(any(), any());
     }
 
     @Test

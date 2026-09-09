@@ -50,6 +50,28 @@ class WhatsAppProviderScopeServiceTest {
     }
 
     @Test
+    void copiesExistingAccountCredentialsIntoAnEmptyEnterpriseScope() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChatAppAccountCredentialsResolver resolver = mock(ChatAppAccountCredentialsResolver.class);
+        ChannelAccountEntity account = activeAccount();
+        WhatsAppProviderScopeEntity scope = scope(SCOPE_ID, "space-1");
+        scope.setEncryptedConfig("{}");
+        when(accountMapper.findByOwnerAndChannelType(USER_ID, "chatapp")).thenReturn(List.of(account));
+        when(resolver.resolve(account)).thenReturn(credentials("space-1"));
+        when(scopeMapper.findAllByProvider("ALIYUN_CAMS")).thenReturn(List.of(scope));
+        when(scopeMapper.findByProviderAndExternalScopeId("ALIYUN_CAMS", "space-1")).thenReturn(scope);
+        when(scopeMapper.updateEncryptedConfigIfEmpty(SCOPE_ID, "encrypted")).thenReturn(1);
+        when(accountMapper.bindProviderScope(ACCOUNT_ID, SCOPE_ID)).thenReturn(1);
+        WhatsAppProviderScopeService service = service(accountMapper, scopeMapper, resolver);
+
+        WhatsAppProviderScopeEntity resolved = service.requireOwnedActive(USER_ID).scope();
+
+        assertThat(resolved.getEncryptedConfig()).isEqualTo("encrypted");
+        verify(scopeMapper).updateEncryptedConfigIfEmpty(SCOPE_ID, "encrypted");
+    }
+
+    @Test
     void rejectsASecondProviderScopeWithoutLeakingCredentials() {
         ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
         WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
@@ -168,6 +190,7 @@ class WhatsAppProviderScopeServiceTest {
         scope.setProvider("ALIYUN_CAMS");
         scope.setExternalScopeId(externalScopeId);
         scope.setStatus("READY");
+        scope.setEncryptedConfig("encrypted");
         return scope;
     }
 

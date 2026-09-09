@@ -55,6 +55,11 @@ import type {
   ChannelAddressBookChannel,
   ChannelAddressBookItem,
   ChannelAddressBookPageResponse,
+  WhatsAppAuthorizationAttempt,
+  WhatsAppAuthorizationResult,
+  WhatsAppPhoneNumberStatus,
+  WhatsAppPhoneOperationStatus,
+  WhatsAppCapabilityStatus,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -741,6 +746,13 @@ export async function fetchChannelAccounts(): Promise<import('./types').ChannelA
   return res.data;
 }
 
+export async function createChannelAccount(
+  data: import('./types').CreateChannelAccountRequest,
+): Promise<import('./types').ChannelAccount> {
+  const res = await client.post<import('./types').ChannelAccount>('/channel-accounts', data);
+  return res.data;
+}
+
 export async function updateChannelAccount(id: string, data: { name?: string; accountIdentifier?: string }): Promise<import('./types').ChannelAccount> {
   const res = await client.put<import('./types').ChannelAccount>(`/channel-accounts/${id}`, data);
   return res.data;
@@ -758,6 +770,59 @@ export async function fetchChannelCredentials(id: string): Promise<import('./typ
 
 export async function updateChannelCredentials(id: string, data: import('./types').ChannelCredentials): Promise<{ updated: number }> {
   const res = await client.put<{ updated: number }>(`/channel-accounts/${id}/credentials`, data);
+  return res.data;
+}
+
+export async function unbindChannelAccount(id: string): Promise<void> {
+  await client.post(`/channel-accounts/${id}/unbind`);
+}
+
+export async function createWhatsAppAuthorizationAttempt(onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY'): Promise<WhatsAppAuthorizationAttempt> {
+  const res = await client.post<WhatsAppAuthorizationAttempt>('/whatsapp/authorization/attempts', { onboardingMode });
+  return res.data;
+}
+
+export async function fetchWhatsAppCapability(): Promise<WhatsAppCapabilityStatus> {
+  const res = await client.get<WhatsAppCapabilityStatus>('/whatsapp/capability');
+  return res.data;
+}
+
+export async function completeWhatsAppAuthorization(data: {
+  attemptId: string;
+  state: string;
+  event: 'FINISH';
+  wabaId: string;
+  phoneNumberId: string;
+  phoneNumber: string;
+  code: string;
+  verifiedName?: string;
+  historySync: boolean;
+}): Promise<WhatsAppAuthorizationResult> {
+  const res = await client.post<WhatsAppAuthorizationResult>('/whatsapp/authorization/complete', data);
+  return res.data;
+}
+
+export async function fetchWhatsAppPhoneNumbers(): Promise<WhatsAppPhoneNumberStatus[]> {
+  const res = await client.get<WhatsAppPhoneNumberStatus[]>('/whatsapp/phone-numbers');
+  return res.data;
+}
+
+export async function addWhatsAppPhoneNumber(data: {
+  countryCode: string;
+  phoneNumber: string;
+  verifiedName: string;
+}): Promise<WhatsAppPhoneOperationStatus> {
+  const res = await client.post<WhatsAppPhoneOperationStatus>('/whatsapp/phone-numbers', data);
+  return res.data;
+}
+
+export async function sendWhatsAppVerificationCode(phoneNumber: string, data: { locale: string; method: string }): Promise<WhatsAppPhoneOperationStatus> {
+  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/phone-numbers/${encodeURIComponent(phoneNumber)}/verification-code`, data);
+  return res.data;
+}
+
+export async function verifyWhatsAppPhoneNumber(phoneNumber: string, verificationCode: string): Promise<WhatsAppPhoneOperationStatus> {
+  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/phone-numbers/${encodeURIComponent(phoneNumber)}/verify`, { verificationCode });
   return res.data;
 }
 
@@ -858,11 +923,11 @@ export async function retryTopicGeneration(contactId: string): Promise<import('.
 }
 
 export async function createCallRecord(
-  contactId: string,
+  contactId: string | undefined,
   formData: FormData,
 ): Promise<{ callRecordId: string; state: string }> {
   const res = await client.post<{ callRecordId: string; state: string }>(
-    `/v1/contacts/${contactId}/call-records`,
+    contactId ? `/v1/contacts/${contactId}/call-records` : '/v1/call-records',
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } },
   );
@@ -1005,6 +1070,46 @@ export async function syncSharedTemplates(): Promise<TemplateSyncResult> {
   return res.data;
 }
 
+export async function fetchPrivateTemplates(accountId: string, params?: SharedTemplateListFilters): Promise<SharedTemplateListPage> {
+  const res = await client.get<SharedTemplateListPage>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates`, { params });
+  return res.data;
+}
+
+export async function fetchPrivateTemplate(accountId: string, templateId: string): Promise<SharedTemplate> {
+  const res = await client.get<SharedTemplate>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}`);
+  return res.data;
+}
+
+export async function createPrivateTemplate(accountId: string, command: TemplateCommand): Promise<TemplateOperation> {
+  const res = await client.post<TemplateOperation>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/applications`, command);
+  return res.data;
+}
+
+export async function updatePrivateTemplate(accountId: string, templateId: string, command: TemplateUpdateCommand): Promise<TemplateOperation> {
+  const res = await client.put<TemplateOperation>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}`, command);
+  return res.data;
+}
+
+export async function setPrivateTemplateSendPermission(accountId: string, templateId: string, allowSend: boolean, clientRequestId = crypto.randomUUID()): Promise<TemplateOperation> {
+  const res = await client.patch<TemplateOperation>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}/send-permission`, { allowSend, clientRequestId });
+  return res.data;
+}
+
+export async function deletePrivateTemplate(accountId: string, templateId: string, clientRequestId = crypto.randomUUID()): Promise<TemplateOperation> {
+  const res = await client.delete<TemplateOperation>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}`, { params: { clientRequestId } });
+  return res.data;
+}
+
+export async function syncPrivateTemplates(accountId: string): Promise<TemplateSyncResult> {
+  const res = await client.post<TemplateSyncResult>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/sync`);
+  return res.data;
+}
+
+export async function fetchPrivateTemplateOperations(accountId: string, templateId: string): Promise<TemplateOperation[]> {
+  const res = await client.get<TemplateOperation[]>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}/operations`);
+  return res.data;
+}
+
 export async function fetchAdminTemplates(
   accountId: string,
   params?: TemplateListFilters,
@@ -1094,7 +1199,7 @@ export async function uploadTemplateMedia(
   accountOrFormat: string,
   formatOrFile: TemplateMediaFormat | File,
   fileOrRequestId: File | string,
-  requestIdOrSignal: string | AbortSignal,
+  requestIdOrSignal?: string | AbortSignal,
   signal?: AbortSignal,
 ): Promise<TemplateMediaAsset> {
   const sharedCall = typeof formatOrFile !== 'string';

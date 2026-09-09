@@ -18,10 +18,14 @@ public class ChannelAccountEntity {
     private UUID ownerUserId;
     private String channelType;
     private String name;
+    private String remark;
     private String accountIdentifier;
     private String accountIdentifierNormalized;
     private String authStatus;
     private String syncStatus;
+    private String onboardingMode;
+    private String phoneVerificationStatus;
+    private String providerPhoneStatus;
     @TableField(value = "encrypted_config", jdbcType = JdbcType.OTHER,
             typeHandler = JsonbStringTypeHandler.class)
     private String encryptedConfig;
@@ -65,6 +69,14 @@ public class ChannelAccountEntity {
         this.name = name;
     }
 
+    public String getRemark() {
+        return remark;
+    }
+
+    public void setRemark(String remark) {
+        this.remark = remark;
+    }
+
     public String getAccountIdentifier() {
         return accountIdentifier;
     }
@@ -95,6 +107,30 @@ public class ChannelAccountEntity {
 
     public void setSyncStatus(String syncStatus) {
         this.syncStatus = syncStatus;
+    }
+
+    public String getOnboardingMode() {
+        return onboardingMode;
+    }
+
+    public void setOnboardingMode(String onboardingMode) {
+        this.onboardingMode = onboardingMode;
+    }
+
+    public String getPhoneVerificationStatus() {
+        return phoneVerificationStatus;
+    }
+
+    public void setPhoneVerificationStatus(String phoneVerificationStatus) {
+        this.phoneVerificationStatus = phoneVerificationStatus;
+    }
+
+    public String getProviderPhoneStatus() {
+        return providerPhoneStatus;
+    }
+
+    public void setProviderPhoneStatus(String providerPhoneStatus) {
+        this.providerPhoneStatus = providerPhoneStatus;
     }
 
     public String getEncryptedConfig() {

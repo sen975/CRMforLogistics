@@ -66,9 +66,9 @@ export default function PublicTemplateLibrary({
   };
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+    <Space direction="vertical" size="middle" className="template-management-tab-content" style={{ width: '100%' }}>
       {!hasWhatsAppAccount && <Alert type="warning" showIcon message="没有可用的 WhatsApp 账号" />}
-      <Space wrap style={{ width: '100%' }}>
+      <Space wrap className="template-management-filters" style={{ width: '100%' }}>
         <Input aria-label="公共模板搜索" disabled={!hasWhatsAppAccount} placeholder="搜索公共模板名称" prefix={<SearchOutlined />} allowClear value={query.name ?? ''} onChange={(event) => setFilter({ name: event.target.value || undefined })} style={{ width: 240 }} />
         <Select aria-label="公共模板语言" disabled={!hasWhatsAppAccount} value={query.language} onChange={(value) => setFilter({ language: value })} options={WHATSAPP_TEMPLATE_LANGUAGE_OPTIONS} showSearch optionFilterProp="label" style={{ width: 190 }} />
         <Select aria-label="公共模板类别" disabled={!hasWhatsAppAccount} placeholder="模板类别" allowClear value={query.category} onChange={(value) => setFilter({ category: value })} options={[{ value: 'UTILITY', label: '工具' }, { value: 'MARKETING', label: '营销' }]} style={{ width: 130 }} />
@@ -83,6 +83,7 @@ export default function PublicTemplateLibrary({
         onOpen={openDetail}
       />
       <Pagination
+        className="template-management-pagination"
         current={templatesQuery.data?.page ?? query.page ?? 1}
         pageSize={templatesQuery.data?.size ?? query.size ?? 20}
         total={templatesQuery.data?.total ?? 0}

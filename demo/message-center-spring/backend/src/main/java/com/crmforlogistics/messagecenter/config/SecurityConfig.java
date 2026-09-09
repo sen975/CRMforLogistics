@@ -52,6 +52,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/public/wecom-avatar/oauth/callback").permitAll()
                 .requestMatchers("/api/account/wecom-binding/**").authenticated()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/events").permitAll()
                 .requestMatchers(
                         "/api/wecom/callback",

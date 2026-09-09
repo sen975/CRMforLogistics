@@ -38,7 +38,7 @@ class WhatsAppTemplateMediaUploadServiceTest {
     private static final String ONE_BYTE_SHA256 =
             "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a";
 
-    @Mock private WhatsAppTemplateApplicationService templateApplicationService;
+    @Mock private WhatsAppProviderScopeService providerScopeService;
     @Mock private WhatsAppTemplateMediaUploadStore store;
     @Mock private WhatsAppTemplateGateway gateway;
 
@@ -46,8 +46,8 @@ class WhatsAppTemplateMediaUploadServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new WhatsAppTemplateMediaUploadService(templateApplicationService, store, gateway,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new WhatsAppTemplateMediaUploadService(store, gateway,
+                Clock.fixed(NOW, ZoneOffset.UTC), providerScopeService);
     }
 
     @Test
@@ -136,7 +136,7 @@ class WhatsAppTemplateMediaUploadServiceTest {
 
         assertThat(result.created()).isTrue();
         assertThat(result.asset().assetStatus()).isEqualTo(MediaAssetStatus.UPLOADED);
-        verify(templateApplicationService).validateAccount(ACCOUNT_ID);
+        verify(providerScopeService).requireAccount(ACCOUNT_ID);
         verify(gateway).upload(ACCOUNT_ID, HeaderFormat.IMAGE, new byte[]{1}, "a.png", "image/png");
     }
 

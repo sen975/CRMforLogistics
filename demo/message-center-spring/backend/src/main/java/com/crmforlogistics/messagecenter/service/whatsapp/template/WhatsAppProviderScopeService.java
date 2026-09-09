@@ -70,6 +70,14 @@ public class WhatsAppProviderScopeService {
             throw failure("WHATSAPP_PROVIDER_SCOPE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
                     "WhatsApp 模板空间暂不可用");
         }
+        if (isEmptyConfig(scope.getEncryptedConfig()) && !isBlank(account.getEncryptedConfig())
+                && !"{}".equals(account.getEncryptedConfig().trim())) {
+            if (scopeMapper.updateEncryptedConfigIfEmpty(scope.getId(), account.getEncryptedConfig()) != 1) {
+                throw failure("WHATSAPP_PROVIDER_SCOPE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
+                        "WhatsApp 企业凭证暂不可用");
+            }
+            scope.setEncryptedConfig(account.getEncryptedConfig());
+        }
         if (accountMapper.bindProviderScope(account.getId(), scope.getId()) != 1) {
             throw failure("WHATSAPP_ACCOUNT_UNAVAILABLE", HttpStatus.CONFLICT, "WhatsApp 账号不可用");
         }
@@ -101,6 +109,14 @@ public class WhatsAppProviderScopeService {
     private static boolean isChatApp(ChannelAccountEntity account) {
         return account != null && ("chatapp".equalsIgnoreCase(account.getChannelType())
                 || "whatsapp".equalsIgnoreCase(account.getChannelType()));
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static boolean isEmptyConfig(String value) {
+        return isBlank(value) || "{}".equals(value.trim());
     }
 
     private static WhatsAppTemplateException failure(String code, HttpStatus status, String message) {

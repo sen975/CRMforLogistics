@@ -12,6 +12,8 @@ public class TemplateOperationEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private UUID channelAccountId;
+    private UUID templateId;
+    private UUID changeRequestId;
     private String idempotencyKey;
     private String operationType;
     private String providerTemplateId;
@@ -35,6 +37,10 @@ public class TemplateOperationEntity {
     public void setId(UUID id) { this.id = id; }
     public UUID getChannelAccountId() { return channelAccountId; }
     public void setChannelAccountId(UUID channelAccountId) { this.channelAccountId = channelAccountId; }
+    public UUID getTemplateId() { return templateId; }
+    public void setTemplateId(UUID templateId) { this.templateId = templateId; }
+    public UUID getChangeRequestId() { return changeRequestId; }
+    public void setChangeRequestId(UUID changeRequestId) { this.changeRequestId = changeRequestId; }
     public String getIdempotencyKey() { return idempotencyKey; }
     public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
     public String getOperationType() { return operationType; }

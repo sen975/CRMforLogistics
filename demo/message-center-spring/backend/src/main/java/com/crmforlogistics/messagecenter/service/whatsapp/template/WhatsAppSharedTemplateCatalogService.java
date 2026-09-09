@@ -54,11 +54,40 @@ public class WhatsAppSharedTemplateCatalogService {
         return new SharedTemplateResponse.Page(items, total, page, size);
     }
 
+    public SharedTemplateResponse.Page listPrivate(UUID actorUserId, UUID accountId, int page, int size,
+                                                   TemplateFilters filters) {
+        Objects.requireNonNull(actorUserId);
+        if (accountId == null) {
+            throw validation("accountId", "accountId is required");
+        }
+        if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
+            throw validation("page", "page must be >= 1 and size must be between 1 and 100");
+        }
+        TemplateFilters safe = filters == null ? new TemplateFilters(null, null, null, null, null, null) : filters;
+        QueryWrapper<TemplateEntity> base = privateQuery(accountId, safe);
+        long total = templateMapper.selectCount(base);
+        QueryWrapper<TemplateEntity> rows = privateQuery(accountId, safe)
+                .orderByDesc("updated_at").orderByAsc("id")
+                .last("LIMIT " + size + " OFFSET " + ((page - 1L) * size));
+        List<SharedTemplateResponse> items = templateMapper.selectList(rows).stream().map(this::view).toList();
+        return new SharedTemplateResponse.Page(items, total, page, size);
+    }
+
+    public SharedTemplateResponse privateDetail(UUID actorUserId, UUID accountId, UUID templateId) {
+        Objects.requireNonNull(actorUserId);
+        TemplateEntity template = templateMapper.findPrivateForDisplay(templateId, accountId).orElse(null);
+        if (template == null) {
+            throw notFound();
+        }
+        return view(template);
+    }
+
     public SharedTemplateResponse detail(UUID actorUserId, UUID templateId) {
         Objects.requireNonNull(actorUserId);
         UUID scopeId = gate.requireReady();
         TemplateEntity template = templateMapper.selectOne(new QueryWrapper<TemplateEntity>()
-                .eq("id", templateId).eq("provider_scope_id", scopeId).last("LIMIT 1"));
+                .eq("id", templateId).eq("provider_scope_id", scopeId)
+                .eq("template_domain", "ENTERPRISE_API").last("LIMIT 1"));
         if (template == null) {
             throw notFound();
         }
@@ -72,8 +101,33 @@ public class WhatsAppSharedTemplateCatalogService {
                 .stream().map(WhatsAppSharedTemplateCatalogService::operationView).toList();
     }
 
+    public List<OperationHistoryView> privateHistory(UUID actorUserId, UUID accountId, UUID templateId) {
+        privateDetail(actorUserId, accountId, templateId);
+        return operationMapper.selectList(new QueryWrapper<TemplateOperationEntity>()
+                        .eq("template_id", templateId).eq("channel_account_id", accountId)
+                        .orderByDesc("started_at").last("LIMIT 100"))
+                .stream().map(WhatsAppSharedTemplateCatalogService::operationView).toList();
+    }
+
     private QueryWrapper<TemplateEntity> query(UUID scopeId, TemplateFilters filters) {
-        QueryWrapper<TemplateEntity> query = new QueryWrapper<TemplateEntity>().eq("provider_scope_id", scopeId);
+        QueryWrapper<TemplateEntity> query = new QueryWrapper<TemplateEntity>().eq("provider_scope_id", scopeId)
+                .eq("template_domain", "ENTERPRISE_API");
+        if (!Boolean.TRUE.equals(filters.deleted())) query.isNull("deleted_at");
+        if (filters.status() != null && !filters.status().isBlank()) query.eq("status", filters.status().trim());
+        if (filters.category() != null && !filters.category().isBlank()) query.eq("category", filters.category().trim());
+        if (filters.language() != null && !filters.language().isBlank()) query.eq("language_code", filters.language().trim());
+        if (filters.allowSend() != null) query.eq("allow_send", filters.allowSend());
+        if (filters.search() != null && !filters.search().isBlank()) {
+            String value = filters.search().trim();
+            query.and(nested -> nested.like("name", value).or().like("remark", value)
+                    .or().like("provider_template_id", value));
+        }
+        return query;
+    }
+
+    private QueryWrapper<TemplateEntity> privateQuery(UUID accountId, TemplateFilters filters) {
+        QueryWrapper<TemplateEntity> query = new QueryWrapper<TemplateEntity>().eq("channel_account_id", accountId)
+                .eq("template_domain", "EMPLOYEE_BUSINESS_APP");
         if (!Boolean.TRUE.equals(filters.deleted())) query.isNull("deleted_at");
         if (filters.status() != null && !filters.status().isBlank()) query.eq("status", filters.status().trim());
         if (filters.category() != null && !filters.category().isBlank()) query.eq("category", filters.category().trim());

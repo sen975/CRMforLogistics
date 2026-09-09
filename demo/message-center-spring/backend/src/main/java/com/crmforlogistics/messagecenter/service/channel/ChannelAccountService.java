@@ -134,12 +134,16 @@ public class ChannelAccountService {
 
     @Transactional
     public ChannelAccountSummary createOrBind(UUID ownerId, CreateChannelAccountRequest request) {
+        if (isWhatsAppChannel(request.channelType())) {
+            throw new ChannelAccountException("WHATSAPP_ONBOARDING_REQUIRED", HttpStatus.CONFLICT);
+        }
         String channelType = normalizeChannelType(request.channelType());
         if (channelAccountMapper.countActiveByOwnerAndChannel(ownerId, channelType) > 0) {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_ALREADY_EXISTS", HttpStatus.CONFLICT);
         }
         String identifier = normalizeIdentifier(channelType, request.accountIdentifier());
         Map<String, String> credentials = validatedCredentials(channelType, request.credentials());
+        requireCompleteCredentials(channelType, credentials);
         assertCompatibleScope(channelType, credentials);
         String encrypted = encrypt(credentials);
         ChannelAccountEntity existing = channelAccountMapper.findOwnedByIdentifier(ownerId, channelType, identifier);
@@ -281,6 +285,15 @@ public class ChannelAccountService {
         return values;
     }
 
+    private void requireCompleteCredentials(String channelType, Map<String, String> credentials) {
+        Set<String> missing = CREDENTIAL_KEYS.get(channelType).stream()
+                .filter(key -> credentials.get(key) == null || credentials.get(key).isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (!missing.isEmpty()) {
+            throw new ChannelAccountException("CHANNEL_ACCOUNT_INCOMPLETE_CREDENTIALS", HttpStatus.BAD_REQUEST);
+        }
+    }
+
     private String encrypt(Map<String, String> credentials) {
         try {
             return credentialCipher.encrypt(credentials);
@@ -308,6 +321,11 @@ public class ChannelAccountService {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_TYPE_UNSUPPORTED", HttpStatus.BAD_REQUEST);
         }
         return normalized;
+    }
+
+    private static boolean isWhatsAppChannel(String channelType) {
+        String normalized = trimmed(channelType).toLowerCase();
+        return "chatapp".equals(normalized) || "whatsapp".equals(normalized);
     }
 
     private static String normalizeIdentifier(String channelType, String identifier) {

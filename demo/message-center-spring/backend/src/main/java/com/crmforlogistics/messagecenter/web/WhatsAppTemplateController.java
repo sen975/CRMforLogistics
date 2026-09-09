@@ -2,6 +2,8 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.request.TemplateCreateRequest;
 import com.crmforlogistics.messagecenter.dto.request.TemplateChangeCommandRequest;
+import com.crmforlogistics.messagecenter.dto.request.TemplateSendPermissionRequest;
+import com.crmforlogistics.messagecenter.dto.request.TemplateUpdateRequest;
 import com.crmforlogistics.messagecenter.dto.response.SharedTemplateResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateChangeRequestResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateOperationResponse;
@@ -29,6 +31,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -109,6 +114,89 @@ public class WhatsAppTemplateController {
         UUID actorUserId = actorUserId();
         WhatsAppProviderScopeService.ScopeAccount scopeAccount = requireCurrentScopeAccount(actorUserId);
         return reconciliationService.syncScope(scopeAccount.scope().getId(), scopeAccount.account().getId());
+    }
+
+    @GetMapping("/business-app/accounts/{accountId}/templates")
+    public SharedTemplateResponse.Page listPrivate(@PathVariable UUID accountId,
+                                                     @RequestParam(defaultValue = "1") int page,
+                                                     @RequestParam(defaultValue = "20") int size,
+                                                     @RequestParam(required = false) String search,
+                                                     @RequestParam(required = false) String status,
+                                                     @RequestParam(required = false) String category,
+                                                     @RequestParam(required = false) String language,
+                                                     @RequestParam(required = false) Boolean allowSend,
+                                                     @RequestParam(required = false) Boolean deleted) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return catalogService.listPrivate(actor, accountId, page, size,
+                new WhatsAppSharedTemplateCatalogService.TemplateFilters(
+                        search, status, category, language, allowSend, deleted));
+    }
+
+    @GetMapping("/business-app/accounts/{accountId}/templates/{templateId}")
+    public SharedTemplateResponse privateDetail(@PathVariable UUID accountId, @PathVariable UUID templateId) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return catalogService.privateDetail(actor, accountId, templateId);
+    }
+
+    @PostMapping("/business-app/accounts/{accountId}/templates/applications")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TemplateOperationResponse createPrivate(@PathVariable UUID accountId,
+                                                    @RequestBody TemplateCreateRequest request,
+                                                    HttpServletRequest servletRequest) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return TemplateOperationResponse.from(templateApplicationService.createPrivate(accountId,
+                request.toCommand(), actor, traceId(servletRequest)), traceId(servletRequest));
+    }
+
+    @PutMapping("/business-app/accounts/{accountId}/templates/{templateId}")
+    public TemplateOperationResponse modifyPrivate(@PathVariable UUID accountId, @PathVariable UUID templateId,
+                                                    @RequestBody TemplateUpdateRequest request,
+                                                    HttpServletRequest servletRequest) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return TemplateOperationResponse.from(templateApplicationService.modifyPrivate(accountId, actor, templateId,
+                request.toCommand(null), traceId(servletRequest)), traceId(servletRequest));
+    }
+
+    @PatchMapping("/business-app/accounts/{accountId}/templates/{templateId}/send-permission")
+    public TemplateOperationResponse setPrivateSendPermission(@PathVariable UUID accountId,
+                                                               @PathVariable UUID templateId,
+                                                               @RequestBody TemplateSendPermissionRequest request,
+                                                               HttpServletRequest servletRequest) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return TemplateOperationResponse.from(templateApplicationService.setSendPermissionPrivate(accountId, actor,
+                templateId, Boolean.TRUE.equals(request.allowSend()), request.clientRequestId(),
+                traceId(servletRequest)), traceId(servletRequest));
+    }
+
+    @DeleteMapping("/business-app/accounts/{accountId}/templates/{templateId}")
+    public TemplateOperationResponse deletePrivate(@PathVariable UUID accountId, @PathVariable UUID templateId,
+                                                   @RequestParam String clientRequestId,
+                                                   HttpServletRequest servletRequest) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return TemplateOperationResponse.from(templateApplicationService.deletePrivate(accountId, actor, templateId,
+                clientRequestId, traceId(servletRequest)), traceId(servletRequest));
+    }
+
+    @PostMapping("/business-app/accounts/{accountId}/templates/sync")
+    public WhatsAppTemplateReconciliationService.SyncResult syncPrivate(@PathVariable UUID accountId) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return reconciliationService.syncPrivateAccount(accountId);
+    }
+
+    @GetMapping("/business-app/accounts/{accountId}/templates/{templateId}/operations")
+    public List<TemplateOperationResponse> privateHistory(@PathVariable UUID accountId,
+                                                           @PathVariable UUID templateId) {
+        UUID actor = actorUserId();
+        templateApplicationService.requireOwnedBusinessAppAccount(accountId, actor);
+        return catalogService.privateHistory(actor, accountId, templateId).stream()
+                .map(TemplateOperationResponse::from).toList();
     }
 
     @PostMapping("/templates/{templateId}/change-requests")

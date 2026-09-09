@@ -14,6 +14,18 @@ const template = { id: 'template-1', version: 3, templateCode: 'shipping_notice'
 function renderPage() { const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }); return render(<QueryClientProvider client={client}><ConfigProvider><AntApp><TemplatesPage /></AntApp></ConfigProvider></QueryClientProvider>); }
 beforeEach(() => { vi.clearAllMocks(); auth.isAdmin = false; api.fetchChannelAccounts.mockResolvedValue([{ id: 'account-1', channelType: 'chatapp', authStatus: 'active' }]); api.fetchSharedTemplates.mockResolvedValue({ items: [template], total: 1, page: 1, size: 20 }); api.fetchSharedTemplate.mockResolvedValue(template); api.fetchTemplateOperations.mockResolvedValue([]); api.fetchMyTemplateChangeRequests.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 }); api.fetchTemplateChangeRequestsForReview.mockResolvedValue({ items: [], total: 0, page: 1, size: 20 }); });
 describe('TemplatesPage shared workspace', () => {
+  it('does not render the redundant shared-template title or subtitle', async () => {
+    renderPage();
+
+    await screen.findByText('发货提醒');
+
+    expect(screen.getByRole('heading', { name: 'WhatsApp模板管理' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: '共享模板' })).not.toBeInTheDocument();
+    expect(screen.queryByText('系统内所有用户共用同一 WhatsApp 模板目录')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '共享模板' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: '公共模板库' })).toBeVisible();
+  });
+
   it('lets ordinary users submit an edit request rather than directly changing the shared template', async () => { const user = userEvent.setup(); api.createTemplateChangeRequest.mockResolvedValue({ mode: 'APPROVAL_REQUIRED', request: { id: 'r1' } }); renderPage(); await screen.findByText('发货提醒'); expect(screen.getByRole('tab', { name: '共享模板' })).toBeVisible(); await user.click(screen.getByRole('button', { name: '编辑 shipping_notice' })); expect(screen.getByRole('button', { name: '提交修改' })).toBeVisible(); await user.click(screen.getByRole('button', { name: '提交修改' })); await waitFor(() => expect(api.createTemplateChangeRequest).toHaveBeenCalledWith('template-1', expect.objectContaining({ expectedVersion: 3, changeType: 'MODIFY' }))); });
   it('requires a shared-impact confirmation before an administrator directly changes send permission', async () => { const user = userEvent.setup(); auth.isAdmin = true; api.createTemplateChangeRequest.mockResolvedValue({ mode: 'DIRECT', request: null }); renderPage(); await screen.findByText('发货提醒'); await user.click(screen.getByRole('button', { name: '暂停发送 shipping_notice' })); const dialog = screen.getByRole('dialog', { name: '暂停模板发送' }); expect(within(dialog).getByText('此变更会影响所有用户。请确认后继续。')).toBeInTheDocument(); await user.click(within(dialog).getByRole('button', { name: '确认影响所有用户' })); await waitFor(() => expect(api.createTemplateChangeRequest).toHaveBeenCalledWith('template-1', expect.objectContaining({ changeType: 'SET_SEND_PERMISSION', allowSend: false }))); });
   it('keeps the shared catalog visible when the current user has no WhatsApp account', async () => { api.fetchChannelAccounts.mockResolvedValue([]); renderPage(); expect(await screen.findByText('发货提醒')).toBeVisible(); expect(screen.getByText('没有可用的 WhatsApp 账号')).toBeVisible(); expect(screen.getByRole('button', { name: /同步模板/ })).toBeDisabled(); });

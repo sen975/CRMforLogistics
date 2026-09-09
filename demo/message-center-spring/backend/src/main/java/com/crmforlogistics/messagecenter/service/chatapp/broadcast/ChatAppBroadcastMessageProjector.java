@@ -5,13 +5,11 @@ import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
-import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
-import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppOutboundMessageStateMachine;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppProviderMessageIdentity;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
@@ -43,7 +41,6 @@ public class ChatAppBroadcastMessageProjector {
     private final MessageMapper messageMapper;
     private final ConversationMapper conversationMapper;
     private final MessageStatusEventMapper statusEventMapper;
-    private final TemplateMapper templateMapper;
     private final TemplateMessageTextResolver textResolver;
     private final ObjectMapper objectMapper;
     private final EventHub eventHub;
@@ -56,13 +53,12 @@ public class ChatAppBroadcastMessageProjector {
             MessageMapper messageMapper,
             ConversationMapper conversationMapper,
             MessageStatusEventMapper statusEventMapper,
-            TemplateMapper templateMapper,
             TemplateMessageTextResolver textResolver,
             ObjectMapper objectMapper,
             EventHub eventHub,
             Clock clock) {
         this(broadcastMapper, recipientMapper, messageMapper, conversationMapper, statusEventMapper,
-                templateMapper, textResolver, objectMapper, eventHub, clock, null);
+                textResolver, objectMapper, eventHub, clock, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -72,7 +68,6 @@ public class ChatAppBroadcastMessageProjector {
             MessageMapper messageMapper,
             ConversationMapper conversationMapper,
             MessageStatusEventMapper statusEventMapper,
-            TemplateMapper templateMapper,
             TemplateMessageTextResolver textResolver,
             ObjectMapper objectMapper,
             EventHub eventHub,
@@ -83,7 +78,6 @@ public class ChatAppBroadcastMessageProjector {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.conversationMapper = Objects.requireNonNull(conversationMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
-        this.templateMapper = Objects.requireNonNull(templateMapper);
         this.textResolver = Objects.requireNonNull(textResolver);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.eventHub = Objects.requireNonNull(eventHub);
@@ -448,10 +442,8 @@ public class ChatAppBroadcastMessageProjector {
         Map<String, Object> params = parseParams(recipient.getTemplateParamsJsonb());
         String body = broadcast.getTemplateBodySnapshot();
         if (body == null || body.isBlank()) {
-            Optional<TemplateEntity> fallback = templateMapper.findForDisplay(
-                    broadcast.getChannelAccountId(), broadcast.getTemplateCode(),
-                    broadcast.getLanguageCode());
-            body = fallback.map(TemplateEntity::getBody).orElse("");
+            body = textResolver.findDisplayBody(broadcast.getChannelAccountId(), broadcast.getTemplateCode(),
+                    broadcast.getLanguageCode()).orElse("");
         }
         return body == null || body.isBlank()
                 ? new RenderedBody(TEMPLATE_UNAVAILABLE,

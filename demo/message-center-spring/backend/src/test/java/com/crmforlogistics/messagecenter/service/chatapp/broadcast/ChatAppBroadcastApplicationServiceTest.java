@@ -49,6 +49,7 @@ import static org.mockito.Mockito.times;
 @ExtendWith(MockitoExtension.class)
 class ChatAppBroadcastApplicationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-14T06:00:00Z");
+    private static final UUID SCOPE_ID = UUID.fromString("20000000-0000-0000-0000-000000000001");
 
     @Mock ChatAppBroadcastMapper broadcastMapper;
     @Mock ChatAppBroadcastRecipientMapper recipientMapper;
@@ -281,7 +282,9 @@ class ChatAppBroadcastApplicationServiceTest {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
         when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
-        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
+        ChannelAccountEntity account = account(accountId);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account);
+        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.create(command(accountId,
@@ -468,7 +471,8 @@ class ChatAppBroadcastApplicationServiceTest {
     void nonAdminListingIsScopedToBroadcastsCreatedByTheActor() {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
-        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account(accountId));
+        ChannelAccountEntity account = account(accountId);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account);
         when(broadcastMapper.selectCount(any())).thenReturn(0L);
 
         service.list(accountId, 1, 20, actorId);
@@ -548,7 +552,7 @@ class ChatAppBroadcastApplicationServiceTest {
         template.setStatus("APPROVED");
         template.setAllowSend(true);
         template.setBody("Shipping notice");
-        when(templateMapper.findForSend(accountId, "shipping_notice", "zh_CN"))
+        when(templateMapper.findSharedForSend(SCOPE_ID, "shipping_notice", "zh_CN"))
                 .thenReturn(Optional.of(template));
         return template;
     }
@@ -559,6 +563,7 @@ class ChatAppBroadcastApplicationServiceTest {
         account.setChannelType("chatapp");
         account.setAuthStatus("active");
         account.setAccountIdentifier("60199999999");
+        account.setProviderScopeId(SCOPE_ID);
         return account;
     }
 

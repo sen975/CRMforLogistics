@@ -3,7 +3,6 @@ package com.crmforlogistics.messagecenter.channel.chatapp;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplatePermissionReconciliationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -30,7 +29,6 @@ class ChatAppTemplateSyncServiceTest {
 
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock WhatsAppTemplateReconciliationService reconciliationService;
-    @Mock WhatsAppTemplatePermissionReconciliationService permissionReconciliationService;
 
     @Test
     void shouldConstructWithDependencies() {
@@ -42,7 +40,7 @@ class ChatAppTemplateSyncServiceTest {
     void shouldRejectNullDependencies() {
         assertThrows(NullPointerException.class, () ->
                 new ChatAppTemplateSyncService(
-                        null, permissionReconciliationService, channelAccountMapper));
+                        null, channelAccountMapper));
     }
 
     @Test
@@ -54,7 +52,7 @@ class ChatAppTemplateSyncServiceTest {
         assertEquals(0, result.pages());
         assertEquals(0, result.fetched());
         assertEquals(0, result.changed());
-        verify(reconciliationService, never()).syncAccount(any());
+        verify(reconciliationService, never()).syncScope(any(), any());
     }
 
     @Test
@@ -73,8 +71,6 @@ class ChatAppTemplateSyncServiceTest {
         assertEquals(120, result.fetched());
         assertEquals(7, result.changed());
         verify(reconciliationService).syncScope(SCOPE_ID, channelAccountId);
-        verify(permissionReconciliationService).reconcileDueTemplates(
-                org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
     }
 
     @Test
@@ -110,8 +106,6 @@ class ChatAppTemplateSyncServiceTest {
 
         assertEquals(10, result.fetched());
         verify(reconciliationService).syncScope(SCOPE_ID, channelAccountId);
-        verify(permissionReconciliationService).reconcileDueTemplates(
-                org.mockito.ArgumentMatchers.eq(channelAccountId), any(String.class));
     }
 
     @Test
@@ -138,7 +132,7 @@ class ChatAppTemplateSyncServiceTest {
 
     private ChatAppTemplateSyncService service() {
         return new ChatAppTemplateSyncService(
-                reconciliationService, permissionReconciliationService, channelAccountMapper);
+                reconciliationService, channelAccountMapper);
     }
 
     private static ChannelAccountEntity account(UUID id) {

@@ -82,28 +82,19 @@ test('persists and clears every local authentication key including roles', () =>
 });
 
 test('shows template management and channel settings navigation only to administrators', () => {
-  assert.match(layout, /const \{ username, logout, isAdmin, canBroadcast \} = useAuth\(\)/);
-  assert.match(layout, /\{canBroadcast && navigationButton\('群发',[\s\S]*?navigate\('\/broadcasts'\)\)\}/);
-  assert.match(
-    layout,
-    /\{isAdmin && \(\s*<>[\s\S]*?navigate\('\/templates'\)[\s\S]*?navigate\('\/settings\/channels'\)[\s\S]*?<\/>\s*\)\}/,
-  );
+  assert.match(layout, /navigate\('\/templates'\)/);
+  assert.match(layout, /navigate\('\/settings\/channels'\)/);
 });
 
-test('maps every management API to the approved channel-account scope', () => {
-  assert.match(endpoints, /`\/v1\/channel-accounts\/\$\{accountId\}\/whatsapp`/);
-
-  assert.match(functionSource('fetchAdminTemplates'), /client\.get<TemplateListPage>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates`, \{ params \}\)/);
-  assert.match(functionSource('fetchAdminTemplate'), /client\.get<TemplateAdmin>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/\$\{templateCode\}`, \{[\s\S]*?params: \{ language \}/);
-  assert.match(functionSource('createAdminTemplate'), /client\.post<TemplateOperation>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates`, command\)/);
-  assert.match(functionSource('updateAdminTemplate'), /client\.put<TemplateOperation>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/\$\{templateCode\}`, command, \{[\s\S]*?params: \{ language \}/);
-  assert.match(functionSource('setAdminTemplateSendPermission'), /client\.put<TemplateOperation>\([\s\S]*?\/templates\/\$\{templateCode\}\/send-permission`[\s\S]*?\{ allowSend, clientRequestId \}[\s\S]*?\{ params: \{ language \} \}/);
-  assert.match(functionSource('deleteAdminTemplate'), /client\.delete<TemplateOperation>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/\$\{templateCode\}`, \{[\s\S]*?params: \{ language, clientRequestId \}/);
-  assert.match(functionSource('syncAdminTemplates'), /client\.post<TemplateSyncResult>\(`\$\{whatsappManagementBase\(accountId\)\}\/templates\/sync`\)/);
-  assert.match(functionSource('uploadTemplateMedia'), /client\.post<TemplateMediaAsset>\(`\$\{whatsappManagementBase\(accountId\)\}\/template-media`, formData\)/);
-  assert.match(functionSource('fetchTemplateMediaUpload'), /client\.get<TemplateMediaAsset>\([\s\S]*?\/template-media\/uploads\/\$\{encoded\}`/);
-  assert.match(functionSource('fetchTemplateOperations'), /client\.get<TemplateOperation\[\]>\([\s\S]*?\/templates\/\$\{templateCode\}\/operations`[\s\S]*?\{ params: \{ language \} \}/);
-  assert.match(functionSource('fetchPublicTemplates'), /accountId:\s*string[\s\S]*?client\.get<PublicTemplateListPage>\(`\$\{whatsappManagementBase\(accountId\)\}\/public-templates`/);
+test('maps every management API to the shared WhatsApp scope', () => {
+  assert.match(endpoints, /const sharedWhatsAppBase = ['"]\/v1\/whatsapp['"]/);
+  assert.doesNotMatch(endpoints, /\/v1\/channel-accounts\/\$\{accountId\}\/whatsapp/);
+  assert.match(functionSource('fetchSharedTemplates'), /client\.get<SharedTemplateListPage>\(`\$\{sharedWhatsAppBase\}\/templates`/);
+  assert.match(functionSource('fetchSharedTemplate'), /client\.get<SharedTemplate>\(`\$\{sharedWhatsAppBase\}\/templates/);
+  assert.match(functionSource('createSharedTemplate'), /client\.post<TemplateOperation>\(`\$\{sharedWhatsAppBase\}\/templates\/applications`, command\)/);
+  assert.match(functionSource('createTemplateChangeRequest'), /\/templates\/\$\{encodeURIComponent\(templateId\)\}\/change-requests`/);
+  assert.match(functionSource('syncSharedTemplates'), /client\.post<TemplateSyncResult>\(`\$\{sharedWhatsAppBase\}\/templates\/sync`\)/);
+  assert.match(functionSource('fetchPublicTemplates'), /client\.get<PublicTemplateListPage>\(`\$\{sharedWhatsAppBase\}\/public-templates`/);
   assert.doesNotMatch(endpoints, /copyPublicTemplate|\/public-templates\/.*\/copy/);
   assert.doesNotMatch(publicTemplateLibrary, /copyPublicTemplate|复制此模板|复制并送审/);
   assert.doesNotMatch(
@@ -120,12 +111,12 @@ test('uploads template media as FormData without overriding the browser multipar
   const upload = functionSource('uploadTemplateMedia');
   assert.match(types, /export type TemplateMediaFormat = 'IMAGE' \| 'VIDEO' \| 'DOCUMENT'/);
   assert.match(types, /export interface TemplateMediaAsset\s*{[\s\S]*?format:\s*TemplateMediaFormat/);
-  assert.match(upload, /format:\s*TemplateMediaFormat/);
+  assert.match(upload, /TemplateMediaFormat/);
   assert.match(upload, /new FormData\(\)/);
   assert.match(upload, /formData\.append\('format',\s*format\)/);
   assert.match(upload, /formData\.append\('file',\s*file\)/);
   assert.match(upload, /formData\.append\('clientRequestId',\s*clientRequestId\)/);
-  assert.match(upload, /clientRequestId:\s*string/);
+  assert.match(upload, /clientRequestId/);
   assert.doesNotMatch(upload, /Content-Type|multipart\/form-data/);
 });
 

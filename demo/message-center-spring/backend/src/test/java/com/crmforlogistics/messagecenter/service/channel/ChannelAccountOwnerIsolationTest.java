@@ -79,7 +79,7 @@ class ChannelAccountOwnerIsolationTest {
 
         assertThat(service.unbind(owner, oldId)).isTrue();
         assertThat(service.createOrBind(owner,
-                new CreateChannelAccountRequest("email", "New", "new@example.test", null))).isNotNull();
+                new CreateChannelAccountRequest("email", "New", "new@example.test", emailCredentials()))).isNotNull();
         verify(mapper).disableOwned(owner, oldId);
         verify(mapper).insertOwned(any(), eq(owner));
     }
@@ -100,5 +100,21 @@ class ChannelAccountOwnerIsolationTest {
         e.setAuthStatus("active");
         e.setSyncStatus("idle");
         return e;
+    }
+
+    private static java.util.Map<String, String> emailCredentials() {
+        return java.util.Map.ofEntries(
+                java.util.Map.entry("smtpHost", "smtp.example.test"),
+                java.util.Map.entry("smtpPort", "465"),
+                java.util.Map.entry("smtpSsl", "true"),
+                java.util.Map.entry("smtpUser", "sender@example.test"),
+                java.util.Map.entry("smtpPassword", "test-password"),
+                java.util.Map.entry("imapHost", "imap.example.test"),
+                java.util.Map.entry("imapPort", "993"),
+                java.util.Map.entry("imapSsl", "true"),
+                java.util.Map.entry("imapUser", "sender@example.test"),
+                java.util.Map.entry("imapPassword", "test-password"),
+                java.util.Map.entry("provider", "imap"),
+                java.util.Map.entry("mailFrom", "sender@example.test"));
     }
 }

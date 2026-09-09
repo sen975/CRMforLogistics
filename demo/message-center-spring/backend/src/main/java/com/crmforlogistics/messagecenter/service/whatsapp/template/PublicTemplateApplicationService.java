@@ -20,37 +20,25 @@ public class PublicTemplateApplicationService {
     private static final int MAX_CACHE_ENTRIES = 128;
     private static final long CACHE_TTL_SECONDS = 60;
 
-    private final WhatsAppTemplateApplicationService accountValidator;
     private final ChatAppPublicTemplateGateway gateway;
     private final Clock clock;
     private final WhatsAppProviderScopeService providerScopeService;
     private final Map<CacheKey, CacheEntry> cache = new LinkedHashMap<>(16, 0.75f, true);
 
-    PublicTemplateApplicationService(WhatsAppTemplateApplicationService accountValidator,
-                                     ChatAppPublicTemplateGateway gateway,
-                                     Clock clock) {
-        this(accountValidator, gateway, clock, null);
-    }
-
-    public PublicTemplateApplicationService(WhatsAppTemplateApplicationService accountValidator,
-                                            ChatAppPublicTemplateGateway gateway,
+    public PublicTemplateApplicationService(ChatAppPublicTemplateGateway gateway,
                                             Clock clock,
                                             WhatsAppProviderScopeService providerScopeService) {
-        this.accountValidator = Objects.requireNonNull(accountValidator);
         this.gateway = Objects.requireNonNull(gateway);
         this.clock = Objects.requireNonNull(clock);
-        this.providerScopeService = providerScopeService;
+        this.providerScopeService = Objects.requireNonNull(providerScopeService);
     }
 
     public Page listForUser(UUID actorUserId, Query query) {
-        if (providerScopeService == null) {
-            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
-        }
         return list(providerScopeService.requireOwnedActive(actorUserId).account().getId(), query);
     }
 
     public Page list(UUID accountId, Query query) {
-        accountValidator.validateAccount(accountId);
+        providerScopeService.requireAccount(accountId);
         Query validated = validate(query);
         CacheKey key = new CacheKey(validated);
         Instant now = clock.instant();

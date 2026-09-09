@@ -476,6 +476,39 @@ export interface ChannelAccount {
   syncStatus: string;
   lastSyncedAt: string | null;
   createdAt: string;
+  onboardingMode?: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY' | null;
+  providerScopeId?: string | null;
+}
+
+export interface WhatsAppAuthorizationAttempt {
+  attemptId: string;
+  state: string;
+  expiresAt: string;
+}
+
+export interface WhatsAppAuthorizationResult {
+  accountId: string;
+  phoneNumberLast4: string;
+  onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY';
+}
+
+export interface WhatsAppPhoneNumberStatus {
+  accountId: string;
+  phoneNumberLast4: string;
+  ownerUserId: string | null;
+  onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY' | null;
+  phoneVerificationStatus: string | null;
+  providerPhoneStatus: string | null;
+}
+
+export interface WhatsAppPhoneOperationStatus {
+  operationId: string;
+  phoneNumberLast4: string;
+  status: string;
+}
+
+export interface WhatsAppCapabilityStatus {
+  ready: boolean;
 }
 
 export interface WeComSendRequest {
@@ -487,6 +520,13 @@ export interface WeComSendRequest {
 
 export interface ChannelCredentials {
   [key: string]: string;
+}
+
+export interface CreateChannelAccountRequest {
+  channelType: 'chatapp' | 'email';
+  name: string;
+  accountIdentifier: string;
+  credentials: ChannelCredentials;
 }
 
 export interface SyncResult {
@@ -751,6 +791,7 @@ export interface TemplateComponent {
 
 export interface TemplateAdmin {
   id: string;
+  version: number;
   accountId: string;
   templateCode: string;
   name: string;

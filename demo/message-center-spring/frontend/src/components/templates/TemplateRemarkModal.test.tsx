@@ -14,11 +14,11 @@ beforeEach(() => {
 });
 
 describe('TemplateRemarkModal', () => {
-  it('uses the dedicated account-scoped remark endpoint contract', async () => {
+  it('uses the shared WhatsApp remark endpoint contract', async () => {
     await updateAdminTemplateRemark('account-1', 'tpl-1', 'zh_CN', '发货提醒');
 
     expect(client.put).toHaveBeenCalledWith(
-      '/v1/channel-accounts/account-1/whatsapp/templates/tpl-1/remark',
+      '/v1/whatsapp/templates/tpl-1/remark',
       { remark: '发货提醒' },
       { params: { language: 'zh_CN' } },
     );

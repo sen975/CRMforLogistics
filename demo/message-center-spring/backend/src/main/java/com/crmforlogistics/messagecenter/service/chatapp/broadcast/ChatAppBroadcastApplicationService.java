@@ -112,9 +112,12 @@ public class ChatAppBroadcastApplicationService {
             return idempotentResult(existing.orElseThrow(), requestFingerprint, actorUserId);
         }
 
-        requireAccountAccess(command.channelAccountId(), actorUserId);
-        TemplateEntity template = templateMapper.findForSend(
-                        command.channelAccountId(), command.templateCode(), command.languageCode())
+        var account = requireAccountAccess(command.channelAccountId(), actorUserId);
+        TemplateEntity template = ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())
+                ? templateMapper.findPrivateForSend(command.channelAccountId(), command.templateCode(), command.languageCode())
+                : java.util.Optional.ofNullable(account.getProviderScopeId())
+                .flatMap(scopeId -> templateMapper.findSharedForSend(
+                        scopeId, command.templateCode(), command.languageCode())))
                 .orElseThrow(() -> error(
                         "CHATAPP_BROADCAST_TEMPLATE_NOT_SENDABLE", HttpStatus.CONFLICT));
         if (template.getBody() == null || template.getBody().isBlank()) {
@@ -379,11 +382,12 @@ public class ChatAppBroadcastApplicationService {
         return view(existing);
     }
 
-    private void requireAccountAccess(UUID channelAccountId, UUID actorUserId) {
+    private com.crmforlogistics.messagecenter.entity.ChannelAccountEntity requireAccountAccess(
+            UUID channelAccountId, UUID actorUserId) {
         if (channelAccountId == null || actorUserId == null) {
             throw error("CHATAPP_BROADCAST_REQUEST_INVALID", HttpStatus.BAD_REQUEST);
         }
-        accountResolver.requireOwnedAccount(actorUserId, channelAccountId);
+        return accountResolver.requireOwnedAccount(actorUserId, channelAccountId);
     }
 
     private void requireBroadcastAccess(ChatAppBroadcastEntity broadcast, UUID actorUserId) {

@@ -10,6 +10,15 @@ import { useDetailPanel } from '../hooks/useDetailPanel';
 
 const { Text } = Typography;
 
+function renderPhoneValue(value: string) {
+  const phoneValue = value || '—';
+  return (
+    <Text ellipsis={{ tooltip: phoneValue }} style={{ display: 'block', minWidth: 0, whiteSpace: 'nowrap' }}>
+      {phoneValue}
+    </Text>
+  );
+}
+
 export default function PhoneRepositoryPage() {
   const [query, setQuery] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -18,6 +27,14 @@ export default function PhoneRepositoryPage() {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
   const { selectCallRecord } = useDetailPanel();
+
+  const openTimeline = (record: PhoneRecordResponse) => {
+    if (!record.contactId) {
+      message.warning('该电话记录尚未关联联系人，暂时无法打开时间轴');
+      return;
+    }
+    navigate(`/conversations/contact/${encodeURIComponent(record.contactId)}?channel=phone`);
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ['phoneRepository', query],
@@ -68,9 +85,9 @@ export default function PhoneRepositoryPage() {
       dataIndex: 'contactDisplayName',
       key: 'contact',
       render: (name: string, r: PhoneRecordResponse) => (
-        <Space>
+        <Space style={{ minWidth: 0, maxWidth: '100%' }}>
           <PhoneOutlined />
-          <Text>{name || r.phonePointId}</Text>
+          {renderPhoneValue(name || '—')}
         </Space>
       ),
     },
@@ -79,6 +96,7 @@ export default function PhoneRepositoryPage() {
       dataIndex: 'phonePointId',
       key: 'phone',
       width: 160,
+      render: (phoneValue: string) => renderPhoneValue(phoneValue.replace(/^phone:/, '')),
     },
     {
       title: '方向',
@@ -141,7 +159,7 @@ export default function PhoneRepositoryPage() {
           <PlayCircleOutlined
             style={{ cursor: 'pointer', fontSize: 16 }}
             title="查看会话"
-            onClick={(e) => { e.stopPropagation(); navigate(`/conversations/contact/${r.contactId}?channel=phone`); }}
+            onClick={(e) => { e.stopPropagation(); openTimeline(r); }}
           />
           {r.transcriptionState === 'failed' && (
             <ReloadOutlined
@@ -180,9 +198,10 @@ export default function PhoneRepositoryPage() {
         loading={isLoading}
         pagination={false}
         size="small"
+        scroll={{ x: 1100 }}
         onRow={(r) => ({
-          onClick: () => navigate(`/conversations/contact/${r.contactId}?channel=phone`),
-          style: { cursor: 'pointer' },
+          onClick: () => openTimeline(r),
+          style: { cursor: r.contactId ? 'pointer' : 'default' },
         })}
       />
       {data && (
