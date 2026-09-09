@@ -4,11 +4,14 @@
 
 ## 当前设计
 
+- [CAMS WhatsApp 内嵌注册员工自助绑定设计](specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md)：当前 WhatsApp 绑定最高层真源；定义 API-only 与 Business App 共存两条独立流程、CAMS 公开内嵌注册合同、按 WABA 建立 provider scope、员工自助解绑与实机验收门禁。
+
 - [WhatsApp 共享模板与变更审批设计](specs/2026-09-05-whatsapp-shared-template-approval-design.md)：WhatsApp 模板权限当前最高层真源；定义系统级共享模板、新模板直接官方申请、普通用户变更审批、管理员直接执行、共享身份迁移和凭证隔离。
 - [用户私有渠道通讯录设计](specs/2026-09-04-user-channel-address-books-design.md)：定义 WhatsApp、邮件和电话按用户隔离的渠道账号、联系人、身份、标签、通话记录、通讯录页面、历史迁移和权限边界；企业微信沿用现有实现。
 - [企业微信代开发成员头像 OAuth2 授权设计](specs/2026-09-04-wecom-avatar-oauth-design.md)：定义 Web 登录与敏感头像授权分离、跨设备二维码授权、一次性 state、成员绑定校验和终态刷新。
 - [账户生命周期与用户资料设计](specs/2026-09-03-account-lifecycle-design.md)：定义公开注册、当前账户资料、密码管理、MinIO 用户头像、企业微信头像优先级和管理员角色管理。
 - [AI Topic 手动整理与联系人合并拆分设计](specs/2026-09-02-ai-topic-manual-review-contact-merge-split-design.md)：当前 AI Topic 人工整理与联系人结构变化的最高层真源；定义 `REVIEW_PENDING`、按联系方式/时间选源、AI 预览、融合生成新 Topic，以及联系人合并/拆分后的来源迁移。
+- [联系人合并后的跨渠道同标题 Topic 自动融合设计](specs/2026-09-08-ai-topic-contact-merge-auto-fusion-design.md)：定义联系人合并时跨渠道同标题 Topic 的规范化匹配、内容一致时免 AI 直接融合、内容不一致时复用 AI 融合，以及事务回滚边界。
 - [AI Topic 企业微信混合归属与静默重构设计](specs/2026-09-01-ai-topic-wecom-mixed-scope-design.md)：AI Topic 自动生成与企业微信混合归属基础真源；定义个人/群 Topic 归属、企业微信摘要输入、6 分钟静默重构、群 Topic 入库审批、混合时间轴和仓库投影。
 - [AI Topic 生命周期、异步任务与弃用仓库设计](specs/2026-08-28-ai-topic-lifecycle-and-repository-design.md)：当前 AI Topic 真源；定义非企业微信渠道的增量归类、异步命令、右侧时间轴、弃用隔离与跨联系人弃用仓库。
 - [企业微信会话身份与资料设计](specs/2026-08-24-wecom-conversation-identity-design.md)：定义代开发安装实例、ChatData 源会话、参与者、成员资料、企业名称和访问边界。
@@ -17,10 +20,14 @@
 
 ## 当前实施
 
+- WhatsApp 绑定实施计划待基于 2026-09-09 当前设计重写；此前的单企业 WABA、管理员分配与迁移验证码实施计划不得执行。
+- [WhatsApp 账号模板权限分流实施计划](plans/2026-09-09-whatsapp-template-permission-domain.md)：落实企业 API 共享模板审批与独立 Business App 私有模板直改两条权限链路。
+
 - [WhatsApp 共享模板与变更审批实施计划](plans/2026-09-05-whatsapp-shared-template-approval.md)：把共享 provider scope、账号副本归并、新模板直接官方申请、普通用户变更审批、管理员直接执行、发送解析切换和发布验收拆为九个可独立提交的 Task。
 - [企业微信代开发成员头像 OAuth2 授权实施计划](plans/2026-09-04-wecom-avatar-oauth.md)：落实独立敏感授权二维码、一次性回调、绑定成员校验、终态轮询和 Web 登录 scope 清理。
 - [账户生命周期与用户资料实施计划](plans/2026-09-03-account-lifecycle.md)：落实公开注册、当前用户资料与头像、凭原密码改密、会话轮换和管理员用户管理。
 - [AI Topic 手动整理与联系人合并拆分实施计划](plans/2026-09-02-ai-topic-manual-review-contact-merge-split.md)：落实待确定区、人工选源预览、Topic 融合，以及联系人合并/拆分的 Topic 来源迁移。
+- [联系人合并后的跨渠道同标题 Topic 自动融合实施计划](plans/2026-09-08-ai-topic-contact-merge-auto-fusion.md)：落实联系人合并时同标题 Topic 的跨渠道归并、内容一致时免 AI 直接融合和内容不一致时的 AI 融合。
 - [AI Topic 企业微信混合归属与静默重构实施计划](plans/2026-09-01-ai-topic-wecom-mixed-scope.md)：落实个人/群 owner、企业微信单条摘要混合输入、6 分钟静默重构、群 Topic 入库审批和最终快照刷新。
 - [AI Topic 联系方式合并重关联实施计划](plans/2026-09-01-ai-topic-contact-merge-reconciliation.md)：联系方式或联系人合并后，重新关联全部历史来源与现有 Topic，并在 AI 成功后原位迁移来源。
 
@@ -42,6 +49,7 @@
 
 ## 已被吸收的设计
 
+- `specs/2026-09-08-whatsapp-business-app-coexistence-multi-number-design.md` 和 `plans/2026-09-08-whatsapp-business-app-coexistence-multi-number.md` 已被 2026-09-09 的 CAMS WhatsApp 内嵌注册员工自助绑定设计取代；其中单企业单 WABA、管理员分配、管理员解绑和把共存实现为迁移/验证码流程均不再有效。
 - `specs/2026-08-28-ai-topic-lifecycle-and-repository-design.md` 已被 2026-09-01 的 AI Topic 企业微信混合归属与静默重构设计吸收；其中仅支持 ChatApp/邮件/电话、`DISCARDED` 弃用语义和联系人独占 Topic 归属不再有效。
 - `specs/2026-08-27-ai-topic-timeline-design.md` 已被 2026-08-28 的 AI Topic 生命周期、异步任务与弃用仓库设计吸收；其中前端轮询、同步编辑/合并命令和仅 `READY/ARCHIVED` 的状态模型不再有效。
 - `specs/2026-08-22-wecom-conversation-full-height-design.md` 的全高布局要求已被统一会话工作区设计吸收。

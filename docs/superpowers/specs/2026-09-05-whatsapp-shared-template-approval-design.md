@@ -2,49 +2,50 @@
 
 ## 真源与覆盖关系
 
-本文是 WhatsApp 模板身份、共享范围、变更权限和审批流程的当前最高层真源。它覆盖 `2026-09-04-user-channel-address-books-design.md` 中“所有登录用户均可直接修改、停用、删除模板和调整发送权限”的旧规则；该文档的联系人、渠道账号和 owner 隔离设计继续有效。
+本文是企业 WhatsApp Business API 共享模板的身份、共享范围、变更权限和审批流程真源。它覆盖 `2026-09-04-user-channel-address-books-design.md` 中“所有登录用户均可直接修改、停用、删除模板和调整发送权限”的旧规则；该文档的联系人、渠道账号和 owner 隔离设计继续有效。独立绑定的 WhatsApp Business App 账号不使用本文的共享审批域，改按 `2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md` 的账号私有模板规则执行。
 
 ## 目标
 
-WhatsApp 模板是同一 CAMS `custSpaceId` 下的系统级共享资产。所有登录用户都能查看和使用可发送模板，也能直接提交新模板到官方审核；对已有模板的修改必须受内部审批约束，避免普通用户直接改变所有人的共享资产。
+企业 WhatsApp Business API 下的模板是该 API scope 内的系统级共享资产。所有有权使用企业 API 号码的用户都能查看和使用可发送模板，也能直接提交新模板到官方审核；对已有模板的修改必须受内部审批约束，避免普通用户直接改变所有人的共享资产。独立绑定的 WhatsApp Business App 账号拥有账号私有模板，申请、修改、停用和删除均由账号 owner 直接执行，不经过本审批流程。
 
 本设计实现：
 
-- 同一个上游模板在本地只有一条共享记录，不按渠道账号复制模板所有权。
-- 普通用户可以直接申请新模板，但修改已有模板时只能提交内部变更申请。
-- 管理员可以批准或拒绝普通用户的申请，也可以直接执行模板变更。
-- 模板可见性与用户渠道凭证分离：模板共享，AK/SK、发送号码和账号配置仍按用户隔离。
+- 同一个企业 API 权限域内的上游模板在本地只有一条共享记录，不按 API 渠道账号复制模板所有权。
+- 普通用户可以直接申请企业 API 新模板，但修改已有企业 API 模板时只能提交内部变更申请。
+- 管理员可以批准或拒绝企业 API 模板申请，也可以直接执行企业 API 模板变更；Business App 私有模板由账号 owner 直接执行。
+- 企业 API 模板可见性与用户渠道凭证分离：模板共享，AK/SK、发送号码和账号配置仍按用户隔离；Business App 模板属于账号私有目录。
 - 每次上游调用、审批和执行都有明确操作者、凭证来源、版本与审计记录。
 
 ## 产品边界
 
-- 不设置“我的模板”和“别人的模板”，模板不拥有 `owner_user_id`。
-- `created_by_user_id` 只表示最初申请人，不产生模板所有权或独占修改权。
+- 企业 API 共享模板不设置“我的模板”和“别人的模板”，不拥有 `owner_user_id`；Business App 私有模板必须绑定 `channel_account_id`，其 owner 来自该账号的 `owner_user_id`。
+- 企业 API 模板的 `created_by_user_id` 只表示最初申请人，不产生模板所有权或独占修改权；Business App 模板的创建者与账号 owner 共同构成服务端访问校验。
 - 管理员只在模板审批和直接变更范围内拥有治理权限；这不能成为读取其他用户联系人、消息、附件、Topic、群发任务或渠道密钥的旁路。
 - 新模板申请直接提交阿里云 CAMS/WhatsApp 官方审核，不经过内部管理员审批。
 - 同步是只读操作，不需要内部审批。
-- 普通用户不能直接修改、停用、删除已有模板或调整其发送权限。
+- 普通用户不能直接修改、停用、删除已有 `ENTERPRISE_API` 共享模板或调整其发送权限。
+- 上述限制仅适用于 `ENTERPRISE_API` 共享模板；`EMPLOYEE_BUSINESS_APP` 私有模板由账号 owner 直接修改、停用、删除和调整发送权限。
 - 管理员直接执行模板变更时不需要另一名管理员复核。
-- 所有参与共享模板的 WhatsApp 账号必须属于同一个 CAMS `custSpaceId`。检测到不同空间时阻断迁移与变更，不能跨空间合并模板。
-- 旧账号级模板 API 不保留为并行业务入口；迁移完成后必须退出，避免绕过审批。
+- 企业 API 共享模板的所有参与账号必须属于同一个企业 API CAMS `custSpaceId`；Business App 私有模板按账号所属 scope 分开同步。检测到不同权限域时阻断合并，不能跨域合并模板。
+- 旧的账号级共享模板 API 不保留为绕过企业 API 审批的并行业务入口；Business App 私有模板使用本文件定义的独立私有模板 API。
 
 ## 身份与唯一 Owner
 
 ### 共享模板身份
 
-共享模板的业务身份为：
+企业 API 共享模板的业务身份为：
 
 ```text
 provider_scope_id + provider_template_id + language_code
 ```
 
-`provider_scope_id` 指向一个已验证的 CAMS `custSpaceId`。系统不得把 AK/SK 或发送号码写入模板记录。模板目录由 `SharedWhatsAppTemplateService` 唯一拥有，Controller、前端、同步 worker 和 Gateway 不得另行推断模板身份或权限。
+`provider_scope_id` 指向已验证的企业 API CAMS `custSpaceId`。系统不得把 AK/SK 或发送号码写入模板记录。模板目录由 `SharedWhatsAppTemplateService` 唯一拥有，Controller、前端、同步 worker 和 Gateway 不得另行推断模板身份或权限。Business App 私有模板必须使用独立的账号模板 owner/目录，不得写入或覆盖企业 API 共享目录。
 
 ### 用户、账号与操作者
 
 - 当前用户来自服务端认证上下文。
 - `channel_accounts.owner_user_id` 决定谁可以使用某组 WhatsApp 凭证。
-- 新模板申请与管理员直接操作使用当前用户唯一有效的 WhatsApp 账号。
+- 企业 API 新模板申请与管理员直接操作使用当前用户有权使用的企业 API WhatsApp 账号；Business App 私有模板操作只能使用该私有账号本身。
 - 普通用户变更申请保存 `requested_via_account_id`。管理员批准后仍使用该账号的加密凭证执行，不读取或展示明文。
 - 申请账号在批准前解绑、失效或离开目标 provider scope 时，执行进入结构化失败，不静默换用其他用户凭证。
 - `requested_by_user_id`、`reviewed_by_user_id` 和实际执行者分别记录申请、审批和执行身份，不承担模板所有权。
@@ -157,11 +158,13 @@ PENDING_APPROVAL
 | 查看、搜索、发送模板 | 直接执行 | 直接执行 |
 | 同步模板 | 直接执行 | 直接执行 |
 | 申请新模板 | 直接提交官方审核 | 直接提交官方审核 |
-| 修改已有模板 | 提交内部审批 | 直接执行 |
-| 设置发送权限 | 提交内部审批 | 直接执行 |
-| 停用或删除模板 | 提交内部审批 | 直接执行 |
-| 修改模板并绑定媒体 | 提交内部审批 | 直接执行 |
+| 修改企业 API 共享模板 | 提交内部审批 | 直接执行 |
+| 设置企业 API 模板发送权限 | 提交内部审批 | 直接执行 |
+| 停用或删除企业 API 模板 | 提交内部审批 | 直接执行 |
+| 修改企业 API 模板并绑定媒体 | 提交内部审批 | 直接执行 |
 | 批准、拒绝、重试申请 | 禁止 | 允许 |
+
+`EMPLOYEE_BUSINESS_APP` 私有模板权限：账号 owner 可以直接申请、修改、设置发送权限、停用、删除和绑定媒体；管理员不参与审批。服务端仍执行 owner、scope、版本、幂等和审计校验。
 
 所有权限在服务端执行。前端隐藏按钮不是授权边界。管理员直接执行仍要进行影响确认、乐观锁、幂等和完整审计。
 
@@ -169,18 +172,18 @@ PENDING_APPROVAL
 
 ### 新模板申请
 
-1. 服务端从当前登录用户解析唯一有效 WhatsApp 账号并验证 provider scope。
+1. 服务端从当前登录用户解析目标模板权限域：企业 API 模板要求当前用户有权使用企业 API 账号；Business App 模板要求当前用户拥有该 `channel_account_id`。
 2. 校验模板内容和媒体上界。
 3. 使用该账号的加密凭证直接提交官方审核。
-4. 写入或刷新唯一共享模板，并记录 `created_by_user_id` 和操作审计。
-5. 官方接受请求不等于审核通过；共享模板保持真实官方审核状态。
+4. 企业 API 模板写入或刷新唯一共享模板；Business App 模板写入或刷新当前账号私有模板。两者均记录 `created_by_user_id` 和操作审计。
+5. 官方接受请求不等于审核通过；模板保持真实官方审核状态。
 
 ### 普通用户修改已有模板
 
-1. 读取共享模板和当前 `version`。
-2. 验证当前用户拥有 `requested_via_account_id`，且账号位于模板 provider scope。
+1. 读取目标权限域模板和当前 `version`。
+2. 企业 API 模板验证当前用户拥有 `requested_via_account_id` 且账号位于企业 API provider scope；Business App 模板验证当前用户就是模板所属账号 owner。
 3. 保存结构化变更 payload、字段差异和 `base_version`。
-4. 返回 `PENDING_APPROVAL`，不调用上游、不改变共享模板。
+4. 企业 API 模板返回 `PENDING_APPROVAL`，不调用上游、不改变共享模板；Business App 模板直接执行上游调用并刷新私有模板，不创建内部审批申请。
 
 ### 管理员审批
 
@@ -193,17 +196,19 @@ PENDING_APPROVAL
 
 ### 管理员直接修改
 
-管理员跳过审批申请，使用自己的有效 WhatsApp 账号直接执行。服务仍必须锁定模板、检查版本、写操作审计并在成功后刷新官方详情。管理员没有有效账号时不能借用任意用户账号直接操作。
+管理员对企业 API 共享模板可以跳过审批申请，使用自己的有效 WhatsApp 账号直接执行。服务仍必须锁定模板、检查版本、写操作审计并在成功后刷新官方详情。管理员没有有效账号时不能借用任意用户账号直接操作；管理员不能代替 Business App 账号 owner 修改其私有模板。
 
 ### 同步与发送
 
-同步使用发起者自己的账号凭证读取目标 provider scope，并更新唯一共享模板目录。定时同步只需选择该 scope 中一个健康账号执行一次；账号失败时可尝试同 scope 的下一个健康账号，但必须记录实际凭证账号，且不能跨 scope。
+企业 API 同步使用目标 scope 中的健康账号凭证更新唯一共享模板目录；Business App 同步必须使用该账号自己的凭证更新私有模板目录。账号失败时可在同一权限域内重试，但不能跨权限域借用凭证。
 
-发送时读取共享模板内容和可发送状态，再使用当前用户自己的 WhatsApp 账号发送。模板共享不得暴露或复用其他用户的账号凭证、号码、联系人或会话。
+发送企业 API 模板时读取企业共享模板内容和可发送状态，再使用当前用户自己的 WhatsApp API 账号发送。发送 Business App 私有模板时，只能读取当前用户自己的账号模板目录，并使用该账号凭证。模板共享不得暴露或复用其他用户的账号凭证、号码、联系人或会话。
+
+同步必须按模板权限域分别执行：企业 API scope 同步一次共享目录；Business App 账号逐账号同步私有目录。即使上游返回相同的模板名称、模板 ID 或语言，也不得跨权限域归并。
 
 ## API 合同
 
-共享模板业务 API：
+企业 API 共享模板业务 API：
 
 ```text
 GET    /api/v1/whatsapp/templates
@@ -214,6 +219,20 @@ POST   /api/v1/whatsapp/templates/{templateId}/change-requests
 GET    /api/v1/whatsapp/template-change-requests/mine
 ```
 
+Business App 私有模板业务 API 沿用模板读写协议，但模板域由服务端从当前员工账号推导，不允许请求体指定其他账号：
+
+```text
+GET    /api/v1/whatsapp/business-app/templates
+POST   /api/v1/whatsapp/business-app/templates/applications
+PUT    /api/v1/whatsapp/business-app/templates/{templateId}
+PATCH  /api/v1/whatsapp/business-app/templates/{templateId}/send-permission
+POST   /api/v1/whatsapp/business-app/templates/{templateId}/disable
+DELETE /api/v1/whatsapp/business-app/templates/{templateId}
+POST   /api/v1/whatsapp/business-app/templates/sync
+```
+
+私有模板不存在 `change-requests`、`approve`、`reject` 或 `retry` 的内部审批步骤；上游失败仍返回结构化错误并保留操作审计。
+
 管理员审批 API：
 
 ```text
@@ -223,19 +242,20 @@ POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/reject
 POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
 ```
 
-普通用户不能通过请求体伪造申请人、审批人、管理员直执行标识、provider scope 或账号 owner。服务端根据认证上下文和已拥有账号填充这些字段。旧的 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 账号级模板入口在迁移完成后删除。
+普通用户不能通过请求体伪造申请人、审批人、管理员直执行标识、provider scope 或账号 owner。服务端根据认证上下文和已拥有账号填充这些字段。旧的 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 账号级共享模板入口在迁移完成后删除；Business App 私有模板入口不属于该废弃范围。
 
 ## 前端体验
 
-模板页展示系统级共享目录，不显示账号归属或账号选择器。
+模板页按当前发送账号展示模板目录。企业 API 账号显示共享目录；Business App 账号只显示当前账号私有目录，不显示其他员工账号和企业 API 共享模板。
 
 普通用户：
 
-- “新建模板”直接进入官方申请表单。
+- 企业 API 账号的“新建模板”直接进入官方申请表单；已有模板修改、发送权限、停用和删除进入内部审批申请。
+- Business App 账号的“新建模板”“修改”“发送权限”“停用”和“删除”直接执行当前账号的官方操作，不显示管理员审批入口。
 - 新建表单中的“模板名称”用于填写官方名称；编辑已有模板时官方名称改为纯文本展示，不提供伪装成输入框的只读控件。
 - 模板编辑表单在官方名称下方提供“业务备注”输入框；备注属于本地共享字段，随变更申请提交并在执行成功后保存，不发送给 WhatsApp。
 - “使用模板”进入发送界面。
-- “修改”“发送权限”“停用”“删除”打开变更申请窗口。
+- 企业 API 共享模板的“修改”“发送权限”“停用”“删除”打开变更申请窗口；Business App 私有模板直接打开确认并执行窗口。
 - “我的申请”展示等待审批、执行中、成功、拒绝、过期和执行失败状态。
 - 被拒绝或过期的申请可基于当前模板重新编辑并提交，不能直接恢复旧 payload。
 
@@ -278,13 +298,13 @@ POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
 
 ## 验收标准
 
-1. 所有登录用户看到相同的共享模板目录，并可使用所有官方允许发送的模板。
-2. 同一 provider scope、模板代码和语言在数据库中只有一条共享模板记录。
+1. 企业 API 账号用户看到相同的共享模板目录，并可使用所有官方允许发送的企业模板。
+2. 同一企业 API provider scope、模板代码和语言在数据库中只有一条共享模板记录；Business App 私有模板不进入该目录。
 3. 普通用户可以直接提交新模板到官方审核。
-4. 普通用户修改、停用、删除、调整发送权限或绑定媒体时不会直接调用上游，只产生待审批申请。
-5. 管理员可以批准或拒绝普通用户申请，也可以直接执行模板变更。
+4. 普通用户修改、停用、删除、调整发送权限或绑定媒体时，对企业 API 共享模板不会直接调用上游，只产生待审批申请；对自己的 Business App 私有模板直接调用上游，不产生审批申请。
+5. 管理员可以批准或拒绝企业 API 共享模板申请，也可以直接执行企业 API 模板变更；Business App 私有模板不产生管理员审批申请。
 6. 拒绝必须有原因；旧版本申请不能覆盖新模板；账号失效时不换用其他用户凭证。
-7. 同步只读取上游并更新共享目录，不创建账号级模板副本。
+7. 企业 API 同步只读取上游并更新共享目录；Business App 同步只更新当前账号私有目录，二者不跨域合并。
 8. 发送使用当前用户账号凭证，模板共享不会扩大联系人、消息、附件或渠道密钥访问范围。
 9. 迁移在不同 `custSpaceId`、重复模板、孤儿操作或媒体引用未对账时阻止切换。
 10. 后端覆盖权限矩阵、状态机、幂等、乐观锁、凭证失效、上游失败、迁移和跨用户安全测试。
@@ -293,8 +313,8 @@ POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
 
 ## 非目标
 
-- 不建立模板个人所有权、模板转让或按用户复制模板。
-- 不允许普通用户通过自己账号直接治理共享模板。
+- 不建立企业 API 共享模板的个人所有权、模板转让或按用户复制模板；Business App 私有模板明确按账号 owner 隔离。
+- 不允许普通用户通过自己账号直接治理企业 API 共享模板；允许 Business App 账号 owner 直接治理自己的私有模板。
 - 不把管理员角色扩展到用户私有联系人、消息、附件、Topic 或渠道配置。
-- 不支持多个 CAMS provider scope 在同一共享目录中混用。
-- 不长期保留账号级模板 API 或双写兼容层。
+- 不支持多个 CAMS provider scope 在同一企业 API 共享目录中混用；Business App 私有目录按账号 scope 独立存在。
+- 不长期保留旧账号级共享模板 API 或双写兼容层；Business App 私有模板 API 是独立的正式业务入口。

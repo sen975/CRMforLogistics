@@ -7,7 +7,7 @@
 ## 边界
 
 - 解析和创建逻辑唯一归属后端电话入库服务；前端不推断联系人归属。
-- 所有自动创建和回填都以当前用户为作用域。
+- 所有自动创建和回填都以联系人创建者为作用域；新入库使用当前认证用户，历史孤立电话使用记录中经过校验的 `created_by`。
 - 不自动认领无法证明归属的历史记录。
 - 不改变邮件、WhatsApp、企业微信的联系人归属规则。
 
@@ -20,7 +20,7 @@
 1. 当前用户作用域内已有 `phone` 身份时，复用其 `contact_id`。
 2. 请求已带合法的当前用户联系人 ID、但该联系人没有此电话身份时，补建电话身份。
 3. 找不到身份和联系人时，创建当前用户联系人，名称默认为号码，再创建电话身份。
-4. 写入 `call_records.owner_user_id`、`call_records.contact_id` 和 `contact_anchor_point_id`。
+4. 写入 `call_records.contact_id` 和 `contact_anchor_point_id`；`call_records.owner_user_id` 如被写入仅用于历史兼容，不作为联系人归属真源。
 
 所有步骤在同一事务内完成；已有唯一索引/`insertIfAbsent` 负责并发幂等，重复导入不得创建重复身份或联系人。
 
@@ -28,11 +28,10 @@
 
 回填任务按批处理 `call_records`：
 
-- 优先使用已有 `owner_user_id`。
-- `owner_user_id` 为空且 `created_by` 是有效用户 UUID 时，将其作为归属候选。
-- 有 `contact_id` 时，确保该联系人在归属用户作用域内，并补建缺失电话身份。
-- 没有 `contact_id` 时，先按归属用户和标准化号码查找电话身份；不存在则创建“号码联系人”和电话身份，再写回 `contact_id`。
-- 无法从 `owner_user_id` 或有效 UUID `created_by` 证明归属的记录保持不变，并计入未处理报告。
+- 有 `contact_id` 时，先读取该联系人的 `contacts.created_by`，并在该创建者作用域内补建缺失电话身份。
+- 没有 `contact_id` 时，仅当 `call_records.created_by` 是仍有效的用户 UUID，才将其作为归属候选；先按该用户和标准化号码查找电话身份，不存在则创建“号码联系人”和电话身份，再写回 `contact_id`。
+- `call_records.owner_user_id` 仅保留为兼容字段，不参与联系人权限判断、归属选择或回填覆盖。
+- 无法从联系人 `created_by` 或有效 UUID `call_records.created_by` 证明归属的记录保持不变，并计入未处理报告。
 
 任务必须可重复运行、按批限流，并返回处理、跳过、失败和未归属数量。
 
@@ -57,4 +56,3 @@
 - 历史孤立电话可安全回填并出现在通讯录和时间轴。
 - 无法证明归属的记录不会被认领。
 - 回填命令可重复运行并输出稳定统计。
-
