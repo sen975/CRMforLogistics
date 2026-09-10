@@ -70,7 +70,7 @@ class WeComUserNotificationWorkerTest {
         worker.runAvailable("worker-1", 10);
 
         verify(notifications).retryLater(eq(ROW), eq(NOW.plus(Duration.ofSeconds(10))),
-                anyString());
+                eq("WECOM_NOTIFICATION_SEND_FAILED"));
         verify(notifications, never()).markFailed(any(), any());
     }
 
@@ -86,7 +86,7 @@ class WeComUserNotificationWorkerTest {
 
         worker.runAvailable("worker-1", 10);
 
-        verify(notifications).markFailed(ROW, "WECOM_SEND_FAILED");
+        verify(notifications).markFailed(ROW, "WECOM_NOTIFICATION_SEND_FAILED");
         verify(notifications, never()).retryLater(any(), any(), anyString());
     }
 
@@ -107,7 +107,7 @@ class WeComUserNotificationWorkerTest {
 
         worker.runAvailable("worker-1", 10);
 
-        verify(notifications).retryLater(eq(ROW), any(), anyString());
+        verify(notifications).retryLater(eq(ROW), any(), eq("WECOM_NOTIFICATION_SEND_FAILED"));
         verify(notifications).markSent(okId, NOW);
     }
 

@@ -259,7 +259,7 @@ public class ChatAppWebhookProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{}");
         messageMapper.insertWithSequence(message);
-        enqueueNotification(account, conversation, resolved, message, displayName, from, occurredAt);
+        enqueueNotification(account, conversation, message, displayName, from, occurredAt);
         recordTopicActivity(conversation, occurredAt);
 
         MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
@@ -274,7 +274,6 @@ public class ChatAppWebhookProjector {
     }
 
     private void enqueueNotification(ChannelAccountEntity account, ConversationEntity conversation,
-                                     ChannelAddressBookService.ResolvedContact resolved,
                                      MessageEntity message, String displayName, String from,
                                      Instant occurredAt) {
         WeComUserNotificationService notifications = notificationProvider.getIfAvailable();

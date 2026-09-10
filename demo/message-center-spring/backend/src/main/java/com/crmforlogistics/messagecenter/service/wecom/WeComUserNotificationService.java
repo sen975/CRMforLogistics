@@ -71,13 +71,16 @@ public class WeComUserNotificationService {
         ConversationEntity conversation = conversationMapper.selectById(message.conversationId());
         UUID assignee = conversation == null ? null : conversation.getAssignedUserId();
         if (assignee == null) {
-            LOG.debug("event=wecom.notification_skipped reason=no_assignee conversationId={}",
+            LOG.debug("event=wecom.notification_skipped "
+                            + "code=WECOM_NOTIFICATION_RECIPIENT_UNBOUND reason=no_assignee conversationId={}",
                     message.conversationId());
             return null;
         }
         Optional<WeComUserBindingEntity> binding = bindingMapper.findByUserId(assignee);
         if (binding.isEmpty()) {
-            LOG.debug("event=wecom.notification_skipped reason=assignee_unbound conversationId={} userId={}",
+            LOG.debug("event=wecom.notification_skipped "
+                            + "code=WECOM_NOTIFICATION_RECIPIENT_UNBOUND reason=assignee_unbound "
+                            + "conversationId={} userId={}",
                     message.conversationId(), assignee);
             return null;
         }
@@ -86,7 +89,9 @@ public class WeComUserNotificationService {
                 installationService.find(bound.getSuiteId(), bound.getAuthCorpId());
         if (installation == null || installation.getAgentId() == null
                 || installation.getAgentId().isBlank()) {
-            LOG.debug("event=wecom.notification_skipped reason=installation_unresolved conversationId={} authCorpId={}",
+            LOG.debug("event=wecom.notification_skipped "
+                            + "code=WECOM_NOTIFICATION_RECIPIENT_UNBOUND reason=installation_unresolved "
+                            + "conversationId={} authCorpId={}",
                     message.conversationId(), bound.getAuthCorpId());
             return null;
         }

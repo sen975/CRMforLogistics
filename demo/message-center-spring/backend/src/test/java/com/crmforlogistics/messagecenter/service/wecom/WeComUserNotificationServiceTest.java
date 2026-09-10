@@ -87,6 +87,18 @@ class WeComUserNotificationServiceTest {
 
         service.enqueueInbound(inbound("张三", "主题", "正文"));
 
+        verify(bindings, never()).findByUserId(any());
+        verify(notifications, never()).upsertPending(any());
+    }
+
+    @Test
+    void writesNothingWhenTheConversationIsMissing() {
+        when(conversations.selectById(CONVERSATION)).thenReturn(null);
+        WeComUserNotificationService service = service();
+
+        service.enqueueInbound(inbound("张三", "主题", "正文"));
+
+        verify(bindings, never()).findByUserId(any());
         verify(notifications, never()).upsertPending(any());
     }
 
@@ -122,6 +134,20 @@ class WeComUserNotificationServiceTest {
         service.enqueueInbound(inbound("张三", "主题", "正文"));
 
         verify(notifications, never()).upsertPending(any());
+    }
+
+    @Test
+    void swallowsWriteFailuresSoTheNotificationRowIsNeverFatal() {
+        when(conversations.selectById(CONVERSATION)).thenReturn(conversation(ASSIGNEE));
+        when(bindings.findByUserId(ASSIGNEE)).thenReturn(Optional.of(binding("zhangsan")));
+        when(installations.find("suite-1", "corp-1")).thenReturn(installation("1000002"));
+        when(notifications.upsertPending(any()))
+                .thenThrow(new IllegalStateException("db write down"));
+        WeComUserNotificationService service = service();
+
+        service.enqueueInbound(inbound("张三", "主题", "正文"));
+
+        verify(notifications).upsertPending(any());
     }
 
     private WeComUserNotificationService service() {

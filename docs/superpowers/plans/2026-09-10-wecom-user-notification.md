@@ -1753,15 +1753,15 @@ Expected: 全绿。若失败，先确认失败用例是否也曾在改动前失�
 | spec 验收标准 | 覆盖它的测试 |
 | --- | --- |
 | 1 入站后有绑定负责人则 90 秒内收到提醒 | 逻辑由 `WeComUserNotificationServiceTest.enqueuesAPendingRowForTheBoundAssignee` + `WeComUserNotificationWorkerTest.sendsAggregatedTextThroughTheExistingWeComSendService` 分段覆盖；端到端需人工验证 |
-| 2 90 秒内 3 条只发一条、正文显示 3 条 | `WeComUserNotificationWorkerTest.sendsAggregatedTextThroughTheExistingWeComSendService`、`WeComUserNotificationTextTest.aggregateRendersCountAndLatestPreview` |
-| 3 窗口起点固定，不因后续消息推迟 | `WeComUserNotificationMapperSqlTest.upsertMergesIntoThePendingRowWithoutExtendingTheWindow` |
+| 2 90 秒内 3 条只发一条、正文显示 3 条 | `WeComUserNotificationPersistenceIntegrationTest.upsertMergesIntoThePendingRowWithoutExtendingTheWindow`（真实 PostgreSQL 上同窗口 upsert 递增 `message_count`）、`WeComUserNotificationWorkerTest.sendsAggregatedTextThroughTheExistingWeComSendService`、`WeComUserNotificationTextTest.aggregateRendersCountAndLatestPreview` |
+| 3 窗口起点固定，不因后续消息推迟 | `WeComUserNotificationPersistenceIntegrationTest.upsertMergesIntoThePendingRowWithoutExtendingTheWindow`（第二次 upsert 后 `send_after`、`first_message_at`、`recipient_wecom_user_id` 仍是首次插入值） |
 | 4 负责人为空或未绑定时不写行 | `WeComUserNotificationServiceTest.writesNothingWhenTheConversationHasNoAssignee`、`writesNothingWhenTheAssigneeHasNoWeComBinding` |
 | 5 企微 chatdata 入站不产生提醒 | 结构上保证：本功能只在 `ChatAppWebhookProjector` 与 `EmailSyncService` 两处接入，`WeComMessageProjector`/`WeComChatDataStore` 未被改动。可在 review 时用 `git diff --stat` 核对这两个文件未出现在 diff 里 |
 | 6 邮件入站同样触发 | `EmailSyncServiceTest` 新增用例 + `WeComUserNotificationServiceTest` |
-| 7 失败重试 3 次上限、超限 FAILED、SENDING 卡住被捞回 | `WeComUserNotificationWorkerTest.retriesUntilTheAttemptBudgetIsSpent`、`failsTheRowOnceTheAttemptBudgetIsExhausted`、`recoversRowsLeakedInSending` |
-| 8 两个 worker 并发不重复发送 | `WeComUserNotificationWorkerTest.skipsARowAlreadyClaimedByAnotherWorker` |
+| 7 失败重试 3 次上限、超限 FAILED、SENDING 卡住被捞回 | `WeComUserNotificationPersistenceIntegrationTest.recoverStuckReturnsOnlyStaleSendingRowsToPending`、`claimAndTerminalTransitionsOnlyApplyFromTheExpectedStatus`、`WeComUserNotificationWorkerTest.retriesUntilTheAttemptBudgetIsSpent`、`failsTheRowOnceTheAttemptBudgetIsExhausted`、`recoversRowsLeakedInSending` |
+| 8 两个 worker 并发不重复发送 | `WeComUserNotificationPersistenceIntegrationTest.concurrentClaimOfOnePendingRowHasExactlyOneWinner`（真实 PostgreSQL 上两个并发 `claim` 只有一个成功） |
 | 9 开关关闭时完全不产生行 | `WeComUserNotificationServiceTest.writesNothingWhenTheNotificationFeatureIsDisabled`、`ChatAppWebhookProjectorTest.inboundProjectionSucceedsWhenWeComNotificationsAreNotEnabled` |
-| 10 ChatApp 事务回滚不留提醒行 | 结构上保证：入队在 `project()` 的 `@Transactional` 事务内。**没有单元测试覆盖**，如需证明要加 Testcontainers 集成测试（`AppIntegrationTest` 风格）。邮件路径不适用（无事务边界） |
+| 10 ChatApp 事务回滚不留提醒行 | `WeComUserNotificationPersistenceIntegrationTest.upsertMergesIntoThePendingRowWithoutExtendingTheWindow`（真实 PostgreSQL 上验证入队写行所用的 upsert 可执行且幂等）。入队仍位于 `project()` 的 `@Transactional` 事务内，回滚边界本身是结构性保证，回滚后的端到端行为仍需人工验证。邮件路径不适用（无事务边界） |
 
 **未覆盖、需要人工验证的部分：**
 

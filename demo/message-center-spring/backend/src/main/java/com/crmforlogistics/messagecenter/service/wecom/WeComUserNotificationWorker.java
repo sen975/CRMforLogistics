@@ -69,31 +69,37 @@ public class WeComUserNotificationWorker {
     }
 
     private void dispatch(WeComUserNotificationEntity row) {
-        String text = WeComUserNotificationText.render(
-                row.getChannelType(), row.getContactLabel(), row.getMessageCount(),
-                row.getLastPreview());
         try {
+            String text = WeComUserNotificationText.render(
+                    row.getChannelType(), row.getContactLabel(), row.getMessageCount(),
+                    row.getLastPreview());
             sendService.send(row.getAuthCorpId(), row.getAgentId(),
                     row.getRecipientWecomUserId(), text);
-            notificationMapper.markSent(row.getId(), clock.instant());
-        } catch (WeComException e) {
-            recordFailure(row, e.code());
         } catch (RuntimeException e) {
-            recordFailure(row, "WECOM_NOTIFICATION_SEND_FAILED");
+            recordFailure(row, "WECOM_NOTIFICATION_SEND_FAILED", e);
+            return;
+        }
+        try {
+            notificationMapper.markSent(row.getId(), clock.instant());
+        } catch (RuntimeException e) {
+            // At-least-once semantics: the row stays SENDING and recoverStuck re-sends it.
+            LOG.warn("event=wecom.notification_mark_sent_failed notificationId={}", row.getId(), e);
         }
     }
 
-    private void recordFailure(WeComUserNotificationEntity row, String errorCode) {
+    private void recordFailure(WeComUserNotificationEntity row, String errorCode, Throwable cause) {
         int attempts = row.getAttemptCount() == null ? 0 : row.getAttemptCount();
+        String upstreamCode = cause instanceof WeComException weComException
+                ? weComException.code() : null;
         if (attempts + 1 < maxAttempts) {
             notificationMapper.retryLater(row.getId(),
                     clock.instant().plus(retryBackoff), errorCode);
-            LOG.warn("event=wecom.notification_retry notificationId={} attempt={} code={}",
-                    row.getId(), attempts + 1, errorCode);
+            LOG.warn("event=wecom.notification_retry notificationId={} attempt={} code={} upstreamCode={}",
+                    row.getId(), attempts + 1, errorCode, upstreamCode, cause);
             return;
         }
         notificationMapper.markFailed(row.getId(), errorCode);
-        LOG.error("event=wecom.notification_failed notificationId={} code={}",
-                row.getId(), errorCode);
+        LOG.error("event=wecom.notification_failed notificationId={} code={} upstreamCode={}",
+                row.getId(), errorCode, upstreamCode, cause);
     }
 }

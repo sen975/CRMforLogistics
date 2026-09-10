@@ -64,7 +64,7 @@ conversationId -> conversations.assigned_user_id
 
 窗口长度由 `app.wecom-user-notification-window-ms` 控制，默认 90000（90 秒）。
 
-**固定窗口**：窗口起点为该会话第一条触发消息的时间，`send_after = first_message_at + window`。窗口内后续消息只递增 `message_count`、更新 `last_preview` 和 `updated_at`，**不延长 `send_after`**。因此单条提醒的延迟上界是确定的 90 秒，不会因为客户持续发消息而无限推迟。
+**固定窗口**：窗口起点为通知入队的处理时刻，`send_after = enqueue_time + window`；`first_message_at` 仍记录该消息的真实时间，仅供排查用。窗口内后续消息只递增 `message_count`、更新 `last_preview` 和 `updated_at`，**不延长 `send_after`**。因此单条提醒的延迟上界是确定的 90 秒，不会因为客户持续发消息而无限推迟。用处理时间而非消息时间起算，是因为窗口约束的是「我们这边多久内一定发出去」；对补采的历史邮件，消息时间可能是几天前，按消息时间起算会在入队瞬间就立即触发。
 
 `send_after` 是一个统一的「不早于此时刻发送」时间戳：聚合窗口到期时它就是窗口终点；发送失败重试时它被改写为退避后的时刻。发送扫描只需一个条件。
 

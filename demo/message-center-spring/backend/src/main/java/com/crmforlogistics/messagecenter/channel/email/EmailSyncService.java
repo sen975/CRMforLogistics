@@ -308,7 +308,7 @@ public class EmailSyncService {
             entity.setCurrentStatus("delivered");
             entity.setCurrentStatusAt(Instant.now());
             messageMapper.insertWithSequence(entity);
-            enqueueNotification(account, conversation, identity, entity, contactSource, contactEmail);
+            enqueueNotification(account, conversation, entity, contactSource, contactEmail);
             if (topicActivityRecorder != null) {
                 topicActivityRecorder.recordContact(identity.getContactId(), sentDate);
             }
@@ -334,7 +334,7 @@ public class EmailSyncService {
     }
 
     private void enqueueNotification(ChannelAccountEntity account, ConversationEntity conversation,
-                                     ContactIdentityEntity identity, MessageEntity entity,
+                                     MessageEntity entity,
                                      String contactSource, String contactEmail) {
         if (!"inbound".equals(entity.getDirection()) || notificationProvider == null) {
             return;
