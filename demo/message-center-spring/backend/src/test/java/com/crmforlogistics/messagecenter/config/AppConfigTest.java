@@ -55,4 +55,29 @@ class AppConfigTest {
                 });
     }
 
+    @Test
+    void weComUserNotificationIsOffByDefaultWithBoundedWindow() {
+        context.run(application -> {
+            AppConfig config = application.getBean(AppConfig.class);
+
+            assertThat(config.wecomUserNotificationEnabled()).isFalse();
+            assertThat(config.wecomUserNotificationWindowMs()).isEqualTo(90_000L);
+            assertThat(config.wecomUserNotificationWorkerIntervalMs()).isEqualTo(1_000L);
+            assertThat(config.wecomUserNotificationWorkerInitialDelayMs()).isEqualTo(1_000L);
+        });
+    }
+
+    @Test
+    void bindsExplicitWeComUserNotificationSettings() {
+        context.withPropertyValues(
+                        "app.wecom-user-notification-enabled=true",
+                        "app.wecom-user-notification-window-ms=30000")
+                .run(application -> {
+                    AppConfig config = application.getBean(AppConfig.class);
+
+                    assertThat(config.wecomUserNotificationEnabled()).isTrue();
+                    assertThat(config.wecomUserNotificationWindowMs()).isEqualTo(30_000L);
+                });
+    }
+
 }

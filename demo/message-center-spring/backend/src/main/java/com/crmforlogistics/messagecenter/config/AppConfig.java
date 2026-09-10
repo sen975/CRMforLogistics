@@ -100,7 +100,12 @@ public record AppConfig(
         @DefaultValue("fixture") String localWeComDataSource,
         @DefaultValue("local-wecom-source.jsonl") String localWeComDataFile,
         @DefaultValue("") String chatappWebhookSecret,
-        @DefaultValue("300") int chatappWebhookMaxSkewSeconds
+        @DefaultValue("300") int chatappWebhookMaxSkewSeconds,
+        // 非企业微信渠道入站消息的企微应用消息提醒
+        @DefaultValue("false") boolean wecomUserNotificationEnabled,
+        @DefaultValue("90000") long wecomUserNotificationWindowMs,
+        @DefaultValue("1000") long wecomUserNotificationWorkerIntervalMs,
+        @DefaultValue("1000") long wecomUserNotificationWorkerInitialDelayMs
 ) {
     public AppConfig {
         imapHost = defaultIfBlank(imapHost, "imap.139.com");
