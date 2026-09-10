@@ -20,6 +20,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +28,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.List;
 import java.util.UUID;
@@ -54,6 +57,8 @@ class ChatAppWebhookProjectorTest {
     @Mock AiTopicActivityRecorder topicActivityRecorder;
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock ChannelAddressBookService addressBookService;
+    @Mock ObjectProvider<WeComUserNotificationService> notificationProvider;
+    @Mock WeComUserNotificationService notificationService;
 
     @BeforeEach
     void allowOwnedActiveAccounts() {
@@ -248,12 +253,79 @@ class ChatAppWebhookProjectorTest {
         verify(channelEventMapper).markProcessed(eq(event.getId()), any());
     }
 
+    @Test
+    void inboundProjectionEnqueuesAWeComNotificationForTheAssignee() {
+        UUID accountId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        conversation.setAssignedUserId(UUID.randomUUID());
+        when(messageMapper.findByProviderMessageId(accountId, "inbound-9"))
+                .thenReturn(Optional.empty());
+        when(addressBookService.resolveOrCreateInbound(
+                any(UUID.class), eq("chatapp"), eq(accountId), eq("60123456789"), any(String.class)))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), identity.getId(), false));
+        when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
+                .thenReturn(conversation);
+        when(notificationProvider.getIfAvailable()).thenReturn(notificationService);
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setOccurredAt(Instant.parse("2026-09-01T08:00:00Z"));
+        event.setPayloadJsonb("{\"MessageId\":\"inbound-9\",\"From\":\"60123456789\","
+                + "\"Message\":\"hello\",\"ContactName\":\"张三\"}");
+
+        projector().project(event);
+
+        ArgumentCaptor<WeComUserNotificationService.InboundMessage> captor =
+                ArgumentCaptor.forClass(WeComUserNotificationService.InboundMessage.class);
+        verify(notificationService).enqueueInbound(captor.capture());
+        assertThat(captor.getValue().conversationId()).isEqualTo(conversation.getId());
+        assertThat(captor.getValue().channelAccountId()).isEqualTo(accountId);
+        assertThat(captor.getValue().channelType()).isEqualTo("chatapp");
+        assertThat(captor.getValue().contactLabel()).isEqualTo("张三");
+        assertThat(captor.getValue().bodyText()).isEqualTo("hello");
+        assertThat(captor.getValue().occurredAt())
+                .isEqualTo(Instant.parse("2026-09-01T08:00:00Z"));
+    }
+
+    @Test
+    void inboundProjectionSucceedsWhenWeComNotificationsAreNotEnabled() {
+        UUID accountId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.findByProviderMessageId(accountId, "inbound-10"))
+                .thenReturn(Optional.empty());
+        when(addressBookService.resolveOrCreateInbound(
+                any(UUID.class), eq("chatapp"), eq(accountId), eq("60123456789"), any(String.class)))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        UUID.randomUUID(), identity.getId(), false));
+        when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
+                .thenReturn(conversation);
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setOccurredAt(Instant.parse("2026-09-01T08:00:00Z"));
+        event.setPayloadJsonb("{\"MessageId\":\"inbound-10\",\"From\":\"60123456789\","
+                + "\"Message\":\"hello\"}");
+
+        var result = projector().project(event);
+
+        assertThat(result.type()).isEqualTo("message");
+        verify(notificationService, never()).enqueueInbound(any());
+        verify(messageMapper).insertWithSequence(any(MessageEntity.class));
+    }
+
     private ChatAppWebhookProjector projector() {
         return new ChatAppWebhookProjector(
                 channelEventMapper, messageMapper, statusEventMapper,
                 conversationMapper, eventHub, new ObjectMapper(), broadcastRecipientMapper,
                 broadcastMessageProjector, topicActivityRecorder, channelAccountMapper,
-                addressBookService);
+                addressBookService, notificationProvider);
     }
 
     private static MessageEntity messageWithStatus(String status) {

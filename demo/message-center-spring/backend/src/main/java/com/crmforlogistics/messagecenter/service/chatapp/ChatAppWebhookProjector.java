@@ -18,8 +18,10 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +46,7 @@ public class ChatAppWebhookProjector {
     private final AiTopicActivityRecorder topicActivityRecorder;
     private final ChannelAccountMapper channelAccountMapper;
     private final ChannelAddressBookService addressBookService;
+    private final ObjectProvider<WeComUserNotificationService> notificationProvider;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
@@ -56,7 +59,8 @@ public class ChatAppWebhookProjector {
                                    ChatAppBroadcastMessageProjector broadcastMessageProjector,
                                    AiTopicActivityRecorder topicActivityRecorder,
                                    ChannelAccountMapper channelAccountMapper,
-                                   ChannelAddressBookService addressBookService) {
+                                   ChannelAddressBookService addressBookService,
+                                   ObjectProvider<WeComUserNotificationService> notificationProvider) {
         this.channelEventMapper = Objects.requireNonNull(channelEventMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -68,6 +72,7 @@ public class ChatAppWebhookProjector {
         this.topicActivityRecorder = topicActivityRecorder;
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.addressBookService = Objects.requireNonNull(addressBookService);
+        this.notificationProvider = notificationProvider;
     }
 
     @Transactional
@@ -254,6 +259,7 @@ public class ChatAppWebhookProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{}");
         messageMapper.insertWithSequence(message);
+        enqueueNotification(account, conversation, resolved, message, displayName, from, occurredAt);
         recordTopicActivity(conversation, occurredAt);
 
         MessageStatusEventEntity statusEvent = new MessageStatusEventEntity();
@@ -265,6 +271,20 @@ public class ChatAppWebhookProjector {
         statusEvent.setMetadataJsonb("{}");
         statusEventMapper.insertIgnore(statusEvent);
         return false;
+    }
+
+    private void enqueueNotification(ChannelAccountEntity account, ConversationEntity conversation,
+                                     ChannelAddressBookService.ResolvedContact resolved,
+                                     MessageEntity message, String displayName, String from,
+                                     Instant occurredAt) {
+        WeComUserNotificationService notifications = notificationProvider.getIfAvailable();
+        if (notifications == null) {
+            return;
+        }
+        notifications.enqueueInbound(new WeComUserNotificationService.InboundMessage(
+                conversation.getId(), account.getId(), account.getChannelType(),
+                displayName.isBlank() ? from : displayName,
+                message.getSubject(), message.getBodyText(), occurredAt));
     }
 
     private void recordTopicActivity(ConversationEntity conversation, Instant occurredAt) {

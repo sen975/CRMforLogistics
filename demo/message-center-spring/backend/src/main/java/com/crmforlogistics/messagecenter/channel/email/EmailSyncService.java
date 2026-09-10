@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import jakarta.mail.Address;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Folder;
@@ -29,6 +30,7 @@ import jakarta.mail.internet.MimeUtility;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
@@ -55,6 +57,7 @@ public class EmailSyncService {
     private final EmailMimeParser mimeParser = new EmailMimeParser();
     private final EmailAttachmentStore attachmentStore;
     private final AiTopicActivityRecorder topicActivityRecorder;
+    private final ObjectProvider<WeComUserNotificationService> notificationProvider;
 
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -86,7 +89,7 @@ public class EmailSyncService {
                             CredentialCipher credentialCipher,
                             EmailAttachmentStore attachmentStore) {
         this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
-                contactMapper, eventHub, credentialCipher, attachmentStore, null);
+                contactMapper, eventHub, credentialCipher, attachmentStore, null, null);
     }
 
     @Autowired
@@ -98,7 +101,8 @@ public class EmailSyncService {
                             EventHub eventHub,
                             CredentialCipher credentialCipher,
                             EmailAttachmentStore attachmentStore,
-                            AiTopicActivityRecorder topicActivityRecorder) {
+                            AiTopicActivityRecorder topicActivityRecorder,
+                            ObjectProvider<WeComUserNotificationService> notificationProvider) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -109,6 +113,7 @@ public class EmailSyncService {
         this.credentialCipher = credentialCipher;
         this.attachmentStore = attachmentStore;
         this.topicActivityRecorder = topicActivityRecorder;
+        this.notificationProvider = notificationProvider;
     }
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
@@ -303,6 +308,7 @@ public class EmailSyncService {
             entity.setCurrentStatus("delivered");
             entity.setCurrentStatusAt(Instant.now());
             messageMapper.insertWithSequence(entity);
+            enqueueNotification(account, conversation, identity, entity, contactSource, contactEmail);
             if (topicActivityRecorder != null) {
                 topicActivityRecorder.recordContact(identity.getContactId(), sentDate);
             }
@@ -325,6 +331,23 @@ public class EmailSyncService {
             log.warn("Failed to persist received email", e);
             return new SyncResult("email", result.fetched(), result.saved(), result.skipped() + 1, result.message());
         }
+    }
+
+    private void enqueueNotification(ChannelAccountEntity account, ConversationEntity conversation,
+                                     ContactIdentityEntity identity, MessageEntity entity,
+                                     String contactSource, String contactEmail) {
+        if (!"inbound".equals(entity.getDirection()) || notificationProvider == null) {
+            return;
+        }
+        WeComUserNotificationService notifications = notificationProvider.getIfAvailable();
+        if (notifications == null) {
+            return;
+        }
+        String name = ContactPointUtil.extractName(contactSource, contactEmail);
+        notifications.enqueueInbound(new WeComUserNotificationService.InboundMessage(
+                conversation.getId(), account.getId(), account.getChannelType(),
+                name.isBlank() ? contactEmail : name,
+                entity.getSubject(), entity.getBodyText(), entity.getOccurredAt()));
     }
 
     private Optional<MessageEntity> findDuplicate(UUID accountId, String messageId,

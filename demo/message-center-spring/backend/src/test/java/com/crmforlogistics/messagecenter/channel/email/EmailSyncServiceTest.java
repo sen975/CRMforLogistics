@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import jakarta.activation.DataHandler;
 import jakarta.mail.Message;
 import jakarta.mail.AuthenticationFailedException;
@@ -24,10 +25,12 @@ import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.lang.reflect.Constructor;
@@ -43,6 +46,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -65,6 +69,8 @@ class EmailSyncServiceTest {
     @Mock EmailAttachmentStore attachmentStore;
     @Mock CredentialCipher credentialCipher;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
+    @Mock ObjectProvider<WeComUserNotificationService> notificationProvider;
+    @Mock WeComUserNotificationService notificationService;
 
     @Test
     void sentFolderCandidatesIncludeConfiguredAndLocalizedMailboxNames() {
@@ -79,7 +85,8 @@ class EmailSyncServiceTest {
     @Test
     void shouldConstructWithDependencies() {
         EmailSyncService service = new EmailSyncService(config, messageMapper,
-                conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper, eventHub);
+                conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper, eventHub,
+                null, null, null, null);
         assertNotNull(service);
     }
 
@@ -90,10 +97,11 @@ class EmailSyncServiceTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertEquals(10, injectionConstructor.getParameterCount());
+        assertEquals(11, injectionConstructor.getParameterCount());
         assertEquals(CredentialCipher.class, injectionConstructor.getParameterTypes()[7]);
         assertEquals(EmailAttachmentStore.class, injectionConstructor.getParameterTypes()[8]);
         assertEquals(AiTopicActivityRecorder.class, injectionConstructor.getParameterTypes()[9]);
+        assertTrue(ObjectProvider.class.isAssignableFrom(injectionConstructor.getParameterTypes()[10]));
     }
 
     @Test
@@ -118,7 +126,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, credentialCipher, attachmentStore);
+                eventHub, credentialCipher, attachmentStore, null, null);
 
         EmailSyncSettings settings = service.resolveSettings();
 
@@ -144,7 +152,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, credentialCipher, attachmentStore);
+                eventHub, credentialCipher, attachmentStore, null, null);
 
         assertEquals("mailbox@example.test", service.resolveSettings().imapUser());
     }
@@ -178,7 +186,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, credentialCipher, attachmentStore, topicActivityRecorder);
+                eventHub, credentialCipher, attachmentStore, topicActivityRecorder, null);
         MimeMessage message = attachmentMessage();
 
         Method appendReceived = EmailSyncService.class.getDeclaredMethod(
@@ -209,7 +217,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, attachmentStore);
+                eventHub, null, attachmentStore, null, null);
         Method appendReceived = EmailSyncService.class.getDeclaredMethod(
                 "appendReceived", EmailSyncService.SyncResult.class, Message.class, String.class);
         appendReceived.setAccessible(true);
@@ -240,7 +248,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, attachmentStore);
+                eventHub, null, attachmentStore, null, null);
         Method appendReceived = EmailSyncService.class.getDeclaredMethod(
                 "appendReceived", EmailSyncService.SyncResult.class, Message.class, String.class);
         appendReceived.setAccessible(true);
@@ -258,7 +266,7 @@ class EmailSyncServiceTest {
     void openSslFolderReturnsUpdatedSyncCounters() throws Exception {
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, attachmentStore);
+                eventHub, null, attachmentStore, null, null);
         OpenSslImapClient client = org.mockito.Mockito.mock(OpenSslImapClient.class);
         when(client.fetchLatest("INBOX", 10)).thenReturn(List.of(attachmentMessage()));
         ChannelAccountEntity account = new ChannelAccountEntity();
@@ -304,7 +312,7 @@ class EmailSyncServiceTest {
 
         EmailSyncService service = new EmailSyncService(config, messageMapper,
                 conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
-                eventHub, attachmentStore);
+                eventHub, null, attachmentStore, null, null);
         Method appendReceived = EmailSyncService.class.getDeclaredMethod(
                 "appendReceived", EmailSyncService.SyncResult.class, Message.class, String.class);
         appendReceived.setAccessible(true);
@@ -317,6 +325,47 @@ class EmailSyncServiceTest {
         verify(messageMapper).insertWithSequence(argThat(entity ->
                 "<attachment-test@example.com>".equals(entity.getProviderMessageId())));
         verify(messageMapper, never()).insert(any(MessageEntity.class));
+    }
+
+    @Test
+    void inboundEmailEnqueuesAWeComNotificationForTheSender() throws Exception {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        account.setChannelType("email");
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(channelAccountMapper.selectList(any())).thenReturn(List.of(account));
+        when(contactIdentityMapper.selectList(any())).thenReturn(List.of(identity));
+        when(conversationMapper.selectList(any())).thenReturn(List.of(conversation));
+        when(config.emailAttachmentMaxCount()).thenReturn(16);
+        when(config.emailAttachmentMaxTotalBytes()).thenReturn(20_971_520L);
+        when(notificationProvider.getIfAvailable()).thenReturn(notificationService);
+
+        EmailSyncService service = new EmailSyncService(config, messageMapper,
+                conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
+                eventHub, credentialCipher, attachmentStore, topicActivityRecorder,
+                notificationProvider);
+        Method appendReceived = EmailSyncService.class.getDeclaredMethod(
+                "appendReceived", EmailSyncService.SyncResult.class, Message.class, String.class);
+        appendReceived.setAccessible(true);
+
+        EmailSyncService.SyncResult result = (EmailSyncService.SyncResult) appendReceived.invoke(
+                service, new EmailSyncService.SyncResult("email", 1, 0, 0, ""), attachmentMessage(), "in");
+
+        assertEquals(1, result.saved());
+        ArgumentCaptor<WeComUserNotificationService.InboundMessage> captor =
+                ArgumentCaptor.forClass(WeComUserNotificationService.InboundMessage.class);
+        verify(notificationService).enqueueInbound(captor.capture());
+        assertEquals(conversation.getId(), captor.getValue().conversationId());
+        assertEquals(account.getId(), captor.getValue().channelAccountId());
+        assertEquals("email", captor.getValue().channelType());
+        assertEquals("sender@example.com", captor.getValue().contactLabel());
+        assertEquals("body", captor.getValue().bodyText());
+        assertEquals(Instant.parse("2026-08-13T00:00:00Z"), captor.getValue().occurredAt());
     }
 
     private static MimeMessage attachmentMessage() throws Exception {

@@ -17,9 +17,11 @@ import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +49,9 @@ class ChatAppContactProjectionTest {
             mock(ChatAppBroadcastMessageProjector.class);
     private final ChannelAccountMapper channelAccountMapper = mock(ChannelAccountMapper.class);
     private final ChannelAddressBookService addressBookService = mock(ChannelAddressBookService.class);
+    @SuppressWarnings("unchecked")
+    private final ObjectProvider<WeComUserNotificationService> notificationProvider =
+            (ObjectProvider<WeComUserNotificationService>) mock(ObjectProvider.class);
 
     @Test
     void usesExistingIdentityOnlyWithinCurrentChatAppAccountScope() {
@@ -127,7 +132,8 @@ class ChatAppContactProjectionTest {
         return new ChatAppWebhookProjector(
                 channelEventMapper, messageMapper, statusEventMapper,
                 conversationMapper, eventHub, new ObjectMapper(), broadcastRecipientMapper,
-                broadcastMessageProjector, null, channelAccountMapper, addressBookService);
+                broadcastMessageProjector, null, channelAccountMapper, addressBookService,
+                notificationProvider);
     }
 
     private UUID stubOwnedAccount(UUID accountId) {

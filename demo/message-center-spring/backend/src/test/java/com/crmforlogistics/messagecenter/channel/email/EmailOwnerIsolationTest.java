@@ -122,7 +122,8 @@ class EmailOwnerIsolationTest {
 
     private EmailSyncService service() {
         return new EmailSyncService(config, messageMapper, conversationMapper, channelAccountMapper,
-                contactIdentityMapper, contactMapper, eventHub, credentialCipher, attachmentStore, topicActivityRecorder);
+                contactIdentityMapper, contactMapper, eventHub, credentialCipher, attachmentStore,
+                topicActivityRecorder, null);
     }
 
     private EmailSendService sendService() {

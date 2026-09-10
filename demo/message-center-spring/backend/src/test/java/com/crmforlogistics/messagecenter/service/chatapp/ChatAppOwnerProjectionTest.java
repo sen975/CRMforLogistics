@@ -18,8 +18,10 @@ import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookServi
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.UUID;
@@ -197,12 +199,15 @@ class ChatAppOwnerProjectionTest {
         private final AiTopicActivityRecorder topicActivity = mock(AiTopicActivityRecorder.class);
         private final ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
         private final ChannelAddressBookService addressBook = mock(ChannelAddressBookService.class);
+        @SuppressWarnings("unchecked")
+        private final ObjectProvider<WeComUserNotificationService> notificationProvider =
+                (ObjectProvider<WeComUserNotificationService>) mock(ObjectProvider.class);
 
         private ChatAppWebhookProjector projector() {
             return new ChatAppWebhookProjector(
                     events, messageMapper, statusEvents, conversations, eventHub,
                     new ObjectMapper(), broadcastRecipients, broadcastProjector,
-                    topicActivity, accounts, addressBook);
+                    topicActivity, accounts, addressBook, notificationProvider);
         }
     }
 }
