@@ -56,6 +56,14 @@ contact-memory:
   max-observations: ${CONTACT_MEMORY_MAX_OBSERVATIONS:100}
   max-observation-chars: ${CONTACT_MEMORY_MAX_OBSERVATION_CHARS:500}
   observation-ttl-days: ${CONTACT_MEMORY_OBSERVATION_TTL_DAYS:30}
+  batch-size: ${CONTACT_MEMORY_BATCH_SIZE:50}
+  poll-interval-seconds: ${CONTACT_MEMORY_POLL_INTERVAL_SECONDS:600}
+  max-attempts: ${CONTACT_MEMORY_MAX_ATTEMPTS:3}
+  lease-seconds: ${CONTACT_MEMORY_LEASE_SECONDS:60}
+  max-backoff-seconds: ${CONTACT_MEMORY_MAX_BACKOFF_SECONDS:900}
+  start-hour: ${CONTACT_MEMORY_START_HOUR:0}
+  start-minute: ${CONTACT_MEMORY_START_MINUTE:0}
+  time-zone: ${CONTACT_MEMORY_TIME_ZONE:UTC}
 
 app:
   data-dir: ${APP_DATA_DIR:${DATA_DIR:${user.dir}/data}}
