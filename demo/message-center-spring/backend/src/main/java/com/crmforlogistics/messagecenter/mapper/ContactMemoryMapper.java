@@ -143,6 +143,31 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                                                 @Param("limit") int limit);
 
     @Select("""
+            select *
+            from contact_ai_labels
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status in ('ACTIVE', 'STALE')
+            order by last_seen_at desc, id
+            limit #{limit}
+            """)
+    List<ContactAiLabelEntity> listVisibleLabels(@Param("ownerUserId") UUID ownerUserId,
+                                                 @Param("contactId") UUID contactId,
+                                                 @Param("limit") int limit);
+
+    @Select("""
+            select *
+            from contact_memory_attempts
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status = 'SUCCEEDED'
+            order by coalesce(completed_at, created_at) desc, id desc
+            limit 1
+            """)
+    ContactMemoryAttemptEntity findLatestSuccessfulAttempt(@Param("ownerUserId") UUID ownerUserId,
+                                                            @Param("contactId") UUID contactId);
+
+    @Select("""
             select t.*
             from ai_topics t
             join contacts c on c.id = t.contact_id

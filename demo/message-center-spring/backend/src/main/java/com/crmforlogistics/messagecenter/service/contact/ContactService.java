@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import com.crmforlogistics.messagecenter.dto.response.ContactIdentityResponse;
+import com.crmforlogistics.messagecenter.dto.response.ContactMemoryResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import com.crmforlogistics.messagecenter.dto.response.PhoneContactBindingResponse;
@@ -18,6 +19,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryQueryService;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -50,6 +52,7 @@ public class ContactService {
     private final MessageMapper messageMapper;
     private final ChatAppAccountResolver chatAppAccountResolver;
     private final ContactTagMapper contactTagMapper;
+    private final ContactMemoryQueryService contactMemoryQueryService;
 
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
@@ -57,7 +60,7 @@ public class ContactService {
                           MessageMapper messageMapper,
                           ChatAppAccountResolver chatAppAccountResolver) {
         this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
-                chatAppAccountResolver, null);
+                chatAppAccountResolver, null, null);
     }
 
     @Autowired
@@ -66,13 +69,25 @@ public class ContactService {
                           ConversationMapper conversationMapper,
                           MessageMapper messageMapper,
                           ChatAppAccountResolver chatAppAccountResolver,
-                          ContactTagMapper contactTagMapper) {
+                          ContactTagMapper contactTagMapper,
+                          ContactMemoryQueryService contactMemoryQueryService) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.chatAppAccountResolver = chatAppAccountResolver;
         this.contactTagMapper = contactTagMapper;
+        this.contactMemoryQueryService = contactMemoryQueryService;
+    }
+
+    public ContactService(ContactMapper contactMapper,
+                          ContactIdentityMapper contactIdentityMapper,
+                          ConversationMapper conversationMapper,
+                          MessageMapper messageMapper,
+                          ChatAppAccountResolver chatAppAccountResolver,
+                          ContactTagMapper contactTagMapper) {
+        this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
+                chatAppAccountResolver, contactTagMapper, null);
     }
 
     /**
@@ -227,7 +242,10 @@ public class ContactService {
                 messageCount,
                 unreadCount,
                 tags,
-                identityResponses);
+                identityResponses,
+                contactMemoryQueryService == null
+                        ? null
+                        : contactMemoryQueryService.findForOwner(userId, contactId).orElse(null));
     }
 
     /**

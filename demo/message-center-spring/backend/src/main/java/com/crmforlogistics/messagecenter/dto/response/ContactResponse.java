@@ -32,5 +32,20 @@ public record ContactResponse(
         int messageCount,
         int unreadCount,
         List<ContactTagResponse> tags,
-        List<ContactIdentityResponse> identities
-) {}
+        List<ContactIdentityResponse> identities,
+        ContactMemoryResponse memory
+) {
+    public ContactResponse(UUID id,
+                           String displayName,
+                           String remark,
+                           List<String> channelTypes,
+                           Instant lastMessageAt,
+                           String lastText,
+                           int messageCount,
+                           int unreadCount,
+                           List<ContactTagResponse> tags,
+                           List<ContactIdentityResponse> identities) {
+        this(id, displayName, remark, channelTypes, lastMessageAt, lastText,
+                messageCount, unreadCount, tags, identities, null);
+    }
+}
