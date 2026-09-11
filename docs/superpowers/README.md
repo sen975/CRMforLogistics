@@ -4,6 +4,8 @@
 
 ## 当前设计
 
+- [联系人 AI 标签、画像与增量记忆系统设计](specs/2026-09-10-contact-ai-memory-design.md)：定义联系人级 AI 标签、200 字画像、人工标签隔离、入站消息触发、午夜增量处理、LLM 结构化合同和证据审计。
+
 - [CAMS WhatsApp 内嵌注册员工自助绑定设计](specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md)：当前 WhatsApp 绑定最高层真源；定义 API-only 与 Business App 共存两条独立流程、CAMS 公开内嵌注册合同、按 WABA 建立 provider scope、员工自助解绑与实机验收门禁。
 
 - [WhatsApp 共享模板与变更审批设计](specs/2026-09-05-whatsapp-shared-template-approval-design.md)：WhatsApp 模板权限当前最高层真源；定义系统级共享模板、新模板直接官方申请、普通用户变更审批、管理员直接执行、共享身份迁移和凭证隔离。
@@ -20,7 +22,7 @@
 
 ## 当前实施
 
-- WhatsApp 绑定实施计划待基于 2026-09-09 当前设计重写；此前的单企业 WABA、管理员分配与迁移验证码实施计划不得执行。
+- [CAMS WhatsApp 内嵌注册员工自助绑定实施计划](plans/2026-09-09-whatsapp-cams-embedded-signup-self-service-runtime.md)：落实管理员企业 API/WABA、员工 Business App 共存、企业 API 新号码、owner 生命周期与前端内嵌注册；真实 CAMS 门禁需在具备凭据的环境执行。
 - [WhatsApp 账号模板权限分流实施计划](plans/2026-09-09-whatsapp-template-permission-domain.md)：落实企业 API 共享模板审批与独立 Business App 私有模板直改两条权限链路。
 
 - [WhatsApp 共享模板与变更审批实施计划](plans/2026-09-05-whatsapp-shared-template-approval.md)：把共享 provider scope、账号副本归并、新模板直接官方申请、普通用户变更审批、管理员直接执行、发送解析切换和发布验收拆为九个可独立提交的 Task。
@@ -37,6 +39,8 @@
 - [企业微信消息级官方摘要实施计划](plans/2026-08-31-wecom-message-summary.md)：落实消息入库同事务入队、单条提交/轮询 worker、历史补偿、诊断查询和发布验收。
 
 ## 当前验收
+
+- [CAMS WhatsApp 内嵌注册员工自助绑定验收记录](reviews/2026-09-09-whatsapp-cams-embedded-signup-self-service-verification.md)：记录本地授权、号码操作、账号生命周期、前端合同测试和未执行的真实 CAMS 门禁。
 
 - [WhatsApp 共享模板与变更审批验收记录](reviews/2026-09-05-whatsapp-shared-template-approval-verification.md)：记录共享 schema、迁移、审批、发送投影、前端专项测试、生产制品和浏览器验收；同时保留 Docker/Testcontainers、V48 启动迁移与真实 CAMS 环境门禁。
 - [企业微信代开发成员头像 OAuth2 授权验收记录](reviews/2026-09-04-wecom-avatar-oauth-verification.md)：记录独立敏感授权 API、前端二维码入口、自动化门禁、浏览器验收、制品校验和服务器扫码停止条件。
