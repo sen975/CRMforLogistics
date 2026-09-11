@@ -218,4 +218,68 @@ describe('ContactDetailPanel identity display', () => {
       tags: [{ name: 'VIP' }, { name: '重点' }],
     });
   });
+
+  it('shows profile and separates human tags from read-only ai tags', async () => {
+    fetchContact.mockResolvedValueOnce({
+      id: 'contact-1',
+      displayName: '客户一',
+      remark: '',
+      channelTypes: ['email'],
+      lastMessageAt: null,
+      lastText: '',
+      messageCount: 2,
+      unreadCount: 0,
+      tags: [{ id: 'manual-1', name: '人工VIP', color: 'gold' }],
+      identities: [],
+      memory: {
+        profile: {
+          id: 'profile-1',
+          version: 2,
+          content: '客户关注海运时效，倾向通过邮件确认方案。',
+          createdAt: '2026-09-11T00:00:00Z',
+        },
+        humanTags: [{ id: 'manual-1', name: '人工VIP', color: 'gold' }],
+        aiTags: [{
+          id: 'ai-1',
+          name: '海运客户',
+          category: 'PRODUCT_INTEREST',
+          colorToken: 'green',
+          status: 'STALE',
+          confidence: 0.91,
+        }],
+        state: 'PROCESSING',
+        lastSuccessAt: '2026-09-10T00:00:00Z',
+        lastFailureCode: null,
+        pendingInbound: true,
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider>
+          <AntApp>
+            <MemoryRouter initialEntries={['/thread/contact-1']}>
+              <Routes>
+                <Route path="/thread/:contactId" element={<ContactDetailPanel />} />
+              </Routes>
+            </MemoryRouter>
+          </AntApp>
+        </ConfigProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
+    expect(await screen.findByText('AI 画像')).toBeInTheDocument();
+    expect(screen.getByText('客户关注海运时效，倾向通过邮件确认方案。')).toBeInTheDocument();
+    expect(screen.getByText('AI 标签')).toBeInTheDocument();
+    expect(screen.getByText('海运客户')).toBeInTheDocument();
+    expect(screen.getByText('人工标签')).toBeInTheDocument();
+    expect(screen.getByText('人工VIP')).toBeInTheDocument();
+    expect(screen.getByText('正在更新')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑AI标签' })).not.toBeInTheDocument();
+  });
 });

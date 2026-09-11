@@ -12,6 +12,34 @@ export interface ContactTag {
   color?: string | null;
 }
 
+export type ContactMemoryState = 'CLEAN' | 'DIRTY' | 'PROCESSING' | 'RETRY_WAIT' | 'FAILED' | string;
+
+export interface ContactMemoryProfile {
+  id: string;
+  version: number;
+  content: string;
+  createdAt: string;
+}
+
+export interface ContactMemoryAiTag {
+  id: string;
+  name: string;
+  category: string;
+  colorToken: string | null;
+  status: 'ACTIVE' | 'STALE' | string;
+  confidence: number;
+}
+
+export interface ContactMemoryResponse {
+  profile: ContactMemoryProfile | null;
+  humanTags: ContactTag[];
+  aiTags: ContactMemoryAiTag[];
+  state: ContactMemoryState;
+  lastSuccessAt: string | null;
+  lastFailureCode: string | null;
+  pendingInbound: boolean;
+}
+
 export type ChannelAddressBookChannel = 'chatapp' | 'email' | 'phone';
 
 export interface ChannelAddressBookItem {
@@ -47,6 +75,7 @@ export interface ContactResponse {
   unreadCount: number;
   tags?: ContactTag[];
   identities: ContactIdentityResponse[];
+  memory?: ContactMemoryResponse | null;
 }
 
 export interface ContactConversationItem {

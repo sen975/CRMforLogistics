@@ -140,7 +140,7 @@ export default function ContactDetailPanel() {
             </Space>
           )}
         </Descriptions.Item>
-        <Descriptions.Item label="标签">
+        <Descriptions.Item label="人工标签">
           {editingTags ? (
             <Space style={{ width: '100%' }}>
               <Select mode="tags" value={tagValues} onChange={setTagValues} style={{ minWidth: 160, flex: 1 }}
@@ -163,8 +163,35 @@ export default function ContactDetailPanel() {
               {(contact.tags ?? []).map((tag) => <Tag key={tag.id} color={tag.color || undefined}>{tag.name}</Tag>)}
               <Button type="link" size="small" icon={<EditOutlined />} aria-label="编辑标签"
                 onClick={() => { setTagValues((contact.tags ?? []).map((tag) => tag.name)); setEditingTags(true); }} />
-            </Space>
-          )}
+              </Space>
+            )}
+        </Descriptions.Item>
+        <Descriptions.Item label="AI 画像">
+          <Space direction="vertical" size={4}>
+            <Text type={contact.memory?.profile ? undefined : 'secondary'}>
+              {contact.memory?.profile?.content || '暂无画像'}
+            </Text>
+            {(contact.memory?.state === 'DIRTY' || contact.memory?.state === 'PROCESSING') && (
+              <Text type="secondary">正在更新</Text>
+            )}
+            {contact.memory?.state === 'FAILED' && (
+              <Text type="secondary">画像更新失败，请稍后重试</Text>
+            )}
+          </Space>
+        </Descriptions.Item>
+        <Descriptions.Item label="AI 标签">
+          <Space wrap>
+            {(contact.memory?.aiTags ?? []).length === 0 && <Text type="secondary">暂无 AI 标签</Text>}
+            {(contact.memory?.aiTags ?? []).map((tag) => (
+              <Tag
+                key={tag.id}
+                color={tag.colorToken || undefined}
+                style={tag.status === 'STALE' ? { opacity: 0.55 } : undefined}
+              >
+                {tag.name}
+              </Tag>
+            ))}
+          </Space>
         </Descriptions.Item>
         <Descriptions.Item label="消息数">{contact.messageCount}</Descriptions.Item>
         <Descriptions.Item label="最后消息">{contact.lastMessageAt ? new Date(contact.lastMessageAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
