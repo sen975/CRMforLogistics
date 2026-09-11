@@ -17,6 +17,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.time.Instant;
 import java.util.List;
@@ -212,6 +213,89 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                    @Param("contactId") UUID contactId,
                    @Param("ownerUserId") UUID ownerUserId);
 
+    @Update("""
+            update contact_memory_facts
+            set display_value = #{entity.displayValue},
+                status = #{entity.status},
+                confidence = #{entity.confidence},
+                evidence_count = #{entity.evidenceCount},
+                last_seen_at = #{entity.lastSeenAt},
+                last_confirmed_at = #{entity.lastConfirmedAt},
+                stale_at = #{entity.staleAt},
+                invalidated_at = #{entity.invalidatedAt},
+                generation_batch_id = #{entity.generationBatchId}::uuid
+            where id = #{entity.id}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            """)
+    int updateFact(@Param("entity") ContactMemoryFactEntity entity,
+                   @Param("contactId") UUID contactId,
+                   @Param("ownerUserId") UUID ownerUserId);
+
+    @Select("""
+            select count(*)
+            from contact_memory_fact_evidence
+            where fact_id = #{factId}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            """)
+    long countFactEvidence(@Param("factId") UUID factId,
+                           @Param("contactId") UUID contactId,
+                           @Param("ownerUserId") UUID ownerUserId);
+
+    @Select("""
+            select *
+            from contact_memory_facts
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and category = #{category}
+              and status = 'ACTIVE'
+              and (normalized_key = #{normalizedName} or normalized_value = #{normalizedName})
+            order by case when normalized_value = #{normalizedName} then 0 else 1 end, last_confirmed_at desc
+            limit 1
+            """)
+    ContactMemoryFactEntity findActiveFactForLabel(@Param("ownerUserId") UUID ownerUserId,
+                                                   @Param("contactId") UUID contactId,
+                                                   @Param("category") String category,
+                                                   @Param("normalizedName") String normalizedName);
+
+    @Select("""
+            select *
+            from contact_memory_facts
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and category = #{category}
+              and normalized_key = #{normalizedKey}
+              and normalized_value = #{normalizedValue}
+              and polarity <> #{polarity}
+              and status = 'ACTIVE'
+            limit 1
+            """)
+    ContactMemoryFactEntity findOppositeActiveFact(@Param("ownerUserId") UUID ownerUserId,
+                                                   @Param("contactId") UUID contactId,
+                                                   @Param("category") String category,
+                                                   @Param("normalizedKey") String normalizedKey,
+                                                   @Param("normalizedValue") String normalizedValue,
+                                                   @Param("polarity") String polarity);
+
+    @Select("""
+            select *
+            from contact_memory_facts
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and category = #{category}
+              and normalized_key = #{normalizedKey}
+              and normalized_value = #{normalizedValue}
+              and polarity = #{polarity}
+            limit 1
+            """)
+    ContactMemoryFactEntity findFact(@Param("ownerUserId") UUID ownerUserId,
+                                     @Param("contactId") UUID contactId,
+                                     @Param("category") String category,
+                                     @Param("normalizedKey") String normalizedKey,
+                                     @Param("normalizedValue") String normalizedValue,
+                                     @Param("polarity") String polarity);
+
     @Insert("""
             insert into contact_memory_fact_evidence
                 (id, fact_id, contact_id, owner_user_id, evidence_type, evidence_id,
@@ -240,6 +324,25 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                       @Param("contactId") UUID contactId,
                       @Param("ownerUserId") UUID ownerUserId);
 
+    @Update("""
+            update contact_profile_versions
+            set is_current = false
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and is_current
+            """)
+    int clearCurrentProfile(@Param("contactId") UUID contactId,
+                            @Param("ownerUserId") UUID ownerUserId);
+
+    @Select("""
+            select coalesce(max(version), 0) + 1
+            from contact_profile_versions
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            """)
+    long nextProfileVersion(@Param("contactId") UUID contactId,
+                            @Param("ownerUserId") UUID ownerUserId);
+
     @Insert("""
             insert into contact_ai_labels
                 (id, contact_id, owner_user_id, category, normalized_name, display_name,
@@ -254,6 +357,37 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
             do nothing
             """)
     int insertAiLabel(@Param("entity") ContactAiLabelEntity entity,
+                      @Param("contactId") UUID contactId,
+                      @Param("ownerUserId") UUID ownerUserId);
+
+    @Select("""
+            select *
+            from contact_ai_labels
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and category = #{category}
+              and normalized_name = #{normalizedName}
+            limit 1
+            """)
+    ContactAiLabelEntity findAiLabel(@Param("ownerUserId") UUID ownerUserId,
+                                     @Param("contactId") UUID contactId,
+                                     @Param("category") String category,
+                                     @Param("normalizedName") String normalizedName);
+
+    @Update("""
+            update contact_ai_labels
+            set display_name = #{entity.displayName},
+                color_token = #{entity.colorToken},
+                status = #{entity.status},
+                confidence = #{entity.confidence},
+                last_seen_at = #{entity.lastSeenAt},
+                last_evidence_at = #{entity.lastEvidenceAt},
+                generation_batch_id = #{entity.generationBatchId}::uuid
+            where id = #{entity.id}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            """)
+    int updateAiLabel(@Param("entity") ContactAiLabelEntity entity,
                       @Param("contactId") UUID contactId,
                       @Param("ownerUserId") UUID ownerUserId);
 
