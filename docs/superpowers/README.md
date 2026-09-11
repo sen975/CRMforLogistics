@@ -4,7 +4,7 @@
 
 ## 当前设计
 
-- [联系人 AI 标签、画像与增量记忆系统设计](specs/2026-09-10-contact-ai-memory-design.md)：定义联系人级 AI 标签、200 字画像、人工标签隔离、入站消息触发、午夜增量处理、LLM 结构化合同和证据审计。
+- [联系人 AI 标签、画像与增量记忆系统设计](specs/2026-09-10-contact-ai-memory-design.md)：定义原始事实、短期观察、长期事实、AI 标签与 200 字画像五层记忆、人工标签隔离、入站消息触发、午夜增量处理、LLM 结构化合同和证据审计。
 
 - [CAMS WhatsApp 内嵌注册员工自助绑定设计](specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md)：当前 WhatsApp 绑定最高层真源；定义 API-only 与 Business App 共存两条独立流程、CAMS 公开内嵌注册合同、按 WABA 建立 provider scope、员工自助解绑与实机验收门禁。
 

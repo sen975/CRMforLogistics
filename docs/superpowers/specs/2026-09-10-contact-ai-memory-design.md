@@ -8,6 +8,7 @@
 
 - 联系人级 AI 标签的生成、更新、失效和恢复；
 - 联系人画像的首次生成和增量重写；
+- 原始事实、短期观察、长期事实和展示投影的分层记忆；
 - 入站消息触发、夜间批处理、游标和租约；
 - LLM 输入输出合同、证据和失败处理；
 - 人工标签与 AI 标签的隔离；
@@ -15,12 +16,33 @@
 
 本文不覆盖 WhatsApp 账号绑定、模板审批、Topic 生命周期本身或通话转写生成。Topic 和通话转写只作为联系人记忆的受限上下文来源。
 
+## 1.1 五层记忆结构
+
+联系人记忆按以下五层组织，数据只能沿规定方向流动：
+
+1. **原始事实层**：消息、Topic、已解析的通话转写。该层保留来源事实，不由记忆服务改写。
+2. **短期观察层**：从本轮新增信息中提取的候选信号。观察可以合并、拒绝或过期，不能直接作为长期标签或画像事实。
+3. **长期事实层**：经过证据累积、去重和冲突判断后确认的稳定原子事实。它是 AI 标签和画像的事实来源。
+4. **展示投影层**：从有效长期事实生成 AI 标签和联系人画像，面向销售查询和展示。
+5. **控制审计层**：记忆状态、游标、租约、处理尝试、版本和证据索引。该层保证增量处理、并发、回滚和追溯。
+
+处理方向为：
+
+```text
+原始事实 -> 短期观察 -> 长期事实 -> AI 标签 / 联系人画像
+                         \-> 证据与审计
+```
+
+任何一层失败都不能把未确认的结果越层写入下一层。人工标签属于独立的人工数据域，不属于上述 AI 记忆写入链。
+
 ## 2. 目标与产品边界
 
 系统根据联系人已有消息、相关 Topic 和可靠的通话转写，逐步维护两类 AI 产物：
 
 1. 面向销售阅读的联系人画像，最多 200 个汉字；
 2. 具有分类、证据和生命周期的 AI 标签。
+
+AI 标签和联系人画像都是长期事实的展示投影，不是原始消息的直接摘要。LLM 输出的每个候选观察必须经过服务端的证据累积、去重和冲突判断，才能晋升为长期事实；没有通过晋升门槛的观察不得直接生成长期标签。
 
 系统只沉淀跨多次交流仍有业务价值的稳定特征，不把每次闲聊、一次性情绪或临时上下文变成联系人标签。
 
@@ -118,7 +140,131 @@ FAILED
 
 `last_success_cursor` 只代表已经和画像、标签、证据同一事务提交成功的入站消息边界，不代表“已经看到过”或“已经领取过”。
 
-### 4.2 `contact_profile_versions`
+### 4.2 `contact_memory_observations`
+
+短期观察保存本轮从新消息和补充上下文中提取出的候选信号。它不是长期事实，也不直接在联系人详情页展示为标签：
+
+```text
+id
+contact_id
+owner_user_id
+category
+normalized_key
+observed_value
+polarity
+confidence
+status
+source_cursor
+generation_batch_id
+observed_at
+expires_at
+promoted_fact_id
+created_at
+updated_at
+```
+
+`status` 只允许：
+
+```text
+CANDIDATE
+PROMOTED
+REJECTED
+EXPIRED
+MERGED
+```
+
+规则：
+
+- 观察必须有至少一个本轮输入中的证据；
+- 同一批次和同一语义键的重复观察先在服务端合并；
+- 观察默认具有有限有效期，过期后不能继续晋升为长期事实；
+- 观察默认 30 天后过期，系统允许配置更短期限，但不得超过 90 天；
+- 已晋升、拒绝或合并的观察保留处理结果和批次引用；
+- 观察不直接生成人工标签，也不直接覆盖联系人画像。
+
+`contact_memory_observation_evidence` 保存观察的证据关联：
+
+```text
+id
+observation_id
+contact_id
+owner_user_id
+evidence_type
+evidence_id
+evidence_excerpt
+generation_batch_id
+created_at
+```
+
+证据类型沿用消息、Topic 和通话转写；证据必须属于当前联系人和 owner。
+
+### 4.3 `contact_memory_facts`
+
+长期事实保存经过证据门槛确认的稳定原子判断。一个事实表达一个简短的“主题-值”关系，允许不同值并存，但只有仍有效的事实可以进入标签和画像投影：
+
+```text
+id
+contact_id
+owner_user_id
+category
+normalized_key
+normalized_value
+display_value
+polarity
+status
+confidence
+evidence_count
+first_seen_at
+last_seen_at
+last_confirmed_at
+stale_at
+invalidated_at
+generation_batch_id
+created_at
+updated_at
+```
+
+唯一约束：
+
+```text
+contact_id + owner_user_id + category + normalized_key + normalized_value + polarity
+```
+
+`status` 只允许：
+
+```text
+ACTIVE
+STALE
+CONFLICTED
+INACTIVE
+```
+
+事实规则：
+
+- 默认需要来自不同消息、Topic 或通话事件的至少两条独立证据；
+- 一次明确的长期自述、长期偏好或持续承诺可以作为单条强证据，但仍须通过服务端规则；
+- 同一事实的新证据增加 `evidence_count` 并刷新确认时间，不创建重复事实；
+- 明确否定已有事实时，旧事实进入 `CONFLICTED` 或 `INACTIVE`，新事实只有在满足晋升门槛后才变为 `ACTIVE`；
+- `STALE` 和 `CONFLICTED` 事实默认不生成新的 AI 标签，也不直接写入画像；
+- 事实不物理删除，保留生命周期和证据。
+
+`contact_memory_fact_evidence` 保存长期事实的不可变证据：
+
+```text
+id
+fact_id
+contact_id
+owner_user_id
+evidence_type
+evidence_id
+evidence_excerpt
+generation_batch_id
+created_at
+```
+
+事实证据的联系人、owner 和来源 ID 必须由服务端再次校验，不能信任 LLM 返回的归属。
+
+### 4.4 `contact_profile_versions`
 
 画像版本不可变，每次成功生成创建新版本；旧版本不覆盖、不删除：
 
@@ -145,9 +291,9 @@ created_at
 - 只有一个版本可以为 `is_current = true`；
 - 无实质变化时可以创建新处理记录并复用旧画像内容，但不强制创建重复画像版本，具体以实施计划中的幂等规则为准。
 
-### 4.3 `contact_ai_labels`
+### 4.5 `contact_ai_labels`
 
-AI 标签是联系人级独立实体，不复用人工标签：
+AI 标签是长期事实的联系人级展示投影，不复用人工标签：
 
 ```text
 id
@@ -183,13 +329,16 @@ INACTIVE
 
 AI 标签总量没有固定业务上限。服务端必须限制每轮新增、更新、失效和恢复的数量，并限制名称长度、批量大小和数据库查询范围。
 
-### 4.4 `contact_ai_label_evidence`
+只有与 `ACTIVE` 长期事实关联的标签才能进入 `ACTIVE`。`STALE`、`CONFLICTED` 或 `INACTIVE` 事实只能产生相应的标签弱化、失效或不展示结果。
 
-标签证据不可变，支持消息、Topic、通话转写和画像版本：
+### 4.6 `contact_ai_label_evidence`
+
+标签证据不可变，支持消息、Topic、通话转写、长期事实和画像版本：
 
 ```text
 id
 label_id
+fact_id
 contact_id
 owner_user_id
 evidence_type
@@ -205,12 +354,13 @@ created_at
 MESSAGE
 TOPIC
 CALL_TRANSCRIPT
+LONG_TERM_FACT
 PROFILE_VERSION
 ```
 
-证据必须属于当前联系人和当前 owner。原始聊天正文不写入审计日志；证据表只保存受控短摘录或引用 ID，具体可见内容仍由权限查询层决定。
+`fact_id` 对 AI 标签的新增、更新、失效和恢复必须存在，并指向当前联系人和 owner 的长期事实；当 `evidence_type = LONG_TERM_FACT` 时，`evidence_id` 指向该事实。原始聊天正文不写入审计日志；证据表只保存受控短摘录或引用 ID，具体可见内容仍由权限查询层决定。
 
-### 4.5 `contact_memory_attempts`
+### 4.7 `contact_memory_attempts`
 
 每次处理尝试保存不可变审计：
 
@@ -336,6 +486,7 @@ RESTORE
 - 有效历史入站消息；
 - 相关 Topic；
 - 已完成解析的可靠通话转写；
+- 当前有效长期事实；
 - 当前有效 AI 标签；
 - 人工标签作为只读上下文；
 - 其他稳定记忆。
@@ -347,12 +498,20 @@ RESTORE
 已有成功游标时，使用：
 
 - 上次成功游标之后的新增入站消息；
+- 本轮确认或更新的长期事实；
 - 当前画像；
+- 当前有效长期事实；
 - 当前有效 AI 标签；
 - 必要的历史稳定记忆；
 - 必要的相关 Topic 和通话转写。
 
 LLM 返回完整新版画像，不返回局部字符串补丁。新增消息没有改变长期事实时，画像内容可以保持不变，但处理游标仍需推进。
+
+### 6.3 画像与事实的关系
+
+画像只能引用当前有效的长期事实、人工标签和本轮经过校验的上下文。短期观察、`STALE` 事实、`CONFLICTED` 事实和未经证实的模型推断不得直接写入画像。
+
+画像是可重建的展示投影。画像版本保留生成批次和事实证据边界，后续可以基于当前长期事实重新生成，而不把旧画像本身当作不可质疑的事实。
 
 ## 7. 触发与状态机
 
@@ -406,6 +565,8 @@ RETRY_WAIT -> FAILED
 
 成功提交的必要条件是画像版本、AI 标签变更、证据、处理审计和成功游标在同一事务中完成。任一步失败，旧画像、旧标签和旧游标保持不变。
 
+如果本轮提取出观察，观察写入、观察证据、长期事实晋升或冲突处理、标签投影、画像版本、处理审计和成功游标必须在同一事务中完成。只有成功提交后，观察才可以变为 `PROMOTED`、`REJECTED`、`EXPIRED` 或 `MERGED`。
+
 ## 8. LLM 输入输出合同
 
 ### 8.1 上下文预算
@@ -417,6 +578,8 @@ RETRY_WAIT -> FAILED
 - 本轮消息总字符数；
 - Topic 数量和每条 Topic 字符数；
 - 通话转写数量和每条转写字符数；
+- 短期观察数量和每条观察字符数；
+- 长期事实数量和每条事实字符数；
 - 历史稳定记忆数量和字符数；
 - 当前 AI 标签数量和名称长度；
 - 单联系人单轮输出标签变更数量。
@@ -425,10 +588,12 @@ RETRY_WAIT -> FAILED
 
 1. 本轮新增入站消息；
 2. 当前画像；
-3. 当前有效 AI 标签；
-4. 仍有效的稳定记忆；
-5. 相关 Topic；
-6. 通话转写和更早的补充历史。
+3. 本轮候选观察；
+4. 当前有效长期事实；
+5. 当前有效 AI 标签；
+6. 仍有效的稳定记忆；
+7. 相关 Topic；
+8. 通话转写和更早的补充历史。
 
 每个联系人、每次处理和每个 LLM 请求都必须有超时、批量、重试和输出上界。
 
@@ -438,8 +603,10 @@ RETRY_WAIT -> FAILED
 
 - 联系人必要基础信息；
 - 当前画像；
+- 当前有效长期事实；
 - 当前有效 AI 标签；
 - 本轮新增入站消息；
+- 本轮候选观察；
 - 必要的历史稳定记忆；
 - 相关 Topic；
 - 已解析的可靠通话转写；
@@ -449,10 +616,26 @@ RETRY_WAIT -> FAILED
 
 ### 8.3 输出结构
 
-LLM 只返回结构化 JSON：
+LLM 只返回结构化 JSON。模型可以提出短期观察和画像候选，但不能直接声明候选已经成为长期事实：
 
 ```json
 {
+  "observations": [
+    {
+      "category": "PRODUCT_INTEREST",
+      "key": "运输方式",
+      "value": "冷链运输",
+      "polarity": "POSITIVE",
+      "confidence": 0.86,
+      "evidence": [
+        {
+          "type": "MESSAGE",
+          "id": "message-id"
+        }
+      ],
+      "reason": "本轮连续询问冷链运输方案"
+    }
+  ],
   "profile": {
     "content": "不超过200字的联系人画像"
   },
@@ -485,6 +668,8 @@ LLM 只返回结构化 JSON：
 }
 ```
 
+`labelChanges` 只能引用已有或本轮由服务端确认的长期事实。观察不满足长期事实晋升条件时，只写入观察层，不进入 AI 标签和画像。
+
 允许的 `operation` 只有：
 
 ```text
@@ -506,6 +691,8 @@ RESTORE
 - 置信度位于 `0` 到 `1`；
 - 证据 ID 属于本次输入上下文；
 - 证据联系人和 owner 匹配；
+- 观察的主题、值和极性字段完整且长度合规；
+- 观察证据存在且未过期；
 - 画像正文最多 200 个汉字；
 - 单轮变更数量不超过上限；
 - 目标标签确实是 AI 标签；
@@ -522,7 +709,8 @@ LLM 无权直接访问数据库、消息队列或联系人接口，也无权决�
 - `ContactMemoryScheduler`：在夜间扫描、批量和并发控制；
 - `ContactMemoryWorker`：领取租约、编排上下文、调用模型和提交结果；
 - `ContactMemoryContextService`：查询、去重、裁剪上下文并生成证据索引；
-- `ContactMemoryMutationService`：校验并原子写入画像、AI 标签、证据、审计和游标；
+- `ContactMemoryConsolidationService`：合并短期观察、执行长期事实晋升和冲突判定；
+- `ContactMemoryMutationService`：校验并原子写入观察、长期事实、画像、AI 标签、证据、审计和游标；
 - `ContactMemoryQueryService`：返回画像、人工标签、AI 标签和处理状态投影；
 - `ContactMemoryLlmGateway`：复用现有 OpenAI-compatible 配置，屏蔽模型供应商差异。
 
@@ -534,10 +722,11 @@ LLM 无权直接访问数据库、消息队列或联系人接口，也无权决�
 4. 午夜后 scheduler 扫描可处理状态；
 5. worker 获取租约和 `cutoff_at`；
 6. `ContextService` 读取增量消息及受限历史上下文；
-7. `LlmGateway` 返回结构化画像和标签变更；
+7. `LlmGateway` 返回结构化观察、画像候选和标签投影变更；
 8. 服务端校验输出、证据、owner 和状态转换；
-9. `MutationService` 在一个事务中写入画像版本、标签变化、证据、审计和游标；
-10. 查询层向前端返回人工标签和 AI 标签的结构化合并投影。
+9. `ConsolidationService` 合并观察，晋升或更新长期事实，处理冲突；
+10. `MutationService` 在一个事务中写入观察、长期事实、画像版本、标签变化、证据、审计和游标；
+11. 查询层向前端返回人工标签和 AI 标签的结构化合并投影。
 
 消息接入链只负责发出“入站消息已成功落库”的触发信号，不拥有记忆规则。
 
@@ -672,6 +861,8 @@ LLM 暂时不可用时不降级为猜测、字符串修补或覆盖旧结果。�
 - 画像超过 200 个汉字时拒绝提交；
 - 非法分类、非法操作和无效证据被拒绝；
 - AI 标签不会写入或修改人工标签；
+- 短期观察可以去重、过期、拒绝并在证据足够时晋升为长期事实；
+- 长期事实可以正确处理新增证据、明确冲突、失效和恢复；
 - 标签去重、同义词归一化、失效和恢复正确；
 - LLM 失败时画像、标签和游标保持不变；
 - 同一联系人并发 worker 只有一个可以提交；
