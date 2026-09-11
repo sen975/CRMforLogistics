@@ -10,10 +10,21 @@ import org.apache.ibatis.annotations.Update;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Mapper
 public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateEntity> {
+
+    @Select("""
+            select *
+            from contact_memory_states
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            limit 1
+            """)
+    Optional<ContactMemoryStateEntity> findByOwnerAndContact(@Param("ownerUserId") UUID ownerUserId,
+                                                              @Param("contactId") UUID contactId);
 
     @Insert("""
             insert into contact_memory_states

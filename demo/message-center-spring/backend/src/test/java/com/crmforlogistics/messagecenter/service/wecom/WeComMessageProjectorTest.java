@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -60,6 +61,39 @@ class WeComMessageProjectorTest {
         assertThat(inserted.getValue().getDirection()).isEqualTo("outbound");
         assertThat(inserted.getValue().getBodyText()).isEmpty();
         assertThat(inserted.getValue().getMetadataJsonb()).isEqualTo("{\"wecomReference\":true}");
+    }
+
+    @Test
+    void inboundDirectReferenceTriggersContactMemoryAfterPersistence() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ContactMemoryTriggerService memoryTrigger = mock(ContactMemoryTriggerService.class);
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        when(accounts.selectSingleActiveByChannelType("wecom")).thenReturn(account);
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(contactId);
+        when(messages.findByProviderMessageId(account.getId(), "m-memory-1"))
+                .thenReturn(Optional.empty());
+        when(identities.findByNormalizedValueInScope(
+                "wecom", account.getId().toString(), "external-memory"))
+                .thenReturn(Optional.of(identity));
+        when(conversations.getOrCreateConversation(any(), any()))
+                .thenReturn(new ConversationEntity());
+
+        WeComMessageProjector projector = new WeComMessageProjector(
+                accounts, identities, contacts, conversations, messages,
+                null, null, null, memoryTrigger);
+        projector.project(new WeComMessageProjector.WeComProjectedMessage(
+                "m-memory-1", "external-memory", "employee", 100L, "inbound"));
+
+        verify(memoryTrigger).markInboundPersisted(
+                eq(contactId), eq(java.time.Instant.ofEpochSecond(100L)));
     }
 
     @Test
@@ -184,6 +218,63 @@ class WeComMessageProjectorTest {
                 "employee-2".equals(identity.getIdentityValue())
                         && "employee-2".equals(identity.getDisplayName())));
         verify(conversations).getOrCreateConversation(eq(account.getId()), any());
+    }
+
+    @Test
+    void inboundDirectMessageTriggersContactMemoryForResolvedContact() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ContactMemoryTriggerService memoryTrigger = mock(ContactMemoryTriggerService.class);
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        when(accounts.selectSingleActiveByChannelType("wecom")).thenReturn(account);
+        when(messages.findByProviderMessageId(account.getId(), "direct-memory-1"))
+                .thenReturn(Optional.empty());
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(contactId);
+        when(identities.findByNormalizedValueInScope(
+                "wecom", account.getId().toString(), "external-memory"))
+                .thenReturn(Optional.of(identity));
+        when(conversations.getOrCreateConversation(any(), any()))
+                .thenReturn(new ConversationEntity());
+
+        WeComMessageProjector projector = new WeComMessageProjector(
+                accounts, identities, contacts, conversations, messages, null, null, null,
+                memoryTrigger);
+        projector.projectDirect(new WeComMessageProjector.WeComProjectedDirectMessage(
+                "direct-memory-1", UUID.randomUUID(), UUID.randomUUID(), "corp-1",
+                new WeComMessageProjector.ContactParty("EXTERNAL_CONTACT", "external-memory"),
+                100L, "inbound"));
+
+        verify(memoryTrigger).markInboundPersisted(eq(contactId), eq(java.time.Instant.ofEpochSecond(100L)));
+    }
+
+    @Test
+    void inboundGroupMessageDoesNotTriggerContactMemory() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ContactMemoryTriggerService memoryTrigger = mock(ContactMemoryTriggerService.class);
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        when(accounts.selectSingleActiveByChannelType("wecom")).thenReturn(account);
+        when(conversations.getOrCreateSourceConversation(any(), any()))
+                .thenReturn(new ConversationEntity());
+
+        WeComMessageProjector projector = new WeComMessageProjector(
+                accounts, identities, contacts, conversations, messages, null, null, null,
+                memoryTrigger);
+        projector.projectGroup(new WeComMessageProjector.WeComProjectedGroupMessage(
+                "group-memory-1", UUID.randomUUID(), 100L, "inbound"));
+
+        verify(memoryTrigger, never()).markInboundPersisted(any(), any());
     }
 
     @Test

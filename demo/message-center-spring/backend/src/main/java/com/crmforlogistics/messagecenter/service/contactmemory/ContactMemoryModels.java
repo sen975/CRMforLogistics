@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.entity.AiTopicEntity;
 import com.crmforlogistics.messagecenter.entity.CallTranscriptRevisionEntity;
 import com.crmforlogistics.messagecenter.entity.ContactAiLabelEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
 import com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 
@@ -121,6 +122,7 @@ public final class ContactMemoryModels {
                           UUID ownerUserId,
                           List<MessageEntity> inboundMessages,
                           ContactProfileVersionEntity currentProfile,
+                          List<ContactMemoryObservationEntity> observations,
                           List<ContactMemoryFactEntity> activeFacts,
                           List<ContactAiLabelEntity> activeLabels,
                           StableContext stableContext,
@@ -130,6 +132,7 @@ public final class ContactMemoryModels {
                           String outputCursor) {
         public Context {
             inboundMessages = List.copyOf(inboundMessages == null ? List.of() : inboundMessages);
+            observations = List.copyOf(observations == null ? List.of() : observations);
             activeFacts = List.copyOf(activeFacts == null ? List.of() : activeFacts);
             activeLabels = List.copyOf(activeLabels == null ? List.of() : activeLabels);
             topics = List.copyOf(topics == null ? List.of() : topics);

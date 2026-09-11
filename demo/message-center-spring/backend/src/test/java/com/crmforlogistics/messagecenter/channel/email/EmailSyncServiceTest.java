@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import jakarta.activation.DataHandler;
 import jakarta.mail.Message;
@@ -69,6 +70,7 @@ class EmailSyncServiceTest {
     @Mock EmailAttachmentStore attachmentStore;
     @Mock CredentialCipher credentialCipher;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
+    @Mock ContactMemoryTriggerService contactMemoryTriggerService;
     @Mock ObjectProvider<WeComUserNotificationService> notificationProvider;
     @Mock WeComUserNotificationService notificationService;
 
@@ -97,11 +99,43 @@ class EmailSyncServiceTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertEquals(11, injectionConstructor.getParameterCount());
+        assertEquals(12, injectionConstructor.getParameterCount());
         assertEquals(CredentialCipher.class, injectionConstructor.getParameterTypes()[7]);
         assertEquals(EmailAttachmentStore.class, injectionConstructor.getParameterTypes()[8]);
         assertEquals(AiTopicActivityRecorder.class, injectionConstructor.getParameterTypes()[9]);
         assertTrue(ObjectProvider.class.isAssignableFrom(injectionConstructor.getParameterTypes()[10]));
+        assertEquals(ContactMemoryTriggerService.class, injectionConstructor.getParameterTypes()[11]);
+    }
+
+    @Test
+    void inboundEmailTriggersContactMemoryAfterMessagePersistence() throws Exception {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.randomUUID());
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        identity.setContactId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(channelAccountMapper.selectList(any())).thenReturn(List.of(account));
+        when(contactIdentityMapper.selectList(any())).thenReturn(List.of(identity));
+        when(conversationMapper.selectList(any())).thenReturn(List.of(conversation));
+
+        EmailSyncService service = new EmailSyncService(config, messageMapper,
+                conversationMapper, channelAccountMapper, contactIdentityMapper, contactMapper,
+                eventHub, null, attachmentStore, topicActivityRecorder, null,
+                contactMemoryTriggerService);
+        Method appendReceived = EmailSyncService.class.getDeclaredMethod(
+                "appendReceived", EmailSyncService.SyncResult.class, Message.class, String.class);
+        appendReceived.setAccessible(true);
+
+        EmailSyncService.SyncResult result = (EmailSyncService.SyncResult) appendReceived.invoke(
+                service, new EmailSyncService.SyncResult("email", 1, 0, 0, ""),
+                attachmentMessage(), "in");
+
+        assertEquals(1, result.saved());
+        verify(contactMemoryTriggerService).markInboundPersisted(
+                eq(identity.getContactId()), eq(Instant.parse("2026-08-13T00:00:00Z")));
     }
 
     @Test

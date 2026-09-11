@@ -14,6 +14,7 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComPartyMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComSourceConversationMapper;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -37,6 +38,7 @@ public class WeComMessageProjector {
     private final WeComExternalContactService externalContacts;
     private final WeComPartyMapper parties;
     private final WeComSourceConversationMapper sourceConversations;
+    private final ContactMemoryTriggerService contactMemoryTriggerService;
 
     @Autowired
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -46,7 +48,8 @@ public class WeComMessageProjector {
                                  MessageMapper messages,
                                  WeComExternalContactService externalContacts,
                                  WeComPartyMapper parties,
-                                 WeComSourceConversationMapper sourceConversations) {
+                                 WeComSourceConversationMapper sourceConversations,
+                                 ContactMemoryTriggerService contactMemoryTriggerService) {
         this.accountMapper = channelAccounts;
         this.identities = identities;
         this.contacts = contacts;
@@ -55,6 +58,7 @@ public class WeComMessageProjector {
         this.externalContacts = externalContacts;
         this.parties = parties;
         this.sourceConversations = sourceConversations;
+        this.contactMemoryTriggerService = contactMemoryTriggerService;
     }
 
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -62,7 +66,7 @@ public class WeComMessageProjector {
                           ContactMapper contacts,
                           ConversationMapper conversations,
                           MessageMapper messages) {
-        this(channelAccounts, identities, contacts, conversations, messages, null, null, null);
+        this(channelAccounts, identities, contacts, conversations, messages, null, null, null, null);
     }
 
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -71,7 +75,7 @@ public class WeComMessageProjector {
                                  ConversationMapper conversations,
                                  MessageMapper messages,
                                  WeComExternalContactService externalContacts) {
-        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, null, null);
+        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, null, null, null);
     }
 
     public WeComMessageProjector(ChannelAccountMapper channelAccounts,
@@ -81,7 +85,19 @@ public class WeComMessageProjector {
                                  MessageMapper messages,
                                  WeComExternalContactService externalContacts,
                                  WeComPartyMapper parties) {
-        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, parties, null);
+        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, parties, null, null);
+    }
+
+    public WeComMessageProjector(ChannelAccountMapper channelAccounts,
+                                 ContactIdentityMapper identities,
+                                 ContactMapper contacts,
+                                 ConversationMapper conversations,
+                                 MessageMapper messages,
+                                 WeComExternalContactService externalContacts,
+                                 WeComPartyMapper parties,
+                                 WeComSourceConversationMapper sourceConversations) {
+        this(channelAccounts, identities, contacts, conversations, messages, externalContacts, parties,
+                sourceConversations, null);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -110,6 +126,9 @@ public class WeComMessageProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{\"wecomReference\":true}");
         messages.insertWithSequence(message);
+        if ("inbound".equals(item.direction()) && contactMemoryTriggerService != null) {
+            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), occurredAt);
+        }
         return new ProjectionResult(true);
     }
 
@@ -176,6 +195,9 @@ public class WeComMessageProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{\"wecomReference\":true,\"conversationType\":\"DIRECT\"}");
         messages.insertWithSequence(message);
+        if ("inbound".equals(item.direction()) && contactMemoryTriggerService != null) {
+            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), occurredAt);
+        }
         return new ProjectionResult(true);
     }
 

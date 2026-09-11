@@ -18,6 +18,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,6 +48,7 @@ public class ChatAppWebhookProjector {
     private final ChannelAccountMapper channelAccountMapper;
     private final ChannelAddressBookService addressBookService;
     private final ObjectProvider<WeComUserNotificationService> notificationProvider;
+    private final ContactMemoryTriggerService contactMemoryTriggerService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
@@ -60,7 +62,8 @@ public class ChatAppWebhookProjector {
                                    AiTopicActivityRecorder topicActivityRecorder,
                                    ChannelAccountMapper channelAccountMapper,
                                    ChannelAddressBookService addressBookService,
-                                   ObjectProvider<WeComUserNotificationService> notificationProvider) {
+                                   ObjectProvider<WeComUserNotificationService> notificationProvider,
+                                   ContactMemoryTriggerService contactMemoryTriggerService) {
         this.channelEventMapper = Objects.requireNonNull(channelEventMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -73,6 +76,24 @@ public class ChatAppWebhookProjector {
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.addressBookService = Objects.requireNonNull(addressBookService);
         this.notificationProvider = notificationProvider;
+        this.contactMemoryTriggerService = contactMemoryTriggerService;
+    }
+
+    public ChatAppWebhookProjector(ChannelEventMapper channelEventMapper,
+                                   MessageMapper messageMapper,
+                                   MessageStatusEventMapper statusEventMapper,
+                                   ConversationMapper conversationMapper,
+                                   EventHub eventHub,
+                                   ObjectMapper objectMapper,
+                                   ChatAppBroadcastRecipientMapper broadcastRecipientMapper,
+                                   ChatAppBroadcastMessageProjector broadcastMessageProjector,
+                                   AiTopicActivityRecorder topicActivityRecorder,
+                                   ChannelAccountMapper channelAccountMapper,
+                                   ChannelAddressBookService addressBookService,
+                                   ObjectProvider<WeComUserNotificationService> notificationProvider) {
+        this(channelEventMapper, messageMapper, statusEventMapper, conversationMapper, eventHub,
+                objectMapper, broadcastRecipientMapper, broadcastMessageProjector, topicActivityRecorder,
+                channelAccountMapper, addressBookService, notificationProvider, null);
     }
 
     @Transactional
@@ -259,6 +280,10 @@ public class ChatAppWebhookProjector {
         message.setCurrentStatusAt(occurredAt);
         message.setMetadataJsonb("{}");
         messageMapper.insertWithSequence(message);
+        if (contactMemoryTriggerService != null) {
+            contactMemoryTriggerService.markInboundPersisted(
+                    resolved.contactId(), occurredAt);
+        }
         enqueueNotification(account, conversation, message, displayName, from, occurredAt);
         recordTopicActivity(conversation, occurredAt);
 

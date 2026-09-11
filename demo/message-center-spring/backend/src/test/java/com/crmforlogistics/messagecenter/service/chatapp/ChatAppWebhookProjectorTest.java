@@ -20,6 +20,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastMessageProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,7 @@ class ChatAppWebhookProjectorTest {
     @Mock AiTopicActivityRecorder topicActivityRecorder;
     @Mock ChannelAccountMapper channelAccountMapper;
     @Mock ChannelAddressBookService addressBookService;
+    @Mock ContactMemoryTriggerService contactMemoryTriggerService;
     @Mock ObjectProvider<WeComUserNotificationService> notificationProvider;
     @Mock WeComUserNotificationService notificationService;
 
@@ -97,6 +99,35 @@ class ChatAppWebhookProjectorTest {
 
         verify(topicActivityRecorder).recordConversation(
                 conversation, java.time.Instant.parse("2026-09-01T08:00:00Z"));
+    }
+
+    @Test
+    void inboundMessageTriggersContactMemoryAfterMessagePersistence() {
+        UUID accountId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityEntity identity = new ContactIdentityEntity();
+        identity.setId(UUID.randomUUID());
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(UUID.randomUUID());
+        when(messageMapper.findByProviderMessageId(accountId, "inbound-memory-1"))
+                .thenReturn(Optional.empty());
+        when(addressBookService.resolveOrCreateInbound(
+                any(UUID.class), eq("chatapp"), eq(accountId), eq("60123456789"), any(String.class)))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(
+                        contactId, identity.getId(), false));
+        when(conversationMapper.getOrCreateConversation(accountId, identity.getId()))
+                .thenReturn(conversation);
+        ChannelEventEntity event = new ChannelEventEntity();
+        event.setId(UUID.randomUUID());
+        event.setChannelAccountId(accountId);
+        event.setOccurredAt(Instant.parse("2026-09-01T08:00:00Z"));
+        event.setPayloadJsonb("{\"MessageId\":\"inbound-memory-1\",\"From\":\"60123456789\","
+                + "\"Message\":\"hello\"}");
+
+        projector().project(event);
+
+        verify(contactMemoryTriggerService).markInboundPersisted(
+                eq(contactId), eq(Instant.parse("2026-09-01T08:00:00Z")));
     }
 
     @Test
@@ -325,7 +356,7 @@ class ChatAppWebhookProjectorTest {
                 channelEventMapper, messageMapper, statusEventMapper,
                 conversationMapper, eventHub, new ObjectMapper(), broadcastRecipientMapper,
                 broadcastMessageProjector, topicActivityRecorder, channelAccountMapper,
-                addressBookService, notificationProvider);
+                addressBookService, notificationProvider, contactMemoryTriggerService);
     }
 
     private static MessageEntity messageWithStatus(String status) {

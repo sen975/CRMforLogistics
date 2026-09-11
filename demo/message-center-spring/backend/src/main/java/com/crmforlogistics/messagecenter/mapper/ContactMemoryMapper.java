@@ -10,6 +10,7 @@ import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity;
+import com.crmforlogistics.messagecenter.entity.CallTranscriptRevisionEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryModels;
 import org.apache.ibatis.annotations.Insert;
@@ -45,6 +46,62 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                                             @Param("after") Instant after,
                                             @Param("cutoff") Instant cutoff,
                                             @Param("limit") int limit);
+
+    @Select("""
+            select m.*
+            from messages m
+            join conversations cv on cv.id = m.conversation_id
+            join contact_identities ci on ci.id = cv.contact_identity_id
+            join contacts c on c.id = ci.contact_id
+            where c.id = #{contactId}::uuid
+              and c.created_by = #{ownerUserId}::uuid
+              and c.deleted_at is null
+              and ci.deleted_at is null
+              and m.direction = 'inbound'
+              and (
+                    #{afterOccurredAt} is null
+                    or m.occurred_at > #{afterOccurredAt}
+                    or (m.occurred_at = #{afterOccurredAt} and m.id > #{afterId}::uuid)
+                  )
+              and m.occurred_at <= #{cutoff}
+            order by m.occurred_at, m.id
+            limit #{limit}
+            """)
+    List<MessageEntity> listInboundMessagesByCursor(@Param("ownerUserId") UUID ownerUserId,
+                                                     @Param("contactId") UUID contactId,
+                                                     @Param("afterOccurredAt") Instant afterOccurredAt,
+                                                     @Param("afterId") UUID afterId,
+                                                     @Param("cutoff") Instant cutoff,
+                                                     @Param("limit") int limit);
+
+    @Select("""
+            select *
+            from contact_memory_observations
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status = 'CANDIDATE'
+              and expires_at > now()
+            order by observed_at desc, id
+            limit #{limit}
+            """)
+    List<ContactMemoryObservationEntity> listActiveObservations(@Param("ownerUserId") UUID ownerUserId,
+                                                                  @Param("contactId") UUID contactId,
+                                                                  @Param("limit") int limit);
+
+    @Select("""
+            select ctr.*
+            from call_transcript_revisions ctr
+            join call_records cr on cr.current_revision_id = ctr.id
+            join contacts c on c.id = cr.contact_id
+            where cr.contact_id = #{contactId}::uuid
+              and c.created_by = #{ownerUserId}::uuid
+              and cr.transcription_state = 'completed'
+            order by cr.occurred_at desc, ctr.edited_at desc, ctr.id desc
+            limit #{limit}
+            """)
+    List<CallTranscriptRevisionEntity> listCallTranscripts(@Param("ownerUserId") UUID ownerUserId,
+                                                            @Param("contactId") UUID contactId,
+                                                            @Param("limit") int limit);
 
     @Select("""
             select *

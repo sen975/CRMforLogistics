@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryTriggerService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import jakarta.mail.Address;
 import jakarta.mail.AuthenticationFailedException;
@@ -58,6 +59,7 @@ public class EmailSyncService {
     private final EmailAttachmentStore attachmentStore;
     private final AiTopicActivityRecorder topicActivityRecorder;
     private final ObjectProvider<WeComUserNotificationService> notificationProvider;
+    private final ContactMemoryTriggerService contactMemoryTriggerService;
 
     public EmailSyncService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -102,7 +104,8 @@ public class EmailSyncService {
                             CredentialCipher credentialCipher,
                             EmailAttachmentStore attachmentStore,
                             AiTopicActivityRecorder topicActivityRecorder,
-                            ObjectProvider<WeComUserNotificationService> notificationProvider) {
+                            ObjectProvider<WeComUserNotificationService> notificationProvider,
+                            ContactMemoryTriggerService contactMemoryTriggerService) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -114,6 +117,22 @@ public class EmailSyncService {
         this.attachmentStore = attachmentStore;
         this.topicActivityRecorder = topicActivityRecorder;
         this.notificationProvider = notificationProvider;
+        this.contactMemoryTriggerService = contactMemoryTriggerService;
+    }
+
+    public EmailSyncService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            ContactMapper contactMapper,
+                            EventHub eventHub,
+                            CredentialCipher credentialCipher,
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder,
+                            ObjectProvider<WeComUserNotificationService> notificationProvider) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                contactMapper, eventHub, credentialCipher, attachmentStore, topicActivityRecorder,
+                notificationProvider, null);
     }
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
@@ -308,6 +327,10 @@ public class EmailSyncService {
             entity.setCurrentStatus("delivered");
             entity.setCurrentStatusAt(Instant.now());
             messageMapper.insertWithSequence(entity);
+            if ("inbound".equals(entity.getDirection()) && contactMemoryTriggerService != null) {
+                contactMemoryTriggerService.markInboundPersisted(
+                        identity.getContactId(), entity.getOccurredAt());
+            }
             enqueueNotification(account, conversation, entity, contactSource, contactEmail);
             if (topicActivityRecorder != null) {
                 topicActivityRecorder.recordContact(identity.getContactId(), sentDate);

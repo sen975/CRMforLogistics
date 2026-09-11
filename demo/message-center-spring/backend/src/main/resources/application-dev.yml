@@ -1,5 +1,5 @@
 server:
-  port: 8099
+  port: 8107
 
 spring:
   config:
@@ -40,12 +40,26 @@ ai-topic:
   audit-max-request-bytes: ${AI_TOPIC_AUDIT_MAX_REQUEST_BYTES:262144}
   audit-max-response-bytes: ${AI_TOPIC_AUDIT_MAX_RESPONSE_BYTES:524288}
 
+contact-memory:
+  max-inbound-messages: ${CONTACT_MEMORY_MAX_INBOUND_MESSAGES:50}
+  max-message-chars: ${CONTACT_MEMORY_MAX_MESSAGE_CHARS:4000}
+  max-total-chars: ${CONTACT_MEMORY_MAX_TOTAL_CHARS:50000}
+  max-topics: ${CONTACT_MEMORY_MAX_TOPICS:20}
+  max-topic-chars: ${CONTACT_MEMORY_MAX_TOPIC_CHARS:1000}
+  max-call-transcripts: ${CONTACT_MEMORY_MAX_CALL_TRANSCRIPTS:10}
+  max-transcript-chars: ${CONTACT_MEMORY_MAX_TRANSCRIPT_CHARS:4000}
+  max-facts: ${CONTACT_MEMORY_MAX_FACTS:100}
+  max-labels: ${CONTACT_MEMORY_MAX_LABELS:100}
+  max-observations: ${CONTACT_MEMORY_MAX_OBSERVATIONS:100}
+  max-observation-chars: ${CONTACT_MEMORY_MAX_OBSERVATION_CHARS:500}
+  observation-ttl-days: ${CONTACT_MEMORY_OBSERVATION_TTL_DAYS:30}
+
 app:
   data-dir: ${APP_DATA_DIR:data-local}
   local-dev-mode: ${APP_LOCAL_DEV_MODE:true}
   web-bind-address: 127.0.0.1
 
-  cust-space-id: ${CAMS_CUST_SPACE_ID:}
+  cust-space-id: ${CAMS_CUST_SPACE_ID:cams-9dou6dubx2ww}
   chatapp-from: ${CHATAPP_FROM:}
   chatapp-sync-enabled: true
 
