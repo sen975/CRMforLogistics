@@ -127,7 +127,8 @@ class ChatAppWebhookProjectorTest {
         projector().project(event);
 
         verify(contactMemoryTriggerService).markInboundPersisted(
-                eq(contactId), eq(Instant.parse("2026-09-01T08:00:00Z")));
+                eq(contactId), any(UUID.class), isNull(Long.class),
+                eq(Instant.parse("2026-09-01T08:00:00Z")), isNull(Instant.class));
     }
 
     @Test

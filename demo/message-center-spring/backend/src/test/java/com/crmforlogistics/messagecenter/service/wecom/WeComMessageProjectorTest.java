@@ -93,7 +93,8 @@ class WeComMessageProjectorTest {
                 "m-memory-1", "external-memory", "employee", 100L, "inbound"));
 
         verify(memoryTrigger).markInboundPersisted(
-                eq(contactId), eq(java.time.Instant.ofEpochSecond(100L)));
+                eq(contactId), any(UUID.class), isNull(Long.class),
+                eq(java.time.Instant.ofEpochSecond(100L)), isNull(Instant.class));
     }
 
     @Test
@@ -251,7 +252,8 @@ class WeComMessageProjectorTest {
                 new WeComMessageProjector.ContactParty("EXTERNAL_CONTACT", "external-memory"),
                 100L, "inbound"));
 
-        verify(memoryTrigger).markInboundPersisted(eq(contactId), eq(java.time.Instant.ofEpochSecond(100L)));
+        verify(memoryTrigger).markInboundPersisted(eq(contactId), any(UUID.class), isNull(Long.class),
+                eq(java.time.Instant.ofEpochSecond(100L)), isNull(Instant.class));
     }
 
     @Test
@@ -274,7 +276,7 @@ class WeComMessageProjectorTest {
         projector.projectGroup(new WeComMessageProjector.WeComProjectedGroupMessage(
                 "group-memory-1", UUID.randomUUID(), 100L, "inbound"));
 
-        verify(memoryTrigger, never()).markInboundPersisted(any(), any());
+        verify(memoryTrigger, never()).markInboundPersisted(any(), any(), any(), any(), any());
     }
 
     @Test

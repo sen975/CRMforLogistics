@@ -135,7 +135,8 @@ class EmailSyncServiceTest {
 
         assertEquals(1, result.saved());
         verify(contactMemoryTriggerService).markInboundPersisted(
-                eq(identity.getContactId()), eq(Instant.parse("2026-08-13T00:00:00Z")));
+                eq(identity.getContactId()), any(UUID.class), isNull(Long.class),
+                eq(Instant.parse("2026-08-13T00:00:00Z")), isNull(Instant.class));
     }
 
     @Test

@@ -127,7 +127,8 @@ public class WeComMessageProjector {
         message.setMetadataJsonb("{\"wecomReference\":true}");
         messages.insertWithSequence(message);
         if ("inbound".equals(item.direction()) && contactMemoryTriggerService != null) {
-            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), occurredAt);
+            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), message.getId(),
+                    message.getIngestSequence(), occurredAt, message.getReceivedAt());
         }
         return new ProjectionResult(true);
     }
@@ -196,7 +197,8 @@ public class WeComMessageProjector {
         message.setMetadataJsonb("{\"wecomReference\":true,\"conversationType\":\"DIRECT\"}");
         messages.insertWithSequence(message);
         if ("inbound".equals(item.direction()) && contactMemoryTriggerService != null) {
-            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), occurredAt);
+            contactMemoryTriggerService.markInboundPersisted(identity.getContactId(), message.getId(),
+                    message.getIngestSequence(), occurredAt, message.getReceivedAt());
         }
         return new ProjectionResult(true);
     }

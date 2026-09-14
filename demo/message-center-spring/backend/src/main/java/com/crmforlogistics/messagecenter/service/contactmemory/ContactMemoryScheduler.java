@@ -14,15 +14,22 @@ import java.time.ZoneId;
 @EnableScheduling
 public class ContactMemoryScheduler {
     private final ContactMemoryWorker worker;
+    private final ContactMemoryTriggerService triggers;
     private final ContactMemoryConfig config;
     private final Clock clock;
 
-    public ContactMemoryScheduler(ContactMemoryWorker worker, ContactMemoryConfig config) {
-        this(worker, config, Clock.systemUTC());
+    public ContactMemoryScheduler(ContactMemoryWorker worker,
+                                  ContactMemoryTriggerService triggers,
+                                  ContactMemoryConfig config) {
+        this(worker, triggers, config, Clock.systemUTC());
     }
 
-    ContactMemoryScheduler(ContactMemoryWorker worker, ContactMemoryConfig config, Clock clock) {
+    ContactMemoryScheduler(ContactMemoryWorker worker,
+                           ContactMemoryTriggerService triggers,
+                           ContactMemoryConfig config,
+                           Clock clock) {
         this.worker = worker;
+        this.triggers = triggers;
         this.config = config;
         this.clock = clock;
     }
@@ -40,6 +47,7 @@ public class ContactMemoryScheduler {
         if (!insideWindow) {
             return;
         }
+        triggers.replayDue(now, config.batchSize());
         worker.runOnce(now);
     }
 }

@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -137,16 +138,19 @@ public class EmailSyncService {
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
 
+    @Transactional
     public SyncResult receiveLatest() throws Exception {
         EmailSyncSettings settings = resolveSettings();
         return receiveLatest(resolveEmailAccount(), null, settings);
     }
 
+    @Transactional
     public SyncResult receiveLatest(UUID accountId, UUID ownerId) throws Exception {
         ChannelAccountEntity account = requireOwnedEmailAccount(accountId, ownerId);
         return receiveLatest(account, ownerId, EmailSyncSettings.from(config, account, credentialCipher, log));
     }
 
+    @Transactional
     public SyncResult receiveLatest(UUID ownerId) throws Exception {
         List<ChannelAccountEntity> accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "email");
         if (accounts.size() != 1) {
@@ -329,7 +333,8 @@ public class EmailSyncService {
             messageMapper.insertWithSequence(entity);
             if ("inbound".equals(entity.getDirection()) && contactMemoryTriggerService != null) {
                 contactMemoryTriggerService.markInboundPersisted(
-                        identity.getContactId(), entity.getOccurredAt());
+                        identity.getContactId(), entity.getId(), entity.getIngestSequence(),
+                        entity.getOccurredAt(), entity.getReceivedAt());
             }
             enqueueNotification(account, conversation, entity, contactSource, contactEmail);
             if (topicActivityRecorder != null) {

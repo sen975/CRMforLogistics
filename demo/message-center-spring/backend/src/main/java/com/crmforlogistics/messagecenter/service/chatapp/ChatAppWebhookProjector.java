@@ -282,7 +282,8 @@ public class ChatAppWebhookProjector {
         messageMapper.insertWithSequence(message);
         if (contactMemoryTriggerService != null) {
             contactMemoryTriggerService.markInboundPersisted(
-                    resolved.contactId(), occurredAt);
+                    resolved.contactId(), message.getId(), message.getIngestSequence(),
+                    occurredAt, message.getReceivedAt());
         }
         enqueueNotification(account, conversation, message, displayName, from, occurredAt);
         recordTopicActivity(conversation, occurredAt);

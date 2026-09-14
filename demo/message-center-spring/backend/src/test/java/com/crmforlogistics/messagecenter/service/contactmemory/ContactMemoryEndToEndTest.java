@@ -113,7 +113,8 @@ class ContactMemoryEndToEndTest {
         MessageEntity first = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户明确关注海运方案。");
         MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户希望了解海运报价和时效。");
 
-        trigger.markInboundPersisted(fixture.contactId(), SECOND_MESSAGE_AT);
+        trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
+                second.getOccurredAt(), second.getReceivedAt());
         ContactMemoryModels.Context context = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(context, first, second));
 
@@ -180,7 +181,8 @@ class ContactMemoryEndToEndTest {
         TestFixture fixture = fixture();
         MessageEntity first = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户关注海运。");
         MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户需要海运报价。");
-        trigger.markInboundPersisted(fixture.contactId(), SECOND_MESSAGE_AT);
+        trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
+                second.getOccurredAt(), second.getReceivedAt());
 
         ContactMemoryModels.Context firstContext = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(firstContext, first, second));
@@ -200,7 +202,8 @@ class ContactMemoryEndToEndTest {
                 Integer.class, fixture.contactId(), fixture.ownerId());
 
         MessageEntity third = insertInboundMessage(fixture, THIRD_MESSAGE_AT, "客户补充需要稳定船期。");
-        trigger.markInboundPersisted(fixture.contactId(), THIRD_MESSAGE_AT);
+        trigger.markInboundPersisted(fixture.contactId(), third.getId(), third.getIngestSequence(),
+                third.getOccurredAt(), third.getReceivedAt());
         doThrow(new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true))
                 .when(gateway).generate(any());
 
