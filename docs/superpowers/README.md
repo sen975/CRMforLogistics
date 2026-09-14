@@ -6,7 +6,7 @@
 
 - [联系人 AI 标签、画像与增量记忆系统设计](specs/2026-09-10-contact-ai-memory-design.md)：定义原始事实、短期观察、长期事实、AI 标签与 200 字画像五层记忆、人工标签隔离、入站消息触发、午夜增量处理、LLM 结构化合同和证据审计。
 
-- [CAMS WhatsApp 内嵌注册员工自助绑定设计](specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md)：当前 WhatsApp 绑定最高层真源；定义 API-only 与 Business App 共存两条独立流程、CAMS 公开内嵌注册合同、按 WABA 建立 provider scope、员工自助解绑与实机验收门禁。
+- [WhatsApp 管理员配置与销售账号分配设计](specs/2026-09-10-whatsapp-admin-managed-account-assignment-design.md)：当前 WhatsApp 绑定最高层真源；定义管理员在 CAMS 手工配置、CRM 只读同步、单账号分配/收回/转交、历史会话只读访问和发送 fencing。
 
 - [WhatsApp 共享模板与变更审批设计](specs/2026-09-05-whatsapp-shared-template-approval-design.md)：WhatsApp 模板权限当前最高层真源；定义系统级共享模板、新模板直接官方申请、普通用户变更审批、管理员直接执行、共享身份迁移和凭证隔离。
 - [用户私有渠道通讯录设计](specs/2026-09-04-user-channel-address-books-design.md)：定义 WhatsApp、邮件和电话按用户隔离的渠道账号、联系人、身份、标签、通话记录、通讯录页面、历史迁移和权限边界；企业微信沿用现有实现。
@@ -22,7 +22,7 @@
 
 ## 当前实施
 
-- [CAMS WhatsApp 内嵌注册员工自助绑定实施计划](plans/2026-09-09-whatsapp-cams-embedded-signup-self-service-runtime.md)：落实管理员企业 API/WABA、员工 Business App 共存、企业 API 新号码、owner 生命周期与前端内嵌注册；真实 CAMS 门禁需在具备凭据的环境执行。
+- [WhatsApp 管理员配置与销售账号分配实施计划](plans/2026-09-10-whatsapp-admin-managed-account-assignment.md)：落实 CAMS 已有号码同步、管理员分配/收回/转交、历史授权、发送 fencing、前端账号管理及旧自助 API 禁用。
 - [WhatsApp 账号模板权限分流实施计划](plans/2026-09-09-whatsapp-template-permission-domain.md)：落实企业 API 共享模板审批与独立 Business App 私有模板直改两条权限链路。
 
 - [WhatsApp 共享模板与变更审批实施计划](plans/2026-09-05-whatsapp-shared-template-approval.md)：把共享 provider scope、账号副本归并、新模板直接官方申请、普通用户变更审批、管理员直接执行、发送解析切换和发布验收拆为九个可独立提交的 Task。
@@ -40,7 +40,9 @@
 
 ## 当前验收
 
-- [CAMS WhatsApp 内嵌注册员工自助绑定验收记录](reviews/2026-09-09-whatsapp-cams-embedded-signup-self-service-verification.md)：记录本地授权、号码操作、账号生命周期、前端合同测试和未执行的真实 CAMS 门禁。
+- [联系人 AI 标签、画像与增量记忆系统验收记录](reviews/2026-09-11-contact-ai-memory-verification.md)：记录五层记忆端到端测试设计、后端生产编译、前端测试/构建，以及 Docker 和工作区既有 WhatsApp 测试错误造成的验收边界。
+
+- [WhatsApp 管理员配置与销售账号分配验收记录](reviews/2026-09-10-whatsapp-admin-managed-account-assignment-verification.md)：记录管理员同步、账号分配状态机、历史访问、发送 fencing、前端页面和旧自助 API 禁用验收。
 
 - [WhatsApp 共享模板与变更审批验收记录](reviews/2026-09-05-whatsapp-shared-template-approval-verification.md)：记录共享 schema、迁移、审批、发送投影、前端专项测试、生产制品和浏览器验收；同时保留 Docker/Testcontainers、V48 启动迁移与真实 CAMS 环境门禁。
 - [企业微信代开发成员头像 OAuth2 授权验收记录](reviews/2026-09-04-wecom-avatar-oauth-verification.md)：记录独立敏感授权 API、前端二维码入口、自动化门禁、浏览器验收、制品校验和服务器扫码停止条件。
@@ -53,7 +55,8 @@
 
 ## 已被吸收的设计
 
-- `specs/2026-09-08-whatsapp-business-app-coexistence-multi-number-design.md` 和 `plans/2026-09-08-whatsapp-business-app-coexistence-multi-number.md` 已被 2026-09-09 的 CAMS WhatsApp 内嵌注册员工自助绑定设计取代；其中单企业单 WABA、管理员分配、管理员解绑和把共存实现为迁移/验证码流程均不再有效。
+- `specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md` 与 `plans/2026-09-09-whatsapp-cams-embedded-signup-self-service-runtime.md` 已被 2026-09-10 的 WhatsApp 管理员配置与销售账号分配设计和实施计划取代；其中 Embedded Signup、员工自助绑定、API 电话注册、员工自助解绑及相关前端入口不再是当前产品路线。
+- `specs/2026-09-08-whatsapp-business-app-coexistence-multi-number-design.md` 和 `plans/2026-09-08-whatsapp-business-app-coexistence-multi-number.md` 已被后续 WhatsApp 设计取代，最终由 2026-09-10 的管理员配置与销售账号分配设计统一定义；其中 Business App 共存、员工自助绑定、管理员解绑和迁移/验证码流程均不再有效。
 - `specs/2026-08-28-ai-topic-lifecycle-and-repository-design.md` 已被 2026-09-01 的 AI Topic 企业微信混合归属与静默重构设计吸收；其中仅支持 ChatApp/邮件/电话、`DISCARDED` 弃用语义和联系人独占 Topic 归属不再有效。
 - `specs/2026-08-27-ai-topic-timeline-design.md` 已被 2026-08-28 的 AI Topic 生命周期、异步任务与弃用仓库设计吸收；其中前端轮询、同步编辑/合并命令和仅 `READY/ARCHIVED` 的状态模型不再有效。
 - `specs/2026-08-22-wecom-conversation-full-height-design.md` 的全高布局要求已被统一会话工作区设计吸收。

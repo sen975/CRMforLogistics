@@ -1,0 +1,366 @@
+package com.crmforlogistics.messagecenter.service.contactmemory;
+
+import com.crmforlogistics.messagecenter.App;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryAttemptEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryStateEntity;
+import com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity;
+import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.mapper.ContactMemoryMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
+import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecentertest.ApplicationIntegrationTestConfiguration;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@SpringBootTest(
+        classes = {App.class, ApplicationIntegrationTestConfiguration.class},
+        properties = {
+                "spring.profiles.active=test",
+                "app.chatapp-sync-enabled=false",
+                "app.chatapp-outbox-enabled=false",
+                "app.chatapp-webhook-worker-enabled=false",
+                "app.chatapp-broadcast-worker-enabled=false",
+                "app.chatapp-template-reconcile-enabled=false",
+                "app.email-sync-enabled=false",
+                "contact-memory.time-zone=UTC"
+        }
+)
+@Testcontainers
+class ContactMemoryEndToEndTest {
+
+    private static final Instant FIRST_MESSAGE_AT = Instant.parse("2026-09-13T01:00:00Z");
+    private static final Instant SECOND_MESSAGE_AT = Instant.parse("2026-09-13T02:00:00Z");
+    private static final Instant THIRD_MESSAGE_AT = Instant.parse("2026-09-13T03:00:00Z");
+
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17.5")
+            .withDatabaseName("message_center")
+            .withUsername("test")
+            .withPassword("test");
+
+    @DynamicPropertySource
+    static void configure(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("minio.endpoint", () -> "http://localhost:9999");
+        registry.add("minio.access-key", () -> "test");
+        registry.add("minio.secret-key", () -> "test");
+        registry.add("minio.bucket", () -> "test");
+        registry.add("credential.master-key", () ->
+                java.util.Base64.getEncoder().encodeToString(new byte[32]));
+    }
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @Autowired
+    private MessageMapper messages;
+
+    @Autowired
+    private ContactMemoryStateMapper states;
+
+    @Autowired
+    private ContactMemoryMapper memory;
+
+    @Autowired
+    private ContactMemoryTriggerService trigger;
+
+    @Autowired
+    private ContactMemoryContextService contextService;
+
+    @Autowired
+    private ContactMemoryWorker worker;
+
+    @Autowired
+    private ContactMemoryQueryService query;
+
+    @MockitoBean
+    private ContactMemoryLlmGateway gateway;
+
+    @BeforeEach
+    void resetGateway() {
+        reset(gateway);
+    }
+
+    @Test
+    void inboundMessagesProduceProfileFactsAndAiLabelsWithoutChangingManualTags() {
+        TestFixture fixture = fixture();
+        UUID manualTagId = insertManualTag(fixture);
+        MessageEntity first = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户明确关注海运方案。");
+        MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户希望了解海运报价和时效。");
+
+        trigger.markInboundPersisted(fixture.contactId(), SECOND_MESSAGE_AT);
+        ContactMemoryModels.Context context = contextFor(fixture, SECOND_MESSAGE_AT);
+        when(gateway.generate(any())).thenReturn(outputFor(context, first, second));
+
+        int processed = worker.runOnce(SECOND_MESSAGE_AT.plusSeconds(1));
+
+        assertThat(processed).isEqualTo(1);
+        assertThat(state(fixture)).satisfies(state -> {
+            assertThat(state.getStatus()).isEqualTo("CLEAN");
+            assertThat(state.getLastSuccessCursor())
+                    .isEqualTo(cursor(second));
+        });
+
+        ContactProfileVersionEntity profile = memory.findCurrentProfile(
+                fixture.ownerId(), fixture.contactId());
+        assertThat(profile).isNotNull();
+        assertThat(profile.getContent()).isEqualTo("客户关注海运，重视报价与时效。");
+        assertThat(profile.getVersion()).isEqualTo(1L);
+
+        ContactMemoryFactEntity fact = memory.findActiveFactForLabel(
+                fixture.ownerId(), fixture.contactId(), "PRODUCT_INTEREST", "海运");
+        assertThat(fact).isNotNull();
+        assertThat(fact.getEvidenceCount()).isEqualTo(2);
+
+        Map<String, Object> aiLabel = jdbc.queryForMap("""
+                select display_name, category, color_token, status
+                from contact_ai_labels
+                where contact_id = ? and owner_user_id = ?
+                """, fixture.contactId(), fixture.ownerId());
+        assertThat(aiLabel)
+                .containsEntry("display_name", "海运")
+                .containsEntry("category", "PRODUCT_INTEREST")
+                .containsEntry("color_token", "green")
+                .containsEntry("status", "ACTIVE");
+
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_observations where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_fact_evidence where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_ai_label_evidence where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ? and status = 'SUCCEEDED'",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
+
+        ContactMemoryResponseSnapshot ownerView =
+                ContactMemoryResponseSnapshot.from(query.findForOwner(
+                        fixture.ownerId(), fixture.contactId()).orElseThrow());
+        assertThat(ownerView.manualTagNames()).containsExactly("人工重要");
+        assertThat(ownerView.aiTagNames()).containsExactly("海运");
+        assertThat(ownerView.profile()).isEqualTo("客户关注海运，重视报价与时效。");
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_taggings where contact_id = ? and tag_id = ?",
+                Integer.class, fixture.contactId(), manualTagId)).isEqualTo(1);
+
+        assertThat(query.findForOwner(fixture.otherOwnerId(), fixture.contactId())).isEmpty();
+        verify(gateway).generate(any(ContactMemoryModels.Context.class));
+    }
+
+    @Test
+    void llmFailureLeavesPreviousProjectionAndCursorUntouched() {
+        TestFixture fixture = fixture();
+        MessageEntity first = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户关注海运。");
+        MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户需要海运报价。");
+        trigger.markInboundPersisted(fixture.contactId(), SECOND_MESSAGE_AT);
+
+        ContactMemoryModels.Context firstContext = contextFor(fixture, SECOND_MESSAGE_AT);
+        when(gateway.generate(any())).thenReturn(outputFor(firstContext, first, second));
+        worker.runOnce(SECOND_MESSAGE_AT.plusSeconds(1));
+
+        ContactProfileVersionEntity oldProfile = memory.findCurrentProfile(
+                fixture.ownerId(), fixture.contactId());
+        String oldCursor = state(fixture).getLastSuccessCursor();
+        int oldFactCount = jdbc.queryForObject(
+                "select count(*) from contact_memory_facts where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId());
+        int oldLabelCount = jdbc.queryForObject(
+                "select count(*) from contact_ai_labels where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId());
+        int oldAttemptCount = jdbc.queryForObject(
+                "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId());
+
+        MessageEntity third = insertInboundMessage(fixture, THIRD_MESSAGE_AT, "客户补充需要稳定船期。");
+        trigger.markInboundPersisted(fixture.contactId(), THIRD_MESSAGE_AT);
+        doThrow(new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true))
+                .when(gateway).generate(any());
+
+        worker.runOnce(THIRD_MESSAGE_AT.plusSeconds(1));
+
+        ContactMemoryStateEntity failed = state(fixture);
+        assertThat(failed.getStatus()).isEqualTo("RETRY_WAIT");
+        assertThat(failed.getLastFailureCode()).isEqualTo("LLM_TIMEOUT");
+        assertThat(failed.getLastSuccessCursor()).isEqualTo(oldCursor);
+        assertThat(memory.findCurrentProfile(fixture.ownerId(), fixture.contactId()).getId())
+                .isEqualTo(oldProfile.getId());
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_facts where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldFactCount);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_ai_labels where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldLabelCount);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldAttemptCount);
+        assertThat(third.getId()).isNotNull();
+    }
+
+    private ContactMemoryModels.Context contextFor(TestFixture fixture, Instant cutoff) {
+        return contextService.load(fixture.ownerId(), fixture.contactId(), cutoff);
+    }
+
+    private ContactMemoryModels.LlmOutput outputFor(ContactMemoryModels.Context context,
+                                                    MessageEntity first,
+                                                    MessageEntity second) {
+        List<ContactMemoryModels.EvidenceRef> evidence = List.of(
+                new ContactMemoryModels.EvidenceRef(ContactMemoryModels.EvidenceType.MESSAGE, first.getId()),
+                new ContactMemoryModels.EvidenceRef(ContactMemoryModels.EvidenceType.MESSAGE, second.getId()));
+        return new ContactMemoryModels.LlmOutput(
+                List.of(new ContactMemoryModels.ObservationCandidate(
+                        ContactMemoryModels.Category.PRODUCT_INTEREST,
+                        "product_interest",
+                        "海运",
+                        ContactMemoryModels.Polarity.POSITIVE,
+                        new BigDecimal("0.90"),
+                        evidence,
+                        "两条入站消息均明确表达海运兴趣")),
+                new ContactMemoryModels.ProfileCandidate("客户关注海运，重视报价与时效。"),
+                List.of(new ContactMemoryModels.LabelChange(
+                        ContactMemoryModels.LabelOperation.ADD,
+                        ContactMemoryModels.Category.PRODUCT_INTEREST,
+                        "海运",
+                        new BigDecimal("0.90"),
+                        evidence,
+                        "客户持续关注海运方案")),
+                List.of(),
+                "test-contact-memory-model",
+                "{}");
+    }
+
+    private MessageEntity insertInboundMessage(TestFixture fixture, Instant occurredAt, String body) {
+        MessageEntity message = new MessageEntity();
+        message.setId(UUID.randomUUID());
+        message.setConversationId(fixture.conversationId());
+        message.setChannelAccountId(fixture.channelAccountId());
+        message.setProviderMessageId("provider-" + message.getId());
+        message.setDirection("inbound");
+        message.setMessageKind("text");
+        message.setBodyText(body);
+        message.setOccurredAt(occurredAt);
+        message.setReceivedAt(occurredAt.plusSeconds(1));
+        message.setCountsAsUnread(true);
+        message.setCurrentStatus("delivered");
+        message.setCurrentStatusAt(occurredAt.plusSeconds(1));
+        message.setMetadataJsonb("{}");
+        assertThat(messages.insertWithSequence(message)).isEqualTo(1);
+        return message;
+    }
+
+    private ContactMemoryStateEntity state(TestFixture fixture) {
+        return states.findByOwnerAndContact(fixture.ownerId(), fixture.contactId()).orElseThrow();
+    }
+
+    private UUID insertManualTag(TestFixture fixture) {
+        UUID tagId = UUID.randomUUID();
+        jdbc.update("""
+                insert into contact_tags (id, owner_user_id, name, color, status)
+                values (?, ?, '人工重要', 'red', 'active')
+                """, tagId, fixture.ownerId());
+        jdbc.update("""
+                insert into contact_taggings (contact_id, tag_id)
+                values (?, ?)
+                """, fixture.contactId(), tagId);
+        return tagId;
+    }
+
+    private TestFixture fixture() {
+        UUID ownerId = UUID.randomUUID();
+        UUID otherOwnerId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        UUID channelAccountId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-09-13T00:00:00Z");
+
+        insertUser(ownerId, "memory-owner-" + ownerId);
+        insertUser(otherOwnerId, "memory-other-" + otherOwnerId);
+        jdbc.update("""
+                insert into contacts
+                    (id, display_name, status, created_by, owner_user_id, created_at, updated_at)
+                values (?, 'Memory Contact', 'active', ?, ?, ?, ?)
+                """, contactId, ownerId, ownerId, now, now);
+        jdbc.update("""
+                insert into channel_accounts
+                    (id, owner_user_id, channel_type, name, account_identifier,
+                     account_identifier_normalized, auth_status, encrypted_config)
+                values (?, ?, 'email', 'Memory Email', ?, ?, 'active', '{}'::jsonb)
+                """, channelAccountId, ownerId, "memory-" + channelAccountId,
+                "memory-" + channelAccountId);
+        jdbc.update("""
+                insert into contact_identities
+                    (id, contact_id, channel_type, identity_scope, identity_value,
+                     normalized_value, display_name, is_primary, verify_status, source)
+                values (?, ?, 'email', ?, 'customer@example.com', 'customer@example.com',
+                        'Memory Customer', true, 'verified', 'manual')
+                """, identityId, contactId, ownerId.toString());
+        jdbc.update("""
+                insert into conversations
+                    (id, channel_account_id, contact_identity_id, status, next_ingest_sequence)
+                values (?, ?, ?, 'open', 0)
+                """, conversationId, channelAccountId, identityId);
+        return new TestFixture(ownerId, otherOwnerId, contactId, channelAccountId, conversationId);
+    }
+
+    private void insertUser(UUID id, String username) {
+        jdbc.update("""
+                insert into users
+                    (id, username, username_normalized, password_hash, display_name, status)
+                values (?, ?, ?, 'test-hash', ?, 'active')
+                """, id, username, username, username);
+    }
+
+    private static String cursor(MessageEntity message) {
+        return message.getOccurredAt() + "|" + message.getId();
+    }
+
+    private record TestFixture(UUID ownerId,
+                               UUID otherOwnerId,
+                               UUID contactId,
+                               UUID channelAccountId,
+                               UUID conversationId) {
+    }
+
+    private record ContactMemoryResponseSnapshot(List<String> manualTagNames,
+                                                 List<String> aiTagNames,
+                                                 String profile) {
+        static ContactMemoryResponseSnapshot from(
+                com.crmforlogistics.messagecenter.dto.response.ContactMemoryResponse response) {
+            return new ContactMemoryResponseSnapshot(
+                    response.humanTags().stream().map(
+                            com.crmforlogistics.messagecenter.dto.response.ContactTagResponse::name).toList(),
+                    response.aiTags().stream()
+                            .map(com.crmforlogistics.messagecenter.dto.response.ContactMemoryResponse.AiTag::name)
+                            .toList(),
+                    response.profile() == null ? null : response.profile().content());
+        }
+    }
+}
