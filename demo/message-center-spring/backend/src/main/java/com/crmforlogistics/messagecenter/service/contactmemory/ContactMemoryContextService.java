@@ -60,7 +60,7 @@ public class ContactMemoryContextService {
         String inputCursor = state == null ? null : state.getLastSuccessCursor();
         CursorBoundary boundary = CursorBoundary.parse(inputCursor);
         List<MessageEntity> fetchedMessages = memory.listInboundMessagesByCursor(
-                ownerUserId, contactId, boundary.occurredAt(), boundary.messageId(),
+                ownerUserId, contactId, boundary.receivedAt(), boundary.messageId(),
                 cutoff, config.maxInboundMessages());
         List<MessageEntity> inboundMessages = boundMessages(fetchedMessages);
         String outputCursor = cursorAfterFetched(inputCursor, inboundMessages);
@@ -103,8 +103,8 @@ public class ContactMemoryContextService {
         for (MessageEntity source : fetched.stream()
                 .limit(config.maxInboundMessages())
                 .toList()) {
-            if (source == null || source.getOccurredAt() == null
-                    || source.getOccurredAt().isAfter(Instant.MAX)) {
+            if (source == null || source.getReceivedAt() == null
+                    || source.getReceivedAt().isAfter(Instant.MAX)) {
                 continue;
             }
             String body = truncate(source.getBodyText(), config.maxMessageChars());
@@ -132,13 +132,13 @@ public class ContactMemoryContextService {
         }
         MessageEntity last = fetched.stream()
                 .filter(Objects::nonNull)
-                .max(Comparator.comparing(MessageEntity::getOccurredAt)
+                .max(Comparator.comparing(MessageEntity::getReceivedAt)
                         .thenComparing(MessageEntity::getId))
                 .orElse(null);
-        if (last == null || last.getOccurredAt() == null || last.getId() == null) {
+        if (last == null || last.getReceivedAt() == null || last.getId() == null) {
             return inputCursor;
         }
-        return CursorBoundary.encode(last.getOccurredAt(), last.getId());
+        return CursorBoundary.encode(last.getReceivedAt(), last.getId());
     }
 
     private ContactProfileVersionEntity copyProfile(ContactProfileVersionEntity source) {
@@ -296,7 +296,7 @@ public class ContactMemoryContextService {
         return value.length() <= maxChars ? value : value.substring(0, maxChars);
     }
 
-    private record CursorBoundary(Instant occurredAt, UUID messageId) {
+    private record CursorBoundary(Instant receivedAt, UUID messageId) {
         static CursorBoundary parse(String value) {
             if (value == null || value.isBlank()) return new CursorBoundary(null, null);
             int separator = value.indexOf('|');
@@ -312,8 +312,8 @@ public class ContactMemoryContextService {
             }
         }
 
-        static String encode(Instant occurredAt, UUID messageId) {
-            return occurredAt + "|" + messageId;
+        static String encode(Instant receivedAt, UUID messageId) {
+            return receivedAt + "|" + messageId;
         }
     }
 }

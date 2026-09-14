@@ -37,41 +37,19 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
               and c.deleted_at is null
               and ci.deleted_at is null
               and m.direction = 'inbound'
-              and (#{after} is null or m.occurred_at &gt; #{after})
-              and m.occurred_at &lt;= #{cutoff}
-            order by m.occurred_at, m.id
-            limit #{limit}
-            """)
-    List<MessageEntity> listInboundMessages(@Param("ownerUserId") UUID ownerUserId,
-                                            @Param("contactId") UUID contactId,
-                                            @Param("after") Instant after,
-                                            @Param("cutoff") Instant cutoff,
-                                            @Param("limit") int limit);
-
-    @Select("""
-            select m.*
-            from messages m
-            join conversations cv on cv.id = m.conversation_id
-            join contact_identities ci on ci.id = cv.contact_identity_id
-            join contacts c on c.id = ci.contact_id
-            where c.id = #{contactId}::uuid
-              and c.created_by = #{ownerUserId}::uuid
-              and c.deleted_at is null
-              and ci.deleted_at is null
-              and m.direction = 'inbound'
               and (
-                    #{afterOccurredAt} is null
-                    or m.occurred_at > #{afterOccurredAt}
-                    or (m.occurred_at = #{afterOccurredAt} and m.id > #{afterId}::uuid)
+                    #{afterReceivedAt}::timestamptz is null
+                    or m.received_at > #{afterReceivedAt}
+                    or (m.received_at = #{afterReceivedAt} and m.id > #{afterMessageId}::uuid)
                   )
-              and m.occurred_at <= #{cutoff}
-            order by m.occurred_at, m.id
+              and m.received_at <= #{cutoff}
+            order by m.received_at, m.id
             limit #{limit}
             """)
     List<MessageEntity> listInboundMessagesByCursor(@Param("ownerUserId") UUID ownerUserId,
                                                      @Param("contactId") UUID contactId,
-                                                     @Param("afterOccurredAt") Instant afterOccurredAt,
-                                                     @Param("afterId") UUID afterId,
+                                                     @Param("afterReceivedAt") Instant afterReceivedAt,
+                                                     @Param("afterMessageId") UUID afterMessageId,
                                                      @Param("cutoff") Instant cutoff,
                                                      @Param("limit") int limit);
 

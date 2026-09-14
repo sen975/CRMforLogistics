@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,7 +37,7 @@ class ContactMemoryWorkerTest {
                 List.of(), null, List.of(), List.of(), "model", "{}");
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "out", List.of(), List.of(), List.of(), null, "model");
-        when(states.claim(eq(state.getId()), any(), any())).thenReturn(1);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenReturn(output);
         when(consolidation.consolidate(context, output)).thenReturn(result);
@@ -61,9 +62,10 @@ class ContactMemoryWorkerTest {
         ContactMemoryMutationService mutation = mock(ContactMemoryMutationService.class);
         ContactMemoryStateEntity state = state("DIRTY", 0);
         ContactMemoryModels.Context context = contextWithInbound();
-        when(states.claim(eq(state.getId()), any(), any())).thenReturn(1);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
-        when(states.complete(eq(state.getId()), any(), eq("cursor"), eq(NOW))).thenReturn(1);
+        when(states.complete(eq(state.getId()), any(), eq("cursor"), eq((UUID) null), eq(NOW)))
+                .thenReturn(1);
 
         ContactMemoryWorker worker = worker(states, contextService, gateway, consolidation, mutation);
 
@@ -72,7 +74,7 @@ class ContactMemoryWorkerTest {
         verify(gateway, never()).generate(any());
         verify(consolidation, never()).consolidate(any(), any());
         verify(mutation, never()).persist(any(), any(), any(), any());
-        verify(states).complete(eq(state.getId()), any(), eq("cursor"), eq(NOW));
+        verify(states).complete(eq(state.getId()), any(), eq("cursor"), eq((UUID) null), eq(NOW));
     }
 
     @Test
@@ -84,7 +86,7 @@ class ContactMemoryWorkerTest {
         ContactMemoryMutationService mutation = mock(ContactMemoryMutationService.class);
         ContactMemoryStateEntity state = state("RETRY_WAIT", 1);
         ContactMemoryModels.Context context = contextWithInbound("out");
-        when(states.claim(eq(state.getId()), any(), any())).thenReturn(1);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenThrow(
                 new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true));
@@ -106,7 +108,7 @@ class ContactMemoryWorkerTest {
         ContactMemoryMutationService mutation = mock(ContactMemoryMutationService.class);
         ContactMemoryStateEntity state = state("DIRTY", 2);
         ContactMemoryModels.Context context = contextWithInbound("out");
-        when(states.claim(eq(state.getId()), any(), any())).thenReturn(1);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenThrow(
                 new ContactMemoryLlmGateway.GatewayException("INVALID_EVIDENCE", false));
@@ -117,7 +119,7 @@ class ContactMemoryWorkerTest {
 
         verify(states).fail(eq(state.getId()), any(), eq("INVALID_EVIDENCE"), any(),
                 eq(3), eq(NOW), eq(true));
-        verify(states, never()).complete(any(), any(), any(), any());
+        verify(states, never()).complete(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -133,7 +135,7 @@ class ContactMemoryWorkerTest {
                 List.of(), null, List.of(), List.of(), "model", "{}");
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(), List.of(), null, "model");
-        when(states.claim(eq(state.getId()), any(), any())).thenReturn(1);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenReturn(output);
         when(consolidation.consolidate(context, output)).thenReturn(result);
@@ -144,7 +146,7 @@ class ContactMemoryWorkerTest {
 
         worker.process(state, NOW);
 
-        verify(states, never()).complete(any(), any(), any(), any());
+        verify(states, never()).complete(any(), any(), any(), any(), any());
         verify(states).fail(eq(state.getId()), any(), eq("LEASE_LOST"), any(),
                 eq(1), eq(NOW.plusSeconds(60)), eq(false));
     }

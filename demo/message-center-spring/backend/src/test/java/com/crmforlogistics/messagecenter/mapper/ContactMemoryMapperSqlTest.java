@@ -15,18 +15,22 @@ class ContactMemoryMapperSqlTest {
     @Test
     void inboundMessageQueryUsesOwnerDirectionCutoffAndLimit() throws Exception {
         Method method = ContactMemoryMapper.class.getMethod(
-                "listInboundMessages",
+                "listInboundMessagesByCursor",
                 java.util.UUID.class,
                 java.util.UUID.class,
                 java.time.Instant.class,
+                java.util.UUID.class,
                 java.time.Instant.class,
                 int.class);
         String sql = normalizedSql(method.getAnnotation(Select.class).value());
 
         assertThat(sql).contains("c.created_by = #{ownerUserId}::uuid")
                 .contains("m.direction = 'inbound'")
-                .contains("m.occurred_at > #{after}")
-                .contains("m.occurred_at <= #{cutoff}")
+                .contains("m.received_at > #{afterReceivedAt}")
+                .contains("m.received_at = #{afterReceivedAt}")
+                .contains("m.id > #{afterMessageId}::uuid")
+                .contains("m.received_at <= #{cutoff}")
+                .doesNotContain("m.occurred_at <= #{cutoff}")
                 .contains("limit #{limit}");
     }
 
@@ -48,18 +52,29 @@ class ContactMemoryMapperSqlTest {
         Method claim = ContactMemoryStateMapper.class.getMethod(
                 "claim", java.util.UUID.class, String.class, java.time.Instant.class);
         Method complete = ContactMemoryStateMapper.class.getMethod(
-                "complete", java.util.UUID.class, String.class, String.class, java.time.Instant.class);
+                "complete", java.util.UUID.class, java.util.UUID.class, String.class,
+                java.util.UUID.class, java.time.Instant.class);
+        Method fail = ContactMemoryStateMapper.class.getMethod(
+                "fail", java.util.UUID.class, java.util.UUID.class, String.class, String.class,
+                int.class, java.time.Instant.class, boolean.class);
 
-        String claimSql = normalizedSql(claim.getAnnotation(Update.class).value());
+        String claimSql = normalizedSql(claim.getAnnotation(Select.class).value());
         String completeSql = normalizedSql(complete.getAnnotation(Update.class).value());
+        String failSql = normalizedSql(fail.getAnnotation(Update.class).value());
 
         assertThat(claimSql).contains("lease_owner = #{leaseOwner}")
+                .contains("lease_token = gen_random_uuid()")
                 .contains("lease_expires_at = #{leaseUntil}")
                 .contains("status in ('DIRTY', 'RETRY_WAIT')")
-                .contains("lease_expires_at < now()");
-        assertThat(completeSql).contains("lease_owner = #{leaseOwner}")
+                .contains("returning lease_token");
+        assertThat(completeSql).contains("lease_token = #{leaseToken}::uuid")
                 .contains("last_success_cursor = #{cursor}")
-                .contains("status = 'PROCESSING'");
+                .contains("current_profile_version_id = #{profileId}::uuid")
+                .contains("status = 'PROCESSING'")
+                .contains("lease_expires_at > now()");
+        assertThat(failSql).contains("lease_token = #{leaseToken}::uuid")
+                .contains("status = 'PROCESSING'")
+                .contains("lease_expires_at > now()");
     }
 
     @Test

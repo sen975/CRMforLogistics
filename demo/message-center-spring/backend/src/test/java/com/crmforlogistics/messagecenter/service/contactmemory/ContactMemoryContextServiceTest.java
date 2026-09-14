@@ -33,7 +33,7 @@ class ContactMemoryContextServiceTest {
         when(contacts.findCreatedBy(contactId)).thenReturn(Optional.of(ownerId));
         when(states.findByOwnerAndContact(ownerId, contactId)).thenReturn(Optional.empty());
         MessageEntity before = message(UUID.randomUUID(), Instant.parse("2026-09-11T02:00:00Z"),
-                "before");
+                Instant.parse("2026-09-11T02:30:00Z"), "before");
         when(memory.listInboundMessagesByCursor(eq(ownerId), eq(contactId),
                 any(), any(), eq(cutoff), eq(50))).thenReturn(List.of(before));
         when(memory.listActiveObservations(ownerId, contactId, 100)).thenReturn(List.of());
@@ -51,6 +51,45 @@ class ContactMemoryContextServiceTest {
         assertThat(context.outputCursor()).contains("|" + before.getId());
         verify(memory).listInboundMessagesByCursor(eq(ownerId), eq(contactId),
                 eq(null), eq(null), eq(cutoff), eq(50));
+    }
+
+    @Test
+    void lateInsertedMessageUsesReceivedAtCursorEvenWhenOccurredAtIsOlder() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
+        UUID contactId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        UUID cursorMessageId = UUID.randomUUID();
+        Instant receivedCursor = Instant.parse("2026-09-11T02:00:00Z");
+        Instant cutoff = Instant.parse("2026-09-11T03:00:00Z");
+        when(contacts.findCreatedBy(contactId)).thenReturn(Optional.of(ownerId));
+        ContactMemoryStateEntity state = new ContactMemoryStateEntity();
+        state.setLastSuccessCursor(receivedCursor + "|" + cursorMessageId);
+        when(states.findByOwnerAndContact(ownerId, contactId)).thenReturn(Optional.of(state));
+        MessageEntity lateInserted = message(UUID.randomUUID(),
+                Instant.parse("2026-09-10T23:00:00Z"),
+                Instant.parse("2026-09-11T02:30:00Z"), "late");
+        when(memory.listInboundMessagesByCursor(eq(ownerId), eq(contactId),
+                eq(receivedCursor), eq(cursorMessageId), eq(cutoff), eq(50)))
+                .thenReturn(List.of(lateInserted));
+        when(memory.listActiveObservations(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.findCurrentProfile(ownerId, contactId)).thenReturn(null);
+        when(memory.listActiveFacts(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listActiveLabels(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listStableTopics(ownerId, contactId, 20)).thenReturn(List.of());
+        when(memory.listCallTranscripts(ownerId, contactId, 10)).thenReturn(List.of());
+
+        ContactMemoryModels.Context context = new ContactMemoryContextService(
+                contacts, states, memory).load(ownerId, contactId, cutoff);
+
+        assertThat(context.inboundMessages()).hasSize(1);
+        assertThat(context.inboundMessages().get(0).getId()).isEqualTo(lateInserted.getId());
+        assertThat(context.inboundMessages().get(0).getBodyText()).isEqualTo("late");
+        assertThat(context.outputCursor()).isEqualTo(
+                lateInserted.getReceivedAt() + "|" + lateInserted.getId());
+        verify(memory).listInboundMessagesByCursor(eq(ownerId), eq(contactId),
+                eq(receivedCursor), eq(cursorMessageId), eq(cutoff), eq(50));
     }
 
     @Test
@@ -84,6 +123,7 @@ class ContactMemoryContextServiceTest {
                 any(), any(), eq(cutoff), eq(50))).thenReturn(
                 java.util.stream.IntStream.range(0, 60)
                         .mapToObj(index -> message(UUID.randomUUID(),
+                                cutoff.minusSeconds(index + 1),
                                 cutoff.minusSeconds(index + 1), "x".repeat(5000)))
                         .toList());
         when(memory.listActiveObservations(ownerId, contactId, 100)).thenReturn(List.of());
@@ -102,11 +142,12 @@ class ContactMemoryContextServiceTest {
                 .mapToInt(item -> item.getBodyText().length()).sum()).isLessThanOrEqualTo(50_000);
     }
 
-    private static MessageEntity message(UUID id, Instant occurredAt, String body) {
+    private static MessageEntity message(UUID id, Instant occurredAt, Instant receivedAt, String body) {
         MessageEntity message = new MessageEntity();
         message.setId(id);
         message.setDirection("inbound");
         message.setOccurredAt(occurredAt);
+        message.setReceivedAt(receivedAt);
         message.setBodyText(body);
         return message;
     }

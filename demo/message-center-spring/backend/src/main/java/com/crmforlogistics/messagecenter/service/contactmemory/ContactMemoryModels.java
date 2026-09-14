@@ -101,7 +101,7 @@ public final class ContactMemoryModels {
     }
 
     public record Lease(UUID stateId, UUID contactId, UUID ownerUserId,
-                        String leaseOwner, Instant leaseUntil) {
+                        String leaseOwner, UUID leaseToken, Instant leaseUntil) {
     }
 
     public record EvidenceRef(EvidenceType type, UUID id) {

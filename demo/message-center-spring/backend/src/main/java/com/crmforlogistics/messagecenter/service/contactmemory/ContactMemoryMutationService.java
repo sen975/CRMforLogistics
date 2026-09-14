@@ -43,7 +43,8 @@ public class ContactMemoryMutationService {
         UUID profileId = persistProfile(ownerUserId, contactId, result);
         persistAttempt(ownerUserId, contactId, result, profileId != null);
 
-        if (states.complete(lease.stateId(), lease.leaseOwner(), result.outputCursor(), Instant.now()) != 1) {
+        if (states.complete(lease.stateId(), lease.leaseToken(), result.outputCursor(), profileId,
+                Instant.now()) != 1) {
             throw new ContactMemoryModels.ValidationException("LEASE_LOST");
         }
         return new ContactMemoryModels.MutationResult(
@@ -255,6 +256,7 @@ public class ContactMemoryMutationService {
         if (ownerUserId == null || contactId == null || lease == null || result == null
                 || !ownerUserId.equals(lease.ownerUserId()) || !contactId.equals(lease.contactId())
                 || lease.stateId() == null || lease.leaseOwner() == null || lease.leaseOwner().isBlank()
+                || lease.leaseToken() == null
                 || lease.leaseUntil() == null || !lease.leaseUntil().isAfter(Instant.now())
                 || result.generationBatchId() == null) {
             throw new ContactMemoryModels.ValidationException("LEASE_LOST");

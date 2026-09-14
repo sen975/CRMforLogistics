@@ -22,6 +22,7 @@ public class ContactMemoryStateEntity {
     private String lastFailureCode;
     private String lastFailureMessage;
     private String leaseOwner;
+    private UUID leaseToken;
     private Instant leaseAcquiredAt;
     private Instant leaseExpiresAt;
     private Instant createdAt;
@@ -51,6 +52,8 @@ public class ContactMemoryStateEntity {
     public void setLastFailureMessage(String value) { lastFailureMessage = value; }
     public String getLeaseOwner() { return leaseOwner; }
     public void setLeaseOwner(String value) { leaseOwner = value; }
+    public UUID getLeaseToken() { return leaseToken; }
+    public void setLeaseToken(UUID value) { leaseToken = value; }
     public Instant getLeaseAcquiredAt() { return leaseAcquiredAt; }
     public void setLeaseAcquiredAt(Instant value) { leaseAcquiredAt = value; }
     public Instant getLeaseExpiresAt() { return leaseExpiresAt; }

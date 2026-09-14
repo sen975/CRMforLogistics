@@ -70,23 +70,28 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
                                                 @Param("after") Instant after,
                                                 @Param("limit") int limit);
 
-    @Update("""
-            update contact_memory_states
-            set status = 'PROCESSING',
-                lease_owner = #{leaseOwner},
-                lease_acquired_at = now(),
-                lease_expires_at = #{leaseUntil},
-                updated_at = now()
-            where id = #{id}::uuid
-              and (
-                  (status in ('DIRTY', 'RETRY_WAIT')
-                   and (next_retry_at is null or next_retry_at &lt;= now()))
-                  or (status = 'PROCESSING' and lease_expires_at &lt; now())
-              )
+    @Select("""
+            with claimed as (
+                update contact_memory_states
+                set status = 'PROCESSING',
+                    lease_owner = #{leaseOwner},
+                    lease_token = gen_random_uuid(),
+                    lease_acquired_at = now(),
+                    lease_expires_at = #{leaseUntil},
+                    updated_at = now()
+                where id = #{id}::uuid
+                  and (
+                      (status in ('DIRTY', 'RETRY_WAIT')
+                       and (next_retry_at is null or next_retry_at &lt;= now()))
+                      or (status = 'PROCESSING' and lease_expires_at &lt; now())
+                  )
+                returning lease_token
+            )
+            select lease_token from claimed
             """)
-    int claim(@Param("id") UUID id,
-              @Param("leaseOwner") String leaseOwner,
-              @Param("leaseUntil") Instant leaseUntil);
+    Optional<UUID> claim(@Param("id") UUID id,
+                         @Param("leaseOwner") String leaseOwner,
+                         @Param("leaseUntil") Instant leaseUntil);
 
     @Update("""
             update contact_memory_states
@@ -101,17 +106,21 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
                 next_retry_at = null,
                 last_failure_code = null,
                 last_failure_message = null,
+                current_profile_version_id = coalesce(#{profileId}::uuid, current_profile_version_id),
                 lease_owner = null,
+                lease_token = null,
                 lease_acquired_at = null,
                 lease_expires_at = null,
                 updated_at = now()
             where id = #{id}::uuid
-              and lease_owner = #{leaseOwner}
+              and lease_token = #{leaseToken}::uuid
               and status = 'PROCESSING'
+              and lease_expires_at &gt; now()
             """)
     int complete(@Param("id") UUID id,
-                 @Param("leaseOwner") String leaseOwner,
+                 @Param("leaseToken") UUID leaseToken,
                  @Param("cursor") String cursor,
+                 @Param("profileId") UUID profileId,
                  @Param("processedAt") Instant processedAt);
 
     @Update("""
@@ -122,15 +131,17 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
                 last_failure_code = #{code},
                 last_failure_message = #{message},
                 lease_owner = null,
+                lease_token = null,
                 lease_acquired_at = null,
                 lease_expires_at = null,
                 updated_at = now()
             where id = #{id}::uuid
-              and lease_owner = #{leaseOwner}
+              and lease_token = #{leaseToken}::uuid
               and status = 'PROCESSING'
+              and lease_expires_at &gt; now()
             """)
     int fail(@Param("id") UUID id,
-             @Param("leaseOwner") String leaseOwner,
+             @Param("leaseToken") UUID leaseToken,
              @Param("code") String code,
              @Param("message") String message,
              @Param("retryCount") int retryCount,

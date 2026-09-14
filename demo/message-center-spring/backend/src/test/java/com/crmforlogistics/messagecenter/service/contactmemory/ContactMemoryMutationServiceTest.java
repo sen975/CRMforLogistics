@@ -28,6 +28,7 @@ class ContactMemoryMutationServiceTest {
     private static final UUID CONTACT_ID = UUID.randomUUID();
     private static final UUID OWNER_ID = UUID.randomUUID();
     private static final UUID STATE_ID = UUID.randomUUID();
+    private static final UUID LEASE_TOKEN = UUID.randomUUID();
     private static final String LEASE_OWNER = "memory-worker-1";
 
     @Test
@@ -52,7 +53,7 @@ class ContactMemoryMutationServiceTest {
                 .isInstanceOf(ContactMemoryModels.ValidationException.class)
                 .hasMessageContaining("INVALID_EVIDENCE");
         verify(memory, never()).insertFact(any(), eq(CONTACT_ID), eq(OWNER_ID));
-        verify(states, never()).complete(any(), any(), any(), any());
+        verify(states, never()).complete(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -73,7 +74,7 @@ class ContactMemoryMutationServiceTest {
         when(memory.insertAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
         when(memory.insertAiLabelEvidence(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
         when(memory.updateAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
-        when(states.complete(any(), any(), any(), any())).thenReturn(1);
+        when(states.complete(any(), any(), any(), any(), any())).thenReturn(1);
 
         UUID evidenceId = UUID.randomUUID();
         ContactMemoryModels.FactCandidate fact = new ContactMemoryModels.FactCandidate(
@@ -103,7 +104,7 @@ class ContactMemoryMutationServiceTest {
         assertThatCode(() -> new ContactMemoryMutationService(memory, states)
                 .persist(OWNER_ID, CONTACT_ID, lease(), result))
                 .doesNotThrowAnyException();
-        verify(states).complete(eq(STATE_ID), eq(LEASE_OWNER), eq("cursor"), any());
+        verify(states).complete(eq(STATE_ID), eq(LEASE_TOKEN), eq("cursor"), eq((UUID) null), any());
     }
 
     @Test
@@ -117,7 +118,7 @@ class ContactMemoryMutationServiceTest {
         when(memory.findOppositeActiveFact(any(), eq(CONTACT_ID), eq("PRODUCT_INTEREST"),
                 eq("product_interest"), eq("sea freight"), eq("POSITIVE")))
                 .thenReturn(oppositeFact());
-        when(states.complete(any(), any(), any(), any())).thenReturn(1);
+        when(states.complete(any(), any(), any(), any(), any())).thenReturn(1);
 
         ContactMemoryModels.FactCandidate fact = fact(
                 ContactMemoryModels.Polarity.POSITIVE,
@@ -150,7 +151,7 @@ class ContactMemoryMutationServiceTest {
                 .thenReturn(supportingFact);
         when(memory.insertAiLabelEvidence(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
         when(memory.updateAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
-        when(states.complete(any(), any(), any(), any())).thenReturn(1);
+        when(states.complete(any(), any(), any(), any(), any())).thenReturn(1);
 
         ContactMemoryModels.LabelCandidate label = new ContactMemoryModels.LabelCandidate(
                 ContactMemoryModels.LabelOperation.RESTORE,
@@ -205,7 +206,7 @@ class ContactMemoryMutationServiceTest {
 
     private static ContactMemoryModels.Lease lease() {
         return new ContactMemoryModels.Lease(
-                STATE_ID, CONTACT_ID, OWNER_ID, LEASE_OWNER,
+                STATE_ID, CONTACT_ID, OWNER_ID, LEASE_OWNER, LEASE_TOKEN,
                 Instant.now().plusSeconds(60));
     }
 }

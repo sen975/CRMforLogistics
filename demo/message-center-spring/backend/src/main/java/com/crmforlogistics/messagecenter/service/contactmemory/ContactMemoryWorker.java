@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -72,12 +73,14 @@ public class ContactMemoryWorker {
         }
         String leaseOwner = workerId + "/" + state.getId();
         Instant leaseUntil = now.plusSeconds(config.leaseSeconds());
-        if (states.claim(state.getId(), leaseOwner, leaseUntil) != 1) {
+        Optional<UUID> leaseToken = states.claim(state.getId(), leaseOwner, leaseUntil);
+        if (leaseToken.isEmpty()) {
             return;
         }
 
         ContactMemoryModels.Lease lease = new ContactMemoryModels.Lease(
-                state.getId(), state.getContactId(), state.getOwnerUserId(), leaseOwner, leaseUntil);
+                state.getId(), state.getContactId(), state.getOwnerUserId(), leaseOwner,
+                leaseToken.get(), leaseUntil);
         try {
             ContactMemoryModels.Context context = contextService.load(
                     state.getOwnerUserId(), state.getContactId(), now);
@@ -90,14 +93,14 @@ public class ContactMemoryWorker {
             ContactMemoryModels.ConsolidationResult result = consolidation.consolidate(context, output);
             mutation.persist(state.getOwnerUserId(), state.getContactId(), lease, result);
         } catch (ContactMemoryLlmGateway.GatewayException exception) {
-            handleFailure(state, leaseOwner, now, exception.code(), exception.diagnostic(),
+            handleFailure(state, lease, now, exception.code(), exception.diagnostic(),
                     exception.retryable());
         } catch (ContactMemoryModels.ValidationException exception) {
             String code = exception.getMessage() == null || exception.getMessage().isBlank()
                     ? "PERSISTENCE_FAILED" : exception.getMessage();
-            handleFailure(state, leaseOwner, now, code, code, !isTerminalValidation(code));
+            handleFailure(state, lease, now, code, code, !isTerminalValidation(code));
         } catch (RuntimeException exception) {
-            handleFailure(state, leaseOwner, now, "PERSISTENCE_FAILED",
+            handleFailure(state, lease, now, "PERSISTENCE_FAILED",
                     exception.getMessage() == null ? exception.getClass().getSimpleName()
                             : exception.getMessage(), true);
         }
@@ -107,13 +110,13 @@ public class ContactMemoryWorker {
                                     ContactMemoryModels.Lease lease,
                                     String cursor,
                                     Instant now) {
-        if (states.complete(state.getId(), lease.leaseOwner(), cursor, now) != 1) {
+        if (states.complete(state.getId(), lease.leaseToken(), cursor, null, now) != 1) {
             throw new ContactMemoryModels.ValidationException("LEASE_LOST");
         }
     }
 
     private void handleFailure(ContactMemoryStateEntity state,
-                               String leaseOwner,
+                               ContactMemoryModels.Lease lease,
                                Instant now,
                                String code,
                                String message,
@@ -123,7 +126,7 @@ public class ContactMemoryWorker {
         boolean terminal = !retryable || attempt >= config.maxAttempts();
         Instant retryAt = terminal ? now : now.plusSeconds(backoffSeconds(attempt));
         try {
-            states.fail(state.getId(), leaseOwner, bounded(code, 100), bounded(message, 1000),
+            states.fail(state.getId(), lease.leaseToken(), bounded(code, 100), bounded(message, 1000),
                     attempt, retryAt, terminal);
         } catch (RuntimeException failure) {
             log.warn("contact memory failure state update failed stateId={}", state.getId(), failure);
