@@ -21,7 +21,9 @@ export default function SearchModeSwitch({ value, onChange }: Props) {
         items,
         selectable: true,
         selectedKeys: [value],
-        onClick: ({ key }) => onChange(key as SearchMode),
+        onClick: ({ key }) => {
+          if (key !== value) onChange(key as SearchMode);
+        },
       }}
     >
       <Button aria-label="搜索模式" size="middle">

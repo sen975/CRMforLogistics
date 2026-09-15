@@ -98,8 +98,45 @@ class ContactMapperTagSearchIntegrationTest {
         assertThat(contactMode).containsExactly(namedLikeTag);
     }
 
+    @Test
+    void addressBookTagModeIgnoresDisabledAndForeignTags() {
+        UUID target = insertContact("李四", userId);
+        attachTag(target, insertTag(userId, "停用标签", "disabled"));
+
+        assertThat(contactMapper.listAddressBookByOwner(
+                userId, "email", "标签", true, 20, 0)).isEmpty();
+
+        UUID otherUser = insertUser("other");
+        attachTag(target, insertTag(otherUser, "外部标签", "active"));
+
+        assertThat(contactMapper.listAddressBookByOwner(
+                userId, "email", "标签", true, 20, 0)).isEmpty();
+    }
+
+    @Test
+    void contactListTagModeIgnoresDisabledAndForeignTags() {
+        UUID target = insertContact("李四", userId);
+        attachTag(target, insertTag(userId, "停用标签", "disabled"));
+
+        assertThat(idsOf(contactMapper.listForUser(new Page<>(1, 20), userId,
+                "标签", true, null, null, false, null, null))).isEmpty();
+
+        UUID otherUser = insertUser("other");
+        attachTag(target, insertTag(otherUser, "外部标签", "active"));
+
+        assertThat(idsOf(contactMapper.listForUser(new Page<>(1, 20), userId,
+                "标签", true, null, null, false, null, null))).isEmpty();
+    }
+
     private static List<UUID> idsOf(com.baomidou.mybatisplus.core.metadata.IPage<ContactEntity> page) {
         return page.getRecords().stream().map(ContactEntity::getId).toList();
+    }
+
+    private UUID insertUser(String prefix) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into users (id, username, username_normalized, password_hash, display_name) "
+                + "values (?, ?, ?, 'hash', ?)", id, prefix + id, prefix + id, prefix);
+        return id;
     }
 
     private UUID insertContact(String name, UUID createdBy) {

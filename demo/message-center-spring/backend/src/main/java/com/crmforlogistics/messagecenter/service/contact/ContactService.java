@@ -103,7 +103,9 @@ public class ContactService {
      * from its identities, the last message timestamp, and an unread count.
      *
      * @param userId               the current user's UUID
-     * @param search               optional search string (ilike on display_name + remark)
+     * @param search               optional search string; contact mode matches
+     *                             display_name + remark (ilike), tag mode matches
+     *                             the caller's active tag names (ilike)
      * @param beforeLastMessageAt  cursor: sort_at timestamp
      * @param beforeId             cursor: contact id
      * @param page                 page number (1-based)

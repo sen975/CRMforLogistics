@@ -16,4 +16,25 @@ describe('SearchModeSwitch', () => {
 
     expect(onChange).toHaveBeenCalledWith('tag');
   });
+
+  it('ignores a click on the already-active mode', async () => {
+    const onChange = vi.fn();
+    render(<SearchModeSwitch value="contact" onChange={onChange} />);
+
+    await userEvent.click(screen.getByRole('button', { name: '搜索模式' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: '联系人' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('reports a click on the other mode', async () => {
+    const onChange = vi.fn();
+    render(<SearchModeSwitch value="contact" onChange={onChange} />);
+
+    await userEvent.click(screen.getByRole('button', { name: '搜索模式' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: '标签' }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('tag');
+  });
 });
