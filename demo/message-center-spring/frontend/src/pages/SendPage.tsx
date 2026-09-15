@@ -3,13 +3,16 @@ import { Card, Select, Form, Typography, Empty, Spin } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { useContacts } from '../hooks/useContacts';
 import SendForm from '../components/SendForm';
+import SearchModeSwitch from '../components/SearchModeSwitch';
 import { fetchChannelCapabilities } from '../api/endpoints';
+import type { SearchMode } from '../api/types';
 import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Title } = Typography;
 
 export default function SendPage() {
   const [search, setSearch] = useState('');
+  const [searchMode, setSearchMode] = useState<SearchMode>('contact');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedChannelAccountId, setSelectedChannelAccountId] = useState<string>();
   const {
@@ -53,9 +56,14 @@ export default function SendPage() {
     1,
     20,
     { channelType: 'chatapp', channelAccountId: currentChannelAccountId },
-    'contact',
+    searchMode,
     { enabled: Boolean(currentChannelAccountId) },
   );
+
+  const changeSearchMode = (mode: SearchMode) => {
+    setSearchMode(mode);
+    setSearch('');
+  };
 
   const contacts = data?.records ?? [];
   const selectedContact = contacts.find((c) => c.id === selectedId) ?? null;
@@ -93,20 +101,28 @@ export default function SendPage() {
           </Form.Item>
         )}
         <Form.Item label="收件人" style={{ marginBottom: 0 }}>
-          <Select
-            showSearch
-            placeholder="搜索并选择联系人"
-            filterOption={false}
-            onSearch={setSearch}
-            onChange={(id) => setSelectedId(id)}
-            value={selectedId}
-            style={{ width: '100%' }}
-            options={contacts.map((c) => ({
-              label: `${contactDisplayName(c)} (${c.channelTypes?.join(', ')})`,
-              value: c.id,
-            }))}
-            notFoundContent={contactsPending ? <Spin size="small" /> : <Empty description="暂无 CAMS 消息历史联系人" />}
-          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <SearchModeSwitch value={searchMode} onChange={changeSearchMode} />
+            <Select
+              showSearch
+              placeholder={searchMode === 'tag' ? '搜索标签名' : '搜索并选择联系人'}
+              filterOption={false}
+              onSearch={setSearch}
+              onChange={(id) => setSelectedId(id)}
+              value={selectedId}
+              style={{ flex: 1 }}
+              options={contacts.map((c) => ({
+                label: searchMode === 'tag' && c.matchedTags?.length
+                  ? `${contactDisplayName(c)} (${c.matchedTags.join('、')})`
+                  : `${contactDisplayName(c)} (${c.channelTypes?.join(', ')})`,
+                value: c.id,
+              }))}
+              notFoundContent={contactsPending ? <Spin size="small" /> : <Empty
+                description={searchMode === 'tag'
+                  ? `没有联系人被打上含「${search}」的标签`
+                  : '暂无 CAMS 消息历史联系人'} />}
+            />
+          </div>
         </Form.Item>
       </Card>
       {contactsError ? (

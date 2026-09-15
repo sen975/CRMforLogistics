@@ -221,4 +221,29 @@ describe('SendPage ChatApp contacts', () => {
     })));
     expect(screen.queryByText('发送表单')).not.toBeInTheDocument();
   });
+
+  it('switches the recipient search to tag mode and clears the keyword', async () => {
+    const user = userEvent.setup();
+    api.fetchChannelCapabilities.mockResolvedValue([{
+      channelType: 'chatapp', channelAccountId: 'account-a', displayName: 'CAMS 一号账号', authStatus: 'active',
+    }]);
+    api.fetchContacts.mockResolvedValue(page([{
+      id: 'contact-1', displayName: '张三', remark: '', channelTypes: ['chatapp'],
+      lastMessageAt: null, lastText: '', messageCount: 0, unreadCount: 0, identities: [],
+    }]));
+
+    renderPage();
+
+    // antd 把 Select 的 placeholder 渲染成 span，而不是 input 的 placeholder 属性
+    expect(await screen.findByText('搜索并选择联系人')).toBeInTheDocument();
+    await user.type(screen.getByRole('combobox'), '张三');
+
+    await user.click(screen.getByRole('button', { name: '搜索模式' }));
+    await user.click(await screen.findByRole('menuitem', { name: '标签' }));
+
+    expect(await screen.findByText('搜索标签名')).toBeInTheDocument();
+    await waitFor(() => expect(api.fetchContacts).toHaveBeenLastCalledWith(expect.objectContaining({
+      search: undefined, searchMode: 'tag', channelAccountId: 'account-a',
+    })));
+  });
 });
