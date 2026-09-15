@@ -105,4 +105,40 @@ class ConversationMapperSourceConversationSqlTest {
                 .contains("'外部群聊'")
                 .doesNotContain("coalesce(nullif(sc.display_name, ''), '企业微信群')");
     }
+
+    @Test
+    void tagSearchModeExcludesGroupsAndDropsTheNameBranch() throws Exception {
+        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        params.put("userId", UUID.randomUUID());
+        params.put("search", "客户");
+        params.put("tagSearch", true);
+        params.put("cursorPinned", null);
+        params.put("cursorRank", null);
+        params.put("cursorAt", null);
+        params.put("cursorKey", null);
+        params.put("limit", 20);
+
+        String tagSql = renderUnifiedList(params);
+        assertThat(tagSql).contains("and 1 = 0");
+        assertThat(tagSql).contains("from contact_taggings ct");
+        assertThat(tagSql).contains("t.owner_user_id = ?::uuid");
+        assertThat(tagSql).doesNotContain("coalesce(c.remark, '') ilike");
+
+        params.put("tagSearch", false);
+        String contactSql = renderUnifiedList(params);
+        assertThat(contactSql).doesNotContain("and 1 = 0");
+        assertThat(contactSql).contains("coalesce(c.remark, '') ilike");
+        assertThat(contactSql).doesNotContain("from contact_taggings ct");
+    }
+
+    private static String renderUnifiedList(java.util.Map<String, Object> params) throws Exception {
+        String script = String.join(" ", java.util.Arrays.stream(ConversationMapper.class.getMethods())
+                .filter(method -> method.getName().equals("listUnified"))
+                .findFirst().orElseThrow()
+                .getAnnotation(Select.class)
+                .value()).strip();
+        var sqlSource = new XMLLanguageDriver()
+                .createSqlSource(new Configuration(), script, java.util.Map.class);
+        return sqlSource.getBoundSql(params).getSql().toLowerCase().replaceAll("\\s+", " ");
+    }
 }
