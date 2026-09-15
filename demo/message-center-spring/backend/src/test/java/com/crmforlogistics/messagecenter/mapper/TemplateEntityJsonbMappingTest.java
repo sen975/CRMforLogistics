@@ -29,7 +29,7 @@ class TemplateEntityJsonbMappingTest {
         TableName table = TemplateEntity.class.getAnnotation(TableName.class);
         assertThat(table.autoResultMap()).isTrue();
 
-        for (String fieldName : new String[]{"componentsJsonb", "examplesJsonb", "metadataJsonb"}) {
+        for (String fieldName : new String[]{"componentsJsonb", "examplesJsonb"}) {
             TableField field = TemplateEntity.class.getDeclaredField(fieldName)
                     .getAnnotation(TableField.class);
             assertThat(field).as(fieldName).isNotNull();

@@ -527,7 +527,6 @@ public class WhatsAppTemplateApplicationService {
         entity.setProviderAuditStatus(snapshot.rawAuditStatus());
         entity.setRejectionReason(snapshot.rejectionReason());
         entity.setProviderUpdatedAt(snapshot.providerUpdatedAt());
-        entity.setMetadataJsonb("{}");
         entity.setLastSyncedAt(now());
         entity.setUpdatedAt(now());
         entity.setDeletedAt(snapshot.deletedAt());

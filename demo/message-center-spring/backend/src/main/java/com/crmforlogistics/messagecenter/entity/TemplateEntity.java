@@ -40,9 +40,6 @@ public class TemplateEntity {
     private String rejectionReason;
     private String qualityScore;
     private Instant providerUpdatedAt;
-    @TableField(value = "metadata_jsonb", jdbcType = JdbcType.OTHER,
-            typeHandler = JsonbStringTypeHandler.class)
-    private String metadataJsonb;
     private Instant lastSyncedAt;
     private Instant createdAt;
     private Instant updatedAt;
@@ -215,14 +212,6 @@ public class TemplateEntity {
 
     public void setProviderUpdatedAt(Instant providerUpdatedAt) {
         this.providerUpdatedAt = providerUpdatedAt;
-    }
-
-    public String getMetadataJsonb() {
-        return metadataJsonb;
-    }
-
-    public void setMetadataJsonb(String metadataJsonb) {
-        this.metadataJsonb = metadataJsonb;
     }
 
     public Instant getLastSyncedAt() {

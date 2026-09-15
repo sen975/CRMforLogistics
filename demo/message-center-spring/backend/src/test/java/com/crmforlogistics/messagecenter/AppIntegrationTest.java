@@ -106,7 +106,7 @@ public class AppIntegrationTest {
     }
 
     @Test
-    void templateUpsertPersistsAuditMetadataAsJsonb() {
+    void templateUpsertPersistsProviderAuditStatus() {
         UUID channelAccountId = UUID.randomUUID();
         UUID providerScopeId = UUID.randomUUID();
         jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes (id, provider, external_scope_id) VALUES (?, 'aliyun', ?)",
@@ -118,24 +118,23 @@ public class AppIntegrationTest {
                 VALUES (?, 'chatapp', 'Test WhatsApp', ?, ?, 'active', '{}'::jsonb, ?)
                 """, channelAccountId, channelAccountId.toString(), channelAccountId.toString(), providerScopeId);
 
-        TemplateEntity shared = sharedTemplate(channelAccountId, providerScopeId, "Hello $(name)", "APPROVED",
-                "{\"auditStatus\":\"pass\"}");
+        TemplateEntity shared = sharedTemplate(channelAccountId, providerScopeId, "Hello $(name)", "APPROVED", "pass");
         templateMapper.upsertShared(shared);
         shared.setBody("");
         shared.setStatus("REJECTED");
-        shared.setMetadataJsonb("{\"auditStatus\":\"fail\",\"reason\":\"Variables do not match\"}");
+        shared.setProviderAuditStatus("fail");
+        shared.setRejectionReason("Variables do not match");
         templateMapper.upsertShared(shared);
 
         Map<String, Object> stored = jdbcTemplate.queryForMap("""
-                SELECT body, status, metadata_jsonb::text AS metadata
+                SELECT body, status, provider_audit_status, rejection_reason
                 FROM message_templates
                 WHERE provider_scope_id = ? AND provider_template_id = ? AND language_code = ?
                 """, providerScopeId, "welcome_001", "en_US");
         assertThat(stored.get("body")).isEqualTo("Hello $(name)");
         assertThat(stored.get("status")).isEqualTo("REJECTED");
-        assertThat((String) stored.get("metadata"))
-                .contains("\"auditStatus\": \"fail\"")
-                .contains("\"reason\": \"Variables do not match\"");
+        assertThat(stored.get("provider_audit_status")).isEqualTo("fail");
+        assertThat(stored.get("rejection_reason")).isEqualTo("Variables do not match");
     }
 
     @Test
@@ -197,9 +196,9 @@ public class AppIntegrationTest {
         jdbcTemplate.update("""
                 INSERT INTO message_templates
                     (id, channel_account_id, provider_scope_id, provider_template_id, language_code, name, body, status,
-                     metadata_jsonb, components_jsonb, allow_send, created_at, updated_at)
+                     components_jsonb, allow_send, created_at, updated_at)
                 VALUES (gen_random_uuid(), ?, ?, 'welcome_001', 'en_US', 'welcome', 'Hello $(name)',
-                        'APPROVED', '{}'::jsonb, '[{"type":"BODY"}]'::jsonb, false, now(), now())
+                        'APPROVED', '[{"type":"BODY"}]'::jsonb, false, now(), now())
                 """, channelAccountId, providerScopeId);
 
         assertThat(templateMapper.findSharedForSend(providerScopeId, "welcome_001", "en_US")).isEmpty();
@@ -207,7 +206,7 @@ public class AppIntegrationTest {
     }
 
     private static TemplateEntity sharedTemplate(UUID accountId, UUID scopeId, String body, String status,
-                                                  String metadata) {
+                                                  String providerAuditStatus) {
         TemplateEntity template = new TemplateEntity();
         template.setId(UUID.randomUUID());
         template.setChannelAccountId(accountId);
@@ -219,7 +218,8 @@ public class AppIntegrationTest {
         template.setStatus(status);
         template.setComponentsJsonb("[{\"type\":\"BODY\"}]");
         template.setExamplesJsonb("{}");
-        template.setMetadataJsonb(metadata);
+        template.setProviderAuditStatus(providerAuditStatus);
+        template.setTemplateType("WHATSAPP");
         template.setAllowSend(false);
         template.setCreatedAt(Instant.parse("2026-08-09T10:16:00Z"));
         template.setUpdatedAt(Instant.parse("2026-08-09T10:16:00Z"));

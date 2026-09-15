@@ -47,9 +47,9 @@ class WhatsAppTemplateRemarkMigrationTest {
                 accountId, accountId.toString(), accountId.toString());
         jdbc.update("insert into " + schema + ".message_templates "
                         + "(id, channel_account_id, provider_template_id, language_code, name, body, status, "
-                        + "provider_updated_at, metadata_jsonb, last_synced_at) "
+                        + "provider_updated_at, last_synced_at) "
                         + "values (?, ?, 'shipping_notice', 'zh_CN', 'Shipping Notice', 'Old body', 'APPROVED', "
-                        + "?, '{}'::jsonb, ?)",
+                        + "?, ?)",
                 templateId, accountId, Timestamp.from(providerUpdatedAt), Timestamp.from(lastSyncedAt));
 
         Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load().migrate();
@@ -68,14 +68,14 @@ class WhatsAppTemplateRemarkMigrationTest {
 
         jdbc.update("insert into " + schema + ".message_templates "
                         + "(id, channel_account_id, provider_template_id, language_code, name, body, status, "
-                        + "provider_updated_at, metadata_jsonb, last_synced_at, created_at, updated_at) "
+                        + "provider_updated_at, last_synced_at, created_at, updated_at) "
                         + "values (gen_random_uuid(), ?, 'shipping_notice', 'zh_CN', 'Shipping Notice Updated', "
-                        + "'New body', 'APPROVED', ?, '{}'::jsonb, ?, now(), now()) "
+                        + "'New body', 'APPROVED', ?, ?, now(), now()) "
                         + "on conflict (channel_account_id, provider_template_id, language_code) do update set "
                         + "name = excluded.name, body = coalesce(nullif(excluded.body, ''), " + schema
                         + ".message_templates.body), status = excluded.status, "
                         + "provider_updated_at = excluded.provider_updated_at, "
-                        + "metadata_jsonb = excluded.metadata_jsonb, last_synced_at = excluded.last_synced_at, "
+                        + "last_synced_at = excluded.last_synced_at, "
                         + "updated_at = now()",
                 accountId, Timestamp.from(providerUpdatedAt.plusSeconds(60)),
                 Timestamp.from(lastSyncedAt.plusSeconds(60)));

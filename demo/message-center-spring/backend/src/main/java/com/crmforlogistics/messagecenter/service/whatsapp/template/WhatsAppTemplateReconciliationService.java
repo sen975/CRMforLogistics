@@ -387,7 +387,6 @@ public class WhatsAppTemplateReconciliationService {
         target.setProviderAuditStatus(snapshot.rawAuditStatus());
         target.setRejectionReason(snapshot.rejectionReason());
         target.setProviderUpdatedAt(snapshot.providerUpdatedAt());
-        target.setMetadataJsonb("{}");
         target.setLastSyncedAt(now);
         target.setUpdatedAt(now);
         target.setDeletedAt(snapshot.deletedAt());
