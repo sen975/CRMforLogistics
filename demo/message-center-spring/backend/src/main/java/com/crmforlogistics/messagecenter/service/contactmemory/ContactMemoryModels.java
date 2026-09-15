@@ -87,6 +87,8 @@ public final class ContactMemoryModels {
 
     public enum ErrorCode {
         CONTEXT_LOAD_FAILED,
+        INPUT_LIMIT,
+        OUTPUT_LIMIT,
         LLM_TIMEOUT,
         LLM_RATE_LIMITED,
         LLM_UNAVAILABLE,
@@ -107,6 +109,9 @@ public final class ContactMemoryModels {
     public record EvidenceRef(EvidenceType type, UUID id) {
     }
 
+    public record ManualTag(UUID id, String name, String color) {
+    }
+
     public record StableContext(ContactProfileVersionEntity currentProfile,
                                 List<ContactMemoryFactEntity> activeFacts,
                                 List<ContactAiLabelEntity> activeLabels,
@@ -121,6 +126,7 @@ public final class ContactMemoryModels {
     public record Context(UUID contactId,
                           UUID ownerUserId,
                           List<MessageEntity> inboundMessages,
+                          List<ManualTag> manualTags,
                           ContactProfileVersionEntity currentProfile,
                           List<ContactMemoryObservationEntity> observations,
                           List<ContactMemoryFactEntity> activeFacts,
@@ -132,12 +138,58 @@ public final class ContactMemoryModels {
                           String outputCursor) {
         public Context {
             inboundMessages = List.copyOf(inboundMessages == null ? List.of() : inboundMessages);
+            manualTags = List.copyOf(manualTags == null ? List.of() : manualTags);
             observations = List.copyOf(observations == null ? List.of() : observations);
             activeFacts = List.copyOf(activeFacts == null ? List.of() : activeFacts);
             activeLabels = List.copyOf(activeLabels == null ? List.of() : activeLabels);
             topics = List.copyOf(topics == null ? List.of() : topics);
             callTranscripts = List.copyOf(callTranscripts == null ? List.of() : callTranscripts);
         }
+
+        public Context(UUID contactId,
+                       UUID ownerUserId,
+                       List<MessageEntity> inboundMessages,
+                       ContactProfileVersionEntity currentProfile,
+                       List<ContactMemoryObservationEntity> observations,
+                       List<ContactMemoryFactEntity> activeFacts,
+                       List<ContactAiLabelEntity> activeLabels,
+                       StableContext stableContext,
+                       List<AiTopicEntity> topics,
+                       List<CallTranscriptRevisionEntity> callTranscripts,
+                       String inputCursor,
+                       String outputCursor) {
+            this(contactId, ownerUserId, inboundMessages, List.of(), currentProfile, observations,
+                    activeFacts, activeLabels, stableContext, topics, callTranscripts,
+                    inputCursor, outputCursor);
+        }
+    }
+
+    public static boolean isValidAiLabelName(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty() || normalized.codePointCount(0, normalized.length()) > 32) {
+            return false;
+        }
+        boolean previousWhitespace = false;
+        for (int offset = 0; offset < normalized.length();) {
+            int codePoint = normalized.codePointAt(offset);
+            if (Character.isISOControl(codePoint) || Character.isWhitespace(codePoint)) {
+                if (codePoint == '\n' || codePoint == '\r' || previousWhitespace) {
+                    return false;
+                }
+                previousWhitespace = true;
+            } else {
+                previousWhitespace = false;
+            }
+            offset += Character.charCount(codePoint);
+        }
+        int lastCodePoint = normalized.codePointBefore(normalized.length());
+        if ("。！？!?；;：:,.，、".indexOf(lastCodePoint) >= 0) {
+            return false;
+        }
+        return !normalized.matches("^(客户|他|她|对方|用户|本人|我们).*(希望|需要|想要|计划|正在|已经|会|将|喜欢|认为|确认|表示|要求).+");
     }
 
     public record ObservationCandidate(Category category,

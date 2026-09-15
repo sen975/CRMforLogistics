@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.net.http.HttpTimeoutException;
 import java.time.Instant;
 import java.util.List;
@@ -177,6 +178,47 @@ class ContactMemoryLlmGatewayTest {
                 .isNotEmpty();
     }
 
+    @Test
+    void llmPayloadContainsManualTagsAsReadOnlyContext() throws Exception {
+        UUID messageId = UUID.randomUUID();
+        UUID tagId = UUID.randomUUID();
+        ContactMemoryModels.Context context = contextWithMessageAndManualTag(messageId, tagId);
+
+        String requestJson = new ObjectMapper().writeValueAsString(
+                OpenAiCompatibleContactMemoryGateway.buildRequest(
+                        "test-model", context, new ObjectMapper(), 262_144));
+
+        assertThat(requestJson).contains("manualTags", "重要客户", "red");
+        assertThat(requestJson).contains("Manual tags are read-only context", "Never modify");
+    }
+
+    @Test
+    void reportsInputLimitWhenSerializedContextExceedsRequestBudget() {
+        assertThatThrownBy(() -> OpenAiCompatibleContactMemoryGateway.buildRequest(
+                "test-model", contextWithMessage(UUID.randomUUID()), new ObjectMapper(), 100))
+                .isInstanceOf(ContactMemoryLlmGateway.GatewayException.class)
+                .hasMessage("INPUT_LIMIT");
+    }
+
+    @Test
+    void rejectsProviderResponseExceedingByteBudget() {
+        assertThatThrownBy(() -> OpenAiCompatibleContactMemoryGateway.readResponseBody(
+                new ByteArrayInputStream("12345".getBytes(java.nio.charset.StandardCharsets.UTF_8)), 4))
+                .isInstanceOf(ContactMemoryLlmGateway.GatewayException.class)
+                .hasMessage("OUTPUT_LIMIT");
+    }
+
+    @Test
+    void rejectsSentenceLikeAiLabelName() {
+        UUID messageId = UUID.randomUUID();
+        String json = validJson(messageId).replace("本月采购", "客户希望本月确认采购周期");
+
+        assertThatThrownBy(() -> OpenAiCompatibleContactMemoryGateway.parseOutput(
+                json, contextWithMessage(messageId)))
+                .isInstanceOf(ContactMemoryLlmGateway.GatewayException.class)
+                .hasMessage("INVALID_OUTPUT");
+    }
+
     private static String validJson(UUID messageId) {
         return """
                 {
@@ -230,5 +272,16 @@ class ContactMemoryLlmGatewayTest {
                 List.of(),
                 null,
                 "2026-09-11T02:00:00Z|" + messageId);
+    }
+
+    private static ContactMemoryModels.Context contextWithMessageAndManualTag(
+            UUID messageId, UUID tagId) {
+        ContactMemoryModels.Context context = contextWithMessage(messageId);
+        return new ContactMemoryModels.Context(
+                context.contactId(), context.ownerUserId(), context.inboundMessages(),
+                List.of(new ContactMemoryModels.ManualTag(tagId, "重要客户", "red")),
+                context.currentProfile(), context.observations(), context.activeFacts(),
+                context.activeLabels(), context.stableContext(), context.topics(),
+                context.callTranscripts(), context.inputCursor(), context.outputCursor());
     }
 }

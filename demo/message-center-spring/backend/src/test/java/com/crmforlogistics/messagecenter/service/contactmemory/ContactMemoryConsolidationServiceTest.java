@@ -65,6 +65,24 @@ class ContactMemoryConsolidationServiceTest {
     }
 
     @Test
+    void rejectsSentenceLikeAiLabelName() {
+        ContactMemoryModels.LabelChange change = new ContactMemoryModels.LabelChange(
+                ContactMemoryModels.LabelOperation.ADD,
+                ContactMemoryModels.Category.NEED,
+                "客户希望本月确认采购周期",
+                new BigDecimal("0.90"),
+                List.of(new ContactMemoryModels.EvidenceRef(
+                        ContactMemoryModels.EvidenceType.MESSAGE, changeEvidenceId())),
+                "明确询价");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                new ContactMemoryConsolidationService().consolidate(
+                        contextWithMessage(changeEvidenceId()), output(List.of(), List.of(change))))
+                .isInstanceOf(ContactMemoryModels.ValidationException.class)
+                .hasMessage("INVALID_OUTPUT");
+    }
+
+    @Test
     void existingActiveFactIsConfirmedByOneNewIndependentEvidence() {
         ContactMemoryFactEntity existingFact = new ContactMemoryFactEntity();
         existingFact.setCategory(ContactMemoryModels.Category.PRODUCT_INTEREST.name());

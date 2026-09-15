@@ -87,7 +87,7 @@
 - `ContactMemoryMapper.listInboundMessagesByCursor(UUID ownerUserId, UUID contactId, Instant afterReceivedAt, UUID afterMessageId, Instant cutoff, int limit): List<MessageEntity>`。
 - 游标编码为 `received_at` 与 `message_id`，不再编码 `occurred_at`。
 
-- [ ] **Step 1: 添加失败测试。**
+- [x] **Step 1: 添加失败测试。**
 
 ```java
 @Test
@@ -354,31 +354,33 @@ void rejectsProviderResponseExceedingByteBudget() { }
 void reportsInputLimitInsteadOfOutputLimitForOversizedContext() { }
 ```
 
-- [ ] **Step 2: 运行 gateway/context 专项测试确认失败。**
+- [x] **Step 2: 运行 gateway/context 专项测试确认失败。**
 
 Run: `cd demo/message-center-spring/backend && mvn -Dtest='ContactMemoryContextServiceTest,ContactMemoryLlmGatewayTest,ContactMemoryConsolidationServiceTest' test`
 
 Expected: 当前 payload 缺少 `manualTags`，且标签只检查 100 字符。
 
-- [ ] **Step 3: 加入人工标签只读上下文。**
+- [x] **Step 3: 加入人工标签只读上下文。**
 
 ContextService 通过现有人工标签 mapper 按 owner/contact 查询，转成 contactmemory 自己的不可变 record；gateway 只序列化，不接受模型返回的人工标签操作字段。
 
-- [ ] **Step 4: 增加服务端标签短词组校验。**
+- [x] **Step 4: 增加服务端标签短词组校验。**
 
 标签名称限制为最多 32 个 code point，不允许换行、句末标点、连续空白和明显句式；颜色仍由服务端 category 映射，模型不能返回颜色。
 
-- [ ] **Step 5: 限制 provider response body。**
+- [x] **Step 5: 限制 provider response body。**
 
 读取 response body 时先按 `maxResponseBytes` 预算，超过预算立即抛出结构化 `OUTPUT_LIMIT`；context JSON 超过请求预算抛出 `INPUT_LIMIT`。不使用无界 `readAllBytes()`。
 
-- [ ] **Step 6: 运行测试和编译。**
+- [x] **Step 6: 运行测试和编译。**
 
 Run: `cd demo/message-center-spring/backend && mvn -Dtest='ContactMemoryContextServiceTest,ContactMemoryLlmGatewayTest,ContactMemoryConsolidationServiceTest' test && mvn -DskipTests compile`
 
 Expected: 专项测试通过，生产代码编译退出码为 `0`。
 
-- [ ] **Step 7: 精确提交 Task 4。**
+实际验证：`ContactMemoryContextServiceTest`、`ContactMemoryLlmGatewayTest`、`ContactMemoryConsolidationServiceTest` 共 26 项通过；`mvn -DskipTests compile` 通过。全量 Maven testCompile 仍被用户既有 WIP 测试的缺少 import 阻断，未修改这些非 Task 4 文件。`INPUT_LIMIT` 已纳入 Worker 终止校验，避免上下文超限无意义重试。
+
+- [x] **Step 7: 精确提交 Task 4。**
 
 ```bash
 git add demo/message-center-spring/backend/src/main/java/com/crmforlogistics/messagecenter/service/contactmemory/ContactMemoryModels.java \

@@ -12,6 +12,9 @@ import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
+import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -26,6 +29,7 @@ public class ContactMemoryContextService {
     private final ContactMapper contacts;
     private final ContactMemoryStateMapper states;
     private final ContactMemoryMapper memory;
+    private final ContactTagMapper humanTags;
     private final ContactMemoryConfig config;
 
     public ContactMemoryContextService(ContactMapper contacts,
@@ -40,9 +44,19 @@ public class ContactMemoryContextService {
                                        ContactMemoryStateMapper states,
                                        ContactMemoryMapper memory,
                                        ContactMemoryConfig config) {
+        this(contacts, states, memory, null, config);
+    }
+
+    @Autowired
+    public ContactMemoryContextService(ContactMapper contacts,
+                                       ContactMemoryStateMapper states,
+                                       ContactMemoryMapper memory,
+                                       ContactTagMapper humanTags,
+                                       ContactMemoryConfig config) {
         this.contacts = contacts;
         this.states = states;
         this.memory = memory;
+        this.humanTags = humanTags;
         this.config = config;
     }
 
@@ -79,6 +93,12 @@ public class ContactMemoryContextService {
         List<ContactAiLabelEntity> labels = memory.listActiveLabels(
                         ownerUserId, contactId, config.maxLabels())
                 .stream().map(ContactMemoryContextService::copyLabel).toList();
+        List<ContactMemoryModels.ManualTag> manualTags = humanTags == null
+                ? List.of()
+                : humanTags.findActiveByContactIdAndOwner(contactId, ownerUserId).stream()
+                .filter(Objects::nonNull)
+                .map(ContactMemoryContextService::toManualTag)
+                .toList();
         List<AiTopicEntity> topics = memory.listStableTopics(
                         ownerUserId, contactId, config.maxTopics())
                 .stream().map(topic -> copyTopic(topic, config.maxTopicChars())).toList();
@@ -90,6 +110,7 @@ public class ContactMemoryContextService {
                 contactId,
                 ownerUserId,
                 inboundMessages,
+                manualTags,
                 profile,
                 observations,
                 facts,
@@ -99,6 +120,10 @@ public class ContactMemoryContextService {
                 transcripts,
                 inputCursor,
                 outputCursor);
+    }
+
+    private static ContactMemoryModels.ManualTag toManualTag(ContactTagResponse tag) {
+        return new ContactMemoryModels.ManualTag(tag.id(), tag.name(), tag.color());
     }
 
     private List<MessageEntity> boundMessages(List<MessageEntity> fetched) {

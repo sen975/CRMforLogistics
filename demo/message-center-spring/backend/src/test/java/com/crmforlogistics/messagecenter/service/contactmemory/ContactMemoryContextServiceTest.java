@@ -1,10 +1,14 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
 import com.crmforlogistics.messagecenter.entity.ContactMemoryStateEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
+import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -140,6 +144,82 @@ class ContactMemoryContextServiceTest {
         assertThat(context.inboundMessages()).allMatch(item -> item.getBodyText().length() <= 4000);
         assertThat(context.inboundMessages().stream()
                 .mapToInt(item -> item.getBodyText().length()).sum()).isLessThanOrEqualTo(50_000);
+    }
+
+    @Test
+    void contextCarriesHistoricalObservationEvidenceForCrossRoundDeduplication() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
+        UUID contactId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        UUID evidenceId = UUID.randomUUID();
+        Instant cutoff = Instant.parse("2026-09-11T03:00:00Z");
+        when(contacts.findCreatedBy(contactId)).thenReturn(Optional.of(ownerId));
+        when(states.findByOwnerAndContact(ownerId, contactId)).thenReturn(Optional.empty());
+        when(memory.listInboundMessagesByCursor(eq(ownerId), eq(contactId), any(), any(), eq(cutoff), eq(50)))
+                .thenReturn(List.of());
+        ContactMemoryObservationEntity observation = new ContactMemoryObservationEntity();
+        observation.setId(observationId);
+        observation.setEvidenceCount(1);
+        when(memory.listActiveObservations(ownerId, contactId, 100)).thenReturn(List.of(observation));
+        ContactMemoryObservationEvidenceEntity evidence = new ContactMemoryObservationEvidenceEntity();
+        evidence.setEvidenceId(evidenceId);
+        evidence.setEvidenceType(ContactMemoryModels.EvidenceType.MESSAGE.name());
+        when(memory.listObservationEvidence(observationId, contactId, ownerId)).thenReturn(List.of(evidence));
+        when(memory.findCurrentProfile(ownerId, contactId)).thenReturn(null);
+        when(memory.listActiveFacts(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listActiveLabels(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listStableTopics(ownerId, contactId, 20)).thenReturn(List.of());
+        when(memory.listCallTranscripts(ownerId, contactId, 10)).thenReturn(List.of());
+
+        ContactMemoryModels.Context context = new ContactMemoryContextService(
+                contacts, states, memory).load(ownerId, contactId, cutoff);
+
+        assertThat(context.observations()).singleElement()
+                .satisfies(item -> {
+                    assertThat(item.getEvidenceCount()).isEqualTo(1);
+                    assertThat(item.getEvidence()).singleElement()
+                            .extracting(ContactMemoryObservationEvidenceEntity::getEvidenceId)
+                            .isEqualTo(evidenceId);
+                });
+    }
+
+    @Test
+    void contextCarriesManualTagsAsAnImmutableOwnerScopedReadOnlyList() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
+        ContactTagMapper tags = mock(ContactTagMapper.class);
+        UUID contactId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        Instant cutoff = Instant.parse("2026-09-11T03:00:00Z");
+        UUID tagId = UUID.randomUUID();
+        when(contacts.findCreatedBy(contactId)).thenReturn(Optional.of(ownerId));
+        when(states.findByOwnerAndContact(ownerId, contactId)).thenReturn(Optional.empty());
+        when(memory.listInboundMessagesByCursor(eq(ownerId), eq(contactId), any(), any(), eq(cutoff), eq(50)))
+                .thenReturn(List.of());
+        when(memory.listActiveObservations(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.findCurrentProfile(ownerId, contactId)).thenReturn(null);
+        when(memory.listActiveFacts(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listActiveLabels(ownerId, contactId, 100)).thenReturn(List.of());
+        when(memory.listStableTopics(ownerId, contactId, 20)).thenReturn(List.of());
+        when(memory.listCallTranscripts(ownerId, contactId, 10)).thenReturn(List.of());
+        when(tags.findActiveByContactIdAndOwner(contactId, ownerId))
+                .thenReturn(List.of(new ContactTagResponse(tagId, "重要客户", "red")));
+
+        ContactMemoryModels.Context context = new ContactMemoryContextService(
+                contacts, states, memory, tags,
+                new com.crmforlogistics.messagecenter.config.ContactMemoryConfig(
+                        50, 4000, 50000, 20, 1000, 10, 4000,
+                        100, 100, 100, 500, 30)).load(ownerId, contactId, cutoff);
+
+        assertThat(context.manualTags()).containsExactly(
+                new ContactMemoryModels.ManualTag(tagId, "重要客户", "red"));
+        assertThatThrownBy(() -> context.manualTags().add(
+                new ContactMemoryModels.ManualTag(UUID.randomUUID(), "不可写", "blue")))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 
     private static MessageEntity message(UUID id, Instant occurredAt, Instant receivedAt, String body) {

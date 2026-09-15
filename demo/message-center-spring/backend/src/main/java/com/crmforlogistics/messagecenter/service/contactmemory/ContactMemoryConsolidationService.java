@@ -156,7 +156,7 @@ public class ContactMemoryConsolidationService {
             throw new ContactMemoryModels.ValidationException("INVALID_OUTPUT");
         }
         String name = normalizeText(change.name());
-        if (name.isEmpty() || name.length() > 100 || !validConfidence(change.confidence())) {
+        if (!ContactMemoryModels.isValidAiLabelName(name) || !validConfidence(change.confidence())) {
             throw new ContactMemoryModels.ValidationException("INVALID_OUTPUT");
         }
         return new ContactMemoryModels.LabelCandidate(

@@ -21,6 +21,10 @@ import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpTimeoutException;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -81,8 +85,7 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
             HttpResult response = call.exchange((requestMessage, responseMessage) ->
                     new HttpResult(
                             responseMessage.getStatusCode().value(),
-                            new String(responseMessage.getBody().readAllBytes(),
-                                    java.nio.charset.StandardCharsets.UTF_8)));
+                            readResponseBody(responseMessage.getBody(), config.auditMaxResponseBytes())));
             rawResponse = response.body();
             if (response.status() >= 400) {
                 throw providerStatusFailure(response.status());
@@ -197,7 +200,7 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
             byte[] serialized = mapper.writeValueAsBytes(request);
             if (serialized.length > maxInputBytes) {
                 throw new ContactMemoryLlmGateway.GatewayException(
-                        "OUTPUT_LIMIT", false, "INPUT_BYTES_EXCEEDED", null);
+                        "INPUT_LIMIT", false, "INPUT_BYTES_EXCEEDED", null);
             }
             return request;
         } catch (ContactMemoryLlmGateway.GatewayException exception) {
@@ -213,6 +216,8 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
         payload.put("owner", Map.of(
                 "contactId", context.contactId(),
                 "ownerUserId", context.ownerUserId()));
+        payload.put("manualTags", context.manualTags().stream()
+                .map(OpenAiCompatibleContactMemoryGateway::manualTagPayload).toList());
         payload.put("inboundMessages", context.inboundMessages().stream()
                 .map(OpenAiCompatibleContactMemoryGateway::messagePayload).toList());
         payload.put("currentProfile", profilePayload(context.currentProfile()));
@@ -227,6 +232,14 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
         payload.put("callTranscripts", context.callTranscripts().stream()
                 .map(OpenAiCompatibleContactMemoryGateway::transcriptPayload).toList());
         payload.put("inputCursor", context.inputCursor());
+        return payload;
+    }
+
+    private static Map<String, Object> manualTagPayload(ContactMemoryModels.ManualTag tag) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", tag.id());
+        payload.put("name", bounded(tag.name(), 100));
+        payload.put("color", bounded(tag.color(), 30));
         return payload;
     }
 
@@ -355,6 +368,9 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
             ContactMemoryModels.Category category = category(item, "category");
             BigDecimalValue confidence = confidence(item.get("confidence"));
             String name = requiredText(item, "name", 100);
+            if (!ContactMemoryModels.isValidAiLabelName(name)) {
+                throw invalidOutput();
+            }
             List<ContactMemoryModels.EvidenceRef> evidence = evidence(item.get("evidence"));
             validateLabelEvidence(evidence, context);
             result.add(new ContactMemoryModels.LabelChange(
@@ -577,6 +593,25 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
         return new ContactMemoryLlmGateway.GatewayException("INVALID_OUTPUT", false);
     }
 
+    static String readResponseBody(InputStream input, long maxBytes) throws IOException {
+        if (input == null || maxBytes <= 0) {
+            throw new ContactMemoryLlmGateway.GatewayException("OUTPUT_LIMIT", false);
+        }
+        ByteArrayOutputStream output = new ByteArrayOutputStream(8192);
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            total += count;
+            if (total > maxBytes) {
+                throw new ContactMemoryLlmGateway.GatewayException(
+                        "OUTPUT_LIMIT", false, "RESPONSE_BYTES_EXCEEDED", null);
+            }
+            output.write(buffer, 0, count);
+        }
+        return output.toString(StandardCharsets.UTF_8);
+    }
+
     private static ContactMemoryLlmGateway.GatewayException providerStatusFailure(int status) {
         if (status == 408 || status == 429 || status >= 500) {
             return new ContactMemoryLlmGateway.GatewayException(
@@ -610,7 +645,10 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
                 DECISION_FACTOR, RISK, RELATIONSHIP_STAGE, OTHER_STABLE_TRAIT.
                 Allowed polarities: POSITIVE, NEGATIVE, NEUTRAL.
                 Allowed label operations: ADD, UPDATE, STALE, INACTIVATE, RESTORE.
-                Keep labels short and concise. Do not return label colors or any fact status.
+                Keep labels short and concise: no more than 32 Unicode code points, no line breaks,
+                no repeated whitespace, no sentence-like wording, and no sentence-ending punctuation.
+                Manual tags are read-only context. Never modify, delete, inactivate, restore, rename,
+                recolor, or return changes for manual tags. Do not return label colors or any fact status.
                 Never return database permission decisions or IDs not supplied in context.
                 Profile content must be no more than 200 Chinese characters.
                 """;
