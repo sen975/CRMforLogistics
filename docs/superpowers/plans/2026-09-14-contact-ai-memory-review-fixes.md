@@ -305,7 +305,7 @@ Run: `cd demo/message-center-spring/backend && mvn -Dtest='ContactMemoryConsolid
 
 Expected: 专项测试通过，生产代码编译退出码为 `0`。
 
-实际验证：`mvn -DskipTests compile` 通过；因 3 个既有 WIP 测试缺少 `isNull`/`Instant` 导入，Maven 全量 testCompile 被阻断；通过直接编译目标测试类后运行 `mvn surefire:test`，Task 3 的 3 个测试类共 25 项通过。
+实际验证：`mvn -DskipTests compile` 通过；因 3 个既有 WIP 测试缺少 `isNull`/`Instant` 导入，Maven 全量 testCompile 被阻断；通过直接编译目标测试类后运行 `mvn surefire:test`，Task 3 的 3 个测试类共 19 项通过。
 
 - [x] **Step 7: 精确提交 Task 3。**
 
