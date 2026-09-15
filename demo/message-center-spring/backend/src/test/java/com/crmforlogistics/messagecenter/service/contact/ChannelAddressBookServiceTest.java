@@ -2,14 +2,18 @@ package com.crmforlogistics.messagecenter.service.contact;
 
 import com.crmforlogistics.messagecenter.dto.request.CreateChannelContactRequest;
 import com.crmforlogistics.messagecenter.dto.request.SearchMode;
+import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookItem;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -269,6 +273,47 @@ class ChannelAddressBookServiceTest {
         assertThat(result.identityId()).isEqualTo(winnerIdentity);
         assertThat(result.created()).isFalse();
         verify(contacts).deleteOwned(eq(owner), any());
+    }
+
+    @Test
+    void backfillsMatchedTagsForVisibleContactsOnlyAndScopesOwner() {
+        ContactMapper contacts = mock(ContactMapper.class);
+        UUID owner = UUID.randomUUID();
+        UUID matchedId = UUID.randomUUID();
+        UUID unmatchedId = UUID.randomUUID();
+        UUID lookaheadId = UUID.randomUUID();
+        when(contacts.listAddressBookByOwner(owner, "email", "客户", true, 3, 0))
+                .thenReturn(List.of(
+                        addressBookRow(matchedId, "客户 A"),
+                        addressBookRow(unmatchedId, "客户 B"),
+                        addressBookRow(lookaheadId, "客户 C")));
+
+        ContactTagMapper tagMapper = mock(ContactTagMapper.class);
+        when(tagMapper.findMatchedByContactIds(eq(owner), any(), eq("客户")))
+                .thenReturn(List.of(new ContactTagMapper.MatchedTagRow(matchedId, "重点客户")));
+        ChannelAddressBookService service = new ChannelAddressBookService(contacts,
+                mock(ContactIdentityMapper.class), mock(ChannelAccountMapper.class),
+                new ContactTagMatchResolver(tagMapper));
+
+        var result = service.page(owner, "email", "客户", SearchMode.TAG, 1, 2);
+
+        assertThat(result.items()).extracting(ChannelAddressBookItem::contactId)
+                .containsExactly(matchedId, unmatchedId);
+        assertThat(result.hasMore()).isTrue();
+        assertThat(result.items().get(0).matchedTags()).containsExactly("重点客户");
+        assertThat(result.items().get(1).matchedTags()).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<UUID>> idsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(tagMapper).findMatchedByContactIds(eq(owner), idsCaptor.capture(), eq("客户"));
+        assertThat(idsCaptor.getValue())
+                .containsExactlyInAnyOrder(matchedId, unmatchedId)
+                .doesNotContain(lookaheadId);
+    }
+
+    private static ContactMapper.ChannelAddressBookRow addressBookRow(UUID contactId, String displayName) {
+        return new ContactMapper.ChannelAddressBookRow(contactId, UUID.randomUUID(), displayName, null,
+                "email", displayName + "@example.test", null, null, "manual", null, false, true);
     }
 
     private static ChannelAddressBookService service(ContactMapper contacts,
