@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.Optional;
@@ -65,4 +66,25 @@ public interface ContactTagMapper {
     @Insert("insert into contact_taggings (contact_id, tag_id) values (#{contactId}::uuid, #{tagId}::uuid) "
             + "on conflict do nothing")
     int insertTagging(@Param("contactId") UUID contactId, @Param("tagId") UUID tagId);
+
+    @Select("""
+            <script>
+            select ct.contact_id as contact_id, t.name as name
+            from contact_taggings ct
+            join contact_tags t on t.id = ct.tag_id
+            where t.owner_user_id = #{ownerId}::uuid
+              and t.status = 'active'
+              and t.name ilike '%' || #{search} || '%'
+              and ct.contact_id in
+              <foreach item="contactId" collection="contactIds" open="(" separator="," close=")">
+                #{contactId}::uuid
+              </foreach>
+            order by lower(t.name), t.id
+            </script>
+            """)
+    List<MatchedTagRow> findMatchedByContactIds(@Param("ownerId") UUID ownerId,
+                                                 @Param("contactIds") Collection<UUID> contactIds,
+                                                 @Param("search") String search);
+
+    record MatchedTagRow(UUID contactId, String name) {}
 }
