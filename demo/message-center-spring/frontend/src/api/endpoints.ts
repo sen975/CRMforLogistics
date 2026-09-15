@@ -56,6 +56,7 @@ import type {
   ChannelAddressBookChannel,
   ChannelAddressBookItem,
   ChannelAddressBookPageResponse,
+  SearchMode,
   WhatsAppAuthorizationAttempt,
   WhatsAppAuthorizationResult,
   WhatsAppPhoneOperationStatus,
@@ -451,6 +452,7 @@ export async function fetchWeComTag(authCorpId: string, tagId: number): Promise<
 
 export async function fetchContacts(params?: {
   search?: string;
+  searchMode?: SearchMode;
   page?: number;
   size?: number;
   channelType?: string;
@@ -462,7 +464,7 @@ export async function fetchContacts(params?: {
 
 export async function fetchChannelAddressBook(
   channel: ChannelAddressBookChannel,
-  params?: { query?: string; page?: number; size?: number },
+  params?: { query?: string; searchMode?: SearchMode; page?: number; size?: number },
 ): Promise<ChannelAddressBookPageResponse> {
   const res = await client.get<ChannelAddressBookPageResponse>(
     `/channel-address-books/${encodeURIComponent(channel)}`,
@@ -491,6 +493,7 @@ export async function deleteManualChannelContact(
 
 export async function listConversations(params?: {
   search?: string;
+  searchMode?: SearchMode;
   cursor?: string;
   limit?: number;
 }): Promise<ConversationPage> {

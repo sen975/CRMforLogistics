@@ -12,7 +12,7 @@ import {
   createManualChannelContact,
   deleteManualChannelContact,
 } from '../api/endpoints';
-import type { ChannelAddressBookChannel, ConversationOrderRequest, ConversationTargetType } from '../api/types';
+import type { ChannelAddressBookChannel, ConversationOrderRequest, ConversationTargetType, SearchMode } from '../api/types';
 import { listConversations } from '../api/endpoints';
 import type { ConversationListItem } from '../api/types';
 
@@ -30,30 +30,33 @@ export function useContacts(
   page = 1,
   size = 20,
   filters?: ContactFilters,
+  searchMode: SearchMode = 'contact',
   options?: ContactsQueryOptions,
 ) {
   const { channelType, channelAccountId } = filters ?? {};
   return useQuery({
-    queryKey: ['contacts', search, page, size, channelType, channelAccountId],
-    queryFn: () => fetchContacts({ search, page, size, channelType, channelAccountId }),
+    queryKey: ['contacts', search, page, size, channelType, channelAccountId, searchMode],
+    queryFn: () => fetchContacts({ search, searchMode, page, size, channelType, channelAccountId }),
     enabled: options?.enabled ?? true,
     placeholderData: channelAccountId ? undefined : (prev) => prev,
   });
 }
 
-export function useUnifiedConversations(search?: string, options?: ContactsQueryOptions) {
+export function useUnifiedConversations(search?: string, searchMode: SearchMode = 'contact',
+                                        options?: ContactsQueryOptions) {
   return useQuery({
-    queryKey: ['conversations', search],
-    queryFn: () => listConversations({ search: search || undefined, limit: 50 }),
+    queryKey: ['conversations', search, searchMode],
+    queryFn: () => listConversations({ search: search || undefined, searchMode, limit: 50 }),
     enabled: options?.enabled ?? true,
     placeholderData: (prev) => prev,
   });
 }
 
-export function useChannelAddressBook(channel: ChannelAddressBookChannel, query?: string, page = 1) {
+export function useChannelAddressBook(channel: ChannelAddressBookChannel, query?: string,
+                                      page = 1, searchMode: SearchMode = 'contact') {
   return useQuery({
-    queryKey: ['channel-address-book', channel, query, page],
-    queryFn: () => fetchChannelAddressBook(channel, { query: query || undefined, page, size: 20 }),
+    queryKey: ['channel-address-book', channel, query, page, searchMode],
+    queryFn: () => fetchChannelAddressBook(channel, { query: query || undefined, searchMode, page, size: 20 }),
   });
 }
 

@@ -53,6 +53,7 @@ export default function SendPage() {
     1,
     20,
     { channelType: 'chatapp', channelAccountId: currentChannelAccountId },
+    'contact',
     { enabled: Boolean(currentChannelAccountId) },
   );
 

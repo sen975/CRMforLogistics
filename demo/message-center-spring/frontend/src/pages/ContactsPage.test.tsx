@@ -41,6 +41,6 @@ describe('ContactsPage', () => {
     );
 
     expect(screen.getByPlaceholderText('搜索联系人、邮箱、号码')).toBeInTheDocument();
-    expect(hooks.useUnifiedConversations).toHaveBeenCalledWith(undefined);
+    expect(hooks.useUnifiedConversations).toHaveBeenCalledWith(undefined, 'contact');
   });
 });

@@ -25,7 +25,7 @@ function formatTime(iso: string | null): string {
 }
 
 interface ContactCardProps {
-  contact: Pick<ContactResponse, 'id' | 'displayName' | 'channelTypes' | 'lastMessageAt' | 'lastText' | 'messageCount' | 'unreadCount'> & { remark?: string | null; pinned?: boolean };
+  contact: Pick<ContactResponse, 'id' | 'displayName' | 'channelTypes' | 'lastMessageAt' | 'lastText' | 'messageCount' | 'unreadCount' | 'matchedTags'> & { remark?: string | null; pinned?: boolean };
   isActive: boolean;
   onClick: () => void;
 }
@@ -80,6 +80,13 @@ export default function ContactCard({ contact, isActive, onClick }: ContactCardP
         >
           {contact.lastText}
         </Text>
+      )}
+      {contact.matchedTags && contact.matchedTags.length > 0 && (
+        <div style={{ paddingLeft: 24, marginTop: 2 }}>
+          {contact.matchedTags.map((name) => (
+            <Tag key={name} color="blue" style={{ fontSize: 10, lineHeight: '16px' }}>{name}</Tag>
+          ))}
+        </div>
       )}
       <div style={{ paddingLeft: 24, marginTop: 2 }}>
         {contact.channelTypes?.map((ch) => (

@@ -1,3 +1,5 @@
+export type SearchMode = 'contact' | 'tag';
+
 export interface ContactIdentityResponse {
   id: string;
   channelType: string;
@@ -57,6 +59,7 @@ export interface ChannelAddressBookItem {
   lastContactAt: string | null;
   hasActivity: boolean;
   canDelete: boolean;
+  matchedTags?: string[];
 }
 
 export interface ChannelAddressBookPageResponse {
@@ -78,6 +81,7 @@ export interface ContactResponse {
   tags?: ContactTag[];
   identities: ContactIdentityResponse[];
   memory?: ContactMemoryResponse | null;
+  matchedTags?: string[];
 }
 
 export interface ContactConversationItem {
@@ -92,6 +96,7 @@ export interface ContactConversationItem {
   messageCount: number;
   unreadCount: number;
   pinned?: boolean;
+  matchedTags?: string[];
 }
 
 export interface WeComGroupConversationItem {

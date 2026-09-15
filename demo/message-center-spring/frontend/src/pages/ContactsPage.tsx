@@ -6,22 +6,29 @@ import { useUnifiedConversations, useMergeContacts, useConversationPreference } 
 import { useSse } from '../hooks/useSse';
 import { useQueryClient } from '@tanstack/react-query';
 import ContactCard from '../components/ContactCard';
-import type { ConversationListItem } from '../api/types';
+import SearchModeSwitch from '../components/SearchModeSwitch';
+import type { ConversationListItem, SearchMode } from '../api/types';
 import { weComGroupDisplayName } from '../utils/weComGroupDisplayName';
 
 const { Text } = Typography;
 
 export default function ContactsPage() {
   const [search, setSearch] = useState('');
+  const [searchMode, setSearchMode] = useState<SearchMode>('contact');
   const [dragOver, setDragOver] = useState<{ id: string; mode: 'before' | 'after' | 'merge' } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { contactId, sourceConversationId } = useParams();
   const qc = useQueryClient();
 
-  const { data, isLoading } = useUnifiedConversations(search || undefined);
+  const { data, isLoading } = useUnifiedConversations(search || undefined, searchMode);
   const mergeMutation = useMergeContacts();
   const preferenceMutation = useConversationPreference();
+
+  const changeSearchMode = (mode: SearchMode) => {
+    setSearchMode(mode);
+    setSearch('');
+  };
 
   useSse(() => {
     qc.invalidateQueries({ queryKey: ['conversations'] });
@@ -141,7 +148,8 @@ export default function ContactsPage() {
       <div style={{ padding: '8px 12px' }}>
         <Input
           prefix={<SearchOutlined />}
-          placeholder="搜索联系人、邮箱、号码"
+          addonBefore={<SearchModeSwitch value={searchMode} onChange={changeSearchMode} />}
+          placeholder={searchMode === 'tag' ? '搜索标签名' : '搜索联系人、邮箱、号码'}
           allowClear
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -153,7 +161,12 @@ export default function ContactsPage() {
             <Spin />
           </div>
         ) : conversations.length === 0 ? (
-          <Empty description="暂无联系人" style={{ padding: 24 }} />
+          <Empty
+            description={searchMode === 'tag'
+              ? `没有联系人被打上含「${search}」的标签`
+              : '暂无联系人'}
+            style={{ padding: 24 }}
+          />
         ) : (
           <List
             dataSource={conversations}
