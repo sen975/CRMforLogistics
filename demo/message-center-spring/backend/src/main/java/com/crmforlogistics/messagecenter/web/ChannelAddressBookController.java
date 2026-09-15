@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.request.CreateChannelContactRequest;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookItem;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookPageResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
@@ -32,9 +33,11 @@ public class ChannelAddressBookController {
     public ChannelAddressBookPageResponse page(
             @PathVariable String channelType,
             @RequestParam(required = false) String query,
+            @RequestParam(value = "searchMode", required = false) String rawSearchMode,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return service.page(SecurityUtil.currentUserId(), channelType, query, page, size);
+        return service.page(SecurityUtil.currentUserId(), channelType, query,
+                SearchMode.parse(rawSearchMode), page, size);
     }
 
     @PostMapping

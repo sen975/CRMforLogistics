@@ -64,10 +64,22 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
             where c.created_by = #{ownerId}::uuid and c.deleted_at is null and c.status &lt;&gt; 'merged'
               and ci.channel_type = #{channelType}
             <if test="query != null and query != ''">
-              and (coalesce(c.remark, '') ilike '%' || #{query} || '%'
+              and ( <choose>
+                <when test="tagSearch">
+                  exists (select 1 from contact_taggings ct
+                          join contact_tags t on t.id = ct.tag_id
+                          where ct.contact_id = c.id
+                            and t.status = 'active'
+                            and t.owner_user_id = #{ownerId}::uuid
+                            and t.name ilike '%' || #{query} || '%')
+                </when>
+                <otherwise>
+                  coalesce(c.remark, '') ilike '%' || #{query} || '%'
                    or c.display_name ilike '%' || #{query} || '%'
                    or coalesce(ci.display_name, '') ilike '%' || #{query} || '%'
-                   or ci.identity_value ilike '%' || #{query} || '%')
+                   or ci.identity_value ilike '%' || #{query} || '%'
+                </otherwise>
+              </choose> )
             </if>
             order by last_contact_at desc nulls last, c.updated_at desc, c.id desc
             limit #{limit} offset #{offset}
@@ -76,6 +88,7 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
     List<ChannelAddressBookRow> listAddressBookByOwner(@Param("ownerId") UUID ownerId,
                                                         @Param("channelType") String channelType,
                                                         @Param("query") String query,
+                                                        @Param("tagSearch") boolean tagSearch,
                                                         @Param("limit") int limit,
                                                         @Param("offset") int offset);
 

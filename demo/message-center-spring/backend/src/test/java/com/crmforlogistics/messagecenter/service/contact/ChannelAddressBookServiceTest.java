@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.contact;
 
 import com.crmforlogistics.messagecenter.dto.request.CreateChannelContactRequest;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
@@ -28,14 +29,14 @@ class ChannelAddressBookServiceTest {
     void pageIsOwnerScopedAndClampsRequestedSize() {
         ContactMapper contacts = mock(ContactMapper.class);
         UUID owner = UUID.randomUUID();
-        when(contacts.listAddressBookByOwner(owner, "email", "buyer", 101, 0)).thenReturn(List.of());
+        when(contacts.listAddressBookByOwner(owner, "email", "buyer", false, 101, 0)).thenReturn(List.of());
 
         var result = service(contacts, mock(ContactIdentityMapper.class), mock(ChannelAccountMapper.class))
-                .page(owner, "email", " buyer ", 1, 500);
+                .page(owner, "email", " buyer ", SearchMode.CONTACT, 1, 500);
 
         assertThat(result.items()).isEmpty();
         assertThat(result.size()).isEqualTo(100);
-        verify(contacts).listAddressBookByOwner(owner, "email", "buyer", 101, 0);
+        verify(contacts).listAddressBookByOwner(owner, "email", "buyer", false, 101, 0);
     }
 
     @Test
@@ -273,6 +274,7 @@ class ChannelAddressBookServiceTest {
     private static ChannelAddressBookService service(ContactMapper contacts,
                                                        ContactIdentityMapper identities,
                                                        ChannelAccountMapper accounts) {
-        return new ChannelAddressBookService(contacts, identities, accounts);
+        return new ChannelAddressBookService(contacts, identities, accounts,
+                mock(ContactTagMatchResolver.class));
     }
 }

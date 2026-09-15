@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.contact;
 
 import com.crmforlogistics.messagecenter.dto.request.CreateChannelContactRequest;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookItem;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookPageResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
@@ -17,6 +18,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -28,15 +30,19 @@ public class ChannelAddressBookService {
     private final ContactMapper contacts;
     private final ContactIdentityMapper identities;
     private final ChannelAccountMapper accounts;
+    private final ContactTagMatchResolver tagMatchResolver;
 
     public ChannelAddressBookService(ContactMapper contacts, ContactIdentityMapper identities,
-                                     ChannelAccountMapper accounts) {
+                                     ChannelAccountMapper accounts,
+                                     ContactTagMatchResolver tagMatchResolver) {
         this.contacts = contacts;
         this.identities = identities;
         this.accounts = accounts;
+        this.tagMatchResolver = tagMatchResolver;
     }
 
     public ChannelAddressBookPageResponse page(UUID ownerId, String rawChannelType, String rawQuery,
+                                                SearchMode searchMode,
                                                 int requestedPage, int requestedSize) {
         String channelType = normalizeChannelType(rawChannelType);
         if (requestedPage > MAX_PAGE) {
@@ -47,10 +53,25 @@ public class ChannelAddressBookService {
         String query = normalizeQuery(rawQuery);
         int offset = (page - 1) * size;
         List<ContactMapper.ChannelAddressBookRow> rows = contacts.listAddressBookByOwner(
-                ownerId, channelType, query, size + 1, offset);
+                ownerId, channelType, query, searchMode.isTag(), size + 1, offset);
         boolean hasMore = rows.size() > size;
         List<ChannelAddressBookItem> items = rows.stream().limit(size).map(this::toItem).toList();
+        items = withMatchedTags(ownerId, query, searchMode, items);
         return new ChannelAddressBookPageResponse(items, page, size, hasMore);
+    }
+
+    private List<ChannelAddressBookItem> withMatchedTags(UUID ownerId, String query,
+                                                         SearchMode searchMode,
+                                                         List<ChannelAddressBookItem> items) {
+        List<UUID> contactIds = items.stream().map(ChannelAddressBookItem::contactId).distinct().toList();
+        Map<UUID, List<String>> matched =
+                tagMatchResolver.matchNamesByContact(ownerId, contactIds, query, searchMode);
+        if (matched.isEmpty()) {
+            return items;
+        }
+        return items.stream()
+                .map(item -> item.withMatchedTags(matched.getOrDefault(item.contactId(), List.of())))
+                .toList();
     }
 
     public void requireSupportedChannel(String channelType) {
@@ -98,7 +119,7 @@ public class ChannelAddressBookService {
 
         return new ChannelAddressBookItem(contact.getId(), identity.getId(), contact.getDisplayName(),
                 null, channelType, identity.getIdentityValue(), identity.getDisplayName(), List.of(),
-                "manual", null, false, true);
+                "manual", null, false, true, List.of());
     }
 
     @Transactional
@@ -271,7 +292,7 @@ public class ChannelAddressBookService {
                 .filter(value -> !value.isBlank()).distinct().sorted().toList();
         return new ChannelAddressBookItem(row.contactId(), row.identityId(), row.displayName(),
                 row.remark(), row.channelType(), row.address(), row.channelDisplayName(), additional,
-                row.source(), row.lastContactAt(), row.hasActivity(), row.canDelete());
+                row.source(), row.lastContactAt(), row.hasActivity(), row.canDelete(), List.of());
     }
 
     private String identityScope(UUID ownerId, String channelType) {

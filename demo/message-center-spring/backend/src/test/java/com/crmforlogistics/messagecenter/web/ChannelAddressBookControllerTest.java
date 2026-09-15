@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.web;
 
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAddressBookPageResponse;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
@@ -31,13 +32,13 @@ class ChannelAddressBookControllerTest {
     @Test
     void listPassesAuthenticatedUserToService() throws Exception {
         UUID owner = UUID.randomUUID();
-        when(service.page(owner, "email", null, 1, 20))
+        when(service.page(owner, "email", null, SearchMode.CONTACT, 1, 20))
                 .thenReturn(new ChannelAddressBookPageResponse(List.of(), 1, 20, false));
 
         mvc.perform(get("/api/channel-address-books/email")
                         .with(user(owner.toString()).roles("AGENT")))
                 .andExpect(status().isOk());
-        verify(service).page(owner, "email", null, 1, 20);
+        verify(service).page(owner, "email", null, SearchMode.CONTACT, 1, 20);
     }
 
     @Test

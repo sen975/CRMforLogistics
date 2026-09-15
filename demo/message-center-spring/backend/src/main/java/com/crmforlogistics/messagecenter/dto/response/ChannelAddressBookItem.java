@@ -16,5 +16,12 @@ public record ChannelAddressBookItem(
         String source,
         Instant lastContactAt,
         boolean hasActivity,
-        boolean canDelete) {
+        boolean canDelete,
+        List<String> matchedTags) {
+
+    public ChannelAddressBookItem withMatchedTags(List<String> tags) {
+        return new ChannelAddressBookItem(contactId, identityId, displayName, remark, channelType,
+                address, channelDisplayName, additionalChannelTypes, source, lastContactAt,
+                hasActivity, canDelete, tags == null ? List.of() : tags);
+    }
 }
