@@ -7,14 +7,18 @@ import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.service.contact.ContactTagMatchResolver;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class UnifiedConversationServiceTest {
@@ -66,5 +70,40 @@ class UnifiedConversationServiceTest {
 
         org.mockito.Mockito.verify(mapper).listUnified(
                 userId, "alice", false, true, 7L, "2026-08-25T10:00:00Z", "CONTACT:" + rowId, 21);
+    }
+
+    @Test
+    void backfillsMatchedTagsForVisibleContactsOnlyAndScopesOwner() {
+        UUID userId = UUID.randomUUID();
+        ConversationMapper mapper = mock(ConversationMapper.class);
+        UUID matchedId = UUID.randomUUID();
+        UUID unmatchedId = UUID.randomUUID();
+        UUID lookaheadId = UUID.randomUUID();
+        Instant sortAt = Instant.parse("2026-08-25T10:00:00Z");
+        when(mapper.listUnified(eq(userId), eq("客户"), eq(true), eq(null), eq(null), eq(null), eq(null), eq(3)))
+                .thenReturn(List.of(
+                        new ConversationMapper.UnifiedConversationRow("CONTACT", matchedId, "客户 A", null, null, sortAt, "a", 4, 1, null, 0),
+                        new ConversationMapper.UnifiedConversationRow("CONTACT", unmatchedId, "客户 B", null, null, sortAt.minusSeconds(1), "b", 4, 1, null, 0),
+                        new ConversationMapper.UnifiedConversationRow("CONTACT", lookaheadId, "客户 C", null, null, sortAt.minusSeconds(2), "c", 4, 1, null, 0)));
+
+        ContactTagMapper tagMapper = mock(ContactTagMapper.class);
+        when(tagMapper.findMatchedByContactIds(eq(userId), any(), eq("客户")))
+                .thenReturn(List.of(new ContactTagMapper.MatchedTagRow(matchedId, "重点客户")));
+        UnifiedConversationService service = new UnifiedConversationService(mapper,
+                new ContactTagMatchResolver(tagMapper));
+
+        ConversationPageResponse result = service.list(userId, "客户", SearchMode.TAG, null, 2);
+
+        assertThat(result.records()).extracting(ConversationListItemResponse::id)
+                .containsExactly(matchedId, unmatchedId);
+        assertThat(result.records().get(0).matchedTags()).containsExactly("重点客户");
+        assertThat(result.records().get(1).matchedTags()).isEmpty();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<UUID>> idsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(tagMapper).findMatchedByContactIds(eq(userId), idsCaptor.capture(), eq("客户"));
+        assertThat(idsCaptor.getValue())
+                .containsExactlyInAnyOrder(matchedId, unmatchedId)
+                .doesNotContain(lookaheadId);
     }
 }
