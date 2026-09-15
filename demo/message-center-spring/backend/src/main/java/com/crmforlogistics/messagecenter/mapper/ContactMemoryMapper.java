@@ -576,16 +576,89 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                 (id, contact_id, owner_user_id, generation_batch_id, input_cursor,
                  output_cursor, status, failure_code, failure_message, model, duration_ms,
                  input_message_count, output_label_change_count, profile_changed,
-                 retry_count, completed_at)
+                 retry_count, created_at, completed_at)
             values (coalesce(#{entity.id}, gen_random_uuid()), #{contactId}::uuid,
                     #{ownerUserId}::uuid, #{entity.generationBatchId}::uuid,
                     #{entity.inputCursor}, #{entity.outputCursor}, #{entity.status},
                     #{entity.failureCode}, #{entity.failureMessage}, #{entity.model},
                     #{entity.durationMs}, #{entity.inputMessageCount},
                     #{entity.outputLabelChangeCount}, #{entity.profileChanged},
-                    #{entity.retryCount}, #{entity.completedAt})
+                    #{entity.retryCount}, coalesce(#{entity.createdAt}, now()),
+                    #{entity.completedAt})
             """)
     int insertAttempt(@Param("entity") ContactMemoryAttemptEntity entity,
                       @Param("contactId") UUID contactId,
                       @Param("ownerUserId") UUID ownerUserId);
+
+    @Update("""
+            update contact_memory_attempts
+            set input_cursor = #{inputCursor},
+                output_cursor = #{outputCursor},
+                status = 'SUCCEEDED',
+                failure_code = null,
+                failure_message = null,
+                model = #{model},
+                duration_ms = #{durationMs},
+                input_message_count = #{inputMessageCount},
+                output_label_change_count = #{outputLabelChangeCount},
+                profile_changed = #{profileChanged},
+                retry_count = 0,
+                completed_at = #{completedAt}
+            where id = #{attemptId}::uuid
+            """)
+    int updateAttemptSucceeded(@Param("attemptId") UUID attemptId,
+                               @Param("inputCursor") String inputCursor,
+                               @Param("outputCursor") String outputCursor,
+                               @Param("model") String model,
+                               @Param("durationMs") long durationMs,
+                               @Param("inputMessageCount") int inputMessageCount,
+                               @Param("outputLabelChangeCount") int outputLabelChangeCount,
+                               @Param("profileChanged") boolean profileChanged,
+                               @Param("completedAt") Instant completedAt);
+
+    @Update("""
+            update contact_memory_attempts
+            set input_cursor = #{inputCursor},
+                output_cursor = null,
+                status = 'FAILED',
+                failure_code = #{failureCode},
+                failure_message = #{failureMessage},
+                duration_ms = #{durationMs},
+                input_message_count = #{inputMessageCount},
+                output_label_change_count = 0,
+                profile_changed = false,
+                retry_count = #{retryCount},
+                completed_at = #{completedAt}
+            where id = #{attemptId}::uuid
+            """)
+    int updateAttemptFailed(@Param("attemptId") UUID attemptId,
+                            @Param("failureCode") String failureCode,
+                            @Param("failureMessage") String failureMessage,
+                            @Param("retryCount") int retryCount,
+                            @Param("inputCursor") String inputCursor,
+                            @Param("inputMessageCount") int inputMessageCount,
+                            @Param("durationMs") long durationMs,
+                            @Param("completedAt") Instant completedAt);
+
+    @Update("""
+            update contact_memory_attempts
+            set input_cursor = #{inputCursor},
+                output_cursor = #{outputCursor},
+                status = 'SKIPPED',
+                failure_code = null,
+                failure_message = null,
+                duration_ms = #{durationMs},
+                input_message_count = #{inputMessageCount},
+                output_label_change_count = 0,
+                profile_changed = false,
+                retry_count = 0,
+                completed_at = #{completedAt}
+            where id = #{attemptId}::uuid
+            """)
+    int updateAttemptSkipped(@Param("attemptId") UUID attemptId,
+                             @Param("inputCursor") String inputCursor,
+                             @Param("outputCursor") String outputCursor,
+                             @Param("inputMessageCount") int inputMessageCount,
+                             @Param("durationMs") long durationMs,
+                             @Param("completedAt") Instant completedAt);
 }

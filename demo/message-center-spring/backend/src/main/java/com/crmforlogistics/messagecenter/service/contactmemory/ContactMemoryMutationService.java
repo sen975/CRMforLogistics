@@ -2,7 +2,6 @@ package com.crmforlogistics.messagecenter.service.contactmemory;
 
 import com.crmforlogistics.messagecenter.entity.ContactAiLabelEntity;
 import com.crmforlogistics.messagecenter.entity.ContactAiLabelEvidenceEntity;
-import com.crmforlogistics.messagecenter.entity.ContactMemoryAttemptEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
@@ -25,10 +24,25 @@ public class ContactMemoryMutationService {
     private static final int MAX_LABEL_CHANGES = 20;
     private final ContactMemoryMapper memory;
     private final ContactMemoryStateMapper states;
+    private final ContactMemoryAttemptService attempts;
     private final ContactMemoryConfig config;
 
     public ContactMemoryMutationService(ContactMemoryMapper memory, ContactMemoryStateMapper states) {
-        this(memory, states, new ContactMemoryConfig(
+        this(memory, states, new ContactMemoryAttemptService(memory), new ContactMemoryConfig(
+                50, 4000, 50000, 20, 1000, 10, 4000,
+                100, 100, 100, 500, 30));
+    }
+
+    public ContactMemoryMutationService(ContactMemoryMapper memory,
+                                        ContactMemoryStateMapper states,
+                                        ContactMemoryConfig config) {
+        this(memory, states, new ContactMemoryAttemptService(memory), config);
+    }
+
+    public ContactMemoryMutationService(ContactMemoryMapper memory,
+                                        ContactMemoryStateMapper states,
+                                        ContactMemoryAttemptService attempts) {
+        this(memory, states, attempts, new ContactMemoryConfig(
                 50, 4000, 50000, 20, 1000, 10, 4000,
                 100, 100, 100, 500, 30));
     }
@@ -36,9 +50,11 @@ public class ContactMemoryMutationService {
     @Autowired
     public ContactMemoryMutationService(ContactMemoryMapper memory,
                                         ContactMemoryStateMapper states,
+                                        ContactMemoryAttemptService attempts,
                                         ContactMemoryConfig config) {
         this.memory = memory;
         this.states = states;
+        this.attempts = attempts;
         this.config = config;
     }
 
@@ -47,8 +63,9 @@ public class ContactMemoryMutationService {
             UUID ownerUserId,
             UUID contactId,
             ContactMemoryModels.Lease lease,
-            ContactMemoryModels.ConsolidationResult result) {
-        validateRequest(ownerUserId, contactId, lease, result);
+            ContactMemoryModels.ConsolidationResult result,
+            ContactMemoryModels.AttemptRun attempt) {
+        validateRequest(ownerUserId, contactId, lease, result, attempt);
         validateCandidates(result);
 
         memory.expireObservations(contactId, ownerUserId, Instant.now());
@@ -56,14 +73,15 @@ public class ContactMemoryMutationService {
         int factCount = persistFacts(ownerUserId, contactId, result);
         int labelCount = persistLabels(ownerUserId, contactId, result);
         UUID profileId = persistProfile(ownerUserId, contactId, result);
-        persistAttempt(ownerUserId, contactId, result, profileId != null);
+        ContactMemoryModels.MutationResult mutationResult = new ContactMemoryModels.MutationResult(
+                profileId, result.outputCursor(), observationCount, factCount, labelCount);
+        attempts.succeed(attempt, result, profileId, Instant.now());
 
         if (states.complete(lease.stateId(), lease.leaseToken(), result.outputCursor(), profileId,
                 Instant.now()) != 1) {
             throw new ContactMemoryModels.ValidationException("LEASE_LOST");
         }
-        return new ContactMemoryModels.MutationResult(
-                profileId, result.outputCursor(), observationCount, factCount, labelCount);
+        return mutationResult;
     }
 
     private int persistObservations(UUID ownerUserId, UUID contactId,
@@ -266,28 +284,13 @@ public class ContactMemoryMutationService {
         return entity.getId();
     }
 
-    private void persistAttempt(UUID ownerUserId, UUID contactId,
-                                ContactMemoryModels.ConsolidationResult result,
-                                boolean profileChanged) {
-        ContactMemoryAttemptEntity entity = new ContactMemoryAttemptEntity();
-        entity.setId(UUID.randomUUID());
-        entity.setGenerationBatchId(result.generationBatchId());
-        entity.setInputCursor(result.inputCursor());
-        entity.setOutputCursor(result.outputCursor());
-        entity.setStatus(ContactMemoryModels.AttemptStatus.SUCCEEDED.name());
-        entity.setModel(result.model());
-        entity.setInputMessageCount(result.inputMessageCount());
-        entity.setOutputLabelChangeCount(result.labels().size());
-        entity.setProfileChanged(profileChanged);
-        entity.setRetryCount(0);
-        entity.setCompletedAt(Instant.now());
-        memory.insertAttempt(entity, contactId, ownerUserId);
-    }
-
     private static void validateRequest(UUID ownerUserId, UUID contactId,
                                         ContactMemoryModels.Lease lease,
-                                        ContactMemoryModels.ConsolidationResult result) {
+                                        ContactMemoryModels.ConsolidationResult result,
+                                        ContactMemoryModels.AttemptRun attempt) {
         if (ownerUserId == null || contactId == null || lease == null || result == null
+                || attempt == null || attempt.attemptId() == null || attempt.generationBatchId() == null
+                || !attempt.generationBatchId().equals(result.generationBatchId())
                 || !ownerUserId.equals(lease.ownerUserId()) || !contactId.equals(lease.contactId())
                 || lease.stateId() == null || lease.leaseOwner() == null || lease.leaseOwner().isBlank()
                 || lease.leaseToken() == null

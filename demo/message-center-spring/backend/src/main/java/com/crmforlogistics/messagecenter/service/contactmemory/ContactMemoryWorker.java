@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.contactmemory;
 import com.crmforlogistics.messagecenter.config.ContactMemoryConfig;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryStateEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,16 +22,19 @@ public class ContactMemoryWorker {
     private final ContactMemoryLlmGateway gateway;
     private final ContactMemoryConsolidationService consolidation;
     private final ContactMemoryMutationService mutation;
+    private final ContactMemoryAttemptService attempts;
     private final ContactMemoryConfig config;
     private final String workerId;
 
+    @Autowired
     public ContactMemoryWorker(ContactMemoryStateMapper states,
                                 ContactMemoryContextService contextService,
                                 ContactMemoryLlmGateway gateway,
                                 ContactMemoryConsolidationService consolidation,
                                 ContactMemoryMutationService mutation,
+                                ContactMemoryAttemptService attempts,
                                 ContactMemoryConfig config) {
-        this(states, contextService, gateway, consolidation, mutation, config,
+        this(states, contextService, gateway, consolidation, mutation, attempts, config,
                 "contact-memory-" + UUID.randomUUID());
     }
 
@@ -39,6 +43,7 @@ public class ContactMemoryWorker {
                                ContactMemoryLlmGateway gateway,
                                ContactMemoryConsolidationService consolidation,
                                ContactMemoryMutationService mutation,
+                               ContactMemoryAttemptService attempts,
                                ContactMemoryConfig config,
                                String workerId) {
         this.states = states;
@@ -46,6 +51,7 @@ public class ContactMemoryWorker {
         this.gateway = gateway;
         this.consolidation = consolidation;
         this.mutation = mutation;
+        this.attempts = attempts;
         this.config = config;
         this.workerId = workerId == null || workerId.isBlank()
                 ? "contact-memory-" + UUID.randomUUID()
@@ -81,26 +87,33 @@ public class ContactMemoryWorker {
         ContactMemoryModels.Lease lease = new ContactMemoryModels.Lease(
                 state.getId(), state.getContactId(), state.getOwnerUserId(), leaseOwner,
                 leaseToken.get(), leaseUntil);
+        ContactMemoryModels.AttemptRun attempt = null;
+        ContactMemoryModels.Context context = null;
         try {
-            ContactMemoryModels.Context context = contextService.load(
+            attempt = attempts.start(state.getOwnerUserId(), state.getContactId(),
+                    state.getLastSuccessCursor(), state.getRetryCount() == null ? 0 : state.getRetryCount(), now);
+            context = contextService.load(
                     state.getOwnerUserId(), state.getContactId(), now);
             if (context.inboundMessages().isEmpty()) {
+                attempts.skip(attempt, context.inputCursor(), context.outputCursor(),
+                        context.inboundMessages().size(), Instant.now());
                 completeWithoutLlm(state, lease, context.outputCursor(), now);
                 return;
             }
 
             ContactMemoryModels.LlmOutput output = gateway.generate(context);
-            ContactMemoryModels.ConsolidationResult result = consolidation.consolidate(context, output);
-            mutation.persist(state.getOwnerUserId(), state.getContactId(), lease, result);
+            ContactMemoryModels.ConsolidationResult result = consolidation.consolidate(
+                    context, output, attempt.generationBatchId());
+            mutation.persist(state.getOwnerUserId(), state.getContactId(), lease, result, attempt);
         } catch (ContactMemoryLlmGateway.GatewayException exception) {
-            handleFailure(state, lease, now, exception.code(), exception.diagnostic(),
-                    exception.retryable());
+            handleFailure(state, lease, attempt, context, now, exception.code(),
+                    exception.diagnostic(), exception.retryable());
         } catch (ContactMemoryModels.ValidationException exception) {
             String code = exception.getMessage() == null || exception.getMessage().isBlank()
                     ? "PERSISTENCE_FAILED" : exception.getMessage();
-            handleFailure(state, lease, now, code, code, !isTerminalValidation(code));
+            handleFailure(state, lease, attempt, context, now, code, code, !isTerminalValidation(code));
         } catch (RuntimeException exception) {
-            handleFailure(state, lease, now, "PERSISTENCE_FAILED",
+            handleFailure(state, lease, attempt, context, now, "PERSISTENCE_FAILED",
                     exception.getMessage() == null ? exception.getClass().getSimpleName()
                             : exception.getMessage(), true);
         }
@@ -117,6 +130,8 @@ public class ContactMemoryWorker {
 
     private void handleFailure(ContactMemoryStateEntity state,
                                ContactMemoryModels.Lease lease,
+                               ContactMemoryModels.AttemptRun attemptRun,
+                               ContactMemoryModels.Context context,
                                Instant now,
                                String code,
                                String message,
@@ -130,6 +145,15 @@ public class ContactMemoryWorker {
                     attempt, retryAt, terminal);
         } catch (RuntimeException failure) {
             log.warn("contact memory failure state update failed stateId={}", state.getId(), failure);
+        }
+        if (attemptRun != null) {
+            try {
+                attempts.fail(attemptRun, code, message, attempt,
+                        context == null ? state.getLastSuccessCursor() : context.inputCursor(),
+                        context == null ? 0 : context.inboundMessages().size(), Instant.now());
+            } catch (RuntimeException failure) {
+                log.warn("contact memory attempt audit failed stateId={}", state.getId(), failure);
+            }
         }
     }
 
@@ -150,6 +174,7 @@ public class ContactMemoryWorker {
                 || "INVALID_OUTPUT".equals(code)
                 || "INVALID_EVIDENCE".equals(code)
                 || "PROFILE_TOO_LONG".equals(code)
+                || "INPUT_LIMIT".equals(code)
                 || "OUTPUT_LIMIT".equals(code)
                 || "INVALID_CURSOR".equals(code);
     }

@@ -51,8 +51,8 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(fact), List.of(), null, "model");
 
-        assertThatThrownBy(() -> new ContactMemoryMutationService(memory, states)
-                .persist(OWNER_ID, CONTACT_ID, lease(), result))
+        assertThatThrownBy(() -> new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class))
+                .persist(OWNER_ID, CONTACT_ID, lease(), result, attempt(result)))
                 .isInstanceOf(ContactMemoryModels.ValidationException.class)
                 .hasMessageContaining("INVALID_EVIDENCE");
         verify(memory, never()).insertFact(any(), eq(CONTACT_ID), eq(OWNER_ID));
@@ -104,10 +104,42 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(fact), List.of(label), null, "model");
 
-        assertThatCode(() -> new ContactMemoryMutationService(memory, states)
-                .persist(OWNER_ID, CONTACT_ID, lease(), result))
+        assertThatCode(() -> new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class))
+                .persist(OWNER_ID, CONTACT_ID, lease(), result, attempt(result)))
                 .doesNotThrowAnyException();
         verify(states).complete(eq(STATE_ID), eq(LEASE_TOKEN), eq("cursor"), eq((UUID) null), any());
+    }
+
+    @Test
+    void successfulMutationStoresRealInputAndEvidenceCountsAndUpdatesProfilePointer() {
+        ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryAttemptService attempts = mock(ContactMemoryAttemptService.class);
+        UUID profileId = UUID.randomUUID();
+        ContactMemoryModels.AttemptRun run = new ContactMemoryModels.AttemptRun(
+                UUID.randomUUID(), UUID.randomUUID(), Instant.now());
+        when(memory.nextProfileVersion(eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(2L);
+        when(memory.insertProfile(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenAnswer(invocation -> {
+            ((com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity) invocation.getArgument(0))
+                    .setId(profileId);
+            return 1;
+        });
+        when(states.complete(any(), any(), any(), any(), any())).thenReturn(1);
+
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
+                run.generationBatchId(), "input", "output", List.of(), List.of(), List.of(),
+                new ContactMemoryModels.ProfileCandidate("新画像"), "model", 3, 4, "NEW_CONTEXT");
+
+        new ContactMemoryMutationService(memory, states, attempts)
+                .persist(OWNER_ID, CONTACT_ID, lease(), result, run);
+
+        ArgumentCaptor<com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity> profile =
+                ArgumentCaptor.forClass(com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity.class);
+        verify(memory).insertProfile(profile.capture(), eq(CONTACT_ID), eq(OWNER_ID));
+        assertThat(profile.getValue().getInputMessageCount()).isEqualTo(3);
+        assertThat(profile.getValue().getEvidenceCount()).isEqualTo(4);
+        verify(states).complete(eq(STATE_ID), eq(LEASE_TOKEN), eq("output"), eq(profileId), any());
+        verify(attempts).succeed(eq(run), eq(result), eq(profileId), any());
     }
 
     @Test
@@ -129,8 +161,8 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(fact), List.of(), null, "model");
 
-        new ContactMemoryMutationService(memory, states).persist(
-                OWNER_ID, CONTACT_ID, lease(), result);
+        new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class)).persist(
+                OWNER_ID, CONTACT_ID, lease(), result, attempt(result));
 
         ArgumentCaptor<ContactMemoryFactEntity> captor =
                 ArgumentCaptor.forClass(ContactMemoryFactEntity.class);
@@ -170,8 +202,8 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(), List.of(label), null, "model");
 
-        new ContactMemoryMutationService(memory, states).persist(
-                OWNER_ID, CONTACT_ID, lease(), result);
+        new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class)).persist(
+                OWNER_ID, CONTACT_ID, lease(), result, attempt(result));
 
         verify(memory, never()).insertAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID));
         ArgumentCaptor<ContactAiLabelEntity> captor =
@@ -222,8 +254,8 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(observation), List.of(fact), List.of(), null, "model");
 
-        new ContactMemoryMutationService(memory, states).persist(
-                OWNER_ID, CONTACT_ID, lease(), result);
+        new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class)).persist(
+                OWNER_ID, CONTACT_ID, lease(), result, attempt(result));
 
         var order = inOrder(memory);
         order.verify(memory).copyObservationEvidenceToFact(eq(observationId), eq(factId),
@@ -242,8 +274,8 @@ class ContactMemoryMutationServiceTest {
         ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
                 UUID.randomUUID(), null, "cursor", List.of(), List.of(), List.of(), null, "model");
 
-        new ContactMemoryMutationService(memory, states).persist(
-                OWNER_ID, CONTACT_ID, lease(), result);
+        new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class)).persist(
+                OWNER_ID, CONTACT_ID, lease(), result, attempt(result));
 
         verify(memory).expireObservations(eq(CONTACT_ID), eq(OWNER_ID), any());
     }
@@ -270,8 +302,8 @@ class ContactMemoryMutationServiceTest {
                 100, 100, 100, 500, 2);
         Instant before = Instant.now();
 
-        new ContactMemoryMutationService(memory, states, config).persist(
-                OWNER_ID, CONTACT_ID, lease(), result);
+        new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class), config).persist(
+                OWNER_ID, CONTACT_ID, lease(), result, attempt(result));
 
         ArgumentCaptor<ContactMemoryObservationEntity> captor =
                 ArgumentCaptor.forClass(ContactMemoryObservationEntity.class);
@@ -322,5 +354,11 @@ class ContactMemoryMutationServiceTest {
         return new ContactMemoryModels.Lease(
                 STATE_ID, CONTACT_ID, OWNER_ID, LEASE_OWNER, LEASE_TOKEN,
                 Instant.now().plusSeconds(60));
+    }
+
+    private static ContactMemoryModels.AttemptRun attempt(
+            ContactMemoryModels.ConsolidationResult result) {
+        return new ContactMemoryModels.AttemptRun(
+                UUID.randomUUID(), result.generationBatchId(), Instant.now());
     }
 }

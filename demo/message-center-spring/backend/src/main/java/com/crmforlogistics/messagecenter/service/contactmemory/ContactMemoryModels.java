@@ -106,6 +106,9 @@ public final class ContactMemoryModels {
                         String leaseOwner, UUID leaseToken, Instant leaseUntil) {
     }
 
+    public record AttemptRun(UUID attemptId, UUID generationBatchId, Instant startedAt) {
+    }
+
     public record EvidenceRef(EvidenceType type, UUID id) {
     }
 

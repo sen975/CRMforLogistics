@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -40,15 +41,15 @@ class ContactMemoryWorkerTest {
         when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenReturn(output);
-        when(consolidation.consolidate(context, output)).thenReturn(result);
+        when(consolidation.consolidate(eq(context), eq(output), any())).thenReturn(result);
 
         ContactMemoryWorker worker = worker(states, contextService, gateway, consolidation, mutation);
 
         worker.process(state, NOW);
 
         verify(gateway).generate(context);
-        verify(consolidation).consolidate(context, output);
-        verify(mutation).persist(eq(OWNER_ID), eq(CONTACT_ID), any(), eq(result));
+        verify(consolidation).consolidate(eq(context), eq(output), any());
+        verify(mutation).persist(eq(OWNER_ID), eq(CONTACT_ID), any(), eq(result), any());
         verify(states, never()).fail(any(), any(), any(), any(), any(Integer.class),
                 any(), any(Boolean.class));
     }
@@ -73,7 +74,7 @@ class ContactMemoryWorkerTest {
 
         verify(gateway, never()).generate(any());
         verify(consolidation, never()).consolidate(any(), any());
-        verify(mutation, never()).persist(any(), any(), any(), any());
+        verify(mutation, never()).persist(any(), any(), any(), any(), any());
         verify(states).complete(eq(state.getId()), any(), eq("cursor"), eq((UUID) null), eq(NOW));
     }
 
@@ -97,6 +98,32 @@ class ContactMemoryWorkerTest {
 
         verify(states).fail(eq(state.getId()), any(), eq("LLM_TIMEOUT"), any(),
                 eq(2), eq(NOW.plusSeconds(120)), eq(false));
+    }
+
+    @Test
+    void llmFailureCreatesFailedAttemptWithDurationAndCursor() {
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryContextService contextService = mock(ContactMemoryContextService.class);
+        ContactMemoryLlmGateway gateway = mock(ContactMemoryLlmGateway.class);
+        ContactMemoryConsolidationService consolidation = mock(ContactMemoryConsolidationService.class);
+        ContactMemoryMutationService mutation = mock(ContactMemoryMutationService.class);
+        ContactMemoryAttemptService attempts = mock(ContactMemoryAttemptService.class);
+        ContactMemoryStateEntity state = state("DIRTY", 0);
+        ContactMemoryModels.Context context = contextWithInbound("out");
+        ContactMemoryModels.AttemptRun run = new ContactMemoryModels.AttemptRun(
+                UUID.randomUUID(), UUID.randomUUID(), NOW);
+        when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
+        when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
+        when(gateway.generate(context)).thenThrow(
+                new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true));
+
+        ContactMemoryWorker worker = worker(states, contextService, gateway, consolidation, mutation, attempts);
+        when(attempts.start(any(), any(), any(), anyInt(), any()))
+                .thenReturn(run);
+        worker.process(state, NOW);
+
+        verify(attempts).fail(eq(run), eq("LLM_TIMEOUT"), any(), eq(1),
+                eq(context.inputCursor()), eq(context.inboundMessages().size()), any());
     }
 
     @Test
@@ -138,8 +165,8 @@ class ContactMemoryWorkerTest {
         when(states.claim(eq(state.getId()), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         when(contextService.load(OWNER_ID, CONTACT_ID, NOW)).thenReturn(context);
         when(gateway.generate(context)).thenReturn(output);
-        when(consolidation.consolidate(context, output)).thenReturn(result);
-        when(mutation.persist(eq(OWNER_ID), eq(CONTACT_ID), any(), eq(result)))
+        when(consolidation.consolidate(eq(context), eq(output), any())).thenReturn(result);
+        when(mutation.persist(eq(OWNER_ID), eq(CONTACT_ID), any(), eq(result), any()))
                 .thenThrow(new ContactMemoryModels.ValidationException("LEASE_LOST"));
 
         ContactMemoryWorker worker = worker(states, contextService, gateway, consolidation, mutation);
@@ -172,8 +199,21 @@ class ContactMemoryWorkerTest {
                                               ContactMemoryLlmGateway gateway,
                                               ContactMemoryConsolidationService consolidation,
                                               ContactMemoryMutationService mutation) {
+        return worker(states, contextService, gateway, consolidation, mutation,
+                mock(ContactMemoryAttemptService.class));
+    }
+
+    private static ContactMemoryWorker worker(ContactMemoryStateMapper states,
+                                              ContactMemoryContextService contextService,
+                                              ContactMemoryLlmGateway gateway,
+                                              ContactMemoryConsolidationService consolidation,
+                                              ContactMemoryMutationService mutation,
+                                              ContactMemoryAttemptService attempts) {
+        when(attempts.start(any(), any(), any(), any(Integer.class), any()))
+                .thenReturn(new ContactMemoryModels.AttemptRun(
+                        UUID.randomUUID(), UUID.randomUUID(), NOW));
         return new ContactMemoryWorker(
-                states, contextService, gateway, consolidation, mutation,
+                states, contextService, gateway, consolidation, mutation, attempts,
                 new ContactMemoryConfig(50, 4000, 50000, 20, 1000, 10, 4000,
                         100, 100, 100, 500, 30, 7, 300, 3, 60, 900,
                         0, 0, "UTC"),
