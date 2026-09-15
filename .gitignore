@@ -27,6 +27,7 @@ wechat-decrypt/
 **/data/contact-groups.jsonl
 **/data/media/
 demo/message-center-spring/data/
+demo/message-center-spring/backend/data/
 **/data-local/
 **/media-cache/
 **/*.lock
