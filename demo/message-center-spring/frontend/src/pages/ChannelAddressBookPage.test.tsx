@@ -65,7 +65,7 @@ describe('ChannelAddressBookPage', () => {
 
     await user.type(screen.getByPlaceholderText('搜索名称、备注、号码或邮箱'), '张');
     await user.keyboard('{Enter}');
-    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('chatapp', '张', 1));
+    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('chatapp', '张', 1, 'contact'));
 
     await user.click(screen.getByText('张经理'));
     expect(screen.getByTestId('location')).toHaveTextContent('/conversations/contact/contact-1?channel=chatapp&identityId=identity-1');
@@ -76,7 +76,23 @@ describe('ChannelAddressBookPage', () => {
     renderPage('/address-book/email');
 
     await user.click(screen.getByRole('listitem', { name: '2' }));
-    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('email', '', 2));
+    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('email', '', 2, 'contact'));
+  });
+
+  it('clears the keyword and page and searches tag names when switching to tag mode', async () => {
+    const user = userEvent.setup();
+    renderPage('/address-book/email');
+
+    await user.type(screen.getByPlaceholderText('搜索名称、备注、号码或邮箱'), '张');
+    await user.keyboard('{Enter}');
+    await user.click(screen.getByRole('listitem', { name: '2' }));
+    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('email', '张', 2, 'contact'));
+
+    await user.click(screen.getByRole('button', { name: '搜索模式' }));
+    await user.click(await screen.findByText('标签'));
+
+    await waitFor(() => expect(hooks.useChannelAddressBook).toHaveBeenLastCalledWith('email', '', 1, 'tag'));
+    expect(screen.getByPlaceholderText('搜索标签名')).toHaveValue('');
   });
 
   it('shows enterprise WeCom when it is an additional contact channel', () => {
