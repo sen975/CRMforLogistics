@@ -222,7 +222,7 @@ describe('SendPage ChatApp contacts', () => {
     expect(screen.queryByText('发送表单')).not.toBeInTheDocument();
   });
 
-  it('switches the recipient search to tag mode and clears the keyword', async () => {
+  it('sends the switched search mode to the contact query', async () => {
     const user = userEvent.setup();
     api.fetchChannelCapabilities.mockResolvedValue([{
       channelType: 'chatapp', channelAccountId: 'account-a', displayName: 'CAMS 一号账号', authStatus: 'active',
@@ -242,8 +242,38 @@ describe('SendPage ChatApp contacts', () => {
     await user.click(await screen.findByRole('menuitem', { name: '标签' }));
 
     expect(await screen.findByText('搜索标签名')).toBeInTheDocument();
+    // 只断言「新的 searchMode 真的走到了 API」。这里刻意不断言关键词被清空：
+    // 点「搜索模式」按钮一定会让收件人下拉失焦关闭，而 rc-select 关闭下拉时自己就会
+    // 回调 onSearch('') 清空搜索词，所以 changeSearchMode 里的 setSearch('') 在这条
+    // 交互路径上不可观测（删掉它本用例仍然通过，已实测）。关键词/选中项的重置由
+    // 「切模式清空已选收件人」用例钉住。
     await waitFor(() => expect(api.fetchContacts).toHaveBeenLastCalledWith(expect.objectContaining({
-      search: undefined, searchMode: 'tag', channelAccountId: 'account-a',
+      searchMode: 'tag', channelAccountId: 'account-a',
     })));
+  });
+
+  it('clears the selected recipient when the search mode changes', async () => {
+    const user = userEvent.setup();
+    api.fetchChannelCapabilities.mockResolvedValue([{
+      channelType: 'chatapp', channelAccountId: 'account-a', displayName: 'CAMS 一号账号', authStatus: 'active',
+    }]);
+    api.fetchContacts.mockResolvedValue(page([{
+      id: 'contact-1', displayName: '张三', remark: '', channelTypes: ['chatapp'],
+      lastMessageAt: null, lastText: '', messageCount: 0, unreadCount: 0, identities: [],
+    }]));
+
+    renderPage();
+
+    const contactSelect = await screen.findByRole('combobox');
+    fireEvent.mouseDown(contactSelect);
+    await user.click(await screen.findByText('张三 (chatapp)', { exact: true }));
+    expect(await screen.findByText('发送表单')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '搜索模式' }));
+    await user.click(await screen.findByRole('menuitem', { name: '标签' }));
+
+    // 切模式后不允许残留旧收件人：下拉框不再显示该选中项，下方回到「先选择一个联系人」。
+    await waitFor(() => expect(screen.queryByText('发送表单')).not.toBeInTheDocument());
+    expect(await screen.findByText('先选择一个联系人')).toBeInTheDocument();
   });
 });

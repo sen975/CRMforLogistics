@@ -63,6 +63,7 @@ export default function SendPage() {
   const changeSearchMode = (mode: SearchMode) => {
     setSearchMode(mode);
     setSearch('');
+    setSelectedId(null);
   };
 
   const contacts = data?.records ?? [];
