@@ -41,6 +41,8 @@ describe('contact memory response contract', () => {
         lastSuccessAt: '2026-09-10T00:00:00Z',
         lastFailureCode: null,
         pendingInbound: true,
+        aiTagsNextCursor: 'next-cursor',
+        aiTagsHasMore: true,
       },
     };
     http.get.mockResolvedValue({ data: response });
@@ -54,5 +56,6 @@ describe('contact memory response contract', () => {
       colorToken: 'green',
       status: 'STALE',
     });
+    expect(result.memory?.aiTagsHasMore).toBe(true);
   });
 });

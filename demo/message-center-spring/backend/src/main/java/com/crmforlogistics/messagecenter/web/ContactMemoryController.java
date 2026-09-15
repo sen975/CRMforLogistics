@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -21,10 +22,16 @@ public class ContactMemoryController {
     }
 
     @GetMapping("/{contactId}/memory")
-    public ResponseEntity<ContactMemoryResponse> get(@PathVariable UUID contactId) {
+    public ResponseEntity<ContactMemoryResponse> get(@PathVariable UUID contactId,
+                                                     @RequestParam(required = false) Integer limit,
+                                                     @RequestParam(required = false) String cursor) {
         UUID ownerUserId = SecurityUtil.currentUserId();
-        return memory.findForOwner(ownerUserId, contactId)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        try {
+            return memory.findForOwner(ownerUserId, contactId, limit, cursor)
+                    .map(ResponseEntity::ok)
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.badRequest().build();
+        }
     }
 }

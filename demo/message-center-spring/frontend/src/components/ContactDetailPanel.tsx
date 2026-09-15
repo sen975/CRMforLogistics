@@ -3,10 +3,10 @@ import { useParams } from 'react-router-dom';
 import { Typography, Tag, Descriptions, Input, Button, Space, App, Spin, Empty, Popconfirm, List, Select, Tabs } from 'antd';
 import { EditOutlined, CheckOutlined, CloseOutlined, ScissorOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { applyTopicFusion, fetchContact, fetchMessage, fetchManualReviewPending, keepPendingTopic, previewTopicFusion } from '../api/endpoints';
+import { applyTopicFusion, fetchContact, fetchContactMemory, fetchMessage, fetchManualReviewPending, keepPendingTopic, previewTopicFusion } from '../api/endpoints';
 import { useUpdateContactRemark, useUpdateContactTags, useSplitContact } from '../hooks/useContacts';
 import { useDetailPanel } from '../hooks/useDetailPanel';
-import type { ContactIdentityResponse } from '../api/types';
+import type { ContactIdentityResponse, ContactMemoryAiTag } from '../api/types';
 import EmailAttachmentList from './EmailAttachmentList';
 import AiTopicTimeline from './AiTopicTimeline';
 import AiTopicManualReviewPanel from './AiTopicManualReviewPanel';
@@ -36,6 +36,10 @@ export default function ContactDetailPanel() {
   const [editingTags, setEditingTags] = useState(false);
   const [tagValues, setTagValues] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('topics');
+  const [aiTags, setAiTags] = useState<ContactMemoryAiTag[]>([]);
+  const [aiTagsCursor, setAiTagsCursor] = useState<string | null>(null);
+  const [aiTagsHasMore, setAiTagsHasMore] = useState(false);
+  const [loadingMoreAiTags, setLoadingMoreAiTags] = useState(false);
   const { selectedDetail, selectChannel, selectMessage, selectCallRecord } = useDetailPanel();
   const selectedMessageId = selectedDetail?.kind === 'message' ? selectedDetail.id : null;
 
@@ -58,6 +62,13 @@ export default function ContactDetailPanel() {
     queryFn: () => fetchMessage(selectedMessageId!),
     enabled: !!selectedMessageId,
   });
+
+  useEffect(() => {
+    const memory = contact?.memory;
+    setAiTags(memory?.aiTags ?? []);
+    setAiTagsCursor(memory?.aiTagsNextCursor ?? null);
+    setAiTagsHasMore(memory?.aiTagsHasMore ?? false);
+  }, [contact?.id, contact?.memory]);
 
   const updateRemark = useUpdateContactRemark();
   const updateTags = useUpdateContactTags();
@@ -118,6 +129,19 @@ export default function ContactDetailPanel() {
   const handleSelectChannel = (channelType: string) => {
     setActiveTab('accounts');
     selectChannel(channelType);
+  };
+
+  const loadMoreAiTags = async () => {
+    if (!contact || !aiTagsCursor || loadingMoreAiTags) return;
+    setLoadingMoreAiTags(true);
+    try {
+      const next = await fetchContactMemory(contact.id, { limit: 100, cursor: aiTagsCursor });
+      setAiTags((current) => [...current, ...(next.aiTags ?? [])]);
+      setAiTagsCursor(next.aiTagsNextCursor ?? null);
+      setAiTagsHasMore(next.aiTagsHasMore ?? false);
+    } finally {
+      setLoadingMoreAiTags(false);
+    }
   };
 
   const tabContentStyle = { padding: 16, minHeight: 0 };
@@ -181,8 +205,8 @@ export default function ContactDetailPanel() {
         </Descriptions.Item>
         <Descriptions.Item label="AI 标签">
           <Space wrap>
-            {(contact.memory?.aiTags ?? []).length === 0 && <Text type="secondary">暂无 AI 标签</Text>}
-            {(contact.memory?.aiTags ?? []).map((tag) => (
+            {aiTags.length === 0 && <Text type="secondary">暂无 AI 标签</Text>}
+            {aiTags.map((tag) => (
               <Tag
                 key={tag.id}
                 color={tag.colorToken || undefined}
@@ -191,6 +215,11 @@ export default function ContactDetailPanel() {
                 {tag.name}
               </Tag>
             ))}
+            {aiTagsHasMore && (
+              <Button type="link" size="small" loading={loadingMoreAiTags} onClick={loadMoreAiTags}>
+                加载更多
+              </Button>
+            )}
           </Space>
         </Descriptions.Item>
         <Descriptions.Item label="消息数">{contact.messageCount}</Descriptions.Item>

@@ -8,11 +8,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ContactDetailPanel from './ContactDetailPanel';
 
 const fetchContact = vi.fn();
+const fetchContactMemory = vi.fn();
 const selectChannel = vi.fn();
 const updateTagsMutateAsync = vi.fn();
 
 vi.mock('../api/endpoints', () => ({
   fetchContact: (...args: unknown[]) => fetchContact(...args),
+  fetchContactMemory: (...args: unknown[]) => fetchContactMemory(...args),
   fetchMessage: vi.fn(),
   fetchManualReviewPending: vi.fn().mockResolvedValue([]),
   keepPendingTopic: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('../hooks/useDetailPanel', () => ({
 describe('ContactDetailPanel identity display', () => {
   beforeEach(() => {
     fetchContact.mockReset();
+    fetchContactMemory.mockReset();
     selectChannel.mockReset();
     updateTagsMutateAsync.mockReset();
     updateTagsMutateAsync.mockResolvedValue(undefined);
@@ -251,6 +254,8 @@ describe('ContactDetailPanel identity display', () => {
         lastSuccessAt: '2026-09-10T00:00:00Z',
         lastFailureCode: null,
         pendingInbound: true,
+        aiTagsNextCursor: null,
+        aiTagsHasMore: false,
       },
     });
     const queryClient = new QueryClient({
@@ -281,5 +286,58 @@ describe('ContactDetailPanel identity display', () => {
     expect(screen.getByText('人工VIP')).toBeInTheDocument();
     expect(screen.getByText('正在更新')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑AI标签' })).not.toBeInTheDocument();
+  });
+
+  it('loads the next page of ai tags without changing human tags', async () => {
+    fetchContact.mockResolvedValueOnce({
+      id: 'contact-1',
+      displayName: '客户一',
+      remark: '',
+      channelTypes: ['email'],
+      lastMessageAt: null,
+      lastText: '',
+      messageCount: 2,
+      unreadCount: 0,
+      tags: [{ id: 'manual-1', name: '人工VIP', color: 'gold' }],
+      identities: [],
+      memory: {
+        profile: null,
+        humanTags: [{ id: 'manual-1', name: '人工VIP', color: 'gold' }],
+        aiTags: [{ id: 'ai-1', name: '海运客户', category: 'PRODUCT_INTEREST', colorToken: 'green', status: 'ACTIVE', confidence: 0.9 }],
+        state: 'CLEAN',
+        lastSuccessAt: null,
+        lastFailureCode: null,
+        pendingInbound: false,
+        aiTagsNextCursor: 'cursor-1',
+        aiTagsHasMore: true,
+      },
+    });
+    fetchContactMemory.mockResolvedValueOnce({
+      profile: null,
+      humanTags: [{ id: 'manual-1', name: '人工VIP', color: 'gold' }],
+      aiTags: [{ id: 'ai-2', name: '时效敏感', category: 'NEED', colorToken: 'blue', status: 'STALE', confidence: 0.8 }],
+      state: 'CLEAN',
+      lastSuccessAt: null,
+      lastFailureCode: null,
+      pendingInbound: false,
+      aiTagsNextCursor: null,
+      aiTagsHasMore: false,
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider><AntApp><MemoryRouter initialEntries={['/thread/contact-1']}><Routes>
+          <Route path="/thread/:contactId" element={<ContactDetailPanel />} />
+        </Routes></MemoryRouter></AntApp></ConfigProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
+    await user.click(screen.getByRole('button', { name: '加载更多' }));
+    expect(await screen.findByText('时效敏感')).toBeInTheDocument();
+    expect(screen.getByText('人工VIP')).toBeInTheDocument();
+    expect(fetchContactMemory).toHaveBeenCalledWith('contact-1', { limit: 100, cursor: 'cursor-1' });
   });
 });

@@ -30,6 +30,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -93,8 +94,9 @@ class ContactMemoryControllerTest {
 
         ContactAiLabelEntity stale = aiLabel("PRODUCT_INTEREST", "冷链", "green", "STALE");
         ContactAiLabelEntity inactive = aiLabel("RISK", "价格敏感", "red", "INACTIVE");
-        when(memoryMapper.listVisibleLabels(userId, contactId, 100))
-                .thenReturn(List.of(stale, inactive));
+        stale.setLastSeenAt(successAt);
+        when(memoryMapper.listVisibleLabelsPage(userId, contactId, null, null, 101))
+                .thenReturn(List.of(stale));
 
         ContactMemoryAttemptEntity attempt = new ContactMemoryAttemptEntity();
         attempt.setCompletedAt(successAt);
@@ -115,6 +117,43 @@ class ContactMemoryControllerTest {
                 .andExpect(jsonPath("$.lastFailureCode").value("LLM_TIMEOUT"))
                 .andExpect(jsonPath("$.lastFailureMessage").doesNotExist())
                 .andExpect(jsonPath("$.lastSuccessAt").value(successAt.toString()));
+    }
+
+    @Test
+    void aiLabelsArePagedWithoutChangingUnlimitedStorageSemantics() throws Exception {
+        UUID contactId = UUID.randomUUID();
+        ContactEntity contact = new ContactEntity();
+        contact.setId(contactId);
+        contact.setCreatedBy(userId);
+        when(contactMapper.findByIdAndOwner(contactId, userId)).thenReturn(Optional.of(contact));
+
+        ContactAiLabelEntity first = aiLabel("PRODUCT_INTEREST", "海运", "green", "ACTIVE");
+        first.setLastSeenAt(Instant.parse("2026-09-12T00:00:00Z"));
+        ContactAiLabelEntity second = aiLabel("NEED", "时效", "blue", "STALE");
+        second.setLastSeenAt(Instant.parse("2026-09-11T00:00:00Z"));
+        when(memoryMapper.listVisibleLabelsPage(eq(userId), eq(contactId), isNull(), isNull(), eq(2)))
+                .thenReturn(List.of(first, second));
+
+        mvc.perform(get("/api/contacts/{contactId}/memory", contactId)
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aiTags.length()").value(1))
+                .andExpect(jsonPath("$.aiTags[0].name").value("海运"))
+                .andExpect(jsonPath("$.aiTagsHasMore").value(true))
+                .andExpect(jsonPath("$.aiTagsNextCursor").isNotEmpty());
+    }
+
+    @Test
+    void invalidAiLabelCursorIsRejected() throws Exception {
+        UUID contactId = UUID.randomUUID();
+        ContactEntity contact = new ContactEntity();
+        contact.setId(contactId);
+        contact.setCreatedBy(userId);
+        when(contactMapper.findByIdAndOwner(contactId, userId)).thenReturn(Optional.of(contact));
+
+        mvc.perform(get("/api/contacts/{contactId}/memory", contactId)
+                        .param("cursor", "not-a-cursor"))
+                .andExpect(status().isBadRequest());
     }
 
     private static ContactAiLabelEntity aiLabel(String category, String name,

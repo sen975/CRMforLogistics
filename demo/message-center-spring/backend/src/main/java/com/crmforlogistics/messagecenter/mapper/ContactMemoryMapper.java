@@ -298,6 +298,26 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
 
     @Select("""
             select *
+            from contact_ai_labels
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status in ('ACTIVE', 'STALE')
+              and (
+                    #{afterLastSeenAt}::timestamptz is null
+                    or last_seen_at < #{afterLastSeenAt}
+                    or (last_seen_at = #{afterLastSeenAt} and id < #{afterId}::uuid)
+                  )
+            order by last_seen_at desc, id desc
+            limit #{limit}
+            """)
+    List<ContactAiLabelEntity> listVisibleLabelsPage(@Param("ownerUserId") UUID ownerUserId,
+                                                      @Param("contactId") UUID contactId,
+                                                      @Param("afterLastSeenAt") Instant afterLastSeenAt,
+                                                      @Param("afterId") UUID afterId,
+                                                      @Param("limit") int limit);
+
+    @Select("""
+            select *
             from contact_memory_attempts
             where contact_id = #{contactId}::uuid
               and owner_user_id = #{ownerUserId}::uuid

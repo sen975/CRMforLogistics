@@ -1,6 +1,7 @@
 import client from './client';
 import type {
   ContactResponse,
+  ContactMemoryResponse,
   ConversationPage,
   LoginRequest,
   LoginResponse,
@@ -492,6 +493,14 @@ export async function listConversations(params?: {
 
 export async function fetchContact(id: string): Promise<ContactResponse> {
   const res = await client.get<ContactResponse>(`/contacts/${id}`);
+  return res.data;
+}
+
+export async function fetchContactMemory(
+  id: string,
+  params?: { limit?: number; cursor?: string | null },
+): Promise<ContactMemoryResponse> {
+  const res = await client.get<ContactMemoryResponse>(`/contacts/${id}/memory`, { params });
   return res.data;
 }
 

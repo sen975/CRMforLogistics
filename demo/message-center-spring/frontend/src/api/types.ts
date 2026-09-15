@@ -38,6 +38,8 @@ export interface ContactMemoryResponse {
   lastSuccessAt: string | null;
   lastFailureCode: string | null;
   pendingInbound: boolean;
+  aiTagsNextCursor?: string | null;
+  aiTagsHasMore?: boolean;
 }
 
 export type ChannelAddressBookChannel = 'chatapp' | 'email' | 'phone';

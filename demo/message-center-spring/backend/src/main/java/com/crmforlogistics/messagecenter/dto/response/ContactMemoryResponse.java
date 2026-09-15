@@ -11,11 +11,24 @@ public record ContactMemoryResponse(
         String state,
         Instant lastSuccessAt,
         String lastFailureCode,
-        boolean pendingInbound
+        boolean pendingInbound,
+        String aiTagsNextCursor,
+        boolean aiTagsHasMore
 ) {
     public ContactMemoryResponse {
         humanTags = List.copyOf(humanTags == null ? List.of() : humanTags);
         aiTags = List.copyOf(aiTags == null ? List.of() : aiTags);
+    }
+
+    public ContactMemoryResponse(Profile profile,
+                                 List<ContactTagResponse> humanTags,
+                                 List<AiTag> aiTags,
+                                 String state,
+                                 Instant lastSuccessAt,
+                                 String lastFailureCode,
+                                 boolean pendingInbound) {
+        this(profile, humanTags, aiTags, state, lastSuccessAt, lastFailureCode,
+                pendingInbound, null, false);
     }
 
     public record Profile(UUID id, long version, String content, Instant createdAt) {}
