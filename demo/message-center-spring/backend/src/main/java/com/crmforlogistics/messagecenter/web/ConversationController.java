@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.dto.response.ConversationPageResponse;
 import com.crmforlogistics.messagecenter.dto.request.ConversationPreferenceRequest;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ConversationPreferenceResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.conversation.UnifiedConversationService;
@@ -32,10 +33,11 @@ public class ConversationController {
     @GetMapping
     public ConversationPageResponse list(
             @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "searchMode", required = false) String rawSearchMode,
             @RequestParam(value = "cursor", required = false) String cursor,
             @RequestParam(value = "limit", defaultValue = "20") int limit) {
         UUID userId = SecurityUtil.currentUserId();
-        return service.list(userId, search, cursor, limit);
+        return service.list(userId, search, SearchMode.parse(rawSearchMode), cursor, limit);
     }
 
     @PostMapping("/preferences/pin")

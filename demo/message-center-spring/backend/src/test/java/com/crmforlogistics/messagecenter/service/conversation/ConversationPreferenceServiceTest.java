@@ -96,7 +96,7 @@ class ConversationPreferenceServiceTest {
                 .thenReturn(java.util.Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
         var first = row(firstId, Instant.parse("2026-09-03T10:00:00Z"), false);
         var second = row(secondId, Instant.parse("2026-09-03T09:00:00Z"), false);
-        when(conversations.listUnified(userId, null, null, null, null, null, 201))
+        when(conversations.listUnified(userId, null, false, null, null, null, null, 201))
                 .thenReturn(List.of(first, second));
         when(preferences.setSortRank(eq(userId), anyString(), any(), anyLong())).thenReturn(1);
 

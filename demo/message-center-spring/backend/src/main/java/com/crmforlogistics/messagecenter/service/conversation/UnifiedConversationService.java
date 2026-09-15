@@ -1,13 +1,16 @@
 package com.crmforlogistics.messagecenter.service.conversation;
 
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ConversationListItemResponse;
 import com.crmforlogistics.messagecenter.dto.response.ConversationPageResponse;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
+import com.crmforlogistics.messagecenter.service.contact.ContactTagMatchResolver;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -16,25 +19,48 @@ public class UnifiedConversationService {
     private static final int MAX_LIMIT = 100;
 
     private final ConversationMapper conversationMapper;
+    private final ContactTagMatchResolver tagMatchResolver;
 
-    public UnifiedConversationService(ConversationMapper conversationMapper) {
+    public UnifiedConversationService(ConversationMapper conversationMapper,
+                                      ContactTagMatchResolver tagMatchResolver) {
         this.conversationMapper = conversationMapper;
+        this.tagMatchResolver = tagMatchResolver;
     }
 
-    public ConversationPageResponse list(UUID userId, String search, String cursor, int limit) {
+    public ConversationPageResponse list(UUID userId, String search, SearchMode searchMode,
+                                         String cursor, int limit) {
         int safeLimit = limit <= 0 ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
         CursorKey key = decodeCursor(cursor);
         List<ConversationMapper.UnifiedConversationRow> rows = conversationMapper.listUnified(
-                userId, search, key.pinned(), key.sortRank(), key.sortAt(), key.sortKey(), safeLimit + 1);
+                userId, search, searchMode.isTag(), key.pinned(), key.sortRank(), key.sortAt(),
+                key.sortKey(), safeLimit + 1);
         boolean hasMore = rows.size() > safeLimit;
         List<ConversationMapper.UnifiedConversationRow> visibleRows = hasMore
                 ? rows.subList(0, safeLimit) : rows;
         List<ConversationListItemResponse> records = visibleRows.stream()
                 .map(ConversationMapper.UnifiedConversationRow::toResponse)
                 .toList();
+        records = withMatchedTags(userId, search, searchMode, records);
         String nextCursor = hasMore && !visibleRows.isEmpty()
                 ? encodeCursor(visibleRows.get(visibleRows.size() - 1)) : null;
         return new ConversationPageResponse(records, records.size(), safeLimit, 1, 1, nextCursor);
+    }
+
+    private List<ConversationListItemResponse> withMatchedTags(
+            UUID userId, String search, SearchMode searchMode,
+            List<ConversationListItemResponse> records) {
+        List<UUID> contactIds = records.stream()
+                .filter(record -> "CONTACT".equals(record.type()))
+                .map(ConversationListItemResponse::id)
+                .toList();
+        Map<UUID, List<String>> matched =
+                tagMatchResolver.matchNamesByContact(userId, contactIds, search, searchMode);
+        if (matched.isEmpty()) {
+            return records;
+        }
+        return records.stream()
+                .map(record -> record.withMatchedTags(matched.getOrDefault(record.id(), List.of())))
+                .toList();
     }
 
     static String encodeCursor(ConversationMapper.UnifiedConversationRow row) {

@@ -82,7 +82,19 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
               or cv.id is not null
             )
             <if test="search != null and search != ''">
-              and (c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark, '') ilike '%' || #{search} || '%')
+              and ( <choose>
+                <when test="tagSearch">
+                  exists (select 1 from contact_taggings ct
+                          join contact_tags t on t.id = ct.tag_id
+                          where ct.contact_id = c.id
+                            and t.status = 'active'
+                            and t.owner_user_id = #{userId}::uuid
+                            and t.name ilike '%' || #{search} || '%')
+                </when>
+                <otherwise>
+                  c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark, '') ilike '%' || #{search} || '%'
+                </otherwise>
+              </choose> )
             </if>
             <if test="search == null or search == ''">
               and (pref.hidden_at is null
@@ -149,7 +161,14 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                              and newer_m.received_at &gt; pref.hidden_at))
             </if>
             <if test="search != null and search != ''">
-            and """ + " " + SAFE_GROUP_DISPLAY_NAME + " ilike '%' || #{search} || '%'\n" + """
+            <choose>
+              <when test="tagSearch">
+              and 1 = 0
+              </when>
+              <otherwise>
+              and """ + " " + SAFE_GROUP_DISPLAY_NAME + " ilike '%' || #{search} || '%'\n" + """
+              </otherwise>
+            </choose>
             </if>
           group by sc.id, sc.group_kind, sc.display_name, sc.provider_conversation_key, sc.avatar_url, sc.updated_at, pref.pinned, pref.sort_rank, pref.hidden_at
         )
@@ -179,6 +198,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         """)
     List<UnifiedConversationRow> listUnified(@Param("userId") UUID userId,
                                              @Param("search") String search,
+                                             @Param("tagSearch") boolean tagSearch,
                                              @Param("cursorPinned") Boolean cursorPinned,
                                              @Param("cursorRank") Long cursorRank,
                                              @Param("cursorAt") String cursorAt,
@@ -214,7 +234,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                     .filter(value -> !value.isBlank()).sorted().toList();
             return new ConversationListItemResponse(type, id, displayName, remark, avatarUrl, channels,
                     lastMessageAt, lastText, messageCount, unreadCount,
-                    providerConversationKey, participantCount, pinned);
+                    providerConversationKey, participantCount, pinned, List.of());
         }
     }
 

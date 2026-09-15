@@ -64,7 +64,7 @@ public class ConversationPreferenceService {
         preferences.lockForUser(userId);
 
         List<ConversationMapper.UnifiedConversationRow> current = conversations.listUnified(
-                userId, null, null, null, null, null, MAX_REORDERABLE_CONVERSATIONS + 1);
+                userId, null, false, null, null, null, null, MAX_REORDERABLE_CONVERSATIONS + 1);
         if (current.size() > MAX_REORDERABLE_CONVERSATIONS) {
             throw new IllegalStateException("Too many conversations to reorder");
         }

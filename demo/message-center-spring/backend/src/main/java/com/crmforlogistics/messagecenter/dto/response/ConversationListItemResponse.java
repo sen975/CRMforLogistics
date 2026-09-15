@@ -18,7 +18,8 @@ public record ConversationListItemResponse(
         int unreadCount,
         String providerConversationKey,
         int participantCount,
-        boolean pinned
+        boolean pinned,
+        List<String> matchedTags
 ) {
     public static ConversationListItemResponse contact(UUID id, String displayName,
                                                         Instant lastMessageAt, String lastText,
@@ -30,7 +31,7 @@ public record ConversationListItemResponse(
                                                         Instant lastMessageAt, String lastText,
                                                         int messageCount, int unreadCount) {
         return new ConversationListItemResponse("CONTACT", id, displayName, remark, null, List.of(),
-                lastMessageAt, lastText, messageCount, unreadCount, null, 0, false);
+                lastMessageAt, lastText, messageCount, unreadCount, null, 0, false, List.of());
     }
 
     public static ConversationListItemResponse group(UUID id, String displayName,
@@ -40,6 +41,12 @@ public record ConversationListItemResponse(
                                                       int participantCount) {
         return new ConversationListItemResponse("WECOM_GROUP", id, displayName, null, null, List.of("wecom"),
                 lastMessageAt, lastText, messageCount, unreadCount,
-                providerConversationKey, participantCount, false);
+                providerConversationKey, participantCount, false, List.of());
+    }
+
+    public ConversationListItemResponse withMatchedTags(List<String> tags) {
+        return new ConversationListItemResponse(type, id, displayName, remark, avatarUrl, channelTypes,
+                lastMessageAt, lastText, messageCount, unreadCount, providerConversationKey,
+                participantCount, pinned, tags == null ? List.of() : tags);
     }
 }

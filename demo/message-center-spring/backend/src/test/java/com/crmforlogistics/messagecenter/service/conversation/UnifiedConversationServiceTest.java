@@ -1,8 +1,11 @@
 package com.crmforlogistics.messagecenter.service.conversation;
 
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ConversationListItemResponse;
 import com.crmforlogistics.messagecenter.dto.response.ConversationPageResponse;
+import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
+import com.crmforlogistics.messagecenter.service.contact.ContactTagMatchResolver;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -26,14 +29,15 @@ class UnifiedConversationServiceTest {
                 UUID.randomUUID(), "群 A", "chat-a", Instant.parse("2026-08-25T09:00:00Z"), "ga", 2, 3, 0);
         ConversationListItemResponse groupB = ConversationListItemResponse.group(
                 UUID.randomUUID(), "群 B", "chat-b", Instant.parse("2026-08-25T08:00:00Z"), "gb", 2, 1, 0);
-        when(mapper.listUnified(eq(userId), eq(null), eq(null), eq(null), eq(null), eq(null), eq(11)))
+        when(mapper.listUnified(eq(userId), eq(null), eq(false), eq(null), eq(null), eq(null), eq(null), eq(11)))
                 .thenReturn(List.of(
                         new ConversationMapper.UnifiedConversationRow(contact.type(), contact.id(), contact.displayName(), contact.remark(), null, "", contact.lastMessageAt(), contact.lastText(), contact.messageCount(), contact.unreadCount(), null, 0, false),
                         new ConversationMapper.UnifiedConversationRow(groupA.type(), groupA.id(), groupA.displayName(), null, "wecom", groupA.lastMessageAt(), groupA.lastText(), groupA.messageCount(), groupA.unreadCount(), groupA.providerConversationKey(), groupA.participantCount()),
                         new ConversationMapper.UnifiedConversationRow(groupB.type(), groupB.id(), groupB.displayName(), null, "wecom", groupB.lastMessageAt(), groupB.lastText(), groupB.messageCount(), groupB.unreadCount(), groupB.providerConversationKey(), groupB.participantCount())));
 
-        UnifiedConversationService service = new UnifiedConversationService(mapper);
-        ConversationPageResponse result = service.list(userId, null, null, 10);
+        UnifiedConversationService service = new UnifiedConversationService(mapper,
+                new ContactTagMatchResolver(mock(ContactTagMapper.class)));
+        ConversationPageResponse result = service.list(userId, null, SearchMode.CONTACT, null, 10);
 
         assertThat(result.records()).containsExactly(contact, groupA, groupB);
         assertThat(result.records()).extracting(ConversationListItemResponse::type)
@@ -52,14 +56,15 @@ class UnifiedConversationServiceTest {
                 "CONTACT", rowId, "Alice", null, null, "email", sortAt, "a",
                 1, 0, null, 0, true, 7L, sortAt, "CONTACT:" + rowId);
         String cursor = UnifiedConversationService.encodeCursor(cursorRow);
-        when(mapper.listUnified(eq(userId), eq("alice"), eq(true), eq(7L),
+        when(mapper.listUnified(eq(userId), eq("alice"), eq(false), eq(true), eq(7L),
                 eq("2026-08-25T10:00:00Z"), eq("CONTACT:" + rowId), eq(21)))
                 .thenReturn(List.of());
 
-        UnifiedConversationService service = new UnifiedConversationService(mapper);
-        service.list(userId, "alice", cursor, 20);
+        UnifiedConversationService service = new UnifiedConversationService(mapper,
+                new ContactTagMatchResolver(mock(ContactTagMapper.class)));
+        service.list(userId, "alice", SearchMode.CONTACT, cursor, 20);
 
         org.mockito.Mockito.verify(mapper).listUnified(
-                userId, "alice", true, 7L, "2026-08-25T10:00:00Z", "CONTACT:" + rowId, 21);
+                userId, "alice", false, true, 7L, "2026-08-25T10:00:00Z", "CONTACT:" + rowId, 21);
     }
 }
