@@ -58,7 +58,7 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
             select *
             from contact_memory_states
             where (
-                (status = 'DIRTY' and (#{after} is null or updated_at &gt;= #{after}))
+                (status = 'DIRTY' and (#{after}::timestamptz is null or updated_at &gt;= #{after}::timestamptz))
                 or (status = 'RETRY_WAIT' and next_retry_at &lt;= #{now})
                 or (status = 'PROCESSING' and lease_expires_at &lt; #{now})
             )
@@ -82,8 +82,8 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
                 where id = #{id}::uuid
                   and (
                       (status in ('DIRTY', 'RETRY_WAIT')
-                       and (next_retry_at is null or next_retry_at &lt;= now()))
-                      or (status = 'PROCESSING' and lease_expires_at &lt; now())
+                       and (next_retry_at is null or next_retry_at <= now()))
+                      or (status = 'PROCESSING' and lease_expires_at < now())
                   )
                 returning lease_token
             )
@@ -97,7 +97,7 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
             update contact_memory_states
             set status = case
                              when last_inbound_at is not null
-                                  and last_inbound_at &gt; #{processedAt}
+                                  and last_inbound_at > #{processedAt}
                              then 'DIRTY'
                              else 'CLEAN'
                          end,
@@ -115,7 +115,7 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
             where id = #{id}::uuid
               and lease_token = #{leaseToken}::uuid
               and status = 'PROCESSING'
-              and lease_expires_at &gt; now()
+              and lease_expires_at > now()
             """)
     int complete(@Param("id") UUID id,
                  @Param("leaseToken") UUID leaseToken,
@@ -138,7 +138,7 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
             where id = #{id}::uuid
               and lease_token = #{leaseToken}::uuid
               and status = 'PROCESSING'
-              and lease_expires_at &gt; now()
+              and lease_expires_at > now()
             """)
     int fail(@Param("id") UUID id,
              @Param("leaseToken") UUID leaseToken,
