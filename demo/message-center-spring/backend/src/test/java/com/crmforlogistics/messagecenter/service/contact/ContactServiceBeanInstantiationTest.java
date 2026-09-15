@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.mapper.AiTopicItemMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryQueryService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicOwnerActivityService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicSplitReconciler;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicContactMergeReconciler;
@@ -31,6 +32,8 @@ class ContactServiceBeanInstantiationTest {
         factory.registerSingleton("messageMapper", mock(MessageMapper.class));
         factory.registerSingleton("chatAppAccountResolver", mock(ChatAppAccountResolver.class));
         factory.registerSingleton("contactTagMapper", mock(ContactTagMapper.class));
+        factory.registerSingleton("contactMemoryQueryService", mock(ContactMemoryQueryService.class));
+        factory.registerSingleton("contactTagMatchResolver", new ContactTagMatchResolver(mock(ContactTagMapper.class)));
         factory.registerBeanDefinition("contactService", new RootBeanDefinition(ContactService.class));
 
         ContactService service = factory.getBean(ContactService.class);

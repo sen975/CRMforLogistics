@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.ZoneId;
@@ -46,6 +47,7 @@ public record ContactMemoryConfig(
                 maxObservationChars, observationTtlDays, 50, 600, 3, 60, 900, 0, 0, "UTC");
     }
 
+    @ConstructorBinding
     public ContactMemoryConfig {
         requireRange("maxInboundMessages", maxInboundMessages, 1, 500);
         requireRange("maxMessageChars", maxMessageChars, 1, 20_000);

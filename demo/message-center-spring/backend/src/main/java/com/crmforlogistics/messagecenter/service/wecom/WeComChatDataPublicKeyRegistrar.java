@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -35,6 +36,7 @@ public class WeComChatDataPublicKeyRegistrar {
     private final AtomicBoolean registrationQueued = new AtomicBoolean();
     private volatile WeComChatDataCrypto.PublicKeyMaterial cachedMaterial;
 
+    @Autowired
     public WeComChatDataPublicKeyRegistrar(AppConfig config,
                                            WeComInstallationService installationService,
                                            WeComAccessTokenService accessTokens,

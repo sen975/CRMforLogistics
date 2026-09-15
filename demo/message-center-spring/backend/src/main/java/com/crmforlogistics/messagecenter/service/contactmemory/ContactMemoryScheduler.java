@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
 import com.crmforlogistics.messagecenter.config.ContactMemoryConfig;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ public class ContactMemoryScheduler {
     private final ContactMemoryConfig config;
     private final Clock clock;
 
+    @Autowired
     public ContactMemoryScheduler(ContactMemoryWorker worker,
                                   ContactMemoryTriggerService triggers,
                                   ContactMemoryConfig config) {

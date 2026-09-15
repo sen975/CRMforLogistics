@@ -1,5 +1,7 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
+import org.springframework.stereotype.Service;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,6 +17,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Service
 public class ContactMemoryConsolidationService {
     private static final int MAX_LABEL_CHANGES = 20;
     private static final Map<ContactMemoryModels.Category, String> COLORS = colors();
