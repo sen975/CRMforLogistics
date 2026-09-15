@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ContactIdentityResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactMemoryResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,6 +55,7 @@ public class ContactService {
     private final ChatAppAccountResolver chatAppAccountResolver;
     private final ContactTagMapper contactTagMapper;
     private final ContactMemoryQueryService contactMemoryQueryService;
+    private final ContactTagMatchResolver contactTagMatchResolver;
 
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
@@ -60,7 +63,7 @@ public class ContactService {
                           MessageMapper messageMapper,
                           ChatAppAccountResolver chatAppAccountResolver) {
         this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
-                chatAppAccountResolver, null, null);
+                chatAppAccountResolver, null, null, null);
     }
 
     @Autowired
@@ -70,7 +73,8 @@ public class ContactService {
                           MessageMapper messageMapper,
                           ChatAppAccountResolver chatAppAccountResolver,
                           ContactTagMapper contactTagMapper,
-                          ContactMemoryQueryService contactMemoryQueryService) {
+                          ContactMemoryQueryService contactMemoryQueryService,
+                          ContactTagMatchResolver contactTagMatchResolver) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.conversationMapper = conversationMapper;
@@ -78,6 +82,7 @@ public class ContactService {
         this.chatAppAccountResolver = chatAppAccountResolver;
         this.contactTagMapper = contactTagMapper;
         this.contactMemoryQueryService = contactMemoryQueryService;
+        this.contactTagMatchResolver = contactTagMatchResolver;
     }
 
     public ContactService(ContactMapper contactMapper,
@@ -87,7 +92,7 @@ public class ContactService {
                           ChatAppAccountResolver chatAppAccountResolver,
                           ContactTagMapper contactTagMapper) {
         this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
-                chatAppAccountResolver, contactTagMapper, null);
+                chatAppAccountResolver, contactTagMapper, null, null);
     }
 
     /**
@@ -108,11 +113,19 @@ public class ContactService {
     public IPage<ContactResponse> listForUser(UUID userId, String search,
                                                Instant beforeLastMessageAt, UUID beforeId,
                                                int page, int size) {
-        return listForUser(userId, search, beforeLastMessageAt, beforeId,
+        return listForUser(userId, search, SearchMode.CONTACT, beforeLastMessageAt, beforeId,
                 page, size, null, null);
     }
 
     public IPage<ContactResponse> listForUser(UUID userId, String search,
+                                               Instant beforeLastMessageAt, UUID beforeId,
+                                               int page, int size, String channelType,
+                                               UUID channelAccountId) {
+        return listForUser(userId, search, SearchMode.CONTACT, beforeLastMessageAt, beforeId,
+                page, size, channelType, channelAccountId);
+    }
+
+    public IPage<ContactResponse> listForUser(UUID userId, String search, SearchMode searchMode,
                                                Instant beforeLastMessageAt, UUID beforeId,
                                                int page, int size, String channelType,
                                                UUID channelAccountId) {
@@ -128,11 +141,19 @@ public class ContactService {
         Page<ContactEntity> pageParam = new Page<>(page, safeSize);
         boolean isAdmin = isCurrentUserAdmin();
         IPage<ContactEntity> pageResult = contactMapper.listForUser(
-                pageParam, userId, search, beforeLastMessageAt, beforeId, isAdmin,
+                pageParam, userId, search, searchMode.isTag(), beforeLastMessageAt, beforeId, isAdmin,
                 chatAppFilter ? "chatapp" : null, chatAppFilter ? channelAccountId : null);
 
+        List<UUID> contactIds = pageResult.getRecords().stream()
+                .map(ContactEntity::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        Map<UUID, List<String>> matched = contactTagMatchResolver == null
+                ? Map.of()
+                : contactTagMatchResolver.matchNamesByContact(userId, contactIds, search, searchMode);
         List<ContactResponse> records = pageResult.getRecords().stream()
-                .map(contact -> toResponse(contact, userId))
+                .map(contact -> toResponse(contact, userId)
+                        .withMatchedTags(matched.getOrDefault(contact.getId(), List.of())))
                 .toList();
 
         Page<ContactResponse> resultPage = new Page<>(page, safeSize);
@@ -245,7 +266,8 @@ public class ContactService {
                 identityResponses,
                 contactMemoryQueryService == null
                         ? null
-                        : contactMemoryQueryService.findForOwner(userId, contactId).orElse(null));
+                        : contactMemoryQueryService.findForOwner(userId, contactId).orElse(null),
+                List.of());
     }
 
     /**

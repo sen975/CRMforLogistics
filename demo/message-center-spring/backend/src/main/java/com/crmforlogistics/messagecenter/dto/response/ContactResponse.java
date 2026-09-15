@@ -33,7 +33,8 @@ public record ContactResponse(
         int unreadCount,
         List<ContactTagResponse> tags,
         List<ContactIdentityResponse> identities,
-        ContactMemoryResponse memory
+        ContactMemoryResponse memory,
+        List<String> matchedTags
 ) {
     public ContactResponse(UUID id,
                            String displayName,
@@ -46,6 +47,12 @@ public record ContactResponse(
                            List<ContactTagResponse> tags,
                            List<ContactIdentityResponse> identities) {
         this(id, displayName, remark, channelTypes, lastMessageAt, lastText,
-                messageCount, unreadCount, tags, identities, null);
+                messageCount, unreadCount, tags, identities, null, List.of());
+    }
+
+    public ContactResponse withMatchedTags(List<String> tags) {
+        return new ContactResponse(id, displayName, remark, channelTypes, lastMessageAt, lastText,
+                messageCount, unreadCount, this.tags, identities, memory,
+                tags == null ? List.of() : tags);
     }
 }

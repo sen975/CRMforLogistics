@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.contact;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
 import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
@@ -15,14 +16,18 @@ import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
+import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryQueryService;
 import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
+import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -30,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -68,9 +74,8 @@ class ContactServiceAuthorizationTest {
         Page<ContactEntity> contacts = new Page<>(1, 20);
         contacts.setRecords(List.of(contact));
         contacts.setTotal(1);
-        when(contactMapper.listForUser(any(), any(), any(), any(), any(),
-                any(Boolean.class), any(), any()))
-                .thenReturn(contacts);
+        when(contactMapper.listForUser(any(), any(), any(), anyBoolean(), any(),
+                any(), any(Boolean.class), any(), any())).thenReturn(contacts);
         when(identityMapper.findByContactId(contactId)).thenReturn(List.of(identity));
         MessageEntity lastMessage = new MessageEntity();
         lastMessage.setBodyText("accessible message");
@@ -93,8 +98,8 @@ class ContactServiceAuthorizationTest {
 
         verify(messageMapper).selectOne(any());
         verify(messageMapper, org.mockito.Mockito.times(2)).selectCount(any());
-        verify(contactMapper).listForUser(any(), eq(userId), isNull(), isNull(), isNull(),
-                eq(false), isNull(), isNull());
+        verify(contactMapper).listForUser(any(), eq(userId), isNull(), eq(false), isNull(),
+                isNull(), eq(false), isNull(), isNull());
     }
 
     @Test
@@ -172,7 +177,7 @@ class ContactServiceAuthorizationTest {
     void chatAppListingRequiresAnAccountScopedIdentityFilter() throws Exception {
         String contactSql = sql(ContactMapper.class.getMethod(
                 "listForUser", com.baomidou.mybatisplus.core.metadata.IPage.class,
-                UUID.class, String.class, Instant.class, UUID.class, boolean.class,
+                UUID.class, String.class, boolean.class, Instant.class, UUID.class, boolean.class,
                 String.class, UUID.class));
 
         assertThat(contactSql)
@@ -234,8 +239,8 @@ class ContactServiceAuthorizationTest {
         when(accountResolver.requireOwnedAccount(userId, accountId)).thenReturn(account);
         Page<ContactEntity> contacts = new Page<>(1, 20);
         contacts.setRecords(List.of());
-        when(contactMapper.listForUser(any(), any(), any(), any(), any(),
-                any(Boolean.class), any(), any())).thenReturn(contacts);
+        when(contactMapper.listForUser(any(), any(), any(), anyBoolean(), any(),
+                any(), any(Boolean.class), any(), any())).thenReturn(contacts);
         ContactService service = new ContactService(
                 contactMapper, mock(ContactIdentityMapper.class),
                 mock(ConversationMapper.class), mock(MessageMapper.class), accountResolver);
@@ -243,8 +248,8 @@ class ContactServiceAuthorizationTest {
         service.listForUser(userId, null, null, null,
                 1, 20, "chatapp", accountId);
 
-        verify(contactMapper).listForUser(any(), eq(userId), isNull(), isNull(), isNull(),
-                eq(false), eq("chatapp"), eq(accountId));
+        verify(contactMapper).listForUser(any(), eq(userId), isNull(), eq(false), isNull(),
+                isNull(), eq(false), eq("chatapp"), eq(accountId));
         verify(accountResolver).requireOwnedAccount(userId, accountId);
         verify(accountResolver, never()).requireCurrentAccount(accountId);
     }
@@ -265,6 +270,48 @@ class ContactServiceAuthorizationTest {
                 1, 20, "chatapp", accountId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+    }
+
+    @Test
+    void tagModeSearchReturnsMatchedTagNamesOnlyForTaggedContacts() {
+        UUID userId = UUID.randomUUID();
+        UUID taggedId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        ContactMapper contactMapper = mock(ContactMapper.class);
+        ContactTagMatchResolver resolver = mock(ContactTagMatchResolver.class);
+        ContactEntity tagged = new ContactEntity();
+        tagged.setId(taggedId);
+        tagged.setDisplayName("张经理");
+        ContactEntity other = new ContactEntity();
+        other.setId(otherId);
+        other.setDisplayName("李四");
+        Page<ContactEntity> page = new Page<>(1, 20);
+        page.setRecords(List.of(tagged, other));
+        when(contactMapper.listForUser(any(), any(), any(), anyBoolean(), any(), any(),
+                anyBoolean(), any(), any())).thenReturn(page);
+        when(resolver.matchNamesByContact(eq(userId), any(), eq("客户"), eq(SearchMode.TAG)))
+                .thenReturn(Map.of(taggedId, List.of("VIP客户")));
+        ContactService service = new ContactService(contactMapper,
+                mock(ContactIdentityMapper.class), mock(ConversationMapper.class),
+                mock(MessageMapper.class), mock(ChatAppAccountResolver.class),
+                mock(ContactTagMapper.class), mock(ContactMemoryQueryService.class), resolver);
+
+        List<ContactResponse> records = service
+                .listForUser(userId, "客户", SearchMode.TAG, null, null, 1, 20, null, null)
+                .getRecords();
+
+        assertThat(records).extracting(ContactResponse::id, ContactResponse::matchedTags)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(taggedId, List.of("VIP客户")),
+                        org.assertj.core.groups.Tuple.tuple(otherId, List.of()));
+
+        ArgumentCaptor<UUID> ownerCaptor = ArgumentCaptor.forClass(UUID.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<UUID>> idsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(resolver).matchNamesByContact(ownerCaptor.capture(), idsCaptor.capture(),
+                eq("客户"), eq(SearchMode.TAG));
+        assertThat(ownerCaptor.getValue()).isEqualTo(userId);
+        assertThat(idsCaptor.getValue()).containsExactlyInAnyOrder(taggedId, otherId);
     }
 
     private static void invokeMarkAsRead(ContactService service, UUID userId, UUID contactId)

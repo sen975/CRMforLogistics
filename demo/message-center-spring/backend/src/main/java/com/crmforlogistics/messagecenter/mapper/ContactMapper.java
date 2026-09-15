@@ -158,7 +158,17 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "        or exists (select 1 from conversation_access_grants g where g.conversation_id = cv.id and g.user_id = #{userId}::uuid and g.revoked_at is null and (g.expires_at is null or g.expires_at > now()))))) " +
         "  </if>" +
         "  <if test=\"search != null and search != ''\">" +
-        "    and (c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark,'') ilike '%' || #{search} || '%') " +
+        "    and ( <choose>" +
+        "      <when test=\"tagSearch\">" +
+        "        exists (select 1 from contact_taggings ct join contact_tags t on t.id = ct.tag_id " +
+        "          where ct.contact_id = c.id and t.status = 'active' " +
+        "          and t.owner_user_id = #{userId}::uuid " +
+        "          and t.name ilike '%' || #{search} || '%') " +
+        "      </when>" +
+        "      <otherwise>" +
+        "        c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark,'') ilike '%' || #{search} || '%' " +
+        "      </otherwise>" +
+        "    </choose> ) " +
         "  </if>" +
         "  <if test=\"channelType != null and channelAccountId != null\">" +
         "    and exists (select 1 from contact_identities filtered_ci " +
@@ -178,6 +188,7 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
     IPage<ContactEntity> listForUser(IPage<ContactEntity> page,
                                      @Param("userId") UUID userId,
                                      @Param("search") String search,
+                                     @Param("tagSearch") boolean tagSearch,
                                      @Param("beforeLastMessageAt") Instant beforeLastMessageAt,
                                      @Param("beforeId") UUID beforeId,
                                      @Param("isAdmin") boolean isAdmin,

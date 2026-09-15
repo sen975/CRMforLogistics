@@ -83,6 +83,25 @@ class ContactMapperTagSearchIntegrationTest {
         assertThat(contactMode).containsExactly(namedLikeTag);
     }
 
+    @Test
+    void contactListTagModeMatchesOnlyTaggedContacts() {
+        UUID tagged = insertContact("张经理", userId);
+        attachTag(tagged, insertTag(userId, "VIP客户", "active"));
+        UUID namedLikeTag = insertContact("VIP客户", userId);
+
+        List<UUID> tagMode = idsOf(contactMapper.listForUser(new Page<>(1, 20), userId,
+                "客户", true, null, null, false, null, null));
+        List<UUID> contactMode = idsOf(contactMapper.listForUser(new Page<>(1, 20), userId,
+                "客户", false, null, null, false, null, null));
+
+        assertThat(tagMode).containsExactly(tagged);
+        assertThat(contactMode).containsExactly(namedLikeTag);
+    }
+
+    private static List<UUID> idsOf(com.baomidou.mybatisplus.core.metadata.IPage<ContactEntity> page) {
+        return page.getRecords().stream().map(ContactEntity::getId).toList();
+    }
+
     private UUID insertContact(String name, UUID createdBy) {
         UUID id = UUID.randomUUID();
         jdbc.update("insert into contacts (id, display_name, created_by) values (?, ?, ?)",

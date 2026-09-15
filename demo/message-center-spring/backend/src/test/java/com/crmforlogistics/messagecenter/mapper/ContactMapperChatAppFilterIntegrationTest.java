@@ -90,10 +90,10 @@ class ContactMapperChatAppFilterIntegrationTest {
         insertIdentity(inaccessible, "chatapp", accountId.toString(), "60100000005", false);
 
         List<UUID> generalIds = contactMapper.listForUser(new Page<>(1, 20), userId,
-                        null, null, null, false, null, null)
+                        null, false, null, null, false, null, null)
                 .getRecords().stream().map(ContactEntity::getId).toList();
         List<UUID> chatAppIds = contactMapper.listForUser(new Page<>(1, 20), userId,
-                        null, null, null, false, "chatapp", accountId)
+                        null, false, null, null, false, "chatapp", accountId)
                 .getRecords().stream().map(ContactEntity::getId).toList();
 
         assertThat(generalIds).contains(phoneContact, emailContact, currentChatApp,

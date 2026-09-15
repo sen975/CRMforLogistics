@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.web;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.crmforlogistics.messagecenter.dto.request.ContactGroupRequest;
 import com.crmforlogistics.messagecenter.dto.request.ContactTagsRequest;
+import com.crmforlogistics.messagecenter.dto.request.SearchMode;
 import com.crmforlogistics.messagecenter.dto.response.ContactResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.contact.ContactGroupService;
@@ -55,6 +56,7 @@ public class ContactController {
     @GetMapping
     public IPage<ContactResponse> list(
             @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "searchMode", required = false) String rawSearchMode,
             @RequestParam(value = "beforeLastMessageAt", required = false) Instant beforeLastMessageAt,
             @RequestParam(value = "beforeId", required = false) UUID beforeId,
             @RequestParam(value = "channelType", required = false) String channelType,
@@ -62,7 +64,7 @@ public class ContactController {
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         UUID userId = SecurityUtil.currentUserId();
-        return contactService.listForUser(userId, search,
+        return contactService.listForUser(userId, search, SearchMode.parse(rawSearchMode),
                 beforeLastMessageAt, beforeId, page, size, channelType, channelAccountId);
     }
 
