@@ -1,10 +1,10 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
+import com.crmforlogistics.messagecentertest.PostgresTestSchema;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -29,19 +29,16 @@ class ContactMemoryConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        DataSource migrationDataSource = new DriverManagerDataSource(
-                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
         String schema = "contact_memory_concurrency_" + UUID.randomUUID().toString().replace("-", "");
+        DataSource dataSource = PostgresTestSchema.dataSource(POSTGRES, schema);
+        PostgresTestSchema.resetTrigramExtension(dataSource);
         Flyway.configure()
-                .dataSource(migrationDataSource)
+                .dataSource(dataSource)
                 .schemas(schema)
                 .defaultSchema(schema)
                 .load()
                 .migrate();
-        DataSource queryDataSource = new DriverManagerDataSource(
-                POSTGRES.getJdbcUrl() + "?currentSchema=" + schema,
-                POSTGRES.getUsername(), POSTGRES.getPassword());
-        jdbc = new JdbcTemplate(queryDataSource);
+        jdbc = new JdbcTemplate(dataSource);
     }
 
     @Test
@@ -55,8 +52,14 @@ class ContactMemoryConcurrencyTest {
                 """, stateId, contactId, ownerId);
 
         UUID firstToken = claimState(stateId, "worker-a", Instant.now().plusSeconds(60));
-        jdbc.update("update contact_memory_states set lease_expires_at = now() - interval '1 second' where id = ?",
-                stateId);
+        // Rewind both lease columns together: ck_contact_memory_state_lease_order requires
+        // lease_expires_at > lease_acquired_at, so expiry cannot be simulated by moving one alone.
+        jdbc.update("""
+                update contact_memory_states
+                set lease_acquired_at = now() - interval '2 minutes',
+                    lease_expires_at = now() - interval '1 minute'
+                where id = ?
+                """, stateId);
 
         assertThat(completeState(stateId, firstToken, "old-cursor")).isZero();
 
@@ -122,9 +125,9 @@ class ContactMemoryConcurrencyTest {
     void failedTriggerReplayCanBeClaimedAgainAndAppliedIdempotently() {
         UUID ownerId = insertUser("trigger-owner");
         UUID contactId = insertContact(ownerId);
-        UUID messageId = UUID.randomUUID();
-        UUID eventId = UUID.randomUUID();
         Instant receivedAt = Instant.parse("2026-09-15T02:00:00Z");
+        UUID messageId = insertInboundMessage(ownerId, contactId, receivedAt);
+        UUID eventId = UUID.randomUUID();
         jdbc.update("""
                 insert into contact_memory_trigger_events
                     (id, message_id, contact_id, owner_user_id, ingest_sequence,
@@ -236,6 +239,40 @@ class ContactMemoryConcurrencyTest {
                 where observation_id = ? and contact_id = ? and owner_user_id = ?
                 on conflict (fact_id, evidence_type, evidence_id) do nothing
                 """, factId, UUID.randomUUID(), observationId, contactId, ownerId);
+    }
+
+    private UUID insertInboundMessage(UUID ownerId, UUID contactId, Instant receivedAt) {
+        UUID channelAccountId = UUID.randomUUID();
+        jdbc.update("""
+                insert into channel_accounts
+                    (id, owner_user_id, channel_type, name, account_identifier,
+                     account_identifier_normalized, auth_status, encrypted_config)
+                values (?, ?, 'email', 'Trigger Email', ?, ?, 'active', '{}'::jsonb)
+                """, channelAccountId, ownerId, "trigger-" + channelAccountId,
+                "trigger-" + channelAccountId);
+        UUID identityId = UUID.randomUUID();
+        jdbc.update("""
+                insert into contact_identities
+                    (id, contact_id, channel_type, identity_scope, identity_value,
+                     normalized_value, display_name, is_primary, verify_status, source)
+                values (?, ?, 'email', ?, 'trigger@example.com', 'trigger@example.com',
+                        'Trigger Customer', true, 'verified', 'manual')
+                """, identityId, contactId, ownerId.toString());
+        UUID conversationId = UUID.randomUUID();
+        jdbc.update("""
+                insert into conversations
+                    (id, channel_account_id, contact_identity_id, status, next_ingest_sequence)
+                values (?, ?, ?, 'open', 0)
+                """, conversationId, channelAccountId, identityId);
+        UUID messageId = UUID.randomUUID();
+        jdbc.update("""
+                insert into messages
+                    (id, conversation_id, channel_account_id, channel_account_version, direction,
+                     message_kind, occurred_at, ingest_sequence, current_status, current_status_at)
+                values (?, ?, ?, 0, 'inbound', 'text', ?, 1, 'delivered', ?)
+                """, messageId, conversationId, channelAccountId,
+                Timestamp.from(receivedAt), Timestamp.from(receivedAt));
+        return messageId;
     }
 
     private UUID insertUser(String suffix) {

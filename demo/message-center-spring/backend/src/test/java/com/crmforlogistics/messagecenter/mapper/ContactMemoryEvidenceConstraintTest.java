@@ -1,11 +1,11 @@
 package com.crmforlogistics.messagecenter.mapper;
 
+import com.crmforlogistics.messagecentertest.PostgresTestSchema;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -36,12 +36,11 @@ class ContactMemoryEvidenceConstraintTest {
 
     @BeforeEach
     void setUp() {
-        DataSource dataSource = new DriverManagerDataSource(
-                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
         String schema = "contact_memory_evidence_" + UUID.randomUUID().toString().replace("-", "");
+        DataSource dataSource = PostgresTestSchema.dataSource(POSTGRES, schema);
+        PostgresTestSchema.resetTrigramExtension(dataSource);
         Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load().migrate();
         jdbc = new JdbcTemplate(dataSource);
-        jdbc.execute("set search_path to " + schema);
 
         ownerOne = UUID.randomUUID();
         ownerTwo = UUID.randomUUID();

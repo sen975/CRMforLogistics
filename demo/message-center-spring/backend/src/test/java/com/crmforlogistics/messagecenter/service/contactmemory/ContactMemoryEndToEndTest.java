@@ -23,6 +23,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -115,11 +116,14 @@ class ContactMemoryEndToEndTest {
 
         trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
                 second.getOccurredAt(), second.getReceivedAt());
-        assertThat(trigger.replayDue(SECOND_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
+        // A trigger event's next_attempt_at comes from the database clock, so the replay window
+        // and the worker run have to come from the real clock too, not the simulated message timeline.
+        Instant processingNow = Instant.now();
+        assertThat(trigger.replayDue(processingNow, 10)).isEqualTo(1);
         ContactMemoryModels.Context context = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(context, first, second));
 
-        int processed = worker.runOnce(SECOND_MESSAGE_AT.plusSeconds(1));
+        int processed = worker.runOnce(processingNow);
 
         assertThat(processed).isEqualTo(1);
         assertThat(state(fixture)).satisfies(state -> {
@@ -184,11 +188,12 @@ class ContactMemoryEndToEndTest {
         MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户需要海运报价。");
         trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
                 second.getOccurredAt(), second.getReceivedAt());
-        assertThat(trigger.replayDue(SECOND_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
+        Instant processingNow = Instant.now();
+        assertThat(trigger.replayDue(processingNow, 10)).isEqualTo(1);
 
         ContactMemoryModels.Context firstContext = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(firstContext, first, second));
-        worker.runOnce(SECOND_MESSAGE_AT.plusSeconds(1));
+        worker.runOnce(processingNow);
 
         ContactProfileVersionEntity oldProfile = memory.findCurrentProfile(
                 fixture.ownerId(), fixture.contactId());
@@ -206,11 +211,12 @@ class ContactMemoryEndToEndTest {
         MessageEntity third = insertInboundMessage(fixture, THIRD_MESSAGE_AT, "客户补充需要稳定船期。");
         trigger.markInboundPersisted(fixture.contactId(), third.getId(), third.getIngestSequence(),
                 third.getOccurredAt(), third.getReceivedAt());
-        assertThat(trigger.replayDue(THIRD_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
+        Instant retryNow = Instant.now();
+        assertThat(trigger.replayDue(retryNow, 10)).isEqualTo(1);
         doThrow(new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true))
                 .when(gateway).generate(any());
 
-        worker.runOnce(THIRD_MESSAGE_AT.plusSeconds(1));
+        worker.runOnce(retryNow);
 
         ContactMemoryStateEntity failed = state(fixture);
         assertThat(failed.getStatus()).isEqualTo("RETRY_WAIT");
@@ -281,6 +287,12 @@ class ContactMemoryEndToEndTest {
         message.setCurrentStatusAt(occurredAt.plusSeconds(1));
         message.setMetadataJsonb("{}");
         assertThat(messages.insertWithSequence(message)).isEqualTo(1);
+        // received_at is stamped by the database clock rather than by the caller (the insert does
+        // not persist the entity's value), so the cursor the worker computes uses that timestamp
+        // and the expectation has to read it back instead of assuming the simulated timeline.
+        message.setReceivedAt(jdbc.queryForObject(
+                "select received_at from messages where id = ?",
+                Timestamp.class, message.getId()).toInstant());
         return message;
     }
 
@@ -316,7 +328,7 @@ class ContactMemoryEndToEndTest {
                 insert into contacts
                     (id, display_name, status, created_by, owner_user_id, created_at, updated_at)
                 values (?, 'Memory Contact', 'active', ?, ?, ?, ?)
-                """, contactId, ownerId, ownerId, now, now);
+                """, contactId, ownerId, ownerId, Timestamp.from(now), Timestamp.from(now));
         jdbc.update("""
                 insert into channel_accounts
                     (id, owner_user_id, channel_type, name, account_identifier,
