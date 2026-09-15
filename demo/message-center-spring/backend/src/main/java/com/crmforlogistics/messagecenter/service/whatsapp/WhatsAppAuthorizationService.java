@@ -152,6 +152,13 @@ public class WhatsAppAuthorizationService {
             if (requiredMode != null && !requiredMode.equals(completedMode)) {
                 throw failure("WHATSAPP_ONBOARDING_MODE_INVALID", HttpStatus.CONFLICT);
             }
+            if (attempt.getCompletedAccountId() != null) {
+                ChannelAccountEntity completedAccount = accounts.findByIdAndOwner(
+                        attempt.getCompletedAccountId(), userId);
+                if (completedAccount == null || !"active".equalsIgnoreCase(completedAccount.getAuthStatus())) {
+                    throw failure("WHATSAPP_AUTH_COMPLETED_ACCOUNT_UNAVAILABLE", HttpStatus.CONFLICT);
+                }
+            }
             return new CompletionProjection(attempt.getCompletedAccountId(),
                     isBlank(attempt.getCompletedPhoneNumber()) ? null : last4(normalizePhone(attempt.getCompletedPhoneNumber())),
                     completedMode);

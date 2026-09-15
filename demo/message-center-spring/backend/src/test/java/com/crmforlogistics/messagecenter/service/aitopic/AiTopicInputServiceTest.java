@@ -24,10 +24,30 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiTopicInputServiceTest {
+    @Test
+    void skipsCallRecordQueryWhenContactHasNoPhoneAnchors() {
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        CallRecordMapper calls = mock(CallRecordMapper.class);
+        AiTopicConfig config = new AiTopicConfig("", "", "model", 30, 200, 262144, .65, 1, 3, 120, 30);
+        AiTopicInputService input = new AiTopicInputService(conversations, messages, accounts, identities, calls, config);
+        UUID contactId = UUID.randomUUID();
+
+        when(conversations.listThreads(any(), eq(contactId))).thenReturn(new Page<ConversationEntity>());
+        when(identities.findByContactId(contactId)).thenReturn(List.of());
+
+        input.collect(contactId, Optional.empty());
+
+        verify(calls, never()).listUnassignedByAnchors(any());
+    }
+
     @Test
     void collectsOnlyUnassignedMessagesFromAccessibleConversations() {
         ConversationMapper conversations = mock(ConversationMapper.class);

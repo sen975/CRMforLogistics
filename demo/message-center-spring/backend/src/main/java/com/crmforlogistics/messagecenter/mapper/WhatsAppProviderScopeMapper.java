@@ -76,4 +76,15 @@ public interface WhatsAppProviderScopeMapper extends BaseMapper<WhatsAppProvider
             "where id = #{scopeId}::uuid and (encrypted_config = '{}'::jsonb or encrypted_config is null)")
     int updateEncryptedConfigIfEmpty(@Param("scopeId") java.util.UUID scopeId,
                                      @Param("config") String config);
+
+    @Insert("insert into whatsapp_provider_scopes " +
+            "(provider, external_scope_id, scope_type, owner_user_id, status, identity_status, encrypted_config) " +
+            "values (#{provider}, #{externalScopeId}, 'ENTERPRISE_API', null, 'READY', " +
+            "'IDENTITY_PENDING', #{encryptedConfig}::jsonb) " +
+            "on conflict (provider, external_scope_id) do update set " +
+            "scope_type = 'ENTERPRISE_API', owner_user_id = null, status = 'READY', " +
+            "encrypted_config = excluded.encrypted_config, updated_at = now()")
+    int upsertAdminConfigured(@Param("provider") String provider,
+                              @Param("externalScopeId") String externalScopeId,
+                              @Param("encryptedConfig") String encryptedConfig);
 }

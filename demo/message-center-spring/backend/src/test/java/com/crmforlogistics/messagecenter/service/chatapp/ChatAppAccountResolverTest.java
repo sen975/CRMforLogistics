@@ -59,6 +59,49 @@ class ChatAppAccountResolverTest {
         assertThat(result).isSameAs(selected);
     }
 
+    @Test
+    void requireOwnedAccountForSendLocksAndAcceptsMatchingOwnerAndVersion() {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        UUID ownerId = UUID.randomUUID();
+        ChannelAccountEntity selected = account("60122222222");
+        selected.setOwnerUserId(ownerId);
+        selected.setVersion(7L);
+        when(mapper.findWhatsAppByIdForUpdate(selected.getId())).thenReturn(selected);
+
+        assertThat(new ChatAppAccountResolver(mapper)
+                .requireOwnedAccountForSend(ownerId, selected.getId(), 7L))
+                .isSameAs(selected);
+    }
+
+    @Test
+    void requireOwnedAccountForSendRejectsReassignedOrStaleVersion() {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        UUID originalOwner = UUID.randomUUID();
+        UUID newOwner = UUID.randomUUID();
+        ChannelAccountEntity selected = account("60122222222");
+        selected.setOwnerUserId(newOwner);
+        selected.setVersion(8L);
+        when(mapper.findWhatsAppByIdForUpdate(selected.getId())).thenReturn(selected);
+
+        assertThatThrownBy(() -> new ChatAppAccountResolver(mapper)
+                .requireOwnedAccountForSend(originalOwner, selected.getId(), 7L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_REASSIGNED");
+    }
+
+    @Test
+    void reconciliationAcceptsReclaimedAccountSnapshotWithoutCurrentOwner() {
+        ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
+        ChannelAccountEntity account = account("60122222222");
+        account.setAuthStatus("disabled");
+        account.setOwnerUserId(null);
+        when(mapper.selectById(account.getId())).thenReturn(account);
+
+        assertThat(new ChatAppAccountResolver(mapper)
+                .requireAccountForReconciliation(account.getId()))
+                .isSameAs(account);
+    }
+
     private static ChannelAccountEntity account(String identifier) {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(UUID.randomUUID());

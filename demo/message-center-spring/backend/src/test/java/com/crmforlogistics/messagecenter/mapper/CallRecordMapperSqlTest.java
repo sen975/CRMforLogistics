@@ -36,6 +36,16 @@ class CallRecordMapperSqlTest {
     }
 
     @Test
+    void anchorTimelineQueryQualifiesJoinedTableOrderingColumns() throws Exception {
+        Method method = CallRecordMapper.class.getMethod(
+                "listByOwnerAndAnchors", java.util.UUID.class, java.util.Set.class);
+        Select select = method.getAnnotation(Select.class);
+        String sql = String.join(" ", select.value());
+
+        assertThat(sql).contains("ORDER BY cr.occurred_at, cr.id");
+    }
+
+    @Test
     void contactBindingDoesNotRewriteLegacyOwnerColumn() throws Exception {
         Method method = CallRecordMapper.class.getMethod("updateContactBinding",
                 java.util.UUID.class, java.util.UUID.class, java.util.UUID.class,

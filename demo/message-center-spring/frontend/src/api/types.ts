@@ -515,6 +515,7 @@ export interface WhatsAppAuthorizationAttempt {
   attemptId: string;
   state: string;
   expiresAt: string;
+  startupProfile?: { appId: string; configId: string; onboardingMode: string } | null;
 }
 
 export interface WhatsAppAuthorizationResult {
@@ -523,23 +524,82 @@ export interface WhatsAppAuthorizationResult {
   onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY';
 }
 
-export interface WhatsAppPhoneNumberStatus {
-  accountId: string;
-  phoneNumberLast4: string;
-  ownerUserId: string | null;
-  onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY' | null;
-  phoneVerificationStatus: string | null;
-  providerPhoneStatus: string | null;
-}
-
 export interface WhatsAppPhoneOperationStatus {
   operationId: string;
+  accountId?: string | null;
   phoneNumberLast4: string;
+  status: string;
+}
+
+export interface WhatsAppPhoneOperationProjection {
+  operationId: string;
+  accountId: string | null;
+  phoneNumberLast4: string;
+  accountName: string | null;
+  accountRemark: string | null;
+  status: string;
+}
+
+export interface WhatsAppAccountProjection {
+  accountId: string;
+  mode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY' | null;
+  name: string;
+  remark: string | null;
+  maskedPhone: string;
+  providerStatus: string | null;
+  verificationStatus: string | null;
+  templateDomain: string;
+  recoverableError: string | null;
+}
+
+export interface WhatsAppHistorySyncProjection {
+  jobId: string | null;
+  accountId: string;
   status: string;
 }
 
 export interface WhatsAppCapabilityStatus {
   ready: boolean;
+}
+
+export interface AdminWhatsAppAccountProjection {
+  accountId: string;
+  ownerUserId: string | null;
+  maskedPhone: string;
+  name: string;
+  providerStatus: string | null;
+  verificationStatus: string | null;
+  version: number;
+}
+
+export interface AdminWhatsAppSyncResult {
+  importedCount: number;
+  refreshedCount: number;
+  unavailableCount: number;
+  accounts: Array<Omit<AdminWhatsAppAccountProjection, 'version'> & {
+    lastSyncedAt: string | null;
+  }>;
+}
+
+export interface AdminWhatsAppAssignmentRequest {
+  targetOwnerId: string;
+  reason: string;
+  expectedVersion: number;
+}
+
+export interface AdminWhatsAppVersionedReasonRequest {
+  reason: string;
+  expectedVersion: number;
+}
+
+export interface AdminWhatsAppAssignmentAuditProjection {
+  auditId: string;
+  previousOwnerUserId: string | null;
+  nextOwnerUserId: string | null;
+  actorUserId: string;
+  action: 'ASSIGN' | 'RECLAIM' | 'TRANSFER';
+  reason: string;
+  createdAt: string;
 }
 
 export interface WeComSendRequest {

@@ -79,7 +79,8 @@ public class ChatAppMessageApplicationService {
         if (content != null) providerContent.putAll(content);
         providerContent.put("to", recipient);
         return sendService.accept(new MessageSendApplicationService.SendMessageCommand(
-                account.getId(), conversation.getId(), kind, clientRequestId, providerContent), actorUserId);
+                account.getId(), conversation.getId(), kind, clientRequestId, providerContent,
+                account.getVersion() == null ? 0L : account.getVersion()), actorUserId);
     }
 
     private RecipientContext resolveContactIdentity(

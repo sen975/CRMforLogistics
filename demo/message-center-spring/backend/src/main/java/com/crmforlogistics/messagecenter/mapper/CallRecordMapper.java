@@ -46,7 +46,7 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "WHERE (c.created_by=#{ownerId}::uuid OR (cr.contact_id IS NULL AND cr.created_by=#{ownerId}::text)) "
             + "AND cr.contact_anchor_point_id IN "
             + "<foreach item='a' collection='anchors' open='(' separator=',' close=')'>#{a}</foreach> "
-            + "ORDER BY occurred_at, id</script>")
+            + "ORDER BY cr.occurred_at, cr.id</script>")
     List<CallRecordEntity> listByOwnerAndAnchors(@Param("ownerId") UUID ownerId,
                                                  @Param("anchors") Set<String> anchors);
 

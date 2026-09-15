@@ -29,6 +29,11 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
     int countActiveByOwnerAndChannel(@Param("ownerId") UUID ownerId,
                                      @Param("channelType") String channelType);
 
+    @Select("select count(*) from channel_accounts where owner_user_id = #{ownerId}::uuid " +
+            "and channel_type in ('chatapp', 'whatsapp') " +
+            "and auth_status in ('active', 'expired', 'failed') and deleted_at is null")
+    int countActiveWhatsAppByOwner(@Param("ownerId") UUID ownerId);
+
     @Select("select id, owner_user_id, channel_type, name, remark, account_identifier, " +
             "account_identifier_normalized, auth_status, sync_status, onboarding_mode, phone_verification_status, " +
             "provider_phone_status, encrypted_config, provider_scope_id, " +
@@ -100,6 +105,50 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
             "and account_identifier_normalized = #{identifier} " +
             "and auth_status in ('active', 'expired', 'failed') and deleted_at is null limit 1")
     ChannelAccountEntity findActiveByNormalizedIdentifier(@Param("identifier") String identifier);
+
+    @Select("select id, owner_user_id, channel_type, name, remark, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, onboarding_mode, phone_verification_status, " +
+            "provider_phone_status, encrypted_config, provider_scope_id, last_synced_at, created_at, updated_at, " +
+            "deleted_at, version from channel_accounts where id = #{accountId}::uuid " +
+            "and channel_type in ('chatapp', 'whatsapp') and deleted_at is null for update")
+    ChannelAccountEntity findWhatsAppByIdForUpdate(@Param("accountId") UUID accountId);
+
+    @Update("update channel_accounts as target set owner_user_id = #{targetOwnerId}::uuid, " +
+            "updated_at = now(), version = target.version + 1 " +
+            "where target.id = #{accountId}::uuid and target.version = #{expectedVersion} " +
+            "and target.owner_user_id is null " +
+            "and target.channel_type in ('chatapp', 'whatsapp') " +
+            "and target.auth_status in ('active', 'expired', 'failed') and target.deleted_at is null " +
+            "and not exists (select 1 from channel_accounts existing " +
+            "where existing.owner_user_id = #{targetOwnerId}::uuid " +
+            "and existing.channel_type in ('chatapp', 'whatsapp') " +
+            "and existing.auth_status in ('active', 'expired', 'failed') " +
+            "and existing.deleted_at is null and existing.id <> target.id)")
+    int assignWhatsAppOwner(@Param("accountId") UUID accountId,
+                            @Param("targetOwnerId") UUID targetOwnerId,
+                            @Param("expectedVersion") long expectedVersion);
+
+    @Update("update channel_accounts set owner_user_id = null, updated_at = now(), version = version + 1 " +
+            "where id = #{accountId}::uuid and version = #{expectedVersion} " +
+            "and owner_user_id is not null and channel_type in ('chatapp', 'whatsapp') " +
+            "and auth_status in ('active', 'expired', 'failed') and deleted_at is null")
+    int reclaimWhatsAppOwner(@Param("accountId") UUID accountId,
+                             @Param("expectedVersion") long expectedVersion);
+
+    @Update("update channel_accounts as target set owner_user_id = #{targetOwnerId}::uuid, " +
+            "updated_at = now(), version = target.version + 1 " +
+            "where target.id = #{accountId}::uuid and target.version = #{expectedVersion} " +
+            "and target.owner_user_id is not null and target.owner_user_id <> #{targetOwnerId}::uuid " +
+            "and target.channel_type in ('chatapp', 'whatsapp') " +
+            "and target.auth_status in ('active', 'expired', 'failed') and target.deleted_at is null " +
+            "and not exists (select 1 from channel_accounts existing " +
+            "where existing.owner_user_id = #{targetOwnerId}::uuid " +
+            "and existing.channel_type in ('chatapp', 'whatsapp') " +
+            "and existing.auth_status in ('active', 'expired', 'failed') " +
+            "and existing.deleted_at is null and existing.id <> target.id)")
+    int transferWhatsAppOwner(@Param("accountId") UUID accountId,
+                              @Param("targetOwnerId") UUID targetOwnerId,
+                              @Param("expectedVersion") long expectedVersion);
 
     @Update("update channel_accounts as target set owner_user_id = #{targetOwnerId}::uuid, " +
             "updated_at = now(), version = target.version + 1 " +
@@ -217,4 +266,60 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
         }
         return accounts.get(0);
     }
+
+    @Select("select id, owner_user_id, channel_type, name, remark, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, onboarding_mode, phone_verification_status, " +
+            "provider_phone_status, encrypted_config, provider_scope_id, last_synced_at, created_at, updated_at, " +
+            "deleted_at, version from channel_accounts " +
+            "where channel_type in ('chatapp', 'whatsapp') and deleted_at is null " +
+            "order by created_at asc")
+    List<ChannelAccountEntity> findAllWhatsAppForSync();
+
+    @Select("select id, owner_user_id, channel_type, name, remark, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, onboarding_mode, phone_verification_status, " +
+            "provider_phone_status, encrypted_config, provider_scope_id, last_synced_at, created_at, updated_at, " +
+            "deleted_at, version from channel_accounts " +
+            "where provider_scope_id = #{scopeId}::uuid and channel_type in ('chatapp', 'whatsapp') " +
+            "and deleted_at is null order by created_at asc")
+    List<ChannelAccountEntity> findAllWhatsAppByScope(@Param("scopeId") UUID scopeId);
+
+    @Insert("insert into channel_accounts " +
+            "(id, owner_user_id, channel_type, name, account_identifier, account_identifier_normalized, " +
+            "auth_status, sync_status, onboarding_mode, phone_verification_status, provider_phone_status, " +
+            "encrypted_config, provider_scope_id, last_synced_at) " +
+            "values (#{entity.id}::uuid, null, 'chatapp', #{entity.name}, #{entity.accountIdentifier}, " +
+            "#{entity.accountIdentifierNormalized}, 'active', 'success', 'ADMIN_API_WABA', " +
+            "#{entity.phoneVerificationStatus}, #{entity.providerPhoneStatus}, #{entity.encryptedConfig}::jsonb, " +
+            "#{scopeId}::uuid, #{lastSyncedAt}) " +
+            "on conflict (channel_type, account_identifier_normalized) where deleted_at is null do update set " +
+            "name = excluded.name, sync_status = excluded.sync_status, " +
+            "phone_verification_status = excluded.phone_verification_status, " +
+            "provider_phone_status = excluded.provider_phone_status, " +
+            "encrypted_config = excluded.encrypted_config, provider_scope_id = excluded.provider_scope_id, " +
+            "last_synced_at = excluded.last_synced_at, updated_at = now(), version = channel_accounts.version + 1")
+    int upsertAdminSynced(@Param("entity") ChannelAccountEntity entity,
+                          @Param("scopeId") UUID scopeId,
+                          @Param("lastSyncedAt") java.time.Instant lastSyncedAt);
+
+    @Update("update channel_accounts set name = #{name}, account_identifier = #{accountIdentifier}, " +
+            "account_identifier_normalized = #{accountIdentifierNormalized}, phone_verification_status = #{verificationStatus}, " +
+            "provider_phone_status = #{providerStatus}, encrypted_config = #{encryptedConfig}::jsonb, " +
+            "provider_scope_id = #{scopeId}::uuid, sync_status = 'success', last_synced_at = #{lastSyncedAt}, " +
+            "updated_at = now(), version = version + 1 where id = #{accountId}::uuid and deleted_at is null")
+    int refreshAdminSynced(@Param("accountId") UUID accountId,
+                           @Param("scopeId") UUID scopeId,
+                           @Param("name") String name,
+                           @Param("accountIdentifier") String accountIdentifier,
+                           @Param("accountIdentifierNormalized") String accountIdentifierNormalized,
+                           @Param("verificationStatus") String verificationStatus,
+                           @Param("providerStatus") String providerStatus,
+                           @Param("encryptedConfig") String encryptedConfig,
+                           @Param("lastSyncedAt") java.time.Instant lastSyncedAt);
+
+    @Update("update channel_accounts set provider_phone_status = 'UNKNOWN', sync_status = 'failed', " +
+            "last_synced_at = #{lastSyncedAt}, updated_at = now(), version = version + 1 " +
+            "where provider_scope_id = #{scopeId}::uuid and channel_type in ('chatapp', 'whatsapp') " +
+            "and deleted_at is null")
+    int markWhatsAppProviderUnavailable(@Param("scopeId") UUID scopeId,
+                                        @Param("lastSyncedAt") java.time.Instant lastSyncedAt);
 }

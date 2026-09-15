@@ -1,8 +1,12 @@
 # CAMS WhatsApp 内嵌注册员工自助绑定设计
 
-## 状态
+## 状态（历史）
 
-当前真源。本文取代“单企业单 WABA、管理员分配号码、Business App 共存使用迁移验证码”的路线。
+本文已被
+`2026-09-10-whatsapp-admin-managed-account-assignment-design.md`
+取代，仅保留历史实现和公开合同记录，不再定义当前产品行为。
+
+当前路线是管理员在 CAMS 手工配置 WABA/电话号码，CRM 只读同步并由管理员分配、收回或转交销售账号。
 
 ## 目标
 

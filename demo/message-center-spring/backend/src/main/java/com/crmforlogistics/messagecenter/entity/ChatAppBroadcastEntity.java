@@ -12,6 +12,7 @@ public class ChatAppBroadcastEntity {
     @TableId(type = IdType.ASSIGN_UUID)
     private UUID id;
     private UUID channelAccountId;
+    private Long channelAccountVersion;
     private String name;
     private String templateCode;
     private String templateName;
@@ -43,6 +44,8 @@ public class ChatAppBroadcastEntity {
     public void setId(UUID id) { this.id = id; }
     public UUID getChannelAccountId() { return channelAccountId; }
     public void setChannelAccountId(UUID channelAccountId) { this.channelAccountId = channelAccountId; }
+    public Long getChannelAccountVersion() { return channelAccountVersion; }
+    public void setChannelAccountVersion(Long channelAccountVersion) { this.channelAccountVersion = channelAccountVersion; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getTemplateCode() { return templateCode; }

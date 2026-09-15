@@ -16,10 +16,13 @@ test('uses the shared WhatsApp API contract instead of account-scoped template p
 });
 
 test('uses embedded signup completion instead of phone migration verification', () => {
-  assert.match(endpoints, /createWhatsAppAuthorizationAttempt\(\): Promise/);
+  assert.match(endpoints, /createWhatsAppAuthorizationAttempt\([^)]*onboardingMode[^)]*\): Promise/);
   assert.match(endpoints, /event: 'FINISH'/);
   assert.match(endpoints, /phoneNumberId: string/);
   assert.doesNotMatch(authorizationPanel, /verificationCode|GetMigrationVerifyCode|startMigration/);
   assert.match(authorizationPanel, /WA_EMBEDDED_SIGNUP/);
   assert.match(authorizationPanel, /window\.addEventListener\('message'/);
+  assert.match(authorizationPanel, /startupProfile|const profile/);
+  assert.match(authorizationPanel, /\.login\(/);
+  assert.doesNotMatch(authorizationPanel, /chatapp\.console\.aliyun\.com/);
 });

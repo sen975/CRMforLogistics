@@ -144,6 +144,7 @@ public class ChatAppBroadcastApplicationService {
         ChatAppBroadcastEntity broadcast = new ChatAppBroadcastEntity();
         broadcast.setId(UUID.randomUUID());
         broadcast.setChannelAccountId(command.channelAccountId());
+        broadcast.setChannelAccountVersion(account.getVersion() == null ? 0L : account.getVersion());
         broadcast.setName(command.name().trim());
         broadcast.setTemplateCode(command.templateCode().trim());
         broadcast.setTemplateName(template.getName());

@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,7 @@ class MessageSendApplicationServiceTest {
     @Mock EventHub eventHub;
     @Mock ConversationAccessService conversationAccessService;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
+    @Mock ChatAppAccountResolver accountResolver;
 
     @Test
     void persistedOutboundMessageRecordsTopicActivity() {
@@ -173,6 +175,69 @@ class MessageSendApplicationServiceTest {
                 .isInstanceOf(SecurityException.class)
                 .hasMessage("CHATAPP_CONVERSATION_FORBIDDEN");
         verifyNoInteractions(messageMapper, conversationMapper, outboxJobMapper, statusEventMapper);
+    }
+
+    @Test
+    void outboundMessagePersistsLockedDatabaseAccountVersionInsteadOfClientValue() {
+        UUID accountId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(conversationId);
+        conversation.setChannelAccountId(accountId);
+        when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
+                .thenReturn(conversation);
+        when(messageMapper.findByClientRequestId(accountId, "request-version"))
+                .thenReturn(Optional.empty());
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(accountId);
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        account.setOwnerUserId(actorId);
+        account.setVersion(12L);
+        when(accountResolver.requireOwnedAccountForSend(actorId, accountId, null))
+                .thenReturn(account);
+
+        MessageSendApplicationService service = new MessageSendApplicationService(
+                messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
+                conversationAccessService,
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()),
+                topicActivityRecorder, accountResolver);
+
+        service.accept(new MessageSendApplicationService.SendMessageCommand(
+                accountId, conversationId, "text", "request-version",
+                Map.of("text", "hello"), 999L), actorId);
+
+        ArgumentCaptor<MessageEntity> messageCaptor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageMapper).insertWithSequence(messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getChannelAccountVersion()).isEqualTo(12L);
+    }
+
+    @Test
+    void reassignedAccountIsRejectedBeforeMessageAndOutboxCreation() {
+        UUID accountId = UUID.randomUUID();
+        UUID conversationId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setId(conversationId);
+        conversation.setChannelAccountId(accountId);
+        when(conversationAccessService.lockForMessage(conversationId, accountId, actorId))
+                .thenReturn(conversation);
+        when(accountResolver.requireOwnedAccountForSend(actorId, accountId, null))
+                .thenThrow(new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED"));
+
+        MessageSendApplicationService service = new MessageSendApplicationService(
+                messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
+                conversationAccessService,
+                new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()),
+                topicActivityRecorder, accountResolver);
+
+        assertThatThrownBy(() -> service.accept(new MessageSendApplicationService.SendMessageCommand(
+                accountId, conversationId, "text", "request-reassigned",
+                Map.of("text", "hello"), 1L), actorId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_REASSIGNED");
+        verifyNoInteractions(messageMapper, outboxJobMapper, statusEventMapper);
     }
 
     @Test

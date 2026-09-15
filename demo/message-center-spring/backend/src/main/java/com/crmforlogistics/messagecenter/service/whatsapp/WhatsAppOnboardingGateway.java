@@ -13,6 +13,14 @@ public interface WhatsAppOnboardingGateway {
 
     List<ProviderPhone> syncPhoneNumbers(WhatsAppProviderScopeEntity scope);
 
+    /**
+     * Reads the provider's already configured phone numbers using the global
+     * administrator CAMS credentials. This path must not start onboarding.
+     */
+    default List<ProviderPhone> syncConfiguredPhoneNumbers() {
+        throw new UnsupportedOperationException("Configured phone sync is not supported");
+    }
+
     ProviderResult add(AddCommand command, WhatsAppProviderScopeEntity scope);
 
     ProviderResult sendCode(CodeCommand command, WhatsAppProviderScopeEntity scope);
@@ -21,6 +29,10 @@ public interface WhatsAppOnboardingGateway {
 
     default String encryptedProviderConfig() {
         return null;
+    }
+
+    default String encryptedProviderConfig(String chatappFrom) {
+        return encryptedProviderConfig();
     }
 
     record AddCommand(String countryCode, String phoneNumber, String verifiedName) { }

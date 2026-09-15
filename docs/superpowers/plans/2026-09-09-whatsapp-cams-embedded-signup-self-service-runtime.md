@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 文档状态：历史计划，已被 `2026-09-10-whatsapp-admin-managed-account-assignment.md` 取代。本文不再定义当前产品入口；当前路线由管理员在 CAMS 手工配置并在 CRM 分配 WhatsApp 账号。
+
 **目标：** 实现管理员企业 API WABA 绑定、员工 Business App 共存自助绑定、企业 API 新号码注册，以及受 owner 和 provider scope 约束的查询、解绑与诊断闭环。
 
 **架构：** `WhatsAppAuthorizationService` 是 attempt 状态机和授权完成唯一 owner；`WhatsAppProviderScopeEntity` 按 `(provider,waba_id)` 保存两种用途的 scope，`ChannelAccountEntity` 是员工发送身份唯一记录。浏览器只消费后端启动投影并提交经白名单验证的 Meta `code/wabaId/phoneNumberId`；后端不将事件中的 `phoneNumberId` 当作 CAMS 号码事实，号码、状态、显示名称和最终账户投影都由后端调用 CAMS 公开 API 同步得到。多号码时由服务端为本次 attempt 签发候选标识，提交后以新鲜 CAMS 查询复核。模板权限域及模板 UI 由 `2026-09-09-whatsapp-template-permission-domain.md` 承担，本计划不重复实现。
@@ -13,6 +15,7 @@
 - 当前设计文档 `docs/superpowers/specs/2026-09-09-whatsapp-cams-embedded-signup-self-service-design.md` 是本计划唯一产品真源；9 月 8 日计划中的“单企业 WABA”和管理员分配员工号码路线不得保留。
 - scope 用途只能是 `ENTERPRISE_API` 或 `EMPLOYEE_BUSINESS_APP`；同一 `ALIYUN_CAMS + waba_id` 复用一个 scope，不用全局 scope 表达不同员工的 WABA。
 - `ADMIN_API_WABA` 仅管理员可启动和完成；`EMPLOYEE_BUSINESS_APP` 仅当前员工可创建个人 scope；`EMPLOYEE_API_PHONE` 不启动 Meta WABA 弹窗，只在已存在企业 scope 下走添加号码、验证码与注册。
+- API 请求仍兼容产品文案中的 `BUSINESS_APP_COEXISTENCE`/`API_ONLY` 别名，但服务规范化后只将 `EMPLOYEE_BUSINESS_APP`/`ADMIN_API_WABA` 持久化到数据库；V64 将历史值转换并更新两张表的 CHECK 约束，V65 将授权 attempt 默认值同步为 `EMPLOYEE_BUSINESS_APP`。
 - 完成接口不信任浏览器手机号、账号名称、provider 状态、历史同步结论或启动 profile；绝不传递、保存或记录 AccessKey、Meta token、原始 code 和验证码。
 - Business App 共存绝不调用 `AddChatappPhoneNumber`、`GetChatappVerifyCode`、`ChatappVerifyAndRegister` 或任何迁移 API。
 - 每个活跃标准化号码只能归属一名员工；每个员工最多一个活跃 WhatsApp 账号；解绑仅切断 CRM 本地关系，不删除 CAMS、WABA、号码、模板或 Business App 资源。

@@ -61,7 +61,13 @@ public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity>
             + "ci.normalized_value, ci.display_name, ci.is_primary, ci.verify_status, ci.source, "
             + "ci.created_at, ci.updated_at, ci.deleted_at, ci.version "
             + "from contact_identities ci join contacts c on c.id=ci.contact_id "
-            + "where ci.contact_id=#{contactId}::uuid and c.created_by=#{ownerId}::uuid "
+            + "where ci.contact_id=#{contactId}::uuid and (c.created_by=#{ownerId}::uuid "
+            + "or exists (select 1 from conversations cv where cv.contact_identity_id=ci.id and ("
+            + "cv.assigned_user_id=#{ownerId}::uuid "
+            + "or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{ownerId}::uuid) "
+            + "or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{ownerId}::uuid "
+            + "and g.revoked_at is null and (g.expires_at is null or g.expires_at>now())))) "
+            + "or exists (select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=#{ownerId}::uuid and r.code='admin')) "
             + "and ci.deleted_at is null and c.deleted_at is null and c.status<>'merged' "
             + "order by ci.is_primary desc, ci.created_at, ci.id")
     List<ContactIdentityEntity> findByContactIdAndOwner(@Param("contactId") UUID contactId,

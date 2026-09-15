@@ -112,6 +112,62 @@ class WeComUserNotificationWorkerTest {
     }
 
     @Test
+    void keepsTheRowSendingWhenMarkSentFails() {
+        when(notifications.listDue(NOW, 10)).thenReturn(List.of(row(1, "hi")));
+        when(notifications.claim(ROW)).thenReturn(1);
+        when(sendService.send(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new WeComSendService.SendResult("msg-1", "1000002", "zhangsan", "x", "sent"));
+        when(notifications.markSent(ROW, NOW)).thenThrow(new RuntimeException("db down"));
+        WeComUserNotificationWorker worker = worker();
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(notifications, never()).retryLater(any(), any(), anyString());
+        verify(notifications, never()).markFailed(any(), any());
+    }
+
+    @Test
+    void aFailureToRecordAFailureDoesNotStopTheRestOfTheBatch() {
+        WeComUserNotificationEntity failing = row(1, "boom");
+        WeComUserNotificationEntity ok = row(1, "fine");
+        UUID okId = UUID.fromString("40000000-0000-0000-0000-000000000002");
+        ok.setId(okId);
+        when(notifications.listDue(NOW, 10)).thenReturn(List.of(failing, ok));
+        when(notifications.claim(ROW)).thenReturn(1);
+        when(notifications.claim(okId)).thenReturn(1);
+        when(sendService.send(anyString(), anyString(), anyString(), eq("【WhatsApp】张三：boom")))
+                .thenThrow(new WeComException("WECOM_SEND_FAILED", 502, "企业微信消息发送失败"));
+        when(sendService.send(anyString(), anyString(), anyString(), eq("【WhatsApp】张三：fine")))
+                .thenReturn(new WeComSendService.SendResult("msg-2", "1000002", "zhangsan", "x", "sent"));
+        when(notifications.retryLater(eq(ROW), any(), anyString()))
+                .thenThrow(new RuntimeException("db down"));
+        WeComUserNotificationWorker worker = worker();
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(notifications).retryLater(eq(ROW), any(), eq("WECOM_NOTIFICATION_SEND_FAILED"));
+        verify(notifications).markSent(okId, NOW);
+    }
+
+    @Test
+    void aFailureToClaimOneRowDoesNotStopTheRestOfTheBatch() {
+        WeComUserNotificationEntity first = row(1, "boom");
+        WeComUserNotificationEntity ok = row(1, "fine");
+        UUID okId = UUID.fromString("40000000-0000-0000-0000-000000000002");
+        ok.setId(okId);
+        when(notifications.listDue(NOW, 10)).thenReturn(List.of(first, ok));
+        when(notifications.claim(ROW)).thenThrow(new RuntimeException("db down"));
+        when(notifications.claim(okId)).thenReturn(1);
+        when(sendService.send(anyString(), anyString(), anyString(), eq("【WhatsApp】张三：fine")))
+                .thenReturn(new WeComSendService.SendResult("msg-2", "1000002", "zhangsan", "x", "sent"));
+        WeComUserNotificationWorker worker = worker();
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(notifications).markSent(okId, NOW);
+    }
+
+    @Test
     void recoversRowsLeakedInSending() {
         when(notifications.recoverStuck(NOW.minus(Duration.ofSeconds(60))))
                 .thenReturn(List.of(ROW));

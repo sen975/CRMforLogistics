@@ -18,12 +18,13 @@ public interface ChatAppBroadcastMapper extends BaseMapper<ChatAppBroadcastEntit
     @Insert("insert into chatapp_broadcasts (id, channel_account_id, name, template_code, "
             + "template_name, template_body_snapshot, language_code, recipient_count, success_count, failed_count, "
             + "processing_count, status, client_request_id, request_fingerprint, retries_broadcast_id, "
-            + "created_by_user_id, created_at, updated_at, version) values (#{broadcast.id}::uuid, "
+            + "created_by_user_id, channel_account_version, created_at, updated_at, version) values (#{broadcast.id}::uuid, "
             + "#{broadcast.channelAccountId}::uuid, #{broadcast.name}, #{broadcast.templateCode}, "
             + "#{broadcast.templateName}, #{broadcast.templateBodySnapshot}, #{broadcast.languageCode}, #{broadcast.recipientCount}, "
             + "#{broadcast.successCount}, #{broadcast.failedCount}, #{broadcast.processingCount}, "
             + "#{broadcast.status}, #{broadcast.clientRequestId}, #{broadcast.requestFingerprint}, "
             + "#{broadcast.retriesBroadcastId}::uuid, #{broadcast.createdByUserId}::uuid, "
+            + "#{broadcast.channelAccountVersion}, "
             + "#{broadcast.createdAt}, #{broadcast.updatedAt}, #{broadcast.version}) "
             + "on conflict (channel_account_id, client_request_id) do nothing")
     int insertIfAbsent(@Param("broadcast") ChatAppBroadcastEntity broadcast);

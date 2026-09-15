@@ -15,17 +15,34 @@ import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AliyunWhatsAppOnboardingGatewayTest {
+
+    @Test
+    void springCanConstructGatewayWithItsPrimaryConstructor() {
+        AppConfig config = mock(AppConfig.class);
+        CredentialCipher cipher = CredentialCipher.fromBase64Key(Base64.getEncoder()
+                .encodeToString(new byte[32]));
+
+        new ApplicationContextRunner()
+                .withBean(AppConfig.class, () -> config)
+                .withBean(CredentialCipher.class, () -> cipher)
+                .withUserConfiguration(AliyunWhatsAppOnboardingGateway.class)
+                .run(context -> assertThat(context)
+                        .hasSingleBean(AliyunWhatsAppOnboardingGateway.class));
+    }
 
     @Test
     void usesCamsPublicAuthorizationEndpointsAndReturnsProviderFacts() {
@@ -65,6 +82,36 @@ class AliyunWhatsAppOnboardingGatewayTest {
                 "space-1".equals(request.getCustSpaceId())));
         verify(client).queryChatappPhoneNumbers(org.mockito.ArgumentMatchers.argThat(request ->
                 "space-1".equals(request.getCustSpaceId())));
+    }
+
+    @Test
+    void configuredPhoneSyncUsesOnlyReadOnlyPhoneEndpointsAndGlobalCustSpace() {
+        AsyncClient client = mock(AsyncClient.class);
+        ChatappSyncPhoneNumberResponse sync = syncResponse();
+        QueryChatappPhoneNumbersResponse phoneResponse = phonesResponse();
+        when(client.chatappSyncPhoneNumber(any())).thenReturn(CompletableFuture.completedFuture(sync));
+        when(client.queryChatappPhoneNumbers(any())).thenReturn(CompletableFuture.completedFuture(phoneResponse));
+        AppConfig config = mock(AppConfig.class);
+        when(config.aliyunAccessKeyId()).thenReturn("test-key-id");
+        when(config.aliyunAccessKeySecret()).thenReturn("test-key-secret");
+        when(config.custSpaceId()).thenReturn("space-1");
+        AliyunWhatsAppOnboardingGateway gateway = new AliyunWhatsAppOnboardingGateway(
+                config, mock(CredentialCipher.class), ignored -> client);
+
+        List<WhatsAppOnboardingGateway.ProviderPhone> phones = gateway.syncConfiguredPhoneNumbers();
+
+        assertThat(phones).singleElement().satisfies(phone -> {
+            assertThat(phone.normalizedPhoneNumber()).isEqualTo("60111111111");
+            assertThat(phone.providerStatus()).isEqualTo("ACTIVE");
+            assertThat(phone.verificationStatus()).isEqualTo("VERIFIED");
+        });
+        verify(client).chatappSyncPhoneNumber(org.mockito.ArgumentMatchers.argThat(request ->
+                "space-1".equals(request.getCustSpaceId())));
+        verify(client).queryChatappPhoneNumbers(org.mockito.ArgumentMatchers.argThat(request ->
+                "space-1".equals(request.getCustSpaceId())));
+        verify(client, never()).isvGetAppId(any());
+        verify(client, never()).getPermissionByCode(any());
+        verify(client, never()).chatappBindWaba(any());
     }
 
     private static AliyunWhatsAppOnboardingGateway gateway(AsyncClient client) {

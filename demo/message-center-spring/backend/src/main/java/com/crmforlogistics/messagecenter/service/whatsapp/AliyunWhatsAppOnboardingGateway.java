@@ -32,6 +32,7 @@ import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import darabonba.core.client.ClientOverrideConfiguration;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -47,6 +48,7 @@ public class AliyunWhatsAppOnboardingGateway implements WhatsAppOnboardingGatewa
     private final CredentialCipher credentialCipher;
     private final Function<ProviderCredentials, AsyncClient> clientFactory;
 
+    @Autowired
     public AliyunWhatsAppOnboardingGateway(AppConfig config, CredentialCipher credentialCipher) {
         this(config, credentialCipher, AliyunWhatsAppOnboardingGateway::createClient);
     }
@@ -111,35 +113,35 @@ public class AliyunWhatsAppOnboardingGateway implements WhatsAppOnboardingGatewa
     @Override
     public List<ProviderPhone> syncPhoneNumbers(WhatsAppProviderScopeEntity scope) {
         String custSpaceId = requireScope(scope);
-        try (AsyncClient client = client(credentials(scope))) {
-            ChatappSyncPhoneNumberResponse sync = client.chatappSyncPhoneNumber(
-                    ChatappSyncPhoneNumberRequest.builder().custSpaceId(custSpaceId).build())
-                    .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            ChatappSyncPhoneNumberResponseBody syncBody = body(sync);
-            requireSuccess(syncBody == null ? null : syncBody.getSuccess(),
-                    syncBody == null ? null : syncBody.getCode());
-            QueryChatappPhoneNumbersResponse response = client.queryChatappPhoneNumbers(
-                    QueryChatappPhoneNumbersRequest.builder().custSpaceId(custSpaceId).build())
-                    .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            QueryChatappPhoneNumbersResponseBody body = body(response);
-            requireSuccess(body == null ? null : body.getSuccess(), body == null ? null : body.getCode());
-            if (body == null || body.getPhoneNumbers() == null) return List.of();
-            return body.getPhoneNumbers().stream()
-                    .filter(phone -> !blank(phone.getPhoneNumber()))
-                    .map(phone -> new ProviderPhone(normalize(phone.getPhoneNumber()), phone.getVerifiedName(),
-                            phoneStatus(phone.getStatus()), verificationStatus(phone.getCodeVerificationStatus())))
-                    .toList();
-        } catch (WhatsAppAuthorizationException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw unavailable();
+        return syncPhoneNumbers(custSpaceId, credentials(scope));
+    }
+
+    @Override
+    public List<ProviderPhone> syncConfiguredPhoneNumbers() {
+        if (blank(config.custSpaceId())) {
+            throw new WhatsAppAuthorizationException("WHATSAPP_CAMS_SYNC_UNAVAILABLE",
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
         }
+        String custSpaceId = config.custSpaceId().trim();
+        return syncPhoneNumbers(custSpaceId, globalProviderCredentials());
     }
 
     @Override
     public String encryptedProviderConfig() {
+        return encryptedProviderConfig(config.chatappFrom());
+    }
+
+    @Override
+    public String encryptedProviderConfig(String chatappFrom) {
         try {
-            return credentialCipher.encrypt(globalCredentials());
+            Map<String, String> values = globalCredentials();
+            values.put("custSpaceId", require(config.custSpaceId()));
+            if (chatappFrom == null || chatappFrom.isBlank()) {
+                values.put("chatappFrom", value(config.chatappFrom()));
+            } else {
+                values.put("chatappFrom", require(chatappFrom));
+            }
+            return credentialCipher.encrypt(values);
         } catch (CredentialCipher.CredentialEncryptionException exception) {
             throw new WhatsAppAuthorizationException("WHATSAPP_PROVIDER_CREDENTIALS_UNAVAILABLE",
                     org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
@@ -222,6 +224,32 @@ public class AliyunWhatsAppOnboardingGateway implements WhatsAppOnboardingGatewa
 
     private AsyncClient client(ProviderCredentials credentials) {
         return clientFactory.apply(credentials);
+    }
+
+    private List<ProviderPhone> syncPhoneNumbers(String custSpaceId, ProviderCredentials credentials) {
+        try (AsyncClient client = client(credentials)) {
+            ChatappSyncPhoneNumberResponse sync = client.chatappSyncPhoneNumber(
+                    ChatappSyncPhoneNumberRequest.builder().custSpaceId(custSpaceId).build())
+                    .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            ChatappSyncPhoneNumberResponseBody syncBody = body(sync);
+            requireSuccess(syncBody == null ? null : syncBody.getSuccess(),
+                    syncBody == null ? null : syncBody.getCode());
+            QueryChatappPhoneNumbersResponse response = client.queryChatappPhoneNumbers(
+                    QueryChatappPhoneNumbersRequest.builder().custSpaceId(custSpaceId).build())
+                    .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            QueryChatappPhoneNumbersResponseBody body = body(response);
+            requireSuccess(body == null ? null : body.getSuccess(), body == null ? null : body.getCode());
+            if (body == null || body.getPhoneNumbers() == null) return List.of();
+            return body.getPhoneNumbers().stream()
+                    .filter(phone -> !blank(phone.getPhoneNumber()))
+                    .map(phone -> new ProviderPhone(normalize(phone.getPhoneNumber()), phone.getVerifiedName(),
+                            phoneStatus(phone.getStatus()), verificationStatus(phone.getCodeVerificationStatus())))
+                    .toList();
+        } catch (WhatsAppAuthorizationException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw unavailable();
+        }
     }
 
     private static AsyncClient createClient(ProviderCredentials credentials) {

@@ -15,6 +15,7 @@ public class MessageEntity {
 
     private UUID conversationId;
     private UUID channelAccountId;
+    private Long channelAccountVersion;
     private UUID sourceEventId;
     private String providerMessageId;
     private String clientRequestId;
@@ -55,6 +56,14 @@ public class MessageEntity {
 
     public void setChannelAccountId(UUID channelAccountId) {
         this.channelAccountId = channelAccountId;
+    }
+
+    public Long getChannelAccountVersion() {
+        return channelAccountVersion;
+    }
+
+    public void setChannelAccountVersion(Long channelAccountVersion) {
+        this.channelAccountVersion = channelAccountVersion;
     }
 
     public UUID getSourceEventId() {

@@ -294,8 +294,15 @@ class WhatsAppAuthorizationServiceTest {
         attempt.setCompletedPhoneNumber("60111111111");
         UUID accountId = UUID.fromString("50000000-0000-0000-0000-000000000005");
         attempt.setCompletedAccountId(accountId);
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        ChannelAccountEntity activeAccount = new ChannelAccountEntity();
+        activeAccount.setId(accountId);
+        activeAccount.setOwnerUserId(USER_ID);
+        activeAccount.setChannelType("chatapp");
+        activeAccount.setAuthStatus("active");
         when(attempts.findByIdForUpdate(ATTEMPT_ID)).thenReturn(attempt);
-        WhatsAppAuthorizationService service = service(attempts, mock(ChannelAccountMapper.class),
+        when(accounts.findByIdAndOwner(accountId, USER_ID)).thenReturn(activeAccount);
+        WhatsAppAuthorizationService service = service(attempts, accounts,
                 mock(WhatsAppProviderScopeMapper.class), gateway);
 
         WhatsAppAuthorizationService.CompletionProjection result = service.completeAuthorization(USER_ID,
@@ -306,6 +313,35 @@ class WhatsAppAuthorizationServiceTest {
         assertThat(result.phoneNumberLast4()).isEqualTo("1111");
         verify(gateway, never()).verifyEmbeddedCode(any());
         verify(gateway, never()).bindWaba(any());
+    }
+
+    @Test
+    void completedAttemptCannotReplayAfterItsAccountWasUnlinked() {
+        WhatsAppAuthorizationAttemptMapper attempts = mock(WhatsAppAuthorizationAttemptMapper.class);
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppOnboardingGateway gateway = mock(WhatsAppOnboardingGateway.class);
+        WhatsAppAuthorizationAttemptEntity attempt = pendingAttempt(USER_ID, "state");
+        attempt.setOnboardingMode("EMPLOYEE_BUSINESS_APP");
+        attempt.setStatus("COMPLETED");
+        attempt.setCompletedPhoneNumber("60111111111");
+        UUID accountId = UUID.fromString("50000000-0000-0000-0000-000000000005");
+        attempt.setCompletedAccountId(accountId);
+        ChannelAccountEntity disabled = new ChannelAccountEntity();
+        disabled.setId(accountId);
+        disabled.setOwnerUserId(USER_ID);
+        disabled.setChannelType("chatapp");
+        disabled.setAuthStatus("disabled");
+        when(attempts.findByIdForUpdate(ATTEMPT_ID)).thenReturn(attempt);
+        when(accounts.findByIdAndOwner(accountId, USER_ID)).thenReturn(disabled);
+        WhatsAppAuthorizationService service = service(attempts, accounts,
+                mock(WhatsAppProviderScopeMapper.class), gateway);
+
+        assertThatThrownBy(() -> service.completeAuthorization(USER_ID,
+                new WhatsAppAuthorizationService.SelfServiceCompletionCommand(
+                        ATTEMPT_ID, "state", "FINISH", "another-code", "waba-1", "meta-phone-id")))
+                .isInstanceOf(WhatsAppAuthorizationException.class)
+                .hasMessage("WHATSAPP_AUTH_COMPLETED_ACCOUNT_UNAVAILABLE");
+        verify(gateway, never()).verifyEmbeddedCode(any());
     }
 
     @Test

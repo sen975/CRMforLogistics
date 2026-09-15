@@ -16,7 +16,10 @@ public class WhatsAppPhoneOnboardingOperationEntity {
     private String phoneNumber;
     private String countryCode;
     private String verifiedName;
+    private String accountName;
+    private String accountRemark;
     private String status;
+    private UUID completedAccountId;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -32,8 +35,14 @@ public class WhatsAppPhoneOnboardingOperationEntity {
     public void setCountryCode(String countryCode) { this.countryCode = countryCode; }
     public String getVerifiedName() { return verifiedName; }
     public void setVerifiedName(String verifiedName) { this.verifiedName = verifiedName; }
+    public String getAccountName() { return accountName; }
+    public void setAccountName(String accountName) { this.accountName = accountName; }
+    public String getAccountRemark() { return accountRemark; }
+    public void setAccountRemark(String accountRemark) { this.accountRemark = accountRemark; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public UUID getCompletedAccountId() { return completedAccountId; }
+    public void setCompletedAccountId(UUID completedAccountId) { this.completedAccountId = completedAccountId; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

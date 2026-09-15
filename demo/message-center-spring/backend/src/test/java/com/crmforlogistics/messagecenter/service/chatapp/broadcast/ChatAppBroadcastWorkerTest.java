@@ -23,6 +23,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
 import java.time.Clock;
@@ -65,6 +68,8 @@ class ChatAppBroadcastWorkerTest {
     @BeforeEach
     void setUp() {
         lenient().when(jobMapper.assertLeaseOwned(any(), any())).thenReturn(1);
+        lenient().when(accountResolver.requireAccountForReconciliation(any()))
+                .thenAnswer(invocation -> account(invocation.getArgument(0)));
         worker = new ChatAppBroadcastWorker(
                 jobMapper, broadcastMapper, recipientMapper, accountResolver,
                 gateway, eventHub, messageProjector, evidenceMapper,
@@ -130,8 +135,6 @@ class ChatAppBroadcastWorkerTest {
                 recipient(broadcastId, second.getRecipientNumberSnapshot(), "DELIVERED"),
                 recipient(broadcastId, third.getRecipientNumberSnapshot(), "FAILED_RECIPIENT")));
         when(jobMapper.assertLeaseOwned(job.getId(), job.getLeaseId())).thenReturn(1);
-        when(jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), NOW)).thenReturn(1);
-
         worker.runAvailable("worker-1", 10);
 
         verify(messageProjector, times(3)).applyReconciliation(eq(broadcastId), any(), any(), eq(NOW));
@@ -419,8 +422,6 @@ class ChatAppBroadcastWorkerTest {
         when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
         when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
         when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(recipient));
-        when(accountResolver.requireCurrentAccount(broadcast.getChannelAccountId()))
-                .thenReturn(account(broadcast.getChannelAccountId()));
         when(jobMapper.assertLeaseOwned(job.getId(), job.getLeaseId())).thenReturn(0);
 
         worker.runAvailable("worker-1", 10);
@@ -455,6 +456,100 @@ class ChatAppBroadcastWorkerTest {
         verify(jobMapper).insert(reconcileJob.capture());
         assertThat(reconcileJob.getValue().getJobType()).isEqualTo("RECONCILE");
         assertThat(reconcileJob.getValue().getMaxAttempts()).isEqualTo(10);
+    }
+
+    @Test
+    void reassignedQueuedBroadcastIsFailedWithoutCallingProvider() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "SUBMIT");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "QUEUED");
+        broadcast.setRecipientCount(1);
+        broadcast.setChannelAccountVersion(4L);
+        broadcast.setCreatedByUserId(UUID.randomUUID());
+        ChatAppBroadcastRecipientEntity recipient = recipient(broadcastId, "60111111111", "QUEUED");
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(recipient));
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED"))
+                .when(accountResolver)
+                .requireOwnedAccountForSend(
+                        eq(broadcast.getCreatedByUserId()),
+                        eq(broadcast.getChannelAccountId()),
+                        eq(4L));
+        when(jobMapper.failIfLeased(
+                job.getId(), job.getLeaseId(), "DEAD", NOW,
+                "WHATSAPP_ACCOUNT_REASSIGNED", "WHATSAPP_ACCOUNT_REASSIGNED", NOW))
+                .thenReturn(1);
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(gateway, never()).submit(any());
+        verify(recipientMapper).updateAllStatuses(broadcastId, "FAILED_RECIPIENT", NOW);
+        verify(broadcastMapper).updateAggregate(
+                broadcastId, "FAILED", 0, 1, 0, NOW,
+                "WHATSAPP_ACCOUNT_REASSIGNED", "WHATSAPP_ACCOUNT_REASSIGNED", NOW);
+    }
+
+    @Test
+    void ownershipFenceAndProviderSubmissionShareTheSameTransaction() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "SUBMIT");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "QUEUED");
+        broadcast.setRecipientCount(1);
+        broadcast.setCreatedByUserId(UUID.randomUUID());
+        broadcast.setChannelAccountVersion(4L);
+        ChatAppBroadcastRecipientEntity recipient = recipient(broadcastId, "60111111111", "QUEUED");
+        TrackingTransactionOperations transactions = new TrackingTransactionOperations();
+        ChatAppBroadcastWorker workerWithTransactions = new ChatAppBroadcastWorker(
+                jobMapper, broadcastMapper, recipientMapper, accountResolver,
+                gateway, eventHub, messageProjector, evidenceMapper,
+                new ObjectMapper(), Clock.fixed(NOW, ZoneOffset.UTC), transactions);
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of(recipient));
+        when(accountResolver.requireOwnedAccountForSend(
+                broadcast.getCreatedByUserId(), broadcast.getChannelAccountId(), 4L))
+                .thenReturn(account(broadcast.getChannelAccountId()));
+        when(gateway.submit(any())).thenAnswer(invocation -> {
+            assertThat(transactions.isActive()).isTrue();
+            return new SubmissionResult("group-1", "request-1", "OK");
+        });
+        when(jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), NOW)).thenReturn(1);
+        when(recipientMapper.findWithoutMessage(broadcastId, 1000)).thenReturn(List.of());
+
+        workerWithTransactions.runAvailable("worker-1", 10);
+
+        verify(accountResolver).requireOwnedAccountForSend(
+                broadcast.getCreatedByUserId(), broadcast.getChannelAccountId(), 4L);
+        assertThat(transactions.isActive()).isFalse();
+    }
+
+    @Test
+    void submittedBroadcastStillReconcilesAfterAccountReclaim() {
+        UUID broadcastId = UUID.randomUUID();
+        ChatAppBroadcastJobEntity job = job(broadcastId, "RECONCILE");
+        ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "SUBMITTED");
+        broadcast.setProviderGroupMessageId("group-1");
+        broadcast.setSubmittedAt(NOW.minusSeconds(60));
+        broadcast.setChannelAccountVersion(4L);
+        broadcast.setCreatedByUserId(UUID.randomUUID());
+        when(jobMapper.claimDue(eq("worker-1"), eq(NOW), any(), eq(10))).thenReturn(List.of(job));
+        when(broadcastMapper.findByIdForUpdate(broadcastId)).thenReturn(Optional.of(broadcast));
+        ChannelAccountEntity reclaimed = account(broadcast.getChannelAccountId());
+        reclaimed.setAuthStatus("disabled");
+        reclaimed.setOwnerUserId(null);
+        when(accountResolver.requireAccountForReconciliation(broadcast.getChannelAccountId()))
+                .thenReturn(reclaimed);
+        when(recipientMapper.findWithoutMessage(broadcastId, 1000)).thenReturn(List.of());
+        when(gateway.reconcile(any())).thenReturn(new ReconciliationPage(
+                List.of(), 1, false, "request-2"));
+        when(recipientMapper.findByBroadcastId(broadcastId)).thenReturn(List.of());
+
+        worker.runAvailable("worker-1", 10);
+
+        verify(gateway).reconcile(any());
+        verify(accountResolver, never()).requireOwnedAccountForSend(any(), any(), any());
+        verify(accountResolver, never()).requireCurrentAccount(broadcast.getChannelAccountId());
     }
 
     @Test
@@ -699,5 +794,24 @@ class ChatAppBroadcastWorkerTest {
         account.setAuthStatus("active");
         account.setAccountIdentifier("60199999999");
         return account;
+    }
+
+    private static final class TrackingTransactionOperations implements TransactionOperations {
+        private boolean active;
+
+        @Override
+        public <T> T execute(TransactionCallback<T> action) throws TransactionException {
+            assertThat(active).isFalse();
+            active = true;
+            try {
+                return action.doInTransaction(new SimpleTransactionStatus());
+            } finally {
+                active = false;
+            }
+        }
+
+        private boolean isActive() {
+            return active;
+        }
     }
 }

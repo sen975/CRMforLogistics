@@ -160,7 +160,7 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "  and (visible.sort_at &lt; #{beforeLastMessageAt} or (visible.sort_at = #{beforeLastMessageAt} and visible.id &lt; #{beforeId}::uuid)) " +
         "</if>" +
         "order by visible.sort_at desc, visible.id desc " +
-        "limit ${page.size}" +
+        "limit #{page.size}" +
         "</script>")
     IPage<ContactEntity> listForUser(IPage<ContactEntity> page,
                                      @Param("userId") UUID userId,

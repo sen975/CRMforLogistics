@@ -186,9 +186,11 @@ public class AiTopicInputService {
             }
         }
         List<String> anchors = contactIdentityMapper.findByContactId(contactId).stream().filter(i -> "phone".equalsIgnoreCase(i.getChannelType())).map(ContactIdentityEntity::getNormalizedValue).filter(Objects::nonNull).map(v -> v.startsWith("phone:") ? v : "phone:" + v).toList();
-        for (CallRecordEntity call : callRecordMapper.listUnassignedByAnchors(new java.util.LinkedHashSet<>(anchors))) {
-            if (after.isPresent() && !call.getOccurredAt().isAfter(after.get())) continue;
-            items.add(new SourceItem(call.getId(), SourceType.CALL_RECORD, "phone", call.getOccurredAt(), call.getDirection(), "", (nullToEmpty(call.getTranscriptionResultOriginalText()) + "\n" + nullToEmpty(call.getNote())).trim()));
+        if (!anchors.isEmpty()) {
+            for (CallRecordEntity call : callRecordMapper.listUnassignedByAnchors(new java.util.LinkedHashSet<>(anchors))) {
+                if (after.isPresent() && !call.getOccurredAt().isAfter(after.get())) continue;
+                items.add(new SourceItem(call.getId(), SourceType.CALL_RECORD, "phone", call.getOccurredAt(), call.getDirection(), "", (nullToEmpty(call.getTranscriptionResultOriginalText()) + "\n" + nullToEmpty(call.getNote())).trim()));
+            }
         }
         return bounded(items);
     }

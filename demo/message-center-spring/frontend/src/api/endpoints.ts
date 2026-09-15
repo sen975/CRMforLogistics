@@ -58,9 +58,16 @@ import type {
   ChannelAddressBookPageResponse,
   WhatsAppAuthorizationAttempt,
   WhatsAppAuthorizationResult,
-  WhatsAppPhoneNumberStatus,
   WhatsAppPhoneOperationStatus,
+  WhatsAppPhoneOperationProjection,
+  WhatsAppAccountProjection,
+  WhatsAppHistorySyncProjection,
   WhatsAppCapabilityStatus,
+  AdminWhatsAppAccountProjection,
+  AdminWhatsAppAssignmentAuditProjection,
+  AdminWhatsAppAssignmentRequest,
+  AdminWhatsAppSyncResult,
+  AdminWhatsAppVersionedReasonRequest,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -786,8 +793,9 @@ export async function unbindChannelAccount(id: string): Promise<void> {
   await client.post(`/channel-accounts/${id}/unbind`);
 }
 
-export async function createWhatsAppAuthorizationAttempt(onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY'): Promise<WhatsAppAuthorizationAttempt> {
-  const res = await client.post<WhatsAppAuthorizationAttempt>('/whatsapp/authorization/attempts', { onboardingMode });
+export async function createWhatsAppAuthorizationAttempt(onboardingMode: 'BUSINESS_APP_COEXISTENCE' | 'API_ONLY' | 'ADMIN_API_WABA'): Promise<WhatsAppAuthorizationAttempt> {
+  const providerMode = onboardingMode === 'BUSINESS_APP_COEXISTENCE' ? 'EMPLOYEE_BUSINESS_APP' : onboardingMode === 'API_ONLY' ? 'ADMIN_API_WABA' : onboardingMode;
+  const res = await client.post<WhatsAppAuthorizationAttempt>('/whatsapp/authorization/attempts', { onboardingMode: providerMode });
   return res.data;
 }
 
@@ -802,17 +810,14 @@ export async function completeWhatsAppAuthorization(data: {
   event: 'FINISH';
   wabaId: string;
   phoneNumberId: string;
-  phoneNumber: string;
   code: string;
-  verifiedName?: string;
-  historySync: boolean;
 }): Promise<WhatsAppAuthorizationResult> {
   const res = await client.post<WhatsAppAuthorizationResult>('/whatsapp/authorization/complete', data);
   return res.data;
 }
 
-export async function fetchWhatsAppPhoneNumbers(): Promise<WhatsAppPhoneNumberStatus[]> {
-  const res = await client.get<WhatsAppPhoneNumberStatus[]>('/whatsapp/phone-numbers');
+export async function fetchWhatsAppPhoneOperations(): Promise<WhatsAppPhoneOperationProjection[]> {
+  const res = await client.get<WhatsAppPhoneOperationProjection[]>('/whatsapp/api-phone-operations');
   return res.data;
 }
 
@@ -820,18 +825,86 @@ export async function addWhatsAppPhoneNumber(data: {
   countryCode: string;
   phoneNumber: string;
   verifiedName: string;
+  accountName: string;
+  accountRemark?: string;
 }): Promise<WhatsAppPhoneOperationStatus> {
-  const res = await client.post<WhatsAppPhoneOperationStatus>('/whatsapp/phone-numbers', data);
+  const res = await client.post<WhatsAppPhoneOperationStatus>('/whatsapp/api-phone-operations', data);
   return res.data;
 }
 
-export async function sendWhatsAppVerificationCode(phoneNumber: string, data: { locale: string; method: string }): Promise<WhatsAppPhoneOperationStatus> {
-  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/phone-numbers/${encodeURIComponent(phoneNumber)}/verification-code`, data);
+export async function sendWhatsAppVerificationCode(operationId: string, data: { locale: string; method: string; confirmed: true }): Promise<WhatsAppPhoneOperationStatus> {
+  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/api-phone-operations/${encodeURIComponent(operationId)}/verification-code`, data);
   return res.data;
 }
 
-export async function verifyWhatsAppPhoneNumber(phoneNumber: string, verificationCode: string): Promise<WhatsAppPhoneOperationStatus> {
-  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/phone-numbers/${encodeURIComponent(phoneNumber)}/verify`, { verificationCode });
+export async function verifyWhatsAppPhoneNumber(operationId: string, verificationCode: string): Promise<WhatsAppPhoneOperationStatus> {
+  const res = await client.post<WhatsAppPhoneOperationStatus>(`/whatsapp/api-phone-operations/${encodeURIComponent(operationId)}/verify`, { verificationCode });
+  return res.data;
+}
+
+export async function fetchWhatsAppAccounts(): Promise<WhatsAppAccountProjection[]> {
+  const res = await client.get<WhatsAppAccountProjection[]>('/whatsapp/accounts/me');
+  return res.data;
+}
+
+export async function unlinkWhatsAppAccount(accountId: string, reason: string): Promise<void> {
+  await client.delete(`/whatsapp/accounts/${encodeURIComponent(accountId)}`, { data: { reason } });
+}
+
+export async function requestWhatsAppHistorySync(accountId: string): Promise<WhatsAppHistorySyncProjection> {
+  const res = await client.post<WhatsAppHistorySyncProjection>(`/whatsapp/accounts/${encodeURIComponent(accountId)}/history-sync`);
+  return res.data;
+}
+
+export async function fetchAdminWhatsAppAccounts(): Promise<AdminWhatsAppAccountProjection[]> {
+  const res = await client.get<AdminWhatsAppAccountProjection[]>('/admin/whatsapp/accounts');
+  return res.data;
+}
+
+export async function syncAdminWhatsAppAccounts(): Promise<AdminWhatsAppSyncResult> {
+  const res = await client.post<AdminWhatsAppSyncResult>('/admin/whatsapp/accounts/sync');
+  return res.data;
+}
+
+export async function assignAdminWhatsAppAccount(
+  accountId: string,
+  request: AdminWhatsAppAssignmentRequest,
+): Promise<AdminWhatsAppAccountProjection> {
+  const res = await client.post<AdminWhatsAppAccountProjection>(
+    `/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/assign`,
+    request,
+  );
+  return res.data;
+}
+
+export async function reclaimAdminWhatsAppAccount(
+  accountId: string,
+  request: AdminWhatsAppVersionedReasonRequest,
+): Promise<AdminWhatsAppAccountProjection> {
+  const res = await client.post<AdminWhatsAppAccountProjection>(
+    `/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/reclaim`,
+    request,
+  );
+  return res.data;
+}
+
+export async function transferAdminWhatsAppAccount(
+  accountId: string,
+  request: AdminWhatsAppAssignmentRequest,
+): Promise<AdminWhatsAppAccountProjection> {
+  const res = await client.post<AdminWhatsAppAccountProjection>(
+    `/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/transfer`,
+    request,
+  );
+  return res.data;
+}
+
+export async function fetchAdminWhatsAppAssignmentHistory(
+  accountId: string,
+): Promise<AdminWhatsAppAssignmentAuditProjection[]> {
+  const res = await client.get<AdminWhatsAppAssignmentAuditProjection[]>(
+    `/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/assignment-history`,
+  );
   return res.data;
 }
 

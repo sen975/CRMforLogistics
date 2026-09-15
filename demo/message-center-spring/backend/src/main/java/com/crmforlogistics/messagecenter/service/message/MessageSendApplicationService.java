@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.message;
 
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
@@ -9,6 +10,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.OutboxJobMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +37,7 @@ public class MessageSendApplicationService {
     private final ConversationAccessService conversationAccessService;
     private final TemplateMessageTextResolver templateTextResolver;
     private final AiTopicActivityRecorder topicActivityRecorder;
+    private final ChatAppAccountResolver accountResolver;
 
     public MessageSendApplicationService(MessageMapper messageMapper,
                                          OutboxJobMapper outboxJobMapper,
@@ -44,7 +47,19 @@ public class MessageSendApplicationService {
                                          ConversationAccessService conversationAccessService,
                                          TemplateMessageTextResolver templateTextResolver) {
         this(messageMapper, outboxJobMapper, statusEventMapper, objectMapper, eventHub,
-                conversationAccessService, templateTextResolver, null);
+                conversationAccessService, templateTextResolver, null, null);
+    }
+
+    public MessageSendApplicationService(MessageMapper messageMapper,
+                                         OutboxJobMapper outboxJobMapper,
+                                         MessageStatusEventMapper statusEventMapper,
+                                         ObjectMapper objectMapper,
+                                         EventHub eventHub,
+                                         ConversationAccessService conversationAccessService,
+                                         TemplateMessageTextResolver templateTextResolver,
+                                         AiTopicActivityRecorder topicActivityRecorder) {
+        this(messageMapper, outboxJobMapper, statusEventMapper, objectMapper, eventHub,
+                conversationAccessService, templateTextResolver, topicActivityRecorder, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -55,7 +70,8 @@ public class MessageSendApplicationService {
                                          EventHub eventHub,
                                          ConversationAccessService conversationAccessService,
                                          TemplateMessageTextResolver templateTextResolver,
-                                         AiTopicActivityRecorder topicActivityRecorder) {
+                                         AiTopicActivityRecorder topicActivityRecorder,
+                                         ChatAppAccountResolver accountResolver) {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.outboxJobMapper = Objects.requireNonNull(outboxJobMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -64,6 +80,7 @@ public class MessageSendApplicationService {
         this.conversationAccessService = Objects.requireNonNull(conversationAccessService);
         this.templateTextResolver = Objects.requireNonNull(templateTextResolver);
         this.topicActivityRecorder = topicActivityRecorder;
+        this.accountResolver = accountResolver;
     }
 
     @Transactional
@@ -72,6 +89,12 @@ public class MessageSendApplicationService {
         String clientRequestId = command.clientRequestId().trim();
         ConversationEntity conversation = conversationAccessService.lockForMessage(
                 command.conversationId(), command.channelAccountId(), actorUserId);
+        Long accountVersion = null;
+        if (accountResolver != null) {
+            ChannelAccountEntity account = accountResolver.requireOwnedAccountForSend(
+                    actorUserId, command.channelAccountId(), null);
+            accountVersion = account.getVersion() == null ? 0L : account.getVersion();
+        }
         var duplicate = messageMapper.findByClientRequestId(
                 command.channelAccountId(), clientRequestId);
         if (duplicate.isPresent()) {
@@ -91,6 +114,7 @@ public class MessageSendApplicationService {
         message.setId(UUID.randomUUID());
         message.setConversationId(command.conversationId());
         message.setChannelAccountId(command.channelAccountId());
+        message.setChannelAccountVersion(accountVersion);
         message.setClientRequestId(clientRequestId);
         message.setDirection("outbound");
         message.setMessageKind(command.kind());
@@ -200,7 +224,13 @@ public class MessageSendApplicationService {
     }
 
     public record SendMessageCommand(UUID channelAccountId, UUID conversationId, String kind,
-                                     String clientRequestId, Map<String, Object> content) {}
+                                     String clientRequestId, Map<String, Object> content,
+                                     Long channelAccountVersion) {
+        public SendMessageCommand(UUID channelAccountId, UUID conversationId, String kind,
+                                  String clientRequestId, Map<String, Object> content) {
+            this(channelAccountId, conversationId, kind, clientRequestId, content, null);
+        }
+    }
 
     public record MessageAccepted(UUID messageId, String status, boolean duplicate) {}
 }

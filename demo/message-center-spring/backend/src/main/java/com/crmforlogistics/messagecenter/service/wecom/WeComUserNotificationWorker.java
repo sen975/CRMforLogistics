@@ -61,10 +61,15 @@ public class WeComUserNotificationWorker {
     public void runAvailable(String workerId, int batchSize) {
         Instant now = clock.instant();
         for (WeComUserNotificationEntity row : notificationMapper.listDue(now, batchSize)) {
-            if (notificationMapper.claim(row.getId()) != 1) {
-                continue;
+            try {
+                if (notificationMapper.claim(row.getId()) != 1) {
+                    continue;
+                }
+                dispatch(row);
+            } catch (RuntimeException e) {
+                // One bad row must not stop the rest of the batch; recoverStuck requeues it later.
+                LOG.warn("event=wecom.notification_row_failed notificationId={}", row.getId(), e);
             }
-            dispatch(row);
         }
     }
 
@@ -91,15 +96,32 @@ public class WeComUserNotificationWorker {
         int attempts = row.getAttemptCount() == null ? 0 : row.getAttemptCount();
         String upstreamCode = cause instanceof WeComException weComException
                 ? weComException.code() : null;
-        if (attempts + 1 < maxAttempts) {
-            notificationMapper.retryLater(row.getId(),
-                    clock.instant().plus(retryBackoff), errorCode);
-            LOG.warn("event=wecom.notification_retry notificationId={} attempt={} code={} upstreamCode={}",
-                    row.getId(), attempts + 1, errorCode, upstreamCode, cause);
+        boolean terminal = attempts + 1 >= maxAttempts;
+        try {
+            if (terminal) {
+                notificationMapper.markFailed(row.getId(), errorCode);
+            } else {
+                notificationMapper.retryLater(row.getId(),
+                        clock.instant().plus(retryBackoff), errorCode);
+            }
+        } catch (RuntimeException persistenceFailure) {
+            // The row stays SENDING; recoverStuck requeues it later.
+            if (terminal) {
+                // A row that spent its retry budget could not be closed out - it will be re-sent.
+                LOG.error("event=wecom.notification_record_failure_failed notificationId={} code={}",
+                        row.getId(), errorCode, persistenceFailure);
+            } else {
+                LOG.warn("event=wecom.notification_record_failure_failed notificationId={} code={}",
+                        row.getId(), errorCode, persistenceFailure);
+            }
             return;
         }
-        notificationMapper.markFailed(row.getId(), errorCode);
-        LOG.error("event=wecom.notification_failed notificationId={} code={} upstreamCode={}",
-                row.getId(), errorCode, upstreamCode, cause);
+        if (terminal) {
+            LOG.error("event=wecom.notification_failed notificationId={} code={} upstreamCode={}",
+                    row.getId(), errorCode, upstreamCode, cause);
+        } else {
+            LOG.warn("event=wecom.notification_retry notificationId={} attempt={} code={} upstreamCode={}",
+                    row.getId(), attempts + 1, errorCode, upstreamCode, cause);
+        }
     }
 }

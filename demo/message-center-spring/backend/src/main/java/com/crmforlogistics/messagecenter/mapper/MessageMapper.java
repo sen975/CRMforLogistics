@@ -21,9 +21,12 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             + "join conversations cv on cv.id=m.conversation_id "
             + "join contact_identities ci on ci.id=cv.contact_identity_id "
             + "join contacts c on c.id=ci.contact_id "
-            + "join channel_accounts ca on ca.id=m.channel_account_id "
-            + "where m.id=#{messageId}::uuid and c.created_by=#{ownerId}::uuid "
-            + "and ca.owner_user_id=#{ownerId}::uuid limit 1")
+            + "where m.id=#{messageId}::uuid and (c.created_by=#{ownerId}::uuid "
+            + "or cv.assigned_user_id=#{ownerId}::uuid "
+            + "or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{ownerId}::uuid) "
+            + "or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{ownerId}::uuid "
+            + "and g.revoked_at is null and (g.expires_at is null or g.expires_at>now())) "
+            + "or exists (select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=#{ownerId}::uuid and r.code='admin')) limit 1")
     MessageEntity findByIdAndOwner(@Param("messageId") UUID messageId, @Param("ownerId") UUID ownerId);
 
     @Select("select m.* from messages m join channel_accounts ca on ca.id=m.channel_account_id "
@@ -34,9 +37,12 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
             + "join conversations cv on cv.id=m.conversation_id "
             + "join contact_identities ci on ci.id=cv.contact_identity_id "
             + "join contacts c on c.id=ci.contact_id "
-            + "join channel_accounts ca on ca.id=m.channel_account_id "
-            + "where c.id=#{contactId}::uuid and c.created_by=#{ownerId}::uuid "
-            + "and ca.owner_user_id=#{ownerId}::uuid "
+            + "where c.id=#{contactId}::uuid and (c.created_by=#{ownerId}::uuid "
+            + "or cv.assigned_user_id=#{ownerId}::uuid "
+            + "or exists (select 1 from team_members tm where tm.team_id=cv.assigned_team_id and tm.user_id=#{ownerId}::uuid) "
+            + "or exists (select 1 from conversation_access_grants g where g.conversation_id=cv.id and g.user_id=#{ownerId}::uuid "
+            + "and g.revoked_at is null and (g.expires_at is null or g.expires_at>now())) "
+            + "or exists (select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=#{ownerId}::uuid and r.code='admin')) "
             + "order by m.occurred_at desc, m.id desc limit #{limit}")
     List<MessageEntity> listByContactAndOwner(@Param("ownerId") UUID ownerId,
                                               @Param("contactId") UUID contactId,
@@ -51,8 +57,10 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
     @Insert("with seq as (" +
         "update conversations set next_ingest_sequence = next_ingest_sequence + 1, version = version + 1 " +
         "where id = #{conversationId}::uuid returning next_ingest_sequence" +
-        ") insert into messages (id, conversation_id, channel_account_id, source_event_id, provider_message_id, client_request_id, direction, message_kind, subject, body_text, body_html, occurred_at, ingest_sequence, counts_as_unread, current_status, current_status_at, created_by_user_id, metadata_jsonb) " +
-        "select #{id}::uuid, #{conversationId}::uuid, #{channelAccountId}::uuid, #{sourceEventId}::uuid, #{providerMessageId}, #{clientRequestId}, " +
+        ") insert into messages (id, conversation_id, channel_account_id, channel_account_version, source_event_id, provider_message_id, client_request_id, direction, message_kind, subject, body_text, body_html, occurred_at, ingest_sequence, counts_as_unread, current_status, current_status_at, created_by_user_id, metadata_jsonb) " +
+        "select #{id}::uuid, #{conversationId}::uuid, #{channelAccountId}::uuid, " +
+        "coalesce(#{channelAccountVersion}, (select version from channel_accounts where id=#{channelAccountId}::uuid), 0), " +
+        "#{sourceEventId}::uuid, #{providerMessageId}, #{clientRequestId}, " +
         "#{direction}, #{messageKind}, #{subject}, #{bodyText}, #{bodyHtml}, #{occurredAt}, seq.next_ingest_sequence, #{countsAsUnread}, #{currentStatus}, #{currentStatusAt}, #{createdByUserId}::uuid, " +
         "coalesce(cast(#{metadataJsonb} as jsonb), '{}'::jsonb) from seq")
     int insertWithSequence(MessageEntity message);
@@ -64,7 +72,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
      */
     @Select("<script>" +
         "select m.id, m.provider_message_id, m.channel_account_id, m.conversation_id, " +
-        "m.source_event_id, m.client_request_id, m.direction, m.message_kind, " +
+        "m.source_event_id, m.channel_account_version, m.client_request_id, m.direction, m.message_kind, " +
         "m.subject, m.body_text, m.body_html, m.occurred_at, m.received_at, " +
         "m.ingest_sequence, m.counts_as_unread, m.current_status, " +
         "m.current_status_at, m.created_by_user_id, m.metadata_jsonb, m.created_at " +
@@ -81,7 +89,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
         "  and (m.occurred_at &lt; #{beforeCursor} or (m.occurred_at = #{beforeCursor} and m.id &lt; #{beforeId}::uuid)) " +
         "</if>" +
         "order by m.occurred_at desc, m.id desc " +
-        "limit ${page.size}" +
+        "limit #{page.size}" +
         "</script>")
     IPage<MessageEntity> listMessages(IPage<MessageEntity> page,
                                       @Param("conversationId") UUID conversationId,
@@ -94,7 +102,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
      * Find a message by provider_message_id for the given channel account.
      */
     @Select("select id, provider_message_id, channel_account_id, conversation_id, " +
-        "source_event_id, client_request_id, direction, message_kind, " +
+        "source_event_id, channel_account_version, client_request_id, direction, message_kind, " +
         "subject, body_text, body_html, occurred_at, received_at, " +
         "ingest_sequence, counts_as_unread, current_status, " +
         "current_status_at, created_by_user_id, metadata_jsonb, created_at " +
@@ -106,7 +114,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
                                                     @Param("providerMessageId") String providerMessageId);
 
     @Select("select id, provider_message_id, channel_account_id, conversation_id, " +
-        "source_event_id, client_request_id, direction, message_kind, subject, body_text, body_html, " +
+        "source_event_id, channel_account_version, client_request_id, direction, message_kind, subject, body_text, body_html, " +
         "occurred_at, received_at, ingest_sequence, counts_as_unread, current_status, current_status_at, " +
         "created_by_user_id, metadata_jsonb, created_at from messages " +
         "where channel_account_id = #{channelAccountId}::uuid " +
@@ -119,7 +127,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
      * Find a message by client_request_id for the given channel account (idempotency check).
      */
     @Select("select id, provider_message_id, channel_account_id, conversation_id, " +
-        "source_event_id, client_request_id, direction, message_kind, " +
+        "source_event_id, channel_account_version, client_request_id, direction, message_kind, " +
         "subject, body_text, body_html, occurred_at, received_at, " +
         "ingest_sequence, counts_as_unread, current_status, " +
         "current_status_at, created_by_user_id, metadata_jsonb, created_at " +
@@ -205,7 +213,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
      */
     @Select("<script>" +
         "select m.id, m.provider_message_id, m.channel_account_id, m.conversation_id, " +
-        "m.source_event_id, m.client_request_id, m.direction, m.message_kind, " +
+        "m.source_event_id, m.channel_account_version, m.client_request_id, m.direction, m.message_kind, " +
         "m.subject, m.body_text, m.body_html, m.occurred_at, m.received_at, " +
         "m.ingest_sequence, m.counts_as_unread, m.current_status, " +
         "m.current_status_at, m.created_by_user_id, m.metadata_jsonb, m.created_at " +
@@ -225,7 +233,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
         "  and (m.occurred_at &lt; #{beforeCursor} or (m.occurred_at = #{beforeCursor} and m.id &lt; #{beforeId}::uuid)) " +
         "</if>" +
         "order by m.occurred_at desc, m.id desc " +
-        "limit ${page.size}" +
+        "limit #{page.size}" +
         "</script>")
     IPage<MessageEntity> listMessagesByConversations(IPage<MessageEntity> page,
                                                       @Param("conversationIds") List<UUID> conversationIds,
@@ -236,7 +244,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
 
     @Select("<script>" +
         "select m.id, m.provider_message_id, m.channel_account_id, m.conversation_id, " +
-        "m.source_event_id, m.client_request_id, m.direction, m.message_kind, " +
+        "m.source_event_id, m.channel_account_version, m.client_request_id, m.direction, m.message_kind, " +
         "m.subject, m.body_text, m.body_html, m.occurred_at, m.received_at, " +
         "m.ingest_sequence, m.counts_as_unread, m.current_status, " +
         "m.current_status_at, m.created_by_user_id, m.metadata_jsonb, m.created_at " +
@@ -251,7 +259,7 @@ public interface MessageMapper extends BaseMapper<MessageEntity> {
         "</if>" +
         "<if test=\"beforeCursor != null and beforeId != null\">" +
         "and (m.occurred_at &lt; #{beforeCursor} or (m.occurred_at = #{beforeCursor} and m.id &lt; #{beforeId}::uuid)) " +
-        "</if> order by m.occurred_at desc, m.id desc limit ${page.size}" +
+        "</if> order by m.occurred_at desc, m.id desc limit #{page.size}" +
         "</script>")
     IPage<MessageEntity> listUnassignedMessagesByConversations(IPage<MessageEntity> page,
                                                                  @Param("conversationIds") List<UUID> conversationIds,

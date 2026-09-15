@@ -22,8 +22,15 @@ public class ContactMemoryConsolidationService {
     public ContactMemoryModels.ConsolidationResult consolidate(
             ContactMemoryModels.Context context,
             ContactMemoryModels.LlmOutput output) {
+        return consolidate(context, output, UUID.randomUUID());
+    }
+
+    public ContactMemoryModels.ConsolidationResult consolidate(
+            ContactMemoryModels.Context context,
+            ContactMemoryModels.LlmOutput output,
+            UUID generationBatchId) {
         if (context == null || output == null || context.contactId() == null
-                || context.ownerUserId() == null) {
+                || context.ownerUserId() == null || generationBatchId == null) {
             throw new ContactMemoryModels.ValidationException("INVALID_OUTPUT");
         }
         if (output.labelChanges().size() > MAX_LABEL_CHANGES) {
@@ -31,7 +38,6 @@ public class ContactMemoryConsolidationService {
         }
         validateContextEvidence(context, output);
 
-        UUID batchId = UUID.randomUUID();
         Instant now = Instant.now();
         List<ContactMemoryModels.ObservationCandidate> observations = consolidateObservations(
                 output.observations());
@@ -43,7 +49,7 @@ public class ContactMemoryConsolidationService {
         int evidenceCount = countEvidence(observations, facts, labels);
 
         return new ContactMemoryModels.ConsolidationResult(
-                batchId,
+                generationBatchId,
                 context.inputCursor(),
                 context.outputCursor(),
                 observations,

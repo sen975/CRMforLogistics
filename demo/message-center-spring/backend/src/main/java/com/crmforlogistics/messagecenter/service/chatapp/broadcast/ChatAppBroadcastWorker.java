@@ -141,7 +141,6 @@ public class ChatAppBroadcastWorker {
             complete(job, now);
             return;
         }
-        ChannelAccountEntity account = accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
         List<ChatAppBroadcastRecipientEntity> recipients =
                 recipientMapper.findByBroadcastId(broadcast.getId());
         if (recipients.size() != broadcast.getRecipientCount()) {
@@ -152,15 +151,18 @@ public class ChatAppBroadcastWorker {
             assertLease(job);
             broadcastMapper.updateStatus(broadcast.getId(), BroadcastStatus.SUBMITTING.name(), now);
         });
-        BroadcastSubmission command = new BroadcastSubmission(
-                broadcast.getChannelAccountId(), account.getAccountIdentifier(),
-                broadcast.getTemplateCode(), broadcast.getTemplateName(), broadcast.getLanguageCode(),
-                broadcast.getId().toString(), recipients.stream()
-                .map(recipient -> new SubmissionRecipient(
-                        recipient.getRecipientNumberSnapshot(), params(recipient.getTemplateParamsJsonb())))
-                .toList());
         try {
-            ChatAppBroadcastGateway.SubmissionResult result = gateway.submit(command);
+            ChatAppBroadcastGateway.SubmissionResult result = transactions.execute(status -> {
+                ChannelAccountEntity account = requireSubmissionAccount(broadcast);
+                BroadcastSubmission command = new BroadcastSubmission(
+                        broadcast.getChannelAccountId(), account.getAccountIdentifier(),
+                        broadcast.getTemplateCode(), broadcast.getTemplateName(), broadcast.getLanguageCode(),
+                        broadcast.getId().toString(), recipients.stream()
+                        .map(recipient -> new SubmissionRecipient(
+                                recipient.getRecipientNumberSnapshot(), params(recipient.getTemplateParamsJsonb())))
+                        .toList());
+                return gateway.submit(command);
+            });
             transactions.executeWithoutResult(status -> {
                 if (jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), now) != 1) {
                     throw leaseLost();
@@ -193,9 +195,35 @@ public class ChatAppBroadcastWorker {
                 }
             }
             publish(broadcast.getId());
+        } catch (IllegalArgumentException error) {
+            if ("WHATSAPP_ACCOUNT_REASSIGNED".equals(error.getMessage())) {
+                failSubmission(job, broadcast, "WHATSAPP_ACCOUNT_REASSIGNED", false);
+                return;
+            }
+            throw error;
         } catch (ChatAppBroadcastException error) {
             failSubmission(job, broadcast, error.getMessage(), error.resultUnknown());
         }
+    }
+
+    private ChannelAccountEntity requireSubmissionAccount(ChatAppBroadcastEntity broadcast) {
+        if (broadcast.getCreatedByUserId() == null
+                || broadcast.getChannelAccountVersion() == null) {
+            // Legacy rows created before account-generation fencing.
+            return accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        }
+        return accountResolver.requireOwnedAccountForSend(
+                broadcast.getCreatedByUserId(),
+                broadcast.getChannelAccountId(),
+                broadcast.getChannelAccountVersion());
+    }
+
+    private ChannelAccountEntity requireReconciliationAccount(ChatAppBroadcastEntity broadcast) {
+        if (broadcast.getCreatedByUserId() == null || broadcast.getChannelAccountVersion() == null) {
+            // Legacy rows predate account-generation fencing; preserve their existing lookup path.
+            return accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        }
+        return accountResolver.requireAccountForReconciliation(broadcast.getChannelAccountId());
     }
 
     private void failSubmission(
@@ -245,7 +273,7 @@ public class ChatAppBroadcastWorker {
             markStatusUnknown(job, broadcast, "CHATAPP_BROADCAST_RECONCILIATION_TIME_RANGE_INVALID");
             return;
         }
-        ChannelAccountEntity account = accountResolver.requireCurrentAccount(broadcast.getChannelAccountId());
+        ChannelAccountEntity account = requireReconciliationAccount(broadcast);
         if (!backfillProcessingMessages(broadcast)) {
             retryReconciliation(
                     job, broadcast, "CHATAPP_BROADCAST_MESSAGE_PROJECTION_FAILED");

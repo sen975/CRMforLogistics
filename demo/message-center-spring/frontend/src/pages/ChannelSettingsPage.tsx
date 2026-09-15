@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { App, Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Typography } from 'antd';
-import { CheckOutlined, CloseOutlined, EditOutlined, KeyOutlined, MailOutlined, MessageOutlined, SettingOutlined, SyncOutlined, WechatOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, EditOutlined, KeyOutlined, MailOutlined, SettingOutlined, SyncOutlined, WechatOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createChannelAccount, fetchChannelAccounts, fetchChannelCredentials, fetchWhatsAppCapability, fetchWeComBinding, triggerChannelSync, unbindChannelAccount, updateChannelAccount, updateChannelCredentials } from '../api/endpoints';
+import { createChannelAccount, fetchChannelAccounts, fetchChannelCredentials, fetchWeComBinding, triggerChannelSync, unbindChannelAccount, updateChannelAccount, updateChannelCredentials } from '../api/endpoints';
 import type { ChannelAccount, ChannelCredentials, CreateChannelAccountRequest } from '../api/types';
 import { WeComBindingPanel } from '../components/wecom/WeComBindingPanel';
-import { WhatsAppAuthorizationPanel } from '../components/whatsapp/WhatsAppAuthorizationPanel';
-import { WhatsAppPhoneNumberPanel } from '../components/whatsapp/WhatsAppPhoneNumberPanel';
+import { AdminWhatsAppAccountPanel } from '../components/whatsapp/AdminWhatsAppAccountPanel';
+import { useAuth } from '../hooks/useAuth';
 
 const { Title, Text } = Typography;
-const channelIcons: Record<string, React.ReactNode> = { email: <MailOutlined />, chatapp: <MessageOutlined />, wecom: <WechatOutlined /> };
-const channelLabels: Record<string, string> = { email: '邮件', chatapp: 'WhatsApp', wecom: '企业微信' };
+const channelIcons: Record<string, React.ReactNode> = { email: <MailOutlined />, wecom: <WechatOutlined /> };
+const channelLabels: Record<string, string> = { email: '邮件', wecom: '企业微信' };
 const configurableChannelTypes = ['email'] as const;
 type ConfigurableChannelType = typeof configurableChannelTypes[number];
 type ChannelRow = ChannelAccount & { configured: boolean };
@@ -35,13 +35,12 @@ function formatRelativeTime(iso: string | null): string {
   return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
 }
 
-function unconfiguredRow(channelType: 'chatapp' | 'email' | 'wecom'): ChannelRow {
+function unconfiguredRow(channelType: 'email' | 'wecom'): ChannelRow {
   return { id: `unconfigured-${channelType}`, channelType, name: channelLabels[channelType], accountIdentifier: '', authStatus: 'unbound', syncStatus: 'idle', lastSyncedAt: null, createdAt: '', configured: false };
 }
 
 function displayIdentifier(record: ChannelRow): string {
-  if (record.channelType !== 'chatapp' || !record.accountIdentifier) return record.accountIdentifier || '-';
-  return `尾号 ${record.accountIdentifier.replace(/\D/g, '').slice(-4)}`;
+  return record.accountIdentifier || '-';
 }
 
 function authStatusTag(status: string) {
@@ -56,32 +55,26 @@ function authStatusTag(status: string) {
 export default function ChannelSettingsPage() {
   const queryClient = useQueryClient();
   const { message } = App.useApp();
+  const { isAdmin } = useAuth();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [credentialModalId, setCredentialModalId] = useState<string | null>(null);
   const [creatingChannel, setCreatingChannel] = useState<ConfigurableChannelType | null>(null);
   const [weComAuthorizationOpen, setWeComAuthorizationOpen] = useState(false);
-  const [whatsAppAuthorizationOpen, setWhatsAppAuthorizationOpen] = useState(false);
-  const [whatsAppOnboardingMode, setWhatsAppOnboardingMode] = useState<'BUSINESS_APP_COEXISTENCE' | 'API_ONLY'>('BUSINESS_APP_COEXISTENCE');
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [credentialForm] = Form.useForm();
   const [createForm] = Form.useForm();
   const { data: accounts, isLoading } = useQuery({ queryKey: ['channelAccounts'], queryFn: fetchChannelAccounts });
   const { data: weComBinding } = useQuery({ queryKey: ['wecom-binding'], queryFn: fetchWeComBinding });
-  const { data: whatsAppCapability } = useQuery({ queryKey: ['whatsapp-capability'], queryFn: fetchWhatsAppCapability, retry: false });
 
   const configuredRows = configurableChannelTypes.map((channelType) => {
     const account = accounts?.find((item) => item.channelType === channelType);
     return account ? { ...account, channelType, configured: true } : unconfiguredRow(channelType);
   });
-  const whatsAppAccount = accounts?.find((item) => item.channelType === 'chatapp' || item.channelType === 'whatsapp');
-  const whatsAppRow: ChannelRow = whatsAppAccount
-    ? { ...whatsAppAccount, channelType: 'chatapp', configured: true }
-    : unconfiguredRow('chatapp');
   const weComRow: ChannelRow = weComBinding?.bound
     ? { id: 'wecom-binding', channelType: 'wecom', name: channelLabels.wecom, accountIdentifier: weComBinding.wecomDisplayName?.trim() || '已绑定企业微信', authStatus: 'active', syncStatus: 'idle', lastSyncedAt: null, createdAt: '', configured: true }
     : unconfiguredRow('wecom');
-  const rows = [whatsAppRow, ...configuredRows, weComRow];
+  const rows = [...configuredRows, weComRow];
 
   const invalidateAccounts = () => void queryClient.invalidateQueries({ queryKey: ['channelAccounts'] });
   const syncMutation = useMutation({ mutationFn: triggerChannelSync, onSuccess: () => { message.success('同步已触发'); invalidateAccounts(); void queryClient.invalidateQueries({ queryKey: ['contacts'] }); }, onError: () => message.error('同步失败') });
@@ -115,18 +108,17 @@ export default function ChannelSettingsPage() {
     { title: '操作', key: 'action', width: 230, render: (_: unknown, record: ChannelRow) => {
       if (!record.configured) {
         if (record.channelType === 'wecom') return <Button icon={<WechatOutlined />} onClick={() => setWeComAuthorizationOpen(true)}>授权</Button>;
-        if (record.channelType === 'chatapp') return <Space size="small"><Button type="primary" icon={<MessageOutlined />} disabled={!whatsAppCapability?.ready} onClick={() => { setWhatsAppOnboardingMode('BUSINESS_APP_COEXISTENCE'); setWhatsAppAuthorizationOpen(true); }}>绑定 Business App 共存</Button><Button disabled={!whatsAppCapability?.ready} onClick={() => { setWhatsAppOnboardingMode('API_ONLY'); setWhatsAppAuthorizationOpen(true); }}>绑定 Business API</Button></Space>;
         return <Button type="primary" onClick={() => openCreateModal(record.channelType as ConfigurableChannelType)}>配置</Button>;
       }
       if (record.channelType === 'wecom') return <Link to="/settings/wecom"><Button icon={<SettingOutlined />} aria-label="管理企业微信">管理</Button></Link>;
-      if (record.channelType === 'chatapp') return <Space size="small"><Button size="small" icon={<SyncOutlined />} loading={syncMutation.isPending && syncMutation.variables === record.id} onClick={() => syncMutation.mutate(record.id)}>同步</Button><Popconfirm title="解绑渠道账号" description="解绑后将停止同步该渠道。" okText="解绑" cancelText="取消" onConfirm={() => unbindMutation.mutate(record.id)}><Button size="small" danger loading={unbindMutation.isPending && unbindMutation.variables === record.id}>解绑</Button></Popconfirm></Space>;
       return <Space size="small"><Button size="small" icon={<KeyOutlined />} onClick={() => setCredentialModalId(record.id)}>编辑凭证</Button><Button size="small" icon={<SyncOutlined />} loading={syncMutation.isPending && syncMutation.variables === record.id} onClick={() => syncMutation.mutate(record.id)}>同步</Button><Popconfirm title="解绑渠道账号" description="解绑后将停止同步该渠道。" okText="解绑" cancelText="取消" onConfirm={() => unbindMutation.mutate(record.id)}><Button size="small" danger loading={unbindMutation.isPending && unbindMutation.variables === record.id}>解绑</Button></Popconfirm></Space>;
     } },
   ];
 
   return <div style={{ maxWidth: 980, margin: '0 auto', padding: 24 }}>
     <Title level={4}>渠道设置</Title>
-    {isLoading ? <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div> : <Table dataSource={rows} rowKey="id" columns={columns} pagination={false} size="small" expandable={{ expandedRowKeys: expandedKeys, onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]), rowExpandable: (record: ChannelRow) => record.configured && record.channelType !== 'wecom', expandedRowRender: (record: ChannelRow) => record.channelType === 'chatapp' ? <WhatsAppPhoneNumberPanel /> : <Descriptions size="small" column={2} bordered><Descriptions.Item label="渠道类型">{channelLabels[record.channelType]}</Descriptions.Item><Descriptions.Item label="同步状态"><Tag>{record.syncStatus || 'idle'}</Tag></Descriptions.Item><Descriptions.Item label="创建时间">{record.createdAt ? new Date(record.createdAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item></Descriptions> }} />}
+    <AdminWhatsAppAccountPanel isAdmin={isAdmin} />
+    {isLoading ? <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div> : <Table dataSource={rows} rowKey="id" columns={columns} pagination={false} size="small" expandable={{ expandedRowKeys: expandedKeys, onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]), rowExpandable: (record: ChannelRow) => record.configured && record.channelType !== 'wecom', expandedRowRender: (record: ChannelRow) => <Descriptions size="small" column={2} bordered><Descriptions.Item label="渠道类型">{channelLabels[record.channelType]}</Descriptions.Item><Descriptions.Item label="同步状态"><Tag>{record.syncStatus || 'idle'}</Tag></Descriptions.Item><Descriptions.Item label="创建时间">{record.createdAt ? new Date(record.createdAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item></Descriptions> }} />}
     <Modal title={creatingChannel ? `配置${channelLabels[creatingChannel]}` : '配置渠道'} open={!!creatingChannel} onCancel={() => { setCreatingChannel(null); createForm.resetFields(); }} onOk={() => createForm.submit()} confirmLoading={createMutation.isPending} width={560} destroyOnHidden>
       <Form form={createForm} layout="vertical" onFinish={(values: Record<string, string | boolean>) => {
         if (!creatingChannel) return;
@@ -140,7 +132,6 @@ export default function ChannelSettingsPage() {
       </Form>
     </Modal>
     <Modal title="授权企业微信" open={weComAuthorizationOpen} footer={null} onCancel={() => setWeComAuthorizationOpen(false)} destroyOnHidden><WeComBindingPanel startBinding onBound={async () => { await queryClient.invalidateQueries({ queryKey: ['wecom-binding'] }); setWeComAuthorizationOpen(false); }} /></Modal>
-    <Modal title={whatsAppOnboardingMode === 'API_ONLY' ? '绑定 WhatsApp Business API' : '绑定 WhatsApp Business App 共存'} open={whatsAppAuthorizationOpen} footer={null} onCancel={() => setWhatsAppAuthorizationOpen(false)} destroyOnHidden><WhatsAppAuthorizationPanel onboardingMode={whatsAppOnboardingMode} onCompleted={() => { setWhatsAppAuthorizationOpen(false); invalidateAccounts(); }} /></Modal>
     <Modal title="编辑凭证" open={!!credentialModalId} onCancel={() => { setCredentialModalId(null); credentialForm.resetFields(); }} onOk={() => credentialForm.submit()} confirmLoading={credentialsMutation.isPending} width={520} destroyOnHidden>
       <Spin spinning={credentialsLoading}><Form form={credentialForm} layout="vertical" onFinish={(values: Record<string, string | boolean>) => credentialsMutation.mutate({ id: credentialModalId!, data: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, typeof value === 'boolean' ? String(value) : value || ''])) })}>{(credentialChannel && credentialFields[credentialChannel] || []).map((field) => <Form.Item key={field.key} name={field.key} label={field.label} valuePropName={field.type === 'switch' ? 'checked' : 'value'}>{field.type === 'switch' ? <Switch /> : field.secret ? <Input.Password placeholder="留空则不修改" /> : <Input />}</Form.Item>)}</Form></Spin>
     </Modal>

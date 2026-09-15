@@ -23,9 +23,14 @@ function errorMessage(error: unknown): string {
   return '企业微信绑定操作失败，请重试';
 }
 
-export function WeComBindingPanel() {
+interface WeComBindingPanelProps {
+  startBinding?: boolean;
+  onBound?: () => void | Promise<void>;
+}
+
+export function WeComBindingPanel({ startBinding = false, onBound }: WeComBindingPanelProps) {
   const { profile, refreshProfile } = useAuth();
-  const [binding, setBinding] = useState(false);
+  const [binding, setBinding] = useState(startBinding);
   const [avatarAuthorizationOpen, setAvatarAuthorizationOpen] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
   const bindingQuery = useQuery({
@@ -125,6 +130,7 @@ export function WeComBindingPanel() {
         await exchangeMutation.mutateAsync({ code, state });
         await bindingQuery.refetch();
         await refreshProfile();
+        await onBound?.();
         setBinding(false);
     } catch (error) {
       setOperationError(errorMessage(error));

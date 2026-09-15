@@ -346,6 +346,28 @@ class ChatAppBroadcastApplicationServiceTest {
     }
 
     @Test
+    void freezesChannelAccountVersionForSubmitFencing() {
+        UUID accountId = UUID.randomUUID();
+        UUID actorId = UUID.randomUUID();
+        UUID identityId = UUID.randomUUID();
+        prepareAccountAndTemplate(accountId, actorId);
+        ChannelAccountEntity account = account(accountId);
+        account.setVersion(12L);
+        when(accountResolver.requireOwnedAccount(actorId, accountId)).thenReturn(account);
+        when(chatAppTemplateService.requiredPlaceholders(any())).thenReturn(List.of("campaign", "name"));
+        when(identityMapper.findEligibleChatAppBroadcastRecipients(
+                accountId, List.of(identityId), actorId))
+                .thenReturn(List.of(candidate(identityId, "60123456789", "CRM Name")));
+
+        service.create(command(accountId, List.of(input(identityId, "name", "A"))), actorId);
+
+        ArgumentCaptor<ChatAppBroadcastEntity> broadcast =
+                ArgumentCaptor.forClass(ChatAppBroadcastEntity.class);
+        verify(broadcastMapper).insertIfAbsent(broadcast.capture());
+        assertThat(broadcast.getValue().getChannelAccountVersion()).isEqualTo(12L);
+    }
+
+    @Test
     void sameIdempotencyFingerprintReturnsExistingAndDifferentFingerprintConflicts() {
         UUID accountId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();

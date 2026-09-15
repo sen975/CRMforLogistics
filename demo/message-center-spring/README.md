@@ -2,7 +2,7 @@
 
 `demo/message-center-spring` 是企业微信功能的唯一运行面。Spring 后端直接负责授权回调、扫码登录、已有账号绑定、会话专区同步、统一时间线投影和官方 OpenDataFrame 展示；运行时不启动、不代理、也不调用旧的 `demo/message-center-demo`。
 
-当前运行面只支持一个 active 企业微信授权企业。企业内可以有多个成员，每个成员可以关联各自的 WhatsApp Business 渠道账号；这些账号通过联系人身份的 `identityScope` 精确关联，不代表多个企业微信租户。
+当前运行面只支持一个 active 企业微信授权企业。企业内可以有多个成员，WhatsApp 发送账号由管理员统一配置后分配给销售；这些账号通过联系人身份的 `identityScope` 精确关联，不代表多个企业微信租户。
 
 ## 本地启动
 
@@ -24,6 +24,31 @@ npm run dev
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:8099`
 - 前端开发代理：`/api` 转发至后端 `8099`
+
+## WhatsApp 管理员配置与销售账号分配
+
+当前 WhatsApp 主流程不做 Meta Embedded Signup、员工自助绑定、API 电话注册或 CAMS 解绑。管理员先在阿里云 CAMS 控制台完成 WABA 和电话号码配置，再在 CRM 的“渠道设置”中同步已有号码，并把单个号码分配、收回或转交给销售。
+
+后端通过 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`CAMS_REGION`、`CAMS_ENDPOINT` 和已配置的 `APP_CUST_SPACE_ID`（或 `CAMS_CUST_SPACE_ID`）访问 CAMS。同步只读取当前 scope 的号码事实，仅导入 `ACTIVE + VERIFIED` 号码；本地以标准化号码保持稳定账号 ID，CAMS 中消失或不可发送的号码只标记为不可用，不删除历史消息、会话、联系人、模板或凭据。
+
+管理员接口：
+
+```text
+GET  /api/admin/whatsapp/accounts
+POST /api/admin/whatsapp/accounts/sync
+POST /api/admin/whatsapp/accounts/{accountId}/assign
+POST /api/admin/whatsapp/accounts/{accountId}/reclaim
+POST /api/admin/whatsapp/accounts/{accountId}/transfer
+GET  /api/admin/whatsapp/accounts/{accountId}/assignment-history
+```
+
+分配、收回和转交请求必须携带非空原因及 `expectedVersion`；服务端以账号版本和数据库锁防止并发双分配。一个有效号码同一时刻只能属于一个销售，一个销售也不能同时拥有多个有效 WhatsApp 号码。收回只清空当前 CRM owner，不清空加密凭据或 CAMS 资源。
+
+账号转交只改变未来发送归属。原销售保留已有会话的只读访问，新销售获得该账号既有会话访问权；消息仍按稳定 `channel_account_id` 关联，并保留实际发送者 `created_by_user_id`。发送前和异步发送 worker 均重新校验当前 owner 与账号版本，账号已转交的旧任务不会偷偷改用新销售账号发送。
+
+销售侧只显示当前分配给自己的账号摘要；管理员页面只显示脱敏号码（末四位）和状态，不返回 AccessKey Secret、Meta token、授权码、验证码或完整号码。
+
+历史自助路由 `/api/whatsapp/authorization/**` 与 `/api/whatsapp/api-phone-operations/**` 保留用于兼容识别；已通过鉴权的请求统一返回 HTTP `410` 和 `WHATSAPP_SELF_SERVICE_DISABLED`，不会创建 attempt/operation，也不会调用 CAMS。
 
 ## WhatsApp 共享模板
 

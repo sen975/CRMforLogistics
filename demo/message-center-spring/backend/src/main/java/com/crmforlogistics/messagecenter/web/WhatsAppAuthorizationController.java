@@ -1,8 +1,7 @@
 package com.crmforlogistics.messagecenter.web;
 
-import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAuthorizationException;
 import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAuthorizationService;
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -27,30 +26,25 @@ public class WhatsAppAuthorizationController {
 
     @PostMapping("/attempts")
     public WhatsAppAuthorizationService.AttemptProjection createAttempt(
-            @RequestBody(required = false) @Valid StartRequest request) {
-        if (request == null) {
-            return service.createAttempt(SecurityUtil.currentUserId());
-        }
-        return service.createAttempt(SecurityUtil.currentUserId(), request.onboardingMode(),
-                request.accountName(), request.accountRemark());
+            @RequestBody(required = false) StartRequest request) {
+        throw selfServiceDisabled();
     }
 
     @PostMapping("/complete")
     public WhatsAppAuthorizationService.CompletionProjection complete(
-            @Valid @RequestBody CompletionRequest request) {
-        return service.completeAuthorization(SecurityUtil.currentUserId(),
-                new WhatsAppAuthorizationService.SelfServiceCompletionCommand(
-                        request.attemptId(), request.state(), request.event(), request.code(),
-                request.wabaId(), request.phoneNumberId()));
+            @RequestBody(required = false) CompletionRequest request) {
+        throw selfServiceDisabled();
     }
 
     @PostMapping("/complete/{attemptId}/phone")
     public WhatsAppAuthorizationService.CompletionProjection selectPhone(
-            @PathVariable UUID attemptId,
-            @Valid @RequestBody PhoneSelectionRequest request) {
-        return service.selectBusinessAppPhone(SecurityUtil.currentUserId(),
-                new WhatsAppAuthorizationService.PhoneSelectionCommand(
-                        attemptId, request.state(), request.candidateId()));
+            @PathVariable String attemptId,
+            @RequestBody(required = false) PhoneSelectionRequest request) {
+        throw selfServiceDisabled();
+    }
+
+    private static WhatsAppAuthorizationException selfServiceDisabled() {
+        return new WhatsAppAuthorizationException("WHATSAPP_SELF_SERVICE_DISABLED", HttpStatus.GONE);
     }
 
     public record StartRequest(

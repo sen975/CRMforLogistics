@@ -40,6 +40,51 @@ public class ChatAppAccountResolver {
         return account;
     }
 
+    /**
+     * Verifies the sender still owns the same account generation immediately
+     * before an asynchronous provider submission. The row lock makes the
+     * ownership/version read consistent with admin assignment mutations.
+     */
+    public ChannelAccountEntity requireOwnedAccountForSend(
+            UUID ownerId, UUID channelAccountId, Long expectedVersion) {
+        if (ownerId == null || channelAccountId == null) {
+            throw new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED");
+        }
+        ChannelAccountEntity account = channelAccountMapper.findWhatsAppByIdForUpdate(channelAccountId);
+        if (account == null) {
+            throw new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED");
+        }
+        try {
+            validateActiveAccount(account);
+        } catch (IllegalArgumentException ignored) {
+            throw new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED");
+        }
+        if (!ownerId.equals(account.getOwnerUserId())
+                || (expectedVersion != null && !Objects.equals(account.getVersion(), expectedVersion))) {
+            throw new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED");
+        }
+        return account;
+    }
+
+    /**
+     * Resolves the account snapshot needed to reconcile a provider submission.
+     * Reconciliation is allowed after ownership transfer or reclaim; only the
+     * stable account identity and non-deleted chat-app row are required.
+     */
+    public ChannelAccountEntity requireAccountForReconciliation(UUID channelAccountId) {
+        if (channelAccountId == null) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        ChannelAccountEntity account = channelAccountMapper.selectById(channelAccountId);
+        if (account == null || account.getDeletedAt() != null || !isChatApp(account.getChannelType())) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        if (account.getAccountIdentifier() == null || account.getAccountIdentifier().isBlank()) {
+            throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");
+        }
+        return account;
+    }
+
     public ChannelAccountEntity currentOwnedAccount(UUID ownerId) {
         if (ownerId == null) {
             throw new IllegalArgumentException("CHATAPP_CONTACT_ACCOUNT_INACCESSIBLE");

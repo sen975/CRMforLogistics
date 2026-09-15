@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.OutboxJobMapper;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +37,7 @@ class MessageOutboxWorkerTest {
     @Mock MessageStatusEventMapper statusEventMapper;
     @Mock ChatAppOutboundGateway gateway;
     @Mock EventHub eventHub;
+    @Mock ChatAppAccountResolver accountResolver;
 
     @Test
     void successfulSubmissionCompletesJobAndRecordsProviderId() throws Exception {
@@ -210,9 +212,59 @@ class MessageOutboxWorkerTest {
         verify(eventHub).publish("message-new", "{}");
     }
 
+    @Test
+    void ownershipFenceAndProviderSubmissionShareTheSameTransaction() throws Exception {
+        Fixture fixture = fixture(0, 3);
+        fixture.message.setCreatedByUserId(UUID.randomUUID());
+        fixture.message.setChannelAccountVersion(4L);
+        TrackingTransactionOperations transactions = new TrackingTransactionOperations();
+        when(messageMapper.selectById(fixture.message.getId())).thenReturn(fixture.message);
+        when(gateway.submit(any())).thenAnswer(invocation -> {
+            assertThat(transactions.isActive()).isTrue();
+            return new ChatAppOutboundGateway.Submission("wamid-1");
+        });
+        when(outboxJobMapper.completeIfOwned(any(), any(), any(), any())).thenReturn(1);
+        MessageOutboxWorker worker = new MessageOutboxWorker(
+                outboxJobMapper, messageMapper, statusEventMapper, gateway, eventHub,
+                transactions, accountResolver);
+
+        worker.process(fixture.job);
+
+        verify(accountResolver).requireOwnedAccountForSend(
+                fixture.message.getCreatedByUserId(), fixture.message.getChannelAccountId(), 4L);
+    }
+
+    @Test
+    void reassignedPendingMessageIsDeadWithoutCallingProvider() throws Exception {
+        Fixture fixture = fixture(0, 3);
+        UUID ownerId = UUID.randomUUID();
+        fixture.message.setCreatedByUserId(ownerId);
+        fixture.message.setChannelAccountVersion(4L);
+        when(messageMapper.selectById(fixture.message.getId())).thenReturn(fixture.message);
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("WHATSAPP_ACCOUNT_REASSIGNED"))
+                .when(accountResolver)
+                .requireOwnedAccountForSend(ownerId, fixture.message.getChannelAccountId(), 4L);
+        when(outboxJobMapper.markDeadIfOwned(any(), any(), any(), any(), any())).thenReturn(1);
+
+        workerWithResolver().process(fixture.job);
+
+        verify(gateway, never()).submit(any());
+        assertThat(fixture.job.getStatus()).isEqualTo("dead");
+        assertThat(fixture.message.getCurrentStatus()).isEqualTo("failed");
+        verify(outboxJobMapper).markDeadIfOwned(
+                eq(fixture.job.getId()), eq("worker-1"),
+                eq("WHATSAPP_ACCOUNT_REASSIGNED"),
+                eq("WHATSAPP_ACCOUNT_REASSIGNED"), any());
+    }
+
     private MessageOutboxWorker worker() {
         return new MessageOutboxWorker(outboxJobMapper, messageMapper, statusEventMapper, gateway,
                 eventHub, TransactionOperations.withoutTransaction());
+    }
+
+    private MessageOutboxWorker workerWithResolver() {
+        return new MessageOutboxWorker(outboxJobMapper, messageMapper, statusEventMapper, gateway,
+                eventHub, TransactionOperations.withoutTransaction(), accountResolver);
     }
 
     private static Fixture fixture(int attempts, int maxAttempts) {

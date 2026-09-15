@@ -50,8 +50,8 @@ public class MessageQueryService {
         MessageEntity ownedEntity = messageMapper.findByIdAndOwner(id, userId);
         if (ownedEntity != null) return toMessageResponse(ownedEntity);
 
-        // Only legacy WeCom records retain participant/grant authorization. Private channels
-        // must never fall back from their owner-scoped lookup to a global message id lookup.
+        // The primary lookup already applies conversation authorization. This fallback only
+        // supports legacy WeCom records and must not expose private channels by global id.
         MessageEntity legacyEntity = messageMapper.findWeComById(id);
         if (legacyEntity == null) return null;
         conversationAccessService.requireAccessible(

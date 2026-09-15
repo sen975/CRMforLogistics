@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.OutboxJobMapper;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +32,7 @@ public class MessageOutboxWorker {
     private final ChatAppOutboundGateway gateway;
     private final EventHub eventHub;
     private final TransactionOperations transactions;
+    private final ChatAppAccountResolver accountResolver;
 
     public MessageOutboxWorker(OutboxJobMapper outboxJobMapper,
                                MessageMapper messageMapper,
@@ -38,12 +40,25 @@ public class MessageOutboxWorker {
                                ChatAppOutboundGateway gateway,
                                EventHub eventHub,
                                TransactionOperations transactions) {
+        this(outboxJobMapper, messageMapper, statusEventMapper, gateway, eventHub,
+                transactions, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public MessageOutboxWorker(OutboxJobMapper outboxJobMapper,
+                               MessageMapper messageMapper,
+                               MessageStatusEventMapper statusEventMapper,
+                               ChatAppOutboundGateway gateway,
+                               EventHub eventHub,
+                               TransactionOperations transactions,
+                               ChatAppAccountResolver accountResolver) {
         this.outboxJobMapper = Objects.requireNonNull(outboxJobMapper);
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
         this.gateway = Objects.requireNonNull(gateway);
         this.eventHub = Objects.requireNonNull(eventHub);
         this.transactions = Objects.requireNonNull(transactions);
+        this.accountResolver = accountResolver;
     }
 
     public int claimAndProcess(int requestedBatchSize) {
@@ -108,10 +123,15 @@ public class MessageOutboxWorker {
         int attempt = value(job.getAttemptCount()) + 1;
         job.setAttemptCount(attempt);
         try {
-            ChatAppOutboundGateway.Submission submission = gateway.submit(
-                    new ChatAppOutboundGateway.Command(
-                            message.getChannelAccountId(), message.getId(),
-                            message.getClientRequestId(), message.getMessageKind(), content(message)));
+            ChatAppOutboundGateway.Command command = new ChatAppOutboundGateway.Command(
+                    message.getChannelAccountId(), message.getId(),
+                    message.getClientRequestId(), message.getMessageKind(), content(message));
+            ChatAppOutboundGateway.Submission submission;
+            if (requiresOwnershipFence(job, message)) {
+                submission = submitWithOwnershipFence(message, command);
+            } else {
+                submission = gateway.submit(command);
+            }
             transactions.executeWithoutResult(status -> {
                 Instant now = Instant.now();
                 int completed = outboxJobMapper.completeIfOwned(
@@ -151,6 +171,18 @@ public class MessageOutboxWorker {
             });
             publishMessageChanged();
         } catch (IllegalArgumentException e) {
+            if ("WHATSAPP_ACCOUNT_REASSIGNED".equals(e.getMessage())) {
+                transactions.executeWithoutResult(status -> {
+                    if (!markJobDeadIfOwned(job, "WHATSAPP_ACCOUNT_REASSIGNED",
+                            "WHATSAPP_ACCOUNT_REASSIGNED")) {
+                        throw leaseLost();
+                    }
+                    updateMessageStatus(message, "failed", Instant.now(),
+                            "WHATSAPP_ACCOUNT_REASSIGNED", "WHATSAPP_ACCOUNT_REASSIGNED");
+                });
+                publishMessageChanged();
+                return;
+            }
             transactions.executeWithoutResult(status -> {
                 if (!markJobDeadIfOwned(job, "INVALID_OUTBOX_MESSAGE", safeMessage(e))) {
                     throw leaseLost();
@@ -159,6 +191,36 @@ public class MessageOutboxWorker {
                         "INVALID_OUTBOX_MESSAGE", safeMessage(e));
             });
             publishMessageChanged();
+        }
+    }
+
+    private boolean requiresOwnershipFence(OutboxJobEntity job, MessageEntity message) {
+        return accountResolver != null
+                && "chatapp_send".equals(job.getJobType())
+                && message.getCreatedByUserId() != null
+                && message.getChannelAccountVersion() != null;
+    }
+
+    private ChatAppOutboundGateway.Submission submitWithOwnershipFence(
+            MessageEntity message, ChatAppOutboundGateway.Command command) throws Exception {
+        try {
+            return transactions.execute(status -> {
+                accountResolver.requireOwnedAccountForSend(
+                        message.getCreatedByUserId(),
+                        message.getChannelAccountId(),
+                        message.getChannelAccountVersion());
+                try {
+                    return gateway.submit(command);
+                } catch (Exception error) {
+                    throw new GatewaySubmissionException(error);
+                }
+            });
+        } catch (GatewaySubmissionException error) {
+            Exception cause = error.cause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw cause;
         }
     }
 
@@ -250,6 +312,16 @@ public class MessageOutboxWorker {
     private static final class OutboxLeaseLostException extends IllegalStateException {
         private OutboxLeaseLostException() {
             super("CHATAPP_OUTBOX_LEASE_LOST_AFTER_SUBMISSION");
+        }
+    }
+
+    private static final class GatewaySubmissionException extends RuntimeException {
+        private GatewaySubmissionException(Exception cause) {
+            super(cause);
+        }
+
+        private Exception cause() {
+            return (Exception) getCause();
         }
     }
 }

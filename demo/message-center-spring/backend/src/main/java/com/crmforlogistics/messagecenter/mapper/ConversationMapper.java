@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.dto.response.ConversationListItemResponse;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
@@ -19,6 +20,16 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
     String SAFE_GROUP_DISPLAY_NAME = "case when sc.group_kind='INTERNAL' then '内部群聊' "
             + "when sc.group_kind='EXTERNAL' and nullif(sc.display_name, '') is not null "
             + "and sc.display_name not like 'group:%' then sc.display_name else '外部群聊' end";
+
+    @Insert("insert into conversation_access_grants " +
+            "(id, conversation_id, user_id, granted_by, reason) " +
+            "select gen_random_uuid(), cv.id, #{userId}::uuid, #{grantedBy}::uuid, " +
+            "'whatsapp_assignment_history' from conversations cv " +
+            "where cv.channel_account_id = #{accountId}::uuid " +
+            "on conflict (conversation_id, user_id) where revoked_at is null do nothing")
+    int grantAccountHistory(@Param("accountId") UUID accountId,
+                            @Param("userId") UUID userId,
+                            @Param("grantedBy") UUID grantedBy);
 
     /**
      * Server-side union of accessible CRM contacts and observed WeCom groups.
@@ -290,7 +301,7 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
         "from conversations cv join contact_identities ci on ci.id = cv.contact_identity_id " +
         "where ci.contact_id = #{contactId}::uuid and ci.deleted_at is null " +
         "order by cv.last_message_at desc nulls last, cv.created_at desc " +
-        "limit ${page.size}" +
+        "limit #{page.size}" +
         "</script>")
     IPage<ConversationEntity> listThreads(IPage<ConversationEntity> page,
                                           @Param("contactId") UUID contactId);
