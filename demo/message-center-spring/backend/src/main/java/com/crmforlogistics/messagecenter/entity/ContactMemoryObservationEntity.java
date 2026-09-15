@@ -2,9 +2,11 @@ package com.crmforlogistics.messagecenter.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @TableName("contact_memory_observations")
@@ -24,6 +26,10 @@ public class ContactMemoryObservationEntity {
     private Instant observedAt;
     private Instant expiresAt;
     private UUID promotedFactId;
+    @TableField(exist = false)
+    private Integer evidenceCount;
+    @TableField(exist = false)
+    private List<ContactMemoryObservationEvidenceEntity> evidence = List.of();
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -55,6 +61,12 @@ public class ContactMemoryObservationEntity {
     public void setExpiresAt(Instant value) { expiresAt = value; }
     public UUID getPromotedFactId() { return promotedFactId; }
     public void setPromotedFactId(UUID value) { promotedFactId = value; }
+    public Integer getEvidenceCount() { return evidenceCount; }
+    public void setEvidenceCount(Integer value) { evidenceCount = value; }
+    public List<ContactMemoryObservationEvidenceEntity> getEvidence() { return evidence; }
+    public void setEvidence(List<ContactMemoryObservationEvidenceEntity> value) {
+        evidence = value == null ? List.of() : List.copyOf(value);
+    }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant value) { createdAt = value; }
     public Instant getUpdatedAt() { return updatedAt; }

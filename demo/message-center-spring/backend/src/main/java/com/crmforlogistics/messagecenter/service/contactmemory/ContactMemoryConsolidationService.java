@@ -16,7 +16,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class ContactMemoryConsolidationService {
-    private static final int OBSERVATION_TTL_DAYS = 30;
     private static final int MAX_LABEL_CHANGES = 20;
     private static final Map<ContactMemoryModels.Category, String> COLORS = colors();
 
@@ -36,11 +35,12 @@ public class ContactMemoryConsolidationService {
         Instant now = Instant.now();
         List<ContactMemoryModels.ObservationCandidate> observations = consolidateObservations(
                 output.observations());
-        List<ContactMemoryModels.FactCandidate> facts = promoteFacts(context, observations);
+        List<ContactMemoryModels.FactCandidate> facts = promoteFacts(context, observations, now);
         List<ContactMemoryModels.LabelCandidate> labels = output.labelChanges().stream()
                 .map(change -> toLabelCandidate(change))
                 .toList();
         ContactMemoryModels.ProfileCandidate profile = normalizeProfile(output.profile());
+        int evidenceCount = countEvidence(observations, facts, labels);
 
         return new ContactMemoryModels.ConsolidationResult(
                 batchId,
@@ -50,7 +50,10 @@ public class ContactMemoryConsolidationService {
                 facts,
                 labels,
                 profile,
-                boundedModel(output.model()));
+                boundedModel(output.model()),
+                context.inboundMessages().size(),
+                evidenceCount,
+                context.currentProfile() == null ? "NEW_CONTEXT" : "CURRENT_PROFILE_PLUS_NEW_CONTEXT");
     }
 
     public String normalizeKey(String category, String value) {
@@ -85,7 +88,8 @@ public class ContactMemoryConsolidationService {
 
     private List<ContactMemoryModels.FactCandidate> promoteFacts(
             ContactMemoryModels.Context context,
-            List<ContactMemoryModels.ObservationCandidate> observations) {
+            List<ContactMemoryModels.ObservationCandidate> observations,
+            Instant now) {
         Map<String, Integer> existingEvidence = new HashMap<>();
         for (ContactMemoryModels.FactCandidate fact : context.activeFacts().stream()
                 .map(ContactMemoryConsolidationService::toFactCandidate).toList()) {
@@ -97,15 +101,42 @@ public class ContactMemoryConsolidationService {
                     .orElse(0);
             existingEvidence.merge(factKey(fact), evidenceCount, Math::max);
         }
+        Map<String, Integer> historicalObservationEvidence = new HashMap<>();
+        Map<String, List<ContactMemoryModels.EvidenceRef>> historicalEvidence = new HashMap<>();
+        for (com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity observation
+                : context.observations()) {
+            if (!ContactMemoryModels.ObservationStatus.CANDIDATE.name().equals(observation.getStatus())
+                    || (observation.getExpiresAt() != null && !observation.getExpiresAt().isAfter(now))) {
+                continue;
+            }
+            String key = observationKey(observation);
+            List<ContactMemoryModels.EvidenceRef> refs = observation.getEvidence().stream()
+                    .filter(evidence -> evidence.getEvidenceType() != null && evidence.getEvidenceId() != null)
+                    .map(evidence -> new ContactMemoryModels.EvidenceRef(
+                            ContactMemoryModels.EvidenceType.valueOf(evidence.getEvidenceType()),
+                            evidence.getEvidenceId()))
+                    .toList();
+            historicalEvidence.merge(key, refs, ContactMemoryConsolidationService::mergeEvidence);
+            int count = observation.getEvidenceCount() == null
+                    ? distinctEvidence(refs) : observation.getEvidenceCount();
+            historicalObservationEvidence.merge(key, count, Math::max);
+        }
         Map<String, ContactMemoryModels.ObservationCandidate> candidates = observations.stream()
                 .collect(Collectors.toMap(this::observationKey, Function.identity(), this::mergeObservation,
                         LinkedHashMap::new));
         List<ContactMemoryModels.FactCandidate> facts = new ArrayList<>();
         for (ContactMemoryModels.ObservationCandidate candidate : candidates.values()) {
-            int previousEvidence = existingEvidence.getOrDefault(observationKey(candidate), 0);
-            if (previousEvidence + distinctEvidence(candidate.evidence()) < 2) {
+            String key = observationKey(candidate);
+            List<ContactMemoryModels.EvidenceRef> priorRefs = historicalEvidence.getOrDefault(key, List.of());
+            int previousEvidence = Math.max(existingEvidence.getOrDefault(key, 0),
+                    historicalObservationEvidence.getOrDefault(key, 0));
+            int newEvidence = distinctEvidence(candidate.evidence().stream()
+                    .filter(evidence -> !containsEvidence(priorRefs, evidence))
+                    .toList());
+            if (previousEvidence + newEvidence < 2) {
                 continue;
             }
+            List<ContactMemoryModels.EvidenceRef> factEvidence = mergeEvidence(priorRefs, candidate.evidence());
             facts.add(new ContactMemoryModels.FactCandidate(
                     candidate.category(),
                     normalizeKey(candidate.category().name(), candidate.normalizedKey()),
@@ -114,7 +145,7 @@ public class ContactMemoryConsolidationService {
                     candidate.polarity(),
                     ContactMemoryModels.FactStatus.ACTIVE,
                     candidate.confidence(),
-                    candidate.evidence()));
+                    factEvidence));
         }
         return List.copyOf(facts);
     }
@@ -260,6 +291,13 @@ public class ContactMemoryConsolidationService {
                 + normalizeValue(candidate.observedValue()) + "|" + candidate.polarity().name();
     }
 
+    private String observationKey(
+            com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity observation) {
+        return observation.getCategory() + "|"
+                + normalizeKey(observation.getCategory(), observation.getNormalizedKey()) + "|"
+                + normalizeValue(observation.getObservedValue()) + "|" + observation.getPolarity();
+    }
+
     private static String factKey(ContactMemoryModels.FactCandidate fact) {
         return fact.category().name() + "|" + fact.normalizedKey() + "|"
                 + fact.normalizedValue() + "|" + fact.polarity().name();
@@ -267,6 +305,29 @@ public class ContactMemoryConsolidationService {
 
     private static int distinctEvidence(List<ContactMemoryModels.EvidenceRef> evidence) {
         return (int) evidence.stream().filter(item -> item != null && item.id() != null).distinct().count();
+    }
+
+    private static int countEvidence(
+            List<ContactMemoryModels.ObservationCandidate> observations,
+            List<ContactMemoryModels.FactCandidate> facts,
+            List<ContactMemoryModels.LabelCandidate> labels) {
+        Set<String> evidence = new HashSet<>();
+        observations.forEach(item -> item.evidence().forEach(ref -> addEvidence(evidence, ref)));
+        facts.forEach(item -> item.evidence().forEach(ref -> addEvidence(evidence, ref)));
+        labels.forEach(item -> item.evidence().forEach(ref -> addEvidence(evidence, ref)));
+        return evidence.size();
+    }
+
+    private static void addEvidence(Set<String> evidence, ContactMemoryModels.EvidenceRef ref) {
+        if (ref != null && ref.type() != null && ref.id() != null) {
+            evidence.add(ref.type().name() + "|" + ref.id());
+        }
+    }
+
+    private static boolean containsEvidence(List<ContactMemoryModels.EvidenceRef> evidence,
+                                            ContactMemoryModels.EvidenceRef candidate) {
+        return evidence.stream().anyMatch(item -> item.type() == candidate.type()
+                && item.id().equals(candidate.id()));
     }
 
     private static List<ContactMemoryModels.EvidenceRef> mergeEvidence(

@@ -8,12 +8,15 @@ import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity;
+import com.crmforlogistics.messagecenter.config.ContactMemoryConfig;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,10 +25,21 @@ public class ContactMemoryMutationService {
     private static final int MAX_LABEL_CHANGES = 20;
     private final ContactMemoryMapper memory;
     private final ContactMemoryStateMapper states;
+    private final ContactMemoryConfig config;
 
     public ContactMemoryMutationService(ContactMemoryMapper memory, ContactMemoryStateMapper states) {
+        this(memory, states, new ContactMemoryConfig(
+                50, 4000, 50000, 20, 1000, 10, 4000,
+                100, 100, 100, 500, 30));
+    }
+
+    @Autowired
+    public ContactMemoryMutationService(ContactMemoryMapper memory,
+                                        ContactMemoryStateMapper states,
+                                        ContactMemoryConfig config) {
         this.memory = memory;
         this.states = states;
+        this.config = config;
     }
 
     @Transactional
@@ -37,6 +51,7 @@ public class ContactMemoryMutationService {
         validateRequest(ownerUserId, contactId, lease, result);
         validateCandidates(result);
 
+        memory.expireObservations(contactId, ownerUserId, Instant.now());
         int observationCount = persistObservations(ownerUserId, contactId, result);
         int factCount = persistFacts(ownerUserId, contactId, result);
         int labelCount = persistLabels(ownerUserId, contactId, result);
@@ -67,11 +82,18 @@ public class ContactMemoryMutationService {
             entity.setSourceCursor(result.outputCursor());
             entity.setGenerationBatchId(result.generationBatchId());
             entity.setObservedAt(now);
-            entity.setExpiresAt(now.plusSeconds(30L * 24 * 60 * 60));
-            memory.insertObservation(entity, contactId, ownerUserId);
+            entity.setExpiresAt(now.plus(config.observationTtlDays(), ChronoUnit.DAYS));
+            UUID storedObservationId = memory.upsertObservation(entity, contactId, ownerUserId);
+            if (storedObservationId == null) {
+                throw new ContactMemoryModels.ValidationException("PERSISTENCE_FAILED");
+            }
+            entity.setId(storedObservationId);
+            if (memory.updateObservation(entity, contactId, ownerUserId) != 1) {
+                throw new ContactMemoryModels.ValidationException("PERSISTENCE_FAILED");
+            }
             for (ContactMemoryModels.EvidenceRef evidence : candidate.evidence()) {
                 ContactMemoryObservationEvidenceEntity evidenceEntity = new ContactMemoryObservationEvidenceEntity();
-                evidenceEntity.setObservationId(entity.getId());
+                evidenceEntity.setObservationId(storedObservationId);
                 evidenceEntity.setEvidenceType(evidence.type().name());
                 evidenceEntity.setEvidenceId(evidence.id());
                 evidenceEntity.setEvidenceExcerpt("");
@@ -118,9 +140,21 @@ public class ContactMemoryMutationService {
                 evidenceEntity.setGenerationBatchId(result.generationBatchId());
                 memory.insertFactEvidence(evidenceEntity, contactId, ownerUserId);
             }
+            ContactMemoryObservationEntity promotedObservation = memory.findCandidateObservation(
+                    ownerUserId, contactId, entity.getCategory(), entity.getNormalizedKey(),
+                    entity.getNormalizedValue(), entity.getPolarity());
+            if (promotedObservation != null && promotedObservation.getId() != null) {
+                memory.copyObservationEvidenceToFact(promotedObservation.getId(), stored.getId(),
+                        contactId, ownerUserId, result.generationBatchId());
+            }
             entity.setId(stored.getId());
             entity.setEvidenceCount((int) memory.countFactEvidence(stored.getId(), contactId, ownerUserId));
             if (memory.updateFact(entity, contactId, ownerUserId) != 1) {
+                throw new ContactMemoryModels.ValidationException("PERSISTENCE_FAILED");
+            }
+            if (promotedObservation != null && promotedObservation.getId() != null
+                    && memory.updateObservationLifecycle(promotedObservation.getId(), contactId, ownerUserId,
+                    ContactMemoryModels.ObservationStatus.PROMOTED.name(), stored.getId()) != 1) {
                 throw new ContactMemoryModels.ValidationException("PERSISTENCE_FAILED");
             }
             ContactMemoryFactEntity opposite = memory.findOppositeActiveFact(
@@ -223,8 +257,8 @@ public class ContactMemoryMutationService {
         entity.setSourceCursor(result.outputCursor());
         entity.setGenerationBatchId(result.generationBatchId());
         entity.setModel(result.model());
-        entity.setInputMessageCount(0);
-        entity.setEvidenceCount(0);
+        entity.setInputMessageCount(result.inputMessageCount());
+        entity.setEvidenceCount(result.evidenceCount());
         entity.setIsCurrent(true);
         if (memory.insertProfile(entity, contactId, ownerUserId) != 1) {
             throw new ContactMemoryModels.ValidationException("PERSISTENCE_FAILED");
@@ -242,7 +276,7 @@ public class ContactMemoryMutationService {
         entity.setOutputCursor(result.outputCursor());
         entity.setStatus(ContactMemoryModels.AttemptStatus.SUCCEEDED.name());
         entity.setModel(result.model());
-        entity.setInputMessageCount(0);
+        entity.setInputMessageCount(result.inputMessageCount());
         entity.setOutputLabelChangeCount(result.labels().size());
         entity.setProfileChanged(profileChanged);
         entity.setRetryCount(0);

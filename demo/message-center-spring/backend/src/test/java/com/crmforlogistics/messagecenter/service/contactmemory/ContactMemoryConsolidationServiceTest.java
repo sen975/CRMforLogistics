@@ -91,6 +91,63 @@ class ContactMemoryConsolidationServiceTest {
                 .isEqualTo("prefers sea freight");
     }
 
+    @Test
+    void oneEvidenceInFirstRunAndIndependentEvidenceInSecondRunPromoteFact() {
+        UUID firstEvidenceId = UUID.randomUUID();
+        UUID secondEvidenceId = UUID.randomUUID();
+        ContactMemoryObservationEntity historical = historicalObservation(firstEvidenceId, 1,
+                Instant.parse("2026-09-10T04:00:00Z"));
+
+        ContactMemoryModels.ObservationCandidate secondObservation = observation(
+                secondEvidenceId, "再次确认偏好海运", "prefers sea freight");
+        ContactMemoryModels.Context secondContext = contextWithHistory(
+                secondEvidenceId, historical);
+
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+                .consolidate(secondContext, output(List.of(secondObservation), null));
+
+        assertThat(result.facts()).singleElement()
+                .extracting(ContactMemoryModels.FactCandidate::normalizedValue)
+                .isEqualTo("prefers sea freight");
+        assertThat(result.facts().get(0).evidence())
+                .containsExactlyInAnyOrder(
+                        new ContactMemoryModels.EvidenceRef(
+                                ContactMemoryModels.EvidenceType.MESSAGE, firstEvidenceId),
+                        new ContactMemoryModels.EvidenceRef(
+                                ContactMemoryModels.EvidenceType.MESSAGE, secondEvidenceId));
+    }
+
+    @Test
+    void expiredObservationCannotPromoteFact() {
+        UUID historicalEvidenceId = UUID.randomUUID();
+        ContactMemoryObservationEntity expired = historicalObservation(historicalEvidenceId, 1,
+                Instant.parse("2026-09-10T04:00:00Z"));
+        expired.setExpiresAt(Instant.parse("2026-09-11T03:00:00Z"));
+
+        UUID currentEvidenceId = UUID.randomUUID();
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+                .consolidate(contextWithHistory(currentEvidenceId, expired),
+                        output(List.of(observation(currentEvidenceId, "当前消息", "prefers sea freight")), null));
+
+        assertThat(result.facts()).isEmpty();
+    }
+
+    @Test
+    void resultReportsInputMessageCountEvidenceCountAndProfileInputSource() {
+        UUID firstMessageId = UUID.randomUUID();
+        UUID secondMessageId = UUID.randomUUID();
+        ContactMemoryModels.ObservationCandidate observation = observation(
+                firstMessageId, "客户确认偏好海运", "prefers sea freight");
+
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+                .consolidate(contextWithMessages(firstMessageId, secondMessageId),
+                        outputWithProfile(List.of(observation), new ContactMemoryModels.ProfileCandidate("关注海运")));
+
+        assertThat(result.inputMessageCount()).isEqualTo(2);
+        assertThat(result.evidenceCount()).isEqualTo(1);
+        assertThat(result.profileInputSource()).isEqualTo("NEW_CONTEXT");
+    }
+
     private static ContactMemoryModels.Context context() {
         return new ContactMemoryModels.Context(
                 CONTACT_ID, OWNER_ID, List.of(), null, List.of(), List.of(), List.of(),
@@ -127,6 +184,37 @@ class ContactMemoryConsolidationServiceTest {
                 List.of(), List.of(), null, "cursor");
     }
 
+    private static ContactMemoryModels.Context contextWithHistory(
+            UUID currentMessageId, ContactMemoryObservationEntity historical) {
+        com.crmforlogistics.messagecenter.entity.MessageEntity message =
+                new com.crmforlogistics.messagecenter.entity.MessageEntity();
+        message.setId(currentMessageId);
+        return new ContactMemoryModels.Context(
+                CONTACT_ID, OWNER_ID, List.of(message), null, List.of(historical), List.of(), List.of(),
+                new ContactMemoryModels.StableContext(null, List.of(), List.of(), List.of()),
+                List.of(), List.of(), null, "cursor");
+    }
+
+    private static ContactMemoryObservationEntity historicalObservation(
+            UUID evidenceId, int evidenceCount, Instant observedAt) {
+        ContactMemoryObservationEntity observation = new ContactMemoryObservationEntity();
+        observation.setId(UUID.randomUUID());
+        observation.setCategory(ContactMemoryModels.Category.PRODUCT_INTEREST.name());
+        observation.setNormalizedKey("product_interest");
+        observation.setObservedValue("prefers sea freight");
+        observation.setPolarity(ContactMemoryModels.Polarity.POSITIVE.name());
+        observation.setStatus(ContactMemoryModels.ObservationStatus.CANDIDATE.name());
+        observation.setEvidenceCount(evidenceCount);
+        observation.setObservedAt(observedAt);
+        observation.setExpiresAt(Instant.parse("2026-09-20T04:00:00Z"));
+        com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity evidence =
+                new com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity();
+        evidence.setEvidenceType(ContactMemoryModels.EvidenceType.MESSAGE.name());
+        evidence.setEvidenceId(evidenceId);
+        observation.setEvidence(List.of(evidence));
+        return observation;
+    }
+
     private static UUID changeEvidenceId() {
         return UUID.fromString("00000000-0000-0000-0000-000000000001");
     }
@@ -148,6 +236,13 @@ class ContactMemoryConsolidationServiceTest {
             List<ContactMemoryModels.ObservationCandidate> observations,
             List<ContactMemoryModels.LabelChange> changes) {
         return new ContactMemoryModels.LlmOutput(observations, null, changes, List.of(),
+                "test-model", "{}");
+    }
+
+    private static ContactMemoryModels.LlmOutput outputWithProfile(
+            List<ContactMemoryModels.ObservationCandidate> observations,
+            ContactMemoryModels.ProfileCandidate profile) {
+        return new ContactMemoryModels.LlmOutput(observations, profile, List.of(), List.of(),
                 "test-model", "{}");
     }
 }

@@ -68,7 +68,11 @@ public class ContactMemoryContextService {
         ContactProfileVersionEntity profile = copyProfile(memory.findCurrentProfile(ownerUserId, contactId));
         List<ContactMemoryObservationEntity> observations = memory.listActiveObservations(
                         ownerUserId, contactId, config.maxObservations())
-                .stream().map(this::copyObservation).toList();
+                .stream().map(observation -> {
+                    observation.setEvidence(memory.listObservationEvidence(
+                            observation.getId(), contactId, ownerUserId));
+                    return copyObservation(observation);
+                }).toList();
         List<ContactMemoryFactEntity> facts = memory.listActiveFacts(
                         ownerUserId, contactId, config.maxFacts())
                 .stream().map(ContactMemoryContextService::copyFact).toList();
@@ -175,6 +179,8 @@ public class ContactMemoryContextService {
         copy.setObservedAt(source.getObservedAt());
         copy.setExpiresAt(source.getExpiresAt());
         copy.setPromotedFactId(source.getPromotedFactId());
+        copy.setEvidenceCount(source.getEvidenceCount());
+        copy.setEvidence(source.getEvidence());
         copy.setCreatedAt(source.getCreatedAt());
         copy.setUpdatedAt(source.getUpdatedAt());
         return copy;

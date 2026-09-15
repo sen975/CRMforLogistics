@@ -54,18 +54,181 @@ public interface ContactMemoryMapper extends BaseMapper<ContactMemoryObservation
                                                      @Param("limit") int limit);
 
     @Select("""
-            select *
-            from contact_memory_observations
-            where contact_id = #{contactId}::uuid
-              and owner_user_id = #{ownerUserId}::uuid
-              and status = 'CANDIDATE'
-              and expires_at > now()
-            order by observed_at desc, id
+            select o.*, (
+                       select count(*)
+                       from contact_memory_observation_evidence e
+                       where e.observation_id = o.id
+                         and e.contact_id = o.contact_id
+                         and e.owner_user_id = o.owner_user_id
+                   ) as evidence_count
+            from contact_memory_observations o
+            where o.contact_id = #{contactId}::uuid
+              and o.owner_user_id = #{ownerUserId}::uuid
+              and o.status = 'CANDIDATE'
+              and o.expires_at > now()
+            order by o.observed_at desc, o.id
             limit #{limit}
             """)
     List<ContactMemoryObservationEntity> listActiveObservations(@Param("ownerUserId") UUID ownerUserId,
                                                                   @Param("contactId") UUID contactId,
                                                                   @Param("limit") int limit);
+
+    @Select("""
+            select o.*, (select count(*) from contact_memory_observation_evidence e
+                         where e.observation_id = o.id) as evidence_count
+            from contact_memory_observations o
+            where o.contact_id = #{contactId}::uuid
+              and o.owner_user_id = #{ownerUserId}::uuid
+              and o.category = #{category}
+              and o.normalized_key = #{normalizedKey}
+              and lower(trim(o.observed_value)) = lower(trim(#{observedValue}))
+              and o.polarity = #{polarity}
+              and o.status = 'CANDIDATE'
+              and o.expires_at > now()
+            order by o.observed_at desc, o.id desc
+            limit 1
+            """)
+    ContactMemoryObservationEntity findCandidateObservation(@Param("ownerUserId") UUID ownerUserId,
+                                                             @Param("contactId") UUID contactId,
+                                                             @Param("category") String category,
+                                                             @Param("normalizedKey") String normalizedKey,
+                                                             @Param("observedValue") String observedValue,
+                                                             @Param("polarity") String polarity);
+
+    @Select("""
+            with existing as (
+                select o.id
+                from contact_memory_observations o
+                where o.contact_id = #{contactId}::uuid
+                  and o.owner_user_id = #{ownerUserId}::uuid
+                  and o.category = #{entity.category}
+                  and o.normalized_key = #{entity.normalizedKey}
+                  and lower(trim(o.observed_value)) = lower(trim(#{entity.observedValue}))
+                  and o.polarity = #{entity.polarity}
+                  and o.status = 'CANDIDATE'
+                  and o.expires_at > now()
+                order by o.observed_at desc, o.id desc
+                limit 1
+                for update
+            ), merged as (
+                update contact_memory_observations duplicate
+                set status = 'MERGED', updated_at = now()
+                from existing primary_observation
+                where duplicate.contact_id = #{contactId}::uuid
+                  and duplicate.owner_user_id = #{ownerUserId}::uuid
+                  and duplicate.category = #{entity.category}
+                  and duplicate.normalized_key = #{entity.normalizedKey}
+                  and lower(trim(duplicate.observed_value)) = lower(trim(#{entity.observedValue}))
+                  and duplicate.polarity = #{entity.polarity}
+                  and duplicate.status = 'CANDIDATE'
+                  and duplicate.id <> primary_observation.id
+                returning duplicate.id
+            ), merged_evidence as (
+                insert into contact_memory_observation_evidence
+                    (id, observation_id, contact_id, owner_user_id, evidence_type,
+                     evidence_id, evidence_excerpt, generation_batch_id)
+                select gen_random_uuid(), primary_observation.id, e.contact_id, e.owner_user_id,
+                       e.evidence_type, e.evidence_id, e.evidence_excerpt, e.generation_batch_id
+                from merged
+                join contact_memory_observation_evidence e on e.observation_id = merged.id
+                cross join existing primary_observation
+                on conflict (observation_id, evidence_type, evidence_id) do nothing
+            ), inserted as (
+                insert into contact_memory_observations
+                    (id, contact_id, owner_user_id, category, normalized_key, observed_value,
+                     polarity, confidence, status, source_cursor, generation_batch_id,
+                     observed_at, expires_at, promoted_fact_id)
+                select coalesce(#{entity.id}, gen_random_uuid()), #{contactId}::uuid, #{ownerUserId}::uuid,
+                       #{entity.category}, #{entity.normalizedKey}, #{entity.observedValue},
+                       #{entity.polarity}, #{entity.confidence}, 'CANDIDATE', #{entity.sourceCursor},
+                       #{entity.generationBatchId}::uuid, #{entity.observedAt}, #{entity.expiresAt},
+                       null
+                where not exists (select 1 from existing)
+                returning id
+            )
+            select id from inserted
+            union all
+            select id from existing
+            limit 1
+            """)
+    UUID upsertObservation(@Param("entity") ContactMemoryObservationEntity entity,
+                           @Param("contactId") UUID contactId,
+                           @Param("ownerUserId") UUID ownerUserId);
+
+    @Update("""
+            update contact_memory_observations
+            set confidence = greatest(confidence, #{entity.confidence}),
+                source_cursor = #{entity.sourceCursor},
+                generation_batch_id = #{entity.generationBatchId}::uuid,
+                observed_at = greatest(observed_at, #{entity.observedAt}),
+                expires_at = #{entity.expiresAt},
+                updated_at = now()
+            where id = #{entity.id}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status = 'CANDIDATE'
+            """)
+    int updateObservation(@Param("entity") ContactMemoryObservationEntity entity,
+                          @Param("contactId") UUID contactId,
+                          @Param("ownerUserId") UUID ownerUserId);
+
+    @Update("""
+            update contact_memory_observations
+            set status = #{status},
+                promoted_fact_id = #{promotedFactId}::uuid,
+                updated_at = now()
+            where id = #{id}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            """)
+    int updateObservationLifecycle(@Param("id") UUID id,
+                                   @Param("contactId") UUID contactId,
+                                   @Param("ownerUserId") UUID ownerUserId,
+                                   @Param("status") String status,
+                                   @Param("promotedFactId") UUID promotedFactId);
+
+    @Update("""
+            update contact_memory_observations
+            set status = 'EXPIRED', updated_at = now()
+            where contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+              and status = 'CANDIDATE'
+              and expires_at <= #{now}
+            """)
+    int expireObservations(@Param("contactId") UUID contactId,
+                           @Param("ownerUserId") UUID ownerUserId,
+                           @Param("now") Instant now);
+
+    @Insert("""
+            insert into contact_memory_fact_evidence
+                (id, fact_id, contact_id, owner_user_id, evidence_type, evidence_id,
+                 evidence_excerpt, generation_batch_id)
+            select gen_random_uuid(), #{factId}::uuid, #{contactId}::uuid, #{ownerUserId}::uuid,
+                   e.evidence_type, e.evidence_id, e.evidence_excerpt, #{generationBatchId}::uuid
+            from contact_memory_observation_evidence e
+            where e.observation_id = #{observationId}::uuid
+              and e.contact_id = #{contactId}::uuid
+              and e.owner_user_id = #{ownerUserId}::uuid
+            on conflict (fact_id, evidence_type, evidence_id) do nothing
+            """)
+    int copyObservationEvidenceToFact(@Param("observationId") UUID observationId,
+                                      @Param("factId") UUID factId,
+                                      @Param("contactId") UUID contactId,
+                                      @Param("ownerUserId") UUID ownerUserId,
+                                      @Param("generationBatchId") UUID generationBatchId);
+
+    @Select("""
+            select *
+            from contact_memory_observation_evidence
+            where observation_id = #{observationId}::uuid
+              and contact_id = #{contactId}::uuid
+              and owner_user_id = #{ownerUserId}::uuid
+            order by created_at, id
+            """)
+    List<ContactMemoryObservationEvidenceEntity> listObservationEvidence(
+            @Param("observationId") UUID observationId,
+            @Param("contactId") UUID contactId,
+            @Param("ownerUserId") UUID ownerUserId);
 
     @Select("""
             select ctr.*

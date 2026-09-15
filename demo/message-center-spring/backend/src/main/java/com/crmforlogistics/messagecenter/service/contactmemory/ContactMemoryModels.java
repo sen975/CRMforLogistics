@@ -204,11 +204,29 @@ public final class ContactMemoryModels {
                                       List<FactCandidate> facts,
                                       List<LabelCandidate> labels,
                                       ProfileCandidate profile,
-                                      String model) {
+                                      String model,
+                                      int inputMessageCount,
+                                      int evidenceCount,
+                                      String profileInputSource) {
+        public ConsolidationResult(UUID generationBatchId,
+                                   String inputCursor,
+                                   String outputCursor,
+                                   List<ObservationCandidate> observations,
+                                   List<FactCandidate> facts,
+                                   List<LabelCandidate> labels,
+                                   ProfileCandidate profile,
+                                   String model) {
+            this(generationBatchId, inputCursor, outputCursor, observations, facts, labels,
+                    profile, model, 0, 0, null);
+        }
+
         public ConsolidationResult {
             observations = List.copyOf(observations == null ? List.of() : observations);
             facts = List.copyOf(facts == null ? List.of() : facts);
             labels = List.copyOf(labels == null ? List.of() : labels);
+            if (inputMessageCount < 0 || evidenceCount < 0) {
+                throw new ValidationException("INVALID_OUTPUT");
+            }
         }
     }
 

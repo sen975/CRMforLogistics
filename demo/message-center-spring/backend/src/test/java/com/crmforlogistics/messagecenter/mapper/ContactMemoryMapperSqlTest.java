@@ -1,6 +1,8 @@
 package com.crmforlogistics.messagecenter.mapper;
 
 import com.crmforlogistics.messagecenter.entity.ContactMemoryStateEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
+import com.baomidou.mybatisplus.annotation.TableField;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import org.junit.jupiter.api.Test;
@@ -69,7 +71,7 @@ class ContactMemoryMapperSqlTest {
                 .contains("returning lease_token");
         assertThat(completeSql).contains("lease_token = #{leaseToken}::uuid")
                 .contains("last_success_cursor = #{cursor}")
-                .contains("current_profile_version_id = #{profileId}::uuid")
+                .contains("current_profile_version_id = coalesce(#{profileId}::uuid, current_profile_version_id)")
                 .contains("status = 'PROCESSING'")
                 .contains("lease_expires_at > now()");
         assertThat(failSql).contains("lease_token = #{leaseToken}::uuid")
@@ -92,6 +94,37 @@ class ContactMemoryMapperSqlTest {
                 com.crmforlogistics.messagecenter.entity.ContactMemoryAttemptEntity.class
                 }).allMatch(type -> type.isAnnotationPresent(com.baomidou.mybatisplus.annotation.TableName.class)))
                 .isTrue();
+    }
+
+    @Test
+    void observationEvidenceProjectionIsNotPersistedAsColumns() throws Exception {
+        TableField evidence = ContactMemoryObservationEntity.class
+                .getDeclaredField("evidence").getAnnotation(TableField.class);
+        TableField evidenceCount = ContactMemoryObservationEntity.class
+                .getDeclaredField("evidenceCount").getAnnotation(TableField.class);
+
+        assertThat(evidence).isNotNull();
+        assertThat(evidence.exist()).isFalse();
+        assertThat(evidenceCount).isNotNull();
+        assertThat(evidenceCount.exist()).isFalse();
+    }
+
+    @Test
+    void observationUpsertMergesDuplicateCandidatesAndEvidence() throws Exception {
+        Method candidate = ContactMemoryMapper.class.getMethod(
+                "findCandidateObservation", java.util.UUID.class, java.util.UUID.class,
+                String.class, String.class, String.class, String.class);
+        Method method = ContactMemoryMapper.class.getMethod(
+                "upsertObservation", ContactMemoryObservationEntity.class,
+                java.util.UUID.class, java.util.UUID.class);
+        String candidateSql = normalizedSql(candidate.getAnnotation(Select.class).value());
+        String sql = normalizedSql(method.getAnnotation(Select.class).value());
+
+        assertThat(candidateSql).contains("lower(trim(o.observed_value)) = lower(trim(#{observedValue}))");
+        assertThat(sql).contains("status = 'MERGED'")
+                .contains("lower(trim(o.observed_value)) = lower(trim(#{entity.observedValue}))")
+                .contains("contact_memory_observation_evidence")
+                .contains("on conflict (observation_id, evidence_type, evidence_id) do nothing");
     }
 
     private String normalizedSql(String[] fragments) {
