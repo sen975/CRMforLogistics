@@ -41,6 +41,7 @@
 ## 当前验收
 
 - [联系人 AI 标签、画像与增量记忆系统验收记录](reviews/2026-09-11-contact-ai-memory-verification.md)：记录五层记忆端到端测试设计、后端生产编译、前端测试/构建，以及 Docker 和工作区既有 WhatsApp 测试错误造成的验收边界。
+- [联系人 AI 记忆审查修复验收记录](reviews/2026-09-14-contact-ai-memory-review-fixes-verification.md)：记录 Task 1–7 的 fencing、可靠触发、跨轮晋升、LLM 边界、审计、evidence 归属、标签分页及真实 PostgreSQL 验收阻断。
 
 - [WhatsApp 管理员配置与销售账号分配验收记录](reviews/2026-09-10-whatsapp-admin-managed-account-assignment-verification.md)：记录管理员同步、账号分配状态机、历史访问、发送 fencing、前端页面和旧自助 API 禁用验收。
 

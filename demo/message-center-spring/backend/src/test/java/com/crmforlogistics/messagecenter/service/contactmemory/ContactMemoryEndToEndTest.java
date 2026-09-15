@@ -115,6 +115,7 @@ class ContactMemoryEndToEndTest {
 
         trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
                 second.getOccurredAt(), second.getReceivedAt());
+        assertThat(trigger.replayDue(SECOND_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
         ContactMemoryModels.Context context = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(context, first, second));
 
@@ -124,7 +125,7 @@ class ContactMemoryEndToEndTest {
         assertThat(state(fixture)).satisfies(state -> {
             assertThat(state.getStatus()).isEqualTo("CLEAN");
             assertThat(state.getLastSuccessCursor())
-                    .isEqualTo(cursor(second));
+                    .isEqualTo(receivedCursor(second));
         });
 
         ContactProfileVersionEntity profile = memory.findCurrentProfile(
@@ -183,6 +184,7 @@ class ContactMemoryEndToEndTest {
         MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户需要海运报价。");
         trigger.markInboundPersisted(fixture.contactId(), second.getId(), second.getIngestSequence(),
                 second.getOccurredAt(), second.getReceivedAt());
+        assertThat(trigger.replayDue(SECOND_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
 
         ContactMemoryModels.Context firstContext = contextFor(fixture, SECOND_MESSAGE_AT);
         when(gateway.generate(any())).thenReturn(outputFor(firstContext, first, second));
@@ -204,6 +206,7 @@ class ContactMemoryEndToEndTest {
         MessageEntity third = insertInboundMessage(fixture, THIRD_MESSAGE_AT, "客户补充需要稳定船期。");
         trigger.markInboundPersisted(fixture.contactId(), third.getId(), third.getIngestSequence(),
                 third.getOccurredAt(), third.getReceivedAt());
+        assertThat(trigger.replayDue(THIRD_MESSAGE_AT.plusSeconds(1), 10)).isEqualTo(1);
         doThrow(new ContactMemoryLlmGateway.GatewayException("LLM_TIMEOUT", true))
                 .when(gateway).generate(any());
 
@@ -223,7 +226,10 @@ class ContactMemoryEndToEndTest {
                 Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldLabelCount);
         assertThat(jdbc.queryForObject(
                 "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ?",
-                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldAttemptCount);
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(oldAttemptCount + 1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ? and status = 'FAILED'",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
         assertThat(third.getId()).isNotNull();
     }
 
@@ -341,8 +347,8 @@ class ContactMemoryEndToEndTest {
                 """, id, username, username, username);
     }
 
-    private static String cursor(MessageEntity message) {
-        return message.getOccurredAt() + "|" + message.getId();
+    private static String receivedCursor(MessageEntity message) {
+        return message.getReceivedAt() + "|" + message.getId();
     }
 
     private record TestFixture(UUID ownerId,
