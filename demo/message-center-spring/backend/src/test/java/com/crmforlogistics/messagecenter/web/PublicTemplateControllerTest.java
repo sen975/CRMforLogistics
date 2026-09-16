@@ -11,6 +11,7 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplat
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.PublicTemplate;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.Query;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateChangeRequestService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
@@ -52,6 +53,7 @@ class PublicTemplateControllerTest {
     @MockitoBean WhatsAppSharedTemplateCatalogService catalogService;
     @MockitoBean WhatsAppProviderScopeService providerScopeService;
     @MockitoBean WhatsAppTemplateScopeGate scopeGate;
+    @MockitoBean WhatsAppTemplateChangeRequestService changeRequestService;
     @MockitoBean AuthSessionService authSessionService;
 
     @Test

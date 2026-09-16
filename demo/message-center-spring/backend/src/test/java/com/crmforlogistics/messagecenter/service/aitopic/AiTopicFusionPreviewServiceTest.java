@@ -29,8 +29,8 @@ class AiTopicFusionPreviewServiceTest {
         AiTopicItemMapper items = mock(AiTopicItemMapper.class);
         AiTopicReviewMapper reviews = mock(AiTopicReviewMapper.class);
         TopicAiGateway gateway = mock(TopicAiGateway.class);
-        when(topics.selectById(firstId)).thenReturn(topic(firstId, contactId, 2L));
-        when(topics.selectById(secondId)).thenReturn(topic(secondId, contactId, 3L));
+        when(topics.findContactTopicByIdAndOwner(firstId, userId)).thenReturn(topic(firstId, contactId, 2L));
+        when(topics.findContactTopicByIdAndOwner(secondId, userId)).thenReturn(topic(secondId, contactId, 3L));
         when(reviews.listTopicSources(anyList())).thenReturn(List.of(
                 source(firstSource, "报价"), source(secondSource, "交付")));
         when(gateway.fuse(any())).thenReturn(new AiTopicModels.GenerationOutput(List.of(

@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
 class ContactGroupServiceSplitAuthorizationTest {
 
     @Test
-    void splitUsesAccessibleContactAndCopiesSourceOwner() {
+    void splitUsesAccessibleContactAndAttributesTheCopyToTheActor() {
         UUID sourceContactId = UUID.randomUUID();
         UUID identityId = UUID.randomUUID();
         UUID actorId = UUID.randomUUID();
@@ -48,7 +48,7 @@ class ContactGroupServiceSplitAuthorizationTest {
         assertThat(newContactId).isNotEqualTo(sourceContactId);
         var inserted = org.mockito.ArgumentCaptor.forClass(ContactEntity.class);
         verify(contacts).insert(inserted.capture());
-        assertThat(inserted.getValue().getOwnerUserId()).isEqualTo(sourceOwnerId);
+        assertThat(inserted.getValue().getCreatedBy()).isEqualTo(actorId);
     }
 
     @Test

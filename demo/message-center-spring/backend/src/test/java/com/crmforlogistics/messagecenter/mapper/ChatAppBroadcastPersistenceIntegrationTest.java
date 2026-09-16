@@ -193,11 +193,13 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
                         + "next_ingest_sequence) values (?, ?, ?, 1)",
                 conversationId, accountId, identityId);
-        jdbc.update("insert into messages (id, conversation_id, channel_account_id, client_request_id, "
-                        + "direction, message_kind, body_text, occurred_at, ingest_sequence, counts_as_unread, "
-                        + "current_status, current_status_at) values (?, ?, ?, ?, 'outbound', 'template', "
-                        + "'订单 SO-1 已发货', ?, 1, false, 'processing', ?)",
-                messageId, conversationId, accountId,
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
+                        + "channel_account_version, client_request_id, direction, message_kind, "
+                        + "body_text, occurred_at, ingest_sequence, counts_as_unread, current_status, "
+                        + "current_status_at) values (?, ?, ?, "
+                        + "(select version from channel_accounts where id = ?), ?, 'outbound', "
+                        + "'template', '订单 SO-1 已发货', ?, 1, false, 'processing', ?)",
+                messageId, conversationId, accountId, accountId,
                 "broadcast:" + broadcastId + ":recipient:" + recipientId,
                 Timestamp.from(now), Timestamp.from(now));
         ChatAppBroadcastRecipientEntity recipient = new ChatAppBroadcastRecipientEntity();
@@ -299,11 +301,13 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
                         + "next_ingest_sequence) values (?, ?, ?, 1)",
                 conversationId, accountId, identityId);
-        jdbc.update("insert into messages (id, conversation_id, channel_account_id, direction, "
-                        + "message_kind, body_text, occurred_at, ingest_sequence, counts_as_unread, "
-                        + "current_status, current_status_at) values (?, ?, ?, 'outbound', 'text', "
-                        + "'hello', ?, 1, false, 'read', ?)",
-                messageId, conversationId, accountId, Timestamp.from(readAt), Timestamp.from(readAt));
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
+                        + "channel_account_version, direction, message_kind, body_text, occurred_at, "
+                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
+                        + "values (?, ?, ?, (select version from channel_accounts where id = ?), "
+                        + "'outbound', 'text', 'hello', ?, 1, false, 'read', ?)",
+                messageId, conversationId, accountId, accountId,
+                Timestamp.from(readAt), Timestamp.from(readAt));
 
         assertThat(messageMapper.updateDeliveryStatus(
                 messageId, "wamid-1", "delivered", readAt.minusSeconds(60))).isZero();
@@ -328,11 +332,13 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         jdbc.update("insert into conversations (id, channel_account_id, contact_identity_id, "
                         + "next_ingest_sequence) values (?, ?, ?, 1)",
                 conversationId, accountId, identityId);
-        jdbc.update("insert into messages (id, conversation_id, channel_account_id, direction, "
-                        + "message_kind, body_text, occurred_at, ingest_sequence, counts_as_unread, "
-                        + "current_status, current_status_at) values (?, ?, ?, 'outbound', 'text', "
-                        + "'hello', ?, 1, false, 'failed', ?)",
-                messageId, conversationId, accountId, Timestamp.from(failedAt), Timestamp.from(failedAt));
+        jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
+                        + "channel_account_version, direction, message_kind, body_text, occurred_at, "
+                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
+                        + "values (?, ?, ?, (select version from channel_accounts where id = ?), "
+                        + "'outbound', 'text', 'hello', ?, 1, false, 'failed', ?)",
+                messageId, conversationId, accountId, accountId,
+                Timestamp.from(failedAt), Timestamp.from(failedAt));
 
         assertThat(messageMapper.updateDeliveryStatus(
                 messageId, "wamid-1", "delivered", failedAt.plusSeconds(60))).isOne();
@@ -360,11 +366,12 @@ class ChatAppBroadcastPersistenceIntegrationTest {
                         + "next_ingest_sequence) values (?, ?, ?, 1)",
                 conversationId, accountId, identityId);
         jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
-                        + "provider_message_id, direction, message_kind, body_text, occurred_at, "
-                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
-                        + "values (?, ?, ?, 'wamid-existing', 'outbound', 'text', 'hello', ?, 1, "
-                        + "false, 'processing', ?)",
-                messageId, conversationId, accountId,
+                        + "channel_account_version, provider_message_id, direction, message_kind, "
+                        + "body_text, occurred_at, ingest_sequence, counts_as_unread, current_status, "
+                        + "current_status_at) "
+                        + "values (?, ?, ?, (select version from channel_accounts where id = ?), "
+                        + "'wamid-existing', 'outbound', 'text', 'hello', ?, 1, false, 'processing', ?)",
+                messageId, conversationId, accountId, accountId,
                 Timestamp.from(occurredAt), Timestamp.from(occurredAt));
 
         assertThat(messageMapper.updateDeliveryStatus(
@@ -392,11 +399,12 @@ class ChatAppBroadcastPersistenceIntegrationTest {
                         + "next_ingest_sequence) values (?, ?, ?, 1)",
                 conversationId, accountId, identityId);
         jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
-                        + "provider_message_id, direction, message_kind, body_text, occurred_at, "
-                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
-                        + "values (?, ?, ?, 'group-1', 'outbound', 'text', 'hello', ?, 1, "
-                        + "false, 'processing', ?)",
-                messageId, conversationId, accountId,
+                        + "channel_account_version, provider_message_id, direction, message_kind, "
+                        + "body_text, occurred_at, ingest_sequence, counts_as_unread, current_status, "
+                        + "current_status_at) "
+                        + "values (?, ?, ?, (select version from channel_accounts where id = ?), "
+                        + "'group-1', 'outbound', 'text', 'hello', ?, 1, false, 'processing', ?)",
+                messageId, conversationId, accountId, accountId,
                 Timestamp.from(occurredAt), Timestamp.from(occurredAt));
 
         assertThat(messageMapper.replaceProviderMessageId(
@@ -473,6 +481,7 @@ class ChatAppBroadcastPersistenceIntegrationTest {
         ChatAppBroadcastEntity entity = new ChatAppBroadcastEntity();
         entity.setId(UUID.randomUUID());
         entity.setChannelAccountId(accountId);
+        entity.setChannelAccountVersion(0L);
         entity.setName("Broadcast");
         entity.setTemplateCode("shipping_notice");
         entity.setTemplateName("Shipping Notice");

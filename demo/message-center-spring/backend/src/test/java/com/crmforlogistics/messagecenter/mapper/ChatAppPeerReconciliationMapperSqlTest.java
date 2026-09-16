@@ -144,12 +144,13 @@ class ChatAppPeerReconciliationMapperSqlTest {
                                Instant occurredAt) {
         UUID id = UUID.randomUUID();
         jdbc.update("insert into messages (id, conversation_id, channel_account_id, "
-                        + "provider_message_id, direction, message_kind, body_text, occurred_at, "
-                        + "ingest_sequence, counts_as_unread, current_status, current_status_at) "
-                        + "values (?, ?, ?, ?, 'outbound', 'text', 'body', ?, ?, false, "
-                        + "'delivered', ?)",
-                id, conversationId, accountId, providerMessageId, Timestamp.from(occurredAt), sequence,
-                Timestamp.from(occurredAt));
+                        + "channel_account_version, provider_message_id, direction, message_kind, "
+                        + "body_text, occurred_at, ingest_sequence, counts_as_unread, current_status, "
+                        + "current_status_at) "
+                        + "values (?, ?, ?, (select version from channel_accounts where id = ?), ?, "
+                        + "'outbound', 'text', 'body', ?, ?, false, 'delivered', ?)",
+                id, conversationId, accountId, accountId, providerMessageId,
+                Timestamp.from(occurredAt), sequence, Timestamp.from(occurredAt));
         return id;
     }
 }

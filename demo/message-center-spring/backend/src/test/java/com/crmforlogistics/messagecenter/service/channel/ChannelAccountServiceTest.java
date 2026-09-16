@@ -152,21 +152,20 @@ class ChannelAccountServiceTest {
     }
 
     @Test
-    void rejectsCreatingActiveChatAppAccountWithoutAllCredentials() {
+    void rejectsCreatingActiveEmailAccountWithoutAllCredentials() {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         CredentialCipher cipher = mock(CredentialCipher.class);
         UUID owner = UUID.randomUUID();
-        when(mapper.countActiveByOwnerAndChannel(owner, "chatapp")).thenReturn(0);
+        when(mapper.countActiveByOwnerAndChannel(owner, "email")).thenReturn(0);
         ChannelAccountService service = service(mapper, cipher);
 
         assertThatThrownBy(() -> service.createOrBind(owner,
                 new com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest(
-                        "whatsapp", "Primary WhatsApp", "60111111111", Map.of(
-                        "accessKeyId", "key-id",
-                        "accessKeySecret", "key-secret",
-                        "region", "ap-southeast-1",
-                        "custSpaceId", "space-1",
-                        "chatappFrom", "60111111111"))))
+                        "email", "Primary Mailbox", "support@example.test", Map.of(
+                        "smtpHost", "smtp.example.test",
+                        "smtpPort", "465",
+                        "smtpSsl", "true",
+                        "smtpUser", "support@example.test"))))
                 .isInstanceOf(ChannelAccountException.class)
                 .hasMessage("CHANNEL_ACCOUNT_INCOMPLETE_CREDENTIALS");
 

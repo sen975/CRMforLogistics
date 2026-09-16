@@ -54,8 +54,11 @@ class WhatsAppSharedTemplateApprovalMigrationTest {
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
             UUID userId = insertUser(jdbc, schema, "template-requester");
+            UUID otherUserId = insertUser(jdbc, schema, "template-requester-two");
+            // ux_channel_accounts_owner_unique_active allows one active chatapp account per owner,
+            // so the second account belongs to a different user.
             UUID accountOneId = insertAccount(jdbc, schema, userId, "whatsapp-one");
-            UUID accountTwoId = insertAccount(jdbc, schema, userId, "whatsapp-two");
+            UUID accountTwoId = insertAccount(jdbc, schema, otherUserId, "whatsapp-two");
             UUID templateOneId = insertTemplate(jdbc, schema, accountOneId, "provider-template", "zh_CN");
             UUID templateTwoId = insertTemplate(jdbc, schema, accountTwoId, "provider-template", "zh_CN");
 

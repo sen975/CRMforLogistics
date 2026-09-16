@@ -116,7 +116,7 @@ class EmailOwnerIsolationTest {
         EmailSendService service = sendService();
         service.persistOutbound(ownerId, accountId, "customer@example.test", "subject", "body", "<m@example.test>");
 
-        verify(messageMapper).insert(any(com.crmforlogistics.messagecenter.entity.MessageEntity.class));
+        verify(messageMapper).insertWithSequence(any(com.crmforlogistics.messagecenter.entity.MessageEntity.class));
         verify(channelAccountMapper).findByIdAndOwner(accountId, ownerId);
     }
 

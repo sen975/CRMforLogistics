@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
+import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.MediaAssetStatus;
@@ -24,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.io.ByteArrayInputStream;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -70,6 +72,7 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
     @Autowired private WhatsAppTemplateMediaUploadService mediaUploadService;
     @Autowired private WhatsAppTemplateMediaUploadStore mediaUploadStore;
     @Autowired private WhatsAppTemplateGateway gateway;
+    @Autowired private CredentialCipher credentialCipher;
     @Autowired private JdbcTemplate jdbc;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -77,16 +80,23 @@ class WhatsAppTemplateMediaUploadIntegrationTest {
     private UUID actorUserId;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         accountId = UUID.randomUUID();
         actorUserId = UUID.randomUUID();
         jdbc.update("insert into users (id, username, username_normalized, password_hash, display_name) "
                         + "values (?, ?, ?, 'hash', 'Media Test')",
                 actorUserId, "media-" + actorUserId, "media-" + actorUserId);
+        // The upload path resolves provider credentials through the account, so the fixture has to
+        // carry a configuration the resolver can decrypt rather than an empty object.
+        String encryptedConfig = credentialCipher.encrypt(Map.of(
+                "accessKeyId", "media-key-id",
+                "accessKeySecret", "media-key-secret",
+                "custSpaceId", "media-test-space",
+                "chatappFrom", "60111111111"));
         jdbc.update("insert into channel_accounts "
                         + "(id, channel_type, name, account_identifier, account_identifier_normalized, "
-                        + "auth_status, encrypted_config) values (?, 'whatsapp', 'Media Test', ?, ?, 'active', '{}'::jsonb)",
-                accountId, accountId.toString(), accountId.toString());
+                        + "auth_status, encrypted_config) values (?, 'whatsapp', 'Media Test', ?, ?, 'active', ?::jsonb)",
+                accountId, accountId.toString(), accountId.toString(), encryptedConfig);
         Mockito.reset(gateway);
     }
 
