@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.wecom;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAccessTokenService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComUserBindingService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -22,33 +23,53 @@ public class WeComSendService {
     private final WeComAccessTokenService accessTokens;
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final WeComUserBindingService bindingService;
 
     @Autowired
     public WeComSendService(AppConfig config,
                              WeComInstallationService installationService,
                              WeComAccessTokenService accessTokens,
+                             WeComUserBindingService bindingService,
                              ObjectMapper objectMapper,
                              WeComRestClientFactory restClients) {
-        this(config, installationService, accessTokens, objectMapper, restClients.create());
+        this(config, installationService, accessTokens, bindingService, objectMapper, restClients.create());
+    }
+
+    public WeComSendService(AppConfig config,
+                            WeComInstallationService installationService,
+                            WeComAccessTokenService accessTokens,
+                            WeComUserBindingService bindingService,
+                            ObjectMapper objectMapper) {
+        this(config, installationService, accessTokens, bindingService, objectMapper, RestClient.create());
     }
 
     public WeComSendService(AppConfig config,
                             WeComInstallationService installationService,
                             WeComAccessTokenService accessTokens,
                             ObjectMapper objectMapper) {
-        this(config, installationService, accessTokens, objectMapper, RestClient.create());
+        this(config, installationService, accessTokens, null, objectMapper, RestClient.create());
     }
 
     private WeComSendService(AppConfig config,
                              WeComInstallationService installationService,
                              WeComAccessTokenService accessTokens,
+                             WeComUserBindingService bindingService,
                              ObjectMapper objectMapper,
                              RestClient restClient) {
         this.config = config;
         this.installationService = installationService;
         this.accessTokens = accessTokens;
+        this.bindingService = bindingService;
         this.objectMapper = objectMapper;
         this.restClient = restClient;
+    }
+
+    public SendResult sendToBoundUser(java.util.UUID userId, String text) throws WeComException {
+        if (bindingService == null) throw new WeComException("WECOM_BINDING_UNAVAILABLE", 503, "企业微信绑定服务不可用");
+        var binding = bindingService.requireByUserId(userId);
+        var installation = binding.installationBinding();
+        if (installation == null) throw new WeComException("WECOM_INSTALLATION_UNAVAILABLE", 503, "企业微信应用尚未完成安装");
+        return send(binding.authCorpId(), installation.agentId(), binding.wecomUserId(), text);
     }
 
     public SendResult send(String corpId, String agentId, String toUser,

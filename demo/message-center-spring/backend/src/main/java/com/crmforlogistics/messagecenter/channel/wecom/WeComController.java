@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.channel.wecom;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAuthorizationService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComStartupGate;
+import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -91,6 +92,20 @@ public class WeComController {
         } catch (WeComException e) {
             return ResponseEntity.status(e.httpStatus())
                     .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/api/wecom/send-todo-reminder")
+    public ResponseEntity<?> sendTodoReminder(@RequestBody Map<String, Object> body) {
+        try {
+            String text = String.valueOf(body.getOrDefault("text", "")).trim();
+            if (text.isBlank() || text.length() > 4000) {
+                return ResponseEntity.badRequest().body(Map.of("error", "待办提醒内容不能为空且不能超过 4000 个字符"));
+            }
+            var result = sendService.sendToBoundUser(SecurityUtil.currentUserId(), text);
+            return ResponseEntity.ok(result);
+        } catch (WeComException e) {
+            return ResponseEntity.status(e.httpStatus()).body(Map.of("error", e.getMessage(), "code", e.code()));
         }
     }
 
