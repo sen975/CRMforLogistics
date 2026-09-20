@@ -22,25 +22,38 @@ npm run dev
 默认地址：
 
 - 前端：`http://127.0.0.1:5173`
-- 后端：`http://127.0.0.1:8099`
-- 前端开发代理：`/api` 转发至后端 `8099`
+- 后端：`http://127.0.0.1:8107`
+- 前端开发代理：`/api` 转发至后端 `8107`
 
-## WhatsApp 管理员配置与销售账号分配
+## WhatsApp 管理员平台工作台与销售账号分配
 
-当前 WhatsApp 主流程不做 Meta Embedded Signup、员工自助绑定、API 电话注册或 CAMS 解绑。管理员先在阿里云 CAMS 控制台完成 WABA 和电话号码配置，再在 CRM 的“渠道设置”中同步已有号码，并把单个号码分配、收回或转交给销售。
+当前 WhatsApp 主流程不做 Meta Embedded Signup、员工自助绑定、API 电话注册或 CAMS 解绑。管理员先在阿里云 CAMS 控制台完成 WABA 和电话号码配置，再在管理员平台工作台（`/admin/platforms`）登记一个或多个 CAMS 实例，然后在账号页（`/admin/whatsapp/accounts`）先选 CAMS、再选号码，把单个号码分配、收回或转交给销售。`/settings/channels` 只保留邮件、企业微信等通用渠道设置，并引导到管理员工作台。
 
-后端通过 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`CAMS_REGION`、`CAMS_ENDPOINT` 和已配置的 `APP_CUST_SPACE_ID`（或 `CAMS_CUST_SPACE_ID`）访问 CAMS。同步只读取当前 scope 的号码事实，仅导入 `ACTIVE + VERIFIED` 号码；本地以标准化号码保持稳定账号 ID，CAMS 中消失或不可发送的号码只标记为不可用，不删除历史消息、会话、联系人、模板或凭据。
+每个 CAMS 实例是 `whatsapp_provider_scopes` 中的一行，由 `provider + external_scope_id(CustSpaceId)` 唯一标识，独立保存显示名称、加密后的 AccessKey ID/Secret、Region、Endpoint、`READY/BLOCKED` 状态，以及最近连接测试、最近同步与结构化错误投影。同一 CustSpaceId 重复登记会被拒绝；被 `channel_accounts` 或 `message_templates` 引用的 scope 只能停用，不能物理删除。测试和同步始终使用该 scope 的解密凭证；只有数据库中尚未配置任何 scope 时，才回退到 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`CAMS_REGION`、`CAMS_ENDPOINT` 和 `APP_CUST_SPACE_ID`（或 `CAMS_CUST_SPACE_ID`）。
 
-管理员接口：
+同步只读取所选 scope 的号码事实，仅导入 `ACTIVE + VERIFIED` 号码；本地以标准化号码保持稳定账号 ID，CAMS 中消失或不可发送的号码只标记为不可用，不删除历史消息、会话、联系人、模板或凭据。
+
+管理员接口（账号接口以 scope 为入口）：
 
 ```text
-GET  /api/admin/whatsapp/accounts
-POST /api/admin/whatsapp/accounts/sync
-POST /api/admin/whatsapp/accounts/{accountId}/assign
-POST /api/admin/whatsapp/accounts/{accountId}/reclaim
-POST /api/admin/whatsapp/accounts/{accountId}/transfer
-GET  /api/admin/whatsapp/accounts/{accountId}/assignment-history
+GET    /api/admin/whatsapp/overview
+GET    /api/admin/whatsapp/cams
+POST   /api/admin/whatsapp/cams
+PUT    /api/admin/whatsapp/cams/{scopeId}
+DELETE /api/admin/whatsapp/cams/{scopeId}
+POST   /api/admin/whatsapp/cams/{scopeId}/test
+POST   /api/admin/whatsapp/cams/{scopeId}/sync
+GET    /api/admin/whatsapp/cams/{scopeId}/accounts
+POST   /api/admin/whatsapp/cams/{scopeId}/accounts/sync
+POST   /api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assign
+POST   /api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/reclaim
+POST   /api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/transfer
+GET    /api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assignment-history
 ```
+
+`GET /api/admin/whatsapp/overview` 是管理员首页的唯一数据源：服务端按 scope 聚合可用号码数、待审批数、最近测试/同步状态和失败错误码，并给出待审批总数；前端只渲染服务端返回的状态，不自行推断账号、模板或审批状态。
+
+不带 `{scopeId}` 的 `/api/admin/whatsapp/accounts/**` 路由保留给多 CAMS 之前的页面兼容使用，新页面一律走 scope 版本。CAMS 响应只返回脱敏 AccessKey ID 和非敏感字段，更新时 Secret 留空表示保留旧值。
 
 分配、收回和转交请求必须携带非空原因及 `expectedVersion`；服务端以账号版本和数据库锁防止并发双分配。一个有效号码同一时刻只能属于一个销售，一个销售也不能同时拥有多个有效 WhatsApp 号码。收回只清空当前 CRM owner，不清空加密凭据或 CAMS 资源。
 
@@ -76,17 +89,22 @@ POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/reject
 POST /api/v1/admin/whatsapp/template-change-requests/{requestId}/retry
 ```
 
-旧的账号级 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 管理入口已退出，不提供兼容路径。应用启动时会回填账号 scope、归并历史副本并以官方详情对账；任何有效 WhatsApp 账号出现不同 `custSpaceId` 时，共享模板门禁保持关闭。
+旧的账号级 `/api/v1/channel-accounts/{accountId}/whatsapp/templates/**` 管理入口已退出，不提供兼容路径。应用启动时会回填账号 scope、归并历史副本并以官方详情对账。
+
+共享模板目录仍绑定单个企业 API scope：迁移要求 `whatsapp_provider_scopes` 中恰好存在一个企业 scope，检测到第二个 CAMS 时门禁转为 `BLOCKED`，共享模板接口以 `WHATSAPP_PROVIDER_SCOPE_MISMATCH`（HTTP 503）失败，直到重新回到单个 scope。销售侧手工绑定账号的路径也保留同一 `custSpaceId` 兼容校验。跨 scope 的全局模板目录不在当前范围内。
 
 ## 会话列表个性化
 
 联系人和企业微信群共用左侧会话列表。当前账号可以在列表项上点击右键执行“置顶/取消置顶”或“删除”；这里的删除只写入当前用户的会话偏好，不删除联系人、群聊、消息或 Topic。隐藏项仍可通过搜索找到，隐藏后新入库的消息也会让该项自动重新出现。
+
+主动打开一个会话等同于表达“我要继续用它”，因此进入被隐藏的联系人会话时会清除该账号自己的隐藏偏好，让它重新回到左侧列表。清除只作用于当前账号，幂等，且不会创建从未个性化过的偏好行，也不改动置顶状态和排序。必须先把这次访问标记为已处理，再判断列表里是否缺项，否则会撤销用户对当前打开项刚执行的“删除”。
 
 拖动列表项到另一项上方或下方的间隙会调整当前账号的列表顺序，拖到联系人中心区域才会合并联系人；企业微信群不能参与合并。用户级状态由 `conversation_preferences` 统一保存，对应接口为：
 
 ```text
 POST /api/conversations/preferences/pin
 POST /api/conversations/preferences/delete
+POST /api/conversations/preferences/restore
 POST /api/conversations/preferences/order
 ```
 
@@ -201,6 +219,12 @@ rg -l "Topic 时间轴|contact-topics" dist/assets
 手动输入路由也会收到 403。应用群聊按 `chatId` 操作，客户和客户群遵循企业微信 cursor 分页，通讯录仅提供
 成员、部门、标签读取。
 
+“客户联系”列表里的外部联系人会按服务端解析结果决定能否点击：能解析到当前账号可读的 CRM 联系人时，
+客户名称是进入该联系人消息窗口的入口，跳转带上 `?channel=wecom&identityId=`；没有 CRM 联系人、或当前账号
+没有该联系人会话访问权时保持纯文本，只能继续用“查看详情”读企业微信侧资料。是否可点完全由服务端
+`contact-links` 决定，前端不自行推断，也不允许用企业微信外部联系人标识直接构造联系人 ID。“通讯录”标签
+仍然只读，不提供跳转。
+
 P0 管理路由包括：
 
 ```text
@@ -210,6 +234,7 @@ GET   /api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}
 PATCH /api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}
 POST  /api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}/messages
 GET   /api/v1/wecom/installations/{authCorpId}/external-contacts
+GET   /api/v1/wecom/installations/{authCorpId}/external-contacts/contact-links
 GET   /api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}
 POST  /api/v1/wecom/installations/{authCorpId}/external-contacts:batchGet
 PATCH /api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}/remark

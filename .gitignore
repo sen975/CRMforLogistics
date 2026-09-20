@@ -50,6 +50,9 @@ demo/outputs/
 **/*.class
 **/.verify/edge-profile-*/
 
+# Local agent memory and session state
+.workbuddy/
+
 # IDE and operating-system state
 **/.idea/
 **/.vs/

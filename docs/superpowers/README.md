@@ -22,6 +22,10 @@
 
 ## 当前实施
 
+- [冻结基线收口到 0 实施计划](plans/2026-09-20-baseline-to-zero.md)：越界改造第 ⑤ 步（含只读影响面 + 实施记录）。剩 32 条只有两个病根 —— 两个 wecom 实体住在 `channel/wecom/` 被业务域引用（28 条）、`WhatsAppHistorySyncWorker` 跨板块驱动 chatapp 适配器（4 条）。前者搬到 `entity/`（项目已有 7 个 WeCom 实体先例，`type-aliases-package` 也早已只声明 `…entity`），后者搬到 `service/chatapp/`（② 已有判例）。**已完成（2026-09-20）**：门禁基线 **32 → 0**（删 32 / 增 0），随后**拆掉冻结机制** —— `FreezingArchRule` 换回普通硬规则，删除 `archunit_store/` 与 `archunit.properties`，并用故意注入的越界探针复验「普通规则同样能让构建变红」。
+- [阿里云 CAMS 供应商层独立实施计划](plans/2026-09-20-cams-vendor-layer.md)：越界改造第 ④ 步。把 CAMS 供应商原语（`ChatAppAccountCredentials` / `…Exception` / `…Resolver`）从 `channel/chatapp/` 提到 `infrastructure/cams/`，把 `ChatAppPublicTemplateGateway` 接口随消费方搬到 `service.whatsapp.template/`；门禁基线 40 → 32 条（删除 8 条、新增 0 条）。**已完成（2026-09-20）**，纯搬运零抽象。**未闭合**：6 处重复的 `AsyncClient` 装配与 whatsapp 侧第二套 CAMS 凭证模型未收敛（`WhatsAppHistorySyncWorker → ChatAppMessageSyncService` 的 4 条残留已由第 ⑤ 步归位解决）。
+- [渠道注册表实施计划](plans/2026-09-20-channel-type-registry.md)：抽出 `ChannelType` SPI + `ChannelTypeRegistry`，删除 `ChannelAccountService` 里的 `switch(channelType)`、凭证字段表、渠道白名单，使「新增渠道」不再需要改动核心；**已完成（2026-09-20）**，验收含真实 Spring 上下文加载与架构门禁。
+- [chatapp 出站三件套归位实施计划](plans/2026-09-20-chatapp-outbox-relocation.md)：把 chatapp 独占的出站链路（`MessageOutboxWorker` / `MessageOutboxScheduler` / `MessageSendApplicationService`）从 `service/message` 归位到 `service/chatapp/outbox`，消除「核心 → 渠道」越界 1；**已完成（2026-09-20）**，门禁基线随之 51 → 40 条。
 - [WhatsApp 管理员配置与销售账号分配实施计划](plans/2026-09-10-whatsapp-admin-managed-account-assignment.md)：落实 CAMS 已有号码同步、管理员分配/收回/转交、历史授权、发送 fencing、前端账号管理及旧自助 API 禁用。
 - [WhatsApp 账号模板权限分流实施计划](plans/2026-09-09-whatsapp-template-permission-domain.md)：落实企业 API 共享模板审批与独立 Business App 私有模板直改两条权限链路。
 
@@ -40,6 +44,7 @@
 
 ## 当前验收
 
+- [Testcontainers 容错统一与 Clock 注入收口验收记录](reviews/2026-09-20-testcontainers-and-clock-hardening-verification.md)：记录 P0 时间炸弹根治（注入 `Clock` + 测试固定时钟）、26 个容器测试类统一 `disabledWithoutDocker` 的取舍（假绿风险与「验收必须核对 `Skipped`」约定）、全量 1428 跑 0 失败 0 跳过，以及 `AppIntegrationTest` 10/10 作为 Spring 装配实证。
 - [联系人 AI 标签、画像与增量记忆系统验收记录](reviews/2026-09-11-contact-ai-memory-verification.md)：记录五层记忆端到端测试设计、后端生产编译、前端测试/构建，以及 Docker 和工作区既有 WhatsApp 测试错误造成的验收边界。
 - [联系人 AI 记忆审查修复验收记录](reviews/2026-09-14-contact-ai-memory-review-fixes-verification.md)：记录 Task 1–7 的 fencing、可靠触发、跨轮晋升、LLM 边界、审计、evidence 归属、标签分页及真实 PostgreSQL 验收阻断。
 
