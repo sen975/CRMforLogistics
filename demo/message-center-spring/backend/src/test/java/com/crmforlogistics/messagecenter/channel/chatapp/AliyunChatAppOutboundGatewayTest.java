@@ -15,6 +15,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 
 class AliyunChatAppOutboundGatewayTest {
     @Test

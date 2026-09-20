@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
+import com.crmforlogistics.messagecenter.entity.WeComMessageSummaryJobEntity;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;

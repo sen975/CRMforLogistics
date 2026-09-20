@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -85,9 +86,14 @@ class ChannelAccountOwnerIsolationTest {
     }
 
     private static ChannelAccountService service(ChannelAccountMapper mapper) {
-        return new ChannelAccountService(mapper, mock(ChatAppMessageSyncService.class),
-                mock(ChatAppTemplateSyncService.class), mock(EmailSyncService.class),
-                mock(CredentialCipher.class));
+        return new ChannelAccountService(mapper, registry(), mock(CredentialCipher.class));
+    }
+
+    private static ChannelTypeRegistry registry() {
+        return new ChannelTypeRegistry(List.of(
+                new EmailChannelType(mock(EmailSyncService.class)),
+                new ChatAppChannelType(mock(ChatAppMessageSyncService.class),
+                        mock(ChatAppTemplateSyncService.class), mock(WhatsAppProviderScopeService.class))));
     }
 
     private static ChannelAccountEntity account(UUID id, UUID owner, String type, String identifier) {

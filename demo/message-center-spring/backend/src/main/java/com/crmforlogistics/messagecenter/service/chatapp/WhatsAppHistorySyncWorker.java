@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.service.whatsapp;
+package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppMessageSyncService;
 import com.crmforlogistics.messagecenter.entity.WhatsAppHistorySyncJobEntity;

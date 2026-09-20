@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.channel.chatapp;
+package com.crmforlogistics.messagecenter.infrastructure.cams;
 
 import java.util.Objects;
 

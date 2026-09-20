@@ -17,7 +17,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadc
 import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookService;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
-import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageSendApplicationService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComUserNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;

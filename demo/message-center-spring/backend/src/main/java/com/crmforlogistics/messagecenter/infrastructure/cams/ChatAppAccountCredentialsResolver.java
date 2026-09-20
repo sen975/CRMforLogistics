@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.channel.chatapp;
+package com.crmforlogistics.messagecenter.infrastructure.cams;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;

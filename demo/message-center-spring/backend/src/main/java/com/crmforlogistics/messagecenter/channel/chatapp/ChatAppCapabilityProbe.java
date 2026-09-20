@@ -34,6 +34,7 @@ import java.util.UUID;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
 
 @Component
 public class ChatAppCapabilityProbe {

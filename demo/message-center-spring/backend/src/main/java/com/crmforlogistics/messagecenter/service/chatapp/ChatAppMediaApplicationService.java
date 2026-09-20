@@ -3,7 +3,7 @@ package com.crmforlogistics.messagecenter.service.chatapp;
 import com.crmforlogistics.messagecenter.entity.AttachmentEntity;
 import com.crmforlogistics.messagecenter.infrastructure.MinioStorage;
 import com.crmforlogistics.messagecenter.mapper.AttachmentMapper;
-import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageSendApplicationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionOperations;
 import org.slf4j.Logger;

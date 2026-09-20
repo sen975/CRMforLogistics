@@ -12,7 +12,7 @@ import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
 import com.crmforlogistics.messagecenter.service.auth.BootstrapService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookRetryWorker;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastScheduler;
-import com.crmforlogistics.messagecenter.service.message.MessageOutboxScheduler;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageOutboxScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "app.chatapp-template-reconcile-enabled=false"
         }
 )
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 public class AppIntegrationTest {
 
     @Container

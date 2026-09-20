@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.service.message;
+package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 
 @Service
 public class MessageSendApplicationService {

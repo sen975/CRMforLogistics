@@ -2,7 +2,7 @@ package com.crmforlogistics.messagecenter.service.account;
 
 import com.crmforlogistics.messagecenter.entity.RoleEntity;
 import com.crmforlogistics.messagecenter.entity.UserEntity;
-import com.crmforlogistics.messagecenter.channel.wecom.WeComUserBindingEntity;
+import com.crmforlogistics.messagecenter.entity.WeComUserBindingEntity;
 import com.crmforlogistics.messagecenter.dto.response.AccountProfileResponse;
 import com.crmforlogistics.messagecenter.dto.response.AdminUserPageResponse;
 import com.crmforlogistics.messagecenter.dto.response.AdminUserResponse;

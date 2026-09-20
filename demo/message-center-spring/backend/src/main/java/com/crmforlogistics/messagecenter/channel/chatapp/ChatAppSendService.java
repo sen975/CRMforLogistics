@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
 
 @Service
 public class ChatAppSendService {

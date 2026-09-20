@@ -2,7 +2,7 @@ package com.crmforlogistics.messagecenter.service.wecom;
 
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
-import com.crmforlogistics.messagecenter.channel.wecom.WeComUserBindingEntity;
+import com.crmforlogistics.messagecenter.entity.WeComUserBindingEntity;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
 import com.crmforlogistics.messagecenter.entity.RoleEntity;
 import com.crmforlogistics.messagecenter.entity.UserEntity;

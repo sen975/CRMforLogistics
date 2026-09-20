@@ -3,8 +3,8 @@ package com.crmforlogistics.messagecenter.channel.chatapp.template;
 import com.aliyun.teaopenapi.Client;
 import com.aliyun.teaopenapi.models.Params;
 import com.aliyun.tea.TeaException;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentials;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
 
 class PublicTemplateGatewayContractTest {
     @Test
@@ -202,7 +203,7 @@ class PublicTemplateGatewayContractTest {
         ChatAppAccountCredentialsResolver credentialsResolver = mock(ChatAppAccountCredentialsResolver.class);
         when(accountMapper.selectById(accountId)).thenReturn(account);
         when(credentialsResolver.resolve(account)).thenThrow(
-                new com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException(
+                new com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException(
                         "CHATAPP_ACCOUNT_CREDENTIALS_UNREADABLE"));
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
                 new ObjectMapper(), accountMapper, credentialsResolver);

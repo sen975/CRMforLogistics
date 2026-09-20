@@ -2,7 +2,7 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageApplicationService;
-import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageSendApplicationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;

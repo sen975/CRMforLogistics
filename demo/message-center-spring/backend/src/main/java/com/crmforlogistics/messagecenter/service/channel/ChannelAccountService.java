@@ -1,95 +1,58 @@
 package com.crmforlogistics.messagecenter.service.channel;
 
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppMessageSyncService;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppTemplateSyncService;
-import com.crmforlogistics.messagecenter.channel.email.EmailSyncService;
 import com.crmforlogistics.messagecenter.dto.request.CreateChannelAccountRequest;
 import com.crmforlogistics.messagecenter.dto.response.ChannelAccountSummary;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
-import com.crmforlogistics.messagecenter.service.wecom.WeComChatDataSyncService;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
+/**
+ * 渠道账号的绑定、凭证与同步编排。
+ *
+ * <h2>渠道知识不在这个类里</h2>
+ * 这个类只做「查表 → 按序校验 → 落库」，具体渠道知识（凭证字段、标识归一化、
+ * 范围校验、同步实现）都在 {@link ChannelType} 实现里，按名字从
+ * {@link ChannelTypeRegistry} 取。因此<b>新增一个渠道不需要修改本类</b> ——
+ * 这正是这次改造要消掉的根因。
+ *
+ * <p>改造前它有四份「渠道清单」：{@code CREDENTIAL_KEYS} 凭证表、{@code switch}
+ * 同步分派、{@code normalizeIdentifier} 的 if-else、以及写死的 chatapp 判断。
+ * 现在这些都不在了，只剩查表。
+ *
+ * <p>同时删掉了一个 {@code sync(UUID)} 重载和 {@code ObjectProvider<WeComChatDataSyncService>}
+ * 注入 —— 前者是 package-private 且无生产调用方的死代码（唯一的调用方是只测它的单元测试），
+ * 后者是它存在的唯一理由。那也是本类唯一一处「渠道编排层 → {@code service.wecom}」依赖。
+ * 企业微信的定时同步由 {@code WeComChatDataSyncRuntime} 直接驱动 {@code WeComChatDataSyncService}，
+ * 不经过本类。
+ */
 @Service
 public class ChannelAccountService {
 
-    private static final Set<String> SECRET_KEYS = Set.of(
-            "smtpPassword", "imapPassword", "accessKeySecret");
-    private static final Map<String, Set<String>> CREDENTIAL_KEYS = Map.of(
-            "email", Set.of("smtpHost", "smtpPort", "smtpSsl", "smtpUser", "smtpPassword",
-                    "imapHost", "imapPort", "imapSsl", "imapUser", "imapPassword", "provider", "mailFrom"),
-            "chatapp", Set.of("accessKeyId", "accessKeySecret", "region", "endpoint",
-                    "custSpaceId", "chatappFrom"));
-
     private final ChannelAccountMapper channelAccountMapper;
-    private final ChatAppMessageSyncService chatAppMessageSyncService;
-    private final ChatAppTemplateSyncService chatAppTemplateSyncService;
-    private final EmailSyncService emailSyncService;
+    private final ChannelTypeRegistry channelTypes;
     private final CredentialCipher credentialCipher;
-    private final WeComChatDataSyncService weComSyncService;
-    private final WhatsAppProviderScopeService whatsAppProviderScopeService;
 
     @Autowired
-    public ChannelAccountService(ChannelAccountMapper channelAccountMapper,
-                                 ChatAppMessageSyncService chatAppMessageSyncService,
-                                 ChatAppTemplateSyncService chatAppTemplateSyncService,
-                                 EmailSyncService emailSyncService,
-                                 CredentialCipher credentialCipher,
-                                 ObjectProvider<WeComChatDataSyncService> weComSyncProvider,
-                                 WhatsAppProviderScopeService whatsAppProviderScopeService) {
-        this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
-                emailSyncService, credentialCipher, weComSyncProvider.getIfAvailable(), whatsAppProviderScopeService);
-    }
-
     ChannelAccountService(ChannelAccountMapper channelAccountMapper,
-                          ChatAppMessageSyncService chatAppMessageSyncService,
-                          ChatAppTemplateSyncService chatAppTemplateSyncService,
-                          EmailSyncService emailSyncService,
+                          ChannelTypeRegistry channelTypes,
                           CredentialCipher credentialCipher) {
-        this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
-                emailSyncService, credentialCipher, (WeComChatDataSyncService) null, null);
-    }
-
-    ChannelAccountService(ChannelAccountMapper channelAccountMapper,
-                          ChatAppMessageSyncService chatAppMessageSyncService,
-                          ChatAppTemplateSyncService chatAppTemplateSyncService,
-                          EmailSyncService emailSyncService,
-                          CredentialCipher credentialCipher,
-                          WeComChatDataSyncService weComSyncService) {
-        this(channelAccountMapper, chatAppMessageSyncService, chatAppTemplateSyncService,
-                emailSyncService, credentialCipher, weComSyncService, null);
-    }
-
-    ChannelAccountService(ChannelAccountMapper channelAccountMapper,
-                          ChatAppMessageSyncService chatAppMessageSyncService,
-                          ChatAppTemplateSyncService chatAppTemplateSyncService,
-                          EmailSyncService emailSyncService,
-                          CredentialCipher credentialCipher,
-                          WeComChatDataSyncService weComSyncService,
-                          WhatsAppProviderScopeService whatsAppProviderScopeService) {
         this.channelAccountMapper = channelAccountMapper;
-        this.chatAppMessageSyncService = chatAppMessageSyncService;
-        this.chatAppTemplateSyncService = chatAppTemplateSyncService;
-        this.emailSyncService = emailSyncService;
+        this.channelTypes = channelTypes;
         this.credentialCipher = credentialCipher;
-        this.weComSyncService = weComSyncService;
-        this.whatsAppProviderScopeService = whatsAppProviderScopeService;
     }
 
-    public List<ChannelAccountSummary> list(UUID ownerId) {
+    public java.util.List<ChannelAccountSummary> list(UUID ownerId) {
         return channelAccountMapper.findAllByOwner(ownerId).stream()
                 .map(ChannelAccountSummary::from).toList();
     }
@@ -134,25 +97,24 @@ public class ChannelAccountService {
 
     @Transactional
     public ChannelAccountSummary createOrBind(UUID ownerId, CreateChannelAccountRequest request) {
-        if (isWhatsAppChannel(request.channelType())) {
-            throw new ChannelAccountException("WHATSAPP_ONBOARDING_REQUIRED", HttpStatus.CONFLICT);
-        }
-        String channelType = normalizeChannelType(request.channelType());
-        if (channelAccountMapper.countActiveByOwnerAndChannel(ownerId, channelType) > 0) {
+        ChannelType channelType = channelTypes.require(request.channelType());
+        channelType.assertBindableFromSettings();
+        String typeKey = channelType.key();
+        if (channelAccountMapper.countActiveByOwnerAndChannel(ownerId, typeKey) > 0) {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_ALREADY_EXISTS", HttpStatus.CONFLICT);
         }
-        String identifier = normalizeIdentifier(channelType, request.accountIdentifier());
+        String identifier = channelType.normalizeIdentifier(request.accountIdentifier());
         Map<String, String> credentials = validatedCredentials(channelType, request.credentials());
         requireCompleteCredentials(channelType, credentials);
-        assertCompatibleScope(channelType, credentials);
+        channelType.assertScope(credentials);
         String encrypted = encrypt(credentials);
-        ChannelAccountEntity existing = channelAccountMapper.findOwnedByIdentifier(ownerId, channelType, identifier);
+        ChannelAccountEntity existing = channelAccountMapper.findOwnedByIdentifier(ownerId, typeKey, identifier);
         ChannelAccountEntity entity = existing == null ? new ChannelAccountEntity() : existing;
         if (existing == null) {
             entity.setId(UUID.randomUUID());
         }
         entity.setOwnerUserId(ownerId);
-        entity.setChannelType(channelType);
+        entity.setChannelType(typeKey);
         entity.setName(request.name().trim());
         entity.setAccountIdentifier(request.accountIdentifier().trim());
         entity.setAccountIdentifierNormalized(identifier);
@@ -166,7 +128,7 @@ public class ChannelAccountService {
         } else {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_ALREADY_EXISTS", HttpStatus.CONFLICT);
         }
-        bindProviderScope(channelType, entity);
+        channelType.bindScope(entity);
         return ChannelAccountSummary.from(entity);
     }
 
@@ -178,49 +140,16 @@ public class ChannelAccountService {
 
     public Object sync(UUID ownerId, UUID id) throws Exception {
         ChannelAccountEntity entity = requireActive(ownerId, id);
+        ChannelType channelType = channelTypes.require(entity.getChannelType());
         channelAccountMapper.updateSyncStatusOwned(ownerId, id, "syncing", null);
         try {
-            Object result = switch (entity.getChannelType().toLowerCase()) {
-                case "email" -> emailSyncService.receiveLatest(id, ownerId);
-                case "chatapp", "whatsapp" -> {
-                    var msgResult = chatAppMessageSyncService.runAccount(id);
-                    var tplResult = chatAppTemplateSyncService.runAccount(id);
-                    yield Map.of(
-                            "messageSync", msgResult,
-                            "templateSync", tplResult
-                    );
-                }
-                default -> throw new IllegalArgumentException("Unsupported channel type: " + entity.getChannelType());
-            };
+            Object result = channelType.syncAccount(ownerId, id);
             channelAccountMapper.updateSyncStatusOwned(ownerId, id, "success", Instant.now());
             return result;
         } catch (Exception e) {
             channelAccountMapper.updateSyncStatusOwned(ownerId, id, "failed", Instant.now());
             throw e;
         }
-    }
-
-    Object sync(UUID id) throws Exception {
-        ChannelAccountEntity entity = channelAccountMapper.selectById(id);
-        if (entity == null || !"wecom".equalsIgnoreCase(entity.getChannelType())) {
-            return null;
-        }
-        channelAccountMapper.updateSyncStatus(id, "syncing", null);
-        try {
-            Object result = requireWeComSync().syncSystem();
-            channelAccountMapper.updateSyncStatus(id, "success", Instant.now());
-            return result;
-        } catch (Exception e) {
-            channelAccountMapper.updateSyncStatus(id, "failed", Instant.now());
-            throw e;
-        }
-    }
-
-    private WeComChatDataSyncService requireWeComSync() {
-        if (weComSyncService == null) {
-            throw new IllegalStateException("WECOM_CHATDATA_NOT_CONFIGURED");
-        }
-        return weComSyncService;
     }
 
     public Map<String, String> getCredentials(UUID ownerId, UUID id) {
@@ -231,8 +160,9 @@ public class ChannelAccountService {
         }
         try {
             Map<String, String> secrets = credentialCipher.decrypt(encrypted);
+            Set<String> secretKeys = channelTypes.secretFields();
             Map<String, String> masked = new HashMap<>();
-            secrets.forEach((k, v) -> masked.put(k, SECRET_KEYS.contains(k) ? "***" : v));
+            secrets.forEach((k, v) -> masked.put(k, secretKeys.contains(k) ? "***" : v));
             return masked;
         } catch (CredentialCipher.CredentialDecryptionException e) {
             return Map.of();
@@ -242,7 +172,8 @@ public class ChannelAccountService {
     public Map<String, Object> updateCredentials(UUID ownerId, UUID id, Map<String, String> body)
             throws CredentialCipher.CredentialEncryptionException {
         ChannelAccountEntity entity = requireActive(ownerId, id);
-        Map<String, String> validatedBody = validatedCredentials(entity.getChannelType(), body);
+        ChannelType channelType = channelTypes.require(entity.getChannelType());
+        Map<String, String> validatedBody = validatedCredentials(channelType, body);
 
         Map<String, String> existing = new HashMap<>();
         String encrypted = entity.getEncryptedConfig();
@@ -253,17 +184,18 @@ public class ChannelAccountService {
                 // start fresh if decryption fails
             }
         }
+        Set<String> secretKeys = channelTypes.secretFields();
         validatedBody.forEach((key, value) -> {
             if (value == null || value.isBlank()) return;
-            if (SECRET_KEYS.contains(key) && "***".equals(value.trim())) return;
+            if (secretKeys.contains(key) && "***".equals(value.trim())) return;
             existing.put(key, value);
         });
 
-        assertCompatibleScope(entity.getChannelType(), existing);
+        channelType.assertScope(existing);
         String newEncrypted = credentialCipher.encrypt(existing);
         channelAccountMapper.updateEncryptedConfigOwned(ownerId, id, newEncrypted);
         entity.setEncryptedConfig(newEncrypted);
-        bindProviderScope(entity.getChannelType(), entity);
+        channelType.bindScope(entity);
         return Map.of("updated", existing.size());
     }
 
@@ -275,20 +207,18 @@ public class ChannelAccountService {
         return entity;
     }
 
-    private Map<String, String> validatedCredentials(String rawChannelType, Map<String, String> credentials) {
-        String channelType = normalizeChannelType(rawChannelType);
+    private Map<String, String> validatedCredentials(ChannelType channelType, Map<String, String> credentials) {
         Map<String, String> values = credentials == null ? Map.of() : credentials;
-        Set<String> allowed = CREDENTIAL_KEYS.get(channelType);
-        if (!allowed.containsAll(values.keySet())) {
+        if (!channelType.credentialFields().containsAll(values.keySet())) {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_INVALID_CREDENTIAL_FIELD", HttpStatus.BAD_REQUEST);
         }
         return values;
     }
 
-    private void requireCompleteCredentials(String channelType, Map<String, String> credentials) {
-        Set<String> missing = CREDENTIAL_KEYS.get(channelType).stream()
+    private void requireCompleteCredentials(ChannelType channelType, Map<String, String> credentials) {
+        Set<String> missing = channelType.credentialFields().stream()
                 .filter(key -> credentials.get(key) == null || credentials.get(key).isBlank())
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         if (!missing.isEmpty()) {
             throw new ChannelAccountException("CHANNEL_ACCOUNT_INCOMPLETE_CREDENTIALS", HttpStatus.BAD_REQUEST);
         }
@@ -300,38 +230,6 @@ public class ChannelAccountService {
         } catch (CredentialCipher.CredentialEncryptionException e) {
             throw new ChannelAccountException(e.code(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
-    }
-
-    private void assertCompatibleScope(String channelType, Map<String, String> credentials) {
-        if ("chatapp".equals(normalizeChannelType(channelType)) && whatsAppProviderScopeService != null) {
-            whatsAppProviderScopeService.assertCompatible(credentials.get("custSpaceId"));
-        }
-    }
-
-    private void bindProviderScope(String channelType, ChannelAccountEntity entity) {
-        if ("chatapp".equals(normalizeChannelType(channelType)) && whatsAppProviderScopeService != null) {
-            whatsAppProviderScopeService.bind(entity);
-        }
-    }
-
-    private static String normalizeChannelType(String channelType) {
-        String normalized = trimmed(channelType).toLowerCase();
-        if ("whatsapp".equals(normalized)) normalized = "chatapp";
-        if (!CREDENTIAL_KEYS.containsKey(normalized)) {
-            throw new ChannelAccountException("CHANNEL_ACCOUNT_TYPE_UNSUPPORTED", HttpStatus.BAD_REQUEST);
-        }
-        return normalized;
-    }
-
-    private static boolean isWhatsAppChannel(String channelType) {
-        String normalized = trimmed(channelType).toLowerCase();
-        return "chatapp".equals(normalized) || "whatsapp".equals(normalized);
-    }
-
-    private static String normalizeIdentifier(String channelType, String identifier) {
-        String value = trimmed(identifier);
-        if ("email".equals(channelType)) return value.toLowerCase();
-        return value.replaceAll("[\\s()\\-]", "");
     }
 
     private static String trimmed(String value) {

@@ -1,6 +1,6 @@
 package com.crmforlogistics.messagecenter.service.aitopic;
 
-import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
+import com.crmforlogistics.messagecenter.entity.WeComMessageSummaryJobEntity;
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;

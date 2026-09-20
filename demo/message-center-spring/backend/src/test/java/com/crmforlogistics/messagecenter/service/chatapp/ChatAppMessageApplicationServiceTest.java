@@ -7,7 +7,7 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
-import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageSendApplicationService;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

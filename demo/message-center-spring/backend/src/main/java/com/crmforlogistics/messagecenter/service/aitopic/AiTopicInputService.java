@@ -14,7 +14,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComMessageSummaryJobMapper;
-import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
+import com.crmforlogistics.messagecenter.entity.WeComMessageSummaryJobEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 

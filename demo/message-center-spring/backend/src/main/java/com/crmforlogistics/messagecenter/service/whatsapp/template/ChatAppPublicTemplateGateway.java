@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.channel.chatapp.template;
+package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.Page;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.Query;

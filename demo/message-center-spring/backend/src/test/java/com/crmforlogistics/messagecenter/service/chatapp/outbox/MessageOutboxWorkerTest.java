@@ -1,7 +1,7 @@
-package com.crmforlogistics.messagecenter.service.message;
+package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOutboundGateway;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;

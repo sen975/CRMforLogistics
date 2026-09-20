@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.channel.wecom;
+package com.crmforlogistics.messagecenter.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;

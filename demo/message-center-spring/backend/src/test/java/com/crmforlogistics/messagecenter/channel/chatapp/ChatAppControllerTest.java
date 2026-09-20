@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageApplicationService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
-import com.crmforlogistics.messagecenter.service.message.MessageSendApplicationService;
+import com.crmforlogistics.messagecenter.service.chatapp.outbox.MessageSendApplicationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

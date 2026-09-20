@@ -9,10 +9,10 @@ import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
-import com.crmforlogistics.messagecenter.service.wecom.WeComChatDataSyncService;
 import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -94,9 +94,12 @@ class ChannelAccountServiceTest {
                 .thenReturn(new ChatAppMessageSyncService.SyncResultRecord(1, 2, 2, 0, 10));
         when(templateSyncService.runAccount(id))
                 .thenReturn(new ChatAppTemplateSyncService.SyncResultRecord(1, 3, 1, 10));
+        ChannelTypeRegistry registry = new ChannelTypeRegistry(List.of(
+                new EmailChannelType(mock(EmailSyncService.class)),
+                new ChatAppChannelType(messageSyncService, templateSyncService,
+                        mock(WhatsAppProviderScopeService.class))));
         ChannelAccountService service = new ChannelAccountService(
-                mapper, messageSyncService, templateSyncService,
-                mock(EmailSyncService.class), mock(CredentialCipher.class));
+                mapper, registry, mock(CredentialCipher.class));
 
         service.sync(owner, id);
 
@@ -173,7 +176,7 @@ class ChannelAccountServiceTest {
     }
 
     @Test
-    void credentialUpdateCannotCrossProviderScope() throws Exception {
+    void credentialUpdatePersistsNothingWhenTheScopeCheckFails() throws Exception {
         ChannelAccountMapper mapper = mock(ChannelAccountMapper.class);
         CredentialCipher cipher = mock(CredentialCipher.class);
         WhatsAppProviderScopeService scopeService = mock(WhatsAppProviderScopeService.class);
@@ -206,22 +209,19 @@ class ChannelAccountServiceTest {
     }
 
     private static ChannelAccountService service(ChannelAccountMapper mapper, CredentialCipher cipher) {
-        return new ChannelAccountService(mapper,
-                mock(ChatAppMessageSyncService.class),
-                mock(ChatAppTemplateSyncService.class),
-                mock(EmailSyncService.class),
-                cipher);
+        return service(mapper, cipher, mock(WhatsAppProviderScopeService.class));
     }
 
     private static ChannelAccountService service(ChannelAccountMapper mapper, CredentialCipher cipher,
                                                  WhatsAppProviderScopeService scopeService) {
-        return new ChannelAccountService(mapper,
-                mock(ChatAppMessageSyncService.class),
-                mock(ChatAppTemplateSyncService.class),
-                mock(EmailSyncService.class),
-                cipher,
-                (WeComChatDataSyncService) null,
-                scopeService);
+        return new ChannelAccountService(mapper, registry(scopeService), cipher);
+    }
+
+    private static ChannelTypeRegistry registry(WhatsAppProviderScopeService scopeService) {
+        return new ChannelTypeRegistry(List.of(
+                new EmailChannelType(mock(EmailSyncService.class)),
+                new ChatAppChannelType(mock(ChatAppMessageSyncService.class),
+                        mock(ChatAppTemplateSyncService.class), scopeService)));
     }
 
     private static ChannelAccountEntity account(UUID id, String channelType, String identifier) {

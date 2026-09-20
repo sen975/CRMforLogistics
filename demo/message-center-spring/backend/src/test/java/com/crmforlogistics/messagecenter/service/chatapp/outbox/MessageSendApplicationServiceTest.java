@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.service.message;
+package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
@@ -32,6 +32,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
 
 @ExtendWith(MockitoExtension.class)
 class MessageSendApplicationServiceTest {

@@ -36,6 +36,9 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 
 @Component
 public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {

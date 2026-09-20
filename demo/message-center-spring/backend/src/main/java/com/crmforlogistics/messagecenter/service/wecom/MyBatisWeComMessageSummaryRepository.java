@@ -1,6 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
-import com.crmforlogistics.messagecenter.channel.wecom.WeComMessageSummaryJobEntity;
+import com.crmforlogistics.messagecenter.entity.WeComMessageSummaryJobEntity;
 import com.crmforlogistics.messagecenter.mapper.WeComChatDataMessageMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComMessageSummaryJobMapper;
 import org.springframework.stereotype.Service;

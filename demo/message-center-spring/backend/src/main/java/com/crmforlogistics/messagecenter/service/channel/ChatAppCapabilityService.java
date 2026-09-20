@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.service.channel;
 
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentials;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppCapabilityProbe;
 import com.crmforlogistics.messagecenter.dto.response.ChatAppCapabilityReport;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;

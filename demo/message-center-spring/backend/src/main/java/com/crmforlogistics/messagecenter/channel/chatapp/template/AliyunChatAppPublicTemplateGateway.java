@@ -1,9 +1,9 @@
 package com.crmforlogistics.messagecenter.channel.chatapp.template;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentials;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 import static com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.*;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
 
 @Service
 public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplateGateway {

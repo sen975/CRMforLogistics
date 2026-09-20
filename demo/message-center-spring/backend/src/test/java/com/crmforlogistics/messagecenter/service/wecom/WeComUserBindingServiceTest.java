@@ -1,6 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
-import com.crmforlogistics.messagecenter.channel.wecom.WeComUserBindingEntity;
+import com.crmforlogistics.messagecenter.entity.WeComUserBindingEntity;
 import com.crmforlogistics.messagecenter.mapper.RoleMapper;
 import com.crmforlogistics.messagecenter.mapper.UserMapper;
 import com.crmforlogistics.messagecenter.mapper.WeComUserBindingMapper;

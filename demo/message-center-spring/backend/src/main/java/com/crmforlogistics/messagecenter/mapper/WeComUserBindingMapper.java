@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.crmforlogistics.messagecenter.channel.wecom.WeComUserBindingEntity;
+import com.crmforlogistics.messagecenter.entity.WeComUserBindingEntity;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;

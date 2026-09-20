@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.service.message;
+package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;

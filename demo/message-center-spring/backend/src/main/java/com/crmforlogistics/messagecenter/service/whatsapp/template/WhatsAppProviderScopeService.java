@@ -1,7 +1,7 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsException;
-import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppAccountCredentialsResolver;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;

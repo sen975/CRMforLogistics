@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.service.message;
+package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;

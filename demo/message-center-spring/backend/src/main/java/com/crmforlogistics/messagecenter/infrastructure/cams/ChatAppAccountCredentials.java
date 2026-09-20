@@ -1,4 +1,4 @@
-package com.crmforlogistics.messagecenter.channel.chatapp;
+package com.crmforlogistics.messagecenter.infrastructure.cams;
 
 /** Runtime credentials for one owned WhatsApp/CAMS account. */
 public record ChatAppAccountCredentials(

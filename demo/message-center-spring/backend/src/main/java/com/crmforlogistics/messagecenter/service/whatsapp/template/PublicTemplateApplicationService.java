@@ -1,6 +1,6 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
-import com.crmforlogistics.messagecenter.channel.chatapp.template.ChatAppPublicTemplateGateway;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
