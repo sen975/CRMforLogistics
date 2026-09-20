@@ -65,7 +65,9 @@ class AdminWhatsAppPhoneNumberControllerTest {
         AdminWhatsAppAccountSyncService sync = mock(AdminWhatsAppAccountSyncService.class);
         when(sync.sync(ACTOR)).thenReturn(new AdminWhatsAppAccountSyncService.SyncResult(
                 1, 2, 0, List.of(new AdminWhatsAppAccountSyncService.AccountProjection(
-                        ACCOUNT, null, "*******1111", "账号", "ACTIVE", "VERIFIED", null))));
+                        ACCOUNT, null, "*******1111", "账号", "ACTIVE", "VERIFIED", null)),
+                List.of(new AdminWhatsAppAccountSyncService.ProviderPhoneReport(
+                        "*******1111", "PENDING", "NOT_VERIFIED", false))));
         MockMvc mvc = authenticatedMvc(service, sync);
 
         mvc.perform(post("/api/admin/whatsapp/accounts/sync"))

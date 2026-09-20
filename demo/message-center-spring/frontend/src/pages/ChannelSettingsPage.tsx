@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { App, Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Descriptions, Form, Input, Modal, Popconfirm, Space, Spin, Switch, Table, Tag, Typography } from 'antd';
 import { CheckOutlined, CloseOutlined, EditOutlined, KeyOutlined, MailOutlined, SettingOutlined, SyncOutlined, WechatOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createChannelAccount, fetchChannelAccounts, fetchChannelCredentials, fetchWeComBinding, triggerChannelSync, unbindChannelAccount, updateChannelAccount, updateChannelCredentials } from '../api/endpoints';
@@ -117,7 +117,9 @@ export default function ChannelSettingsPage() {
 
   return <div style={{ maxWidth: 980, margin: '0 auto', padding: 24 }}>
     <Title level={4}>渠道设置</Title>
-    <AdminWhatsAppAccountPanel isAdmin={isAdmin} />
+    {isAdmin
+      ? <Alert type="info" showIcon message="WhatsApp 平台管理已迁移" description={<Link to="/admin/platforms">进入管理员平台工作台，配置 CAMS、管理账号和处理模板审批。</Link>} style={{ marginBottom: 24 }} />
+      : <AdminWhatsAppAccountPanel isAdmin={false} />}
     {isLoading ? <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div> : <Table dataSource={rows} rowKey="id" columns={columns} pagination={false} size="small" expandable={{ expandedRowKeys: expandedKeys, onExpandedRowsChange: (keys) => setExpandedKeys(keys as string[]), rowExpandable: (record: ChannelRow) => record.configured && record.channelType !== 'wecom', expandedRowRender: (record: ChannelRow) => <Descriptions size="small" column={2} bordered><Descriptions.Item label="渠道类型">{channelLabels[record.channelType]}</Descriptions.Item><Descriptions.Item label="同步状态"><Tag>{record.syncStatus || 'idle'}</Tag></Descriptions.Item><Descriptions.Item label="创建时间">{record.createdAt ? new Date(record.createdAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item></Descriptions> }} />}
     <Modal title={creatingChannel ? `配置${channelLabels[creatingChannel]}` : '配置渠道'} open={!!creatingChannel} onCancel={() => { setCreatingChannel(null); createForm.resetFields(); }} onOk={() => createForm.submit()} confirmLoading={createMutation.isPending} width={560} destroyOnHidden>
       <Form form={createForm} layout="vertical" onFinish={(values: Record<string, string | boolean>) => {

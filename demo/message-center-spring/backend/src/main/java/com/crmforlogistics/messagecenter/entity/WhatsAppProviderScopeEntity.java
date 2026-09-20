@@ -25,6 +25,14 @@ public class WhatsAppProviderScopeEntity {
             typeHandler = JsonbStringTypeHandler.class)
     private String encryptedConfig;
     private String status;
+    private String displayName;
+    private Instant lastTestedAt;
+    private String lastTestStatus;
+    private String lastTestErrorCode;
+    private Instant lastSyncedAt;
+    private String lastSyncStatus;
+    private String lastSyncErrorCode;
+    private Long version;
     private Instant createdAt;
     private Instant updatedAt;
 
@@ -46,6 +54,22 @@ public class WhatsAppProviderScopeEntity {
     public void setEncryptedConfig(String encryptedConfig) { this.encryptedConfig = encryptedConfig; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getDisplayName() { return displayName; }
+    public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public Instant getLastTestedAt() { return lastTestedAt; }
+    public void setLastTestedAt(Instant lastTestedAt) { this.lastTestedAt = lastTestedAt; }
+    public String getLastTestStatus() { return lastTestStatus; }
+    public void setLastTestStatus(String lastTestStatus) { this.lastTestStatus = lastTestStatus; }
+    public String getLastTestErrorCode() { return lastTestErrorCode; }
+    public void setLastTestErrorCode(String lastTestErrorCode) { this.lastTestErrorCode = lastTestErrorCode; }
+    public Instant getLastSyncedAt() { return lastSyncedAt; }
+    public void setLastSyncedAt(Instant lastSyncedAt) { this.lastSyncedAt = lastSyncedAt; }
+    public String getLastSyncStatus() { return lastSyncStatus; }
+    public void setLastSyncStatus(String lastSyncStatus) { this.lastSyncStatus = lastSyncStatus; }
+    public String getLastSyncErrorCode() { return lastSyncErrorCode; }
+    public void setLastSyncErrorCode(String lastSyncErrorCode) { this.lastSyncErrorCode = lastSyncErrorCode; }
+    public Long getVersion() { return version; }
+    public void setVersion(Long version) { this.version = version; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

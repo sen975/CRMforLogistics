@@ -9,7 +9,9 @@ import com.crmforlogistics.messagecenter.mapper.RoleMapper;
 import com.crmforlogistics.messagecenter.mapper.UserMapper;
 import com.crmforlogistics.messagecenter.mapper.WhatsAppAccountAssignmentAuditMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,6 +29,8 @@ class AdminWhatsAppPhoneNumberServiceTest {
     private static final UUID OWNER_A = UUID.fromString("10000000-0000-0000-0000-000000000002");
     private static final UUID OWNER_B = UUID.fromString("10000000-0000-0000-0000-000000000003");
     private static final UUID ACCOUNT_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
+    private static final UUID SCOPE_A = UUID.fromString("a0000000-0000-0000-0000-00000000000a");
+    private static final UUID SCOPE_B = UUID.fromString("b0000000-0000-0000-0000-00000000000b");
 
     @Test
     void assignsOnlyUnassignedAccountWithVersionHistoryGrantAndAudit() {
@@ -36,7 +40,7 @@ class AdminWhatsAppPhoneNumberServiceTest {
         UserMapper users = mock(UserMapper.class);
         RoleMapper roles = adminRoles();
         when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(account(null, 4L));
-        when(users.findAssignableSalesUser(OWNER_A)).thenReturn(Optional.of(user(OWNER_A)));
+        when(users.findAssignableUser(OWNER_A)).thenReturn(Optional.of(user(OWNER_A)));
         when(accounts.countActiveWhatsAppByOwner(OWNER_A)).thenReturn(0);
         when(accounts.assignWhatsAppOwner(ACCOUNT_ID, OWNER_A, 4L)).thenReturn(1);
         when(conversations.grantAccountHistory(ACCOUNT_ID, OWNER_A, ACTOR)).thenReturn(1);
@@ -63,7 +67,7 @@ class AdminWhatsAppPhoneNumberServiceTest {
         UserMapper users = mock(UserMapper.class);
         RoleMapper roles = adminRoles();
         when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(account(OWNER_A, 7L));
-        when(users.findAssignableSalesUser(OWNER_B)).thenReturn(Optional.of(user(OWNER_B)));
+        when(users.findAssignableUser(OWNER_B)).thenReturn(Optional.of(user(OWNER_B)));
         when(accounts.countActiveWhatsAppByOwner(OWNER_B)).thenReturn(0);
         when(accounts.transferWhatsAppOwner(ACCOUNT_ID, OWNER_B, 7L)).thenReturn(1);
         when(conversations.grantAccountHistory(ACCOUNT_ID, OWNER_B, ACTOR)).thenReturn(1);
@@ -139,7 +143,7 @@ class AdminWhatsAppPhoneNumberServiceTest {
         UserMapper users = mock(UserMapper.class);
         RoleMapper roles = adminRoles();
         when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(account(null, 1L));
-        when(users.findAssignableSalesUser(OWNER_A)).thenReturn(Optional.of(user(OWNER_A)));
+        when(users.findAssignableUser(OWNER_A)).thenReturn(Optional.of(user(OWNER_A)));
         when(accounts.countActiveWhatsAppByOwner(OWNER_A)).thenReturn(1);
         AdminWhatsAppPhoneNumberService service = service(accounts, audits, conversations, users, roles);
 
@@ -150,12 +154,104 @@ class AdminWhatsAppPhoneNumberServiceTest {
         verify(audits, never()).insert(any(WhatsAppAccountAssignmentAuditEntity.class));
     }
 
+    @Test
+    void assignmentRejectsAccountFromDifferentScope() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppAccountAssignmentAuditMapper audits = mock(WhatsAppAccountAssignmentAuditMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        UserMapper users = mock(UserMapper.class);
+        RoleMapper roles = adminRoles();
+        when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(accountInScope(null, 4L, SCOPE_B));
+        AdminWhatsAppPhoneNumberService service = service(accounts, audits, conversations, users, roles);
+
+        assertThatThrownBy(() -> service.assign(ACTOR, SCOPE_A, ACCOUNT_ID, OWNER_A, "跨域分配", 4L))
+                .isInstanceOf(WhatsAppAuthorizationException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_SCOPE_MISMATCH")
+                .satisfies(error -> assertThat(((WhatsAppAuthorizationException) error).status())
+                        .isEqualTo(HttpStatus.CONFLICT));
+        verify(accounts, never()).assignWhatsAppOwner(any(), any(), any(Long.class));
+        verify(accounts, never()).countActiveWhatsAppByOwner(any());
+        verify(users, never()).findAssignableUser(any());
+        verify(audits, never()).insert(any(WhatsAppAccountAssignmentAuditEntity.class));
+    }
+
+    @Test
+    void reclaimRejectsAccountFromDifferentScope() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppAccountAssignmentAuditMapper audits = mock(WhatsAppAccountAssignmentAuditMapper.class);
+        RoleMapper roles = adminRoles();
+        when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(accountInScope(OWNER_A, 9L, SCOPE_B));
+        AdminWhatsAppPhoneNumberService service = service(accounts, audits, null, null, roles);
+
+        assertThatThrownBy(() -> service.reclaim(ACTOR, SCOPE_A, ACCOUNT_ID, "跨域收回", 9L))
+                .isInstanceOf(WhatsAppAuthorizationException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_SCOPE_MISMATCH");
+        verify(accounts, never()).reclaimWhatsAppOwner(any(), any(Long.class));
+        verify(audits, never()).insert(any(WhatsAppAccountAssignmentAuditEntity.class));
+    }
+
+    @Test
+    void transferRejectsAccountFromDifferentScope() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppAccountAssignmentAuditMapper audits = mock(WhatsAppAccountAssignmentAuditMapper.class);
+        RoleMapper roles = adminRoles();
+        when(accounts.findWhatsAppByIdForUpdate(ACCOUNT_ID)).thenReturn(accountInScope(OWNER_A, 7L, SCOPE_B));
+        AdminWhatsAppPhoneNumberService service = service(accounts, audits, null, null, roles);
+
+        assertThatThrownBy(() -> service.transfer(ACTOR, SCOPE_A, ACCOUNT_ID, OWNER_B, "跨域交接", 7L))
+                .isInstanceOf(WhatsAppAuthorizationException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_SCOPE_MISMATCH");
+        verify(accounts, never()).transferWhatsAppOwner(any(), any(), any(Long.class));
+        verify(audits, never()).insert(any(WhatsAppAccountAssignmentAuditEntity.class));
+    }
+
+    @Test
+    void assignmentHistoryRejectsAccountFromDifferentScope() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppAccountAssignmentAuditMapper audits = mock(WhatsAppAccountAssignmentAuditMapper.class);
+        RoleMapper roles = adminRoles();
+        when(accounts.selectById(ACCOUNT_ID)).thenReturn(accountInScope(OWNER_A, 9L, SCOPE_B));
+        AdminWhatsAppPhoneNumberService service = service(accounts, audits, null, null, roles);
+
+        assertThatThrownBy(() -> service.assignmentHistory(ACTOR, SCOPE_A, ACCOUNT_ID))
+                .isInstanceOf(WhatsAppAuthorizationException.class)
+                .hasMessage("WHATSAPP_ACCOUNT_SCOPE_MISMATCH");
+        verify(audits, never()).findByAccountId(any());
+    }
+
+    @Test
+    void listQueriesOnlyTheRequestedScope() {
+        ChannelAccountMapper accounts = mock(ChannelAccountMapper.class);
+        WhatsAppAccountAssignmentAuditMapper audits = mock(WhatsAppAccountAssignmentAuditMapper.class);
+        RoleMapper roles = adminRoles();
+        when(accounts.findAllWhatsAppByScope(SCOPE_A)).thenReturn(List.of(accountInScope(null, 1L, SCOPE_A)));
+        when(accounts.findAllWhatsAppForSync())
+                .thenReturn(List.of(accountInScope(null, 1L, SCOPE_A), accountInScope(null, 1L, SCOPE_B)));
+        AdminWhatsAppPhoneNumberService service = service(accounts, audits, null, null, roles);
+
+        List<AdminWhatsAppPhoneNumberService.AccountProjection> result = service.list(ACTOR, SCOPE_A);
+
+        assertThat(result).singleElement().satisfies(projection -> {
+            assertThat(projection.accountId()).isEqualTo(ACCOUNT_ID);
+            assertThat(projection.maskedPhone()).isEqualTo("*******1111");
+        });
+        verify(accounts).findAllWhatsAppByScope(SCOPE_A);
+        verify(accounts, never()).findAllWhatsAppByScope(SCOPE_B);
+        verify(accounts, never()).findAllWhatsAppForSync();
+    }
+
     private static AdminWhatsAppPhoneNumberService service(ChannelAccountMapper accounts,
                                                             WhatsAppAccountAssignmentAuditMapper audits,
                                                             ConversationMapper conversations,
                                                             UserMapper users,
                                                             RoleMapper roles) {
         return new AdminWhatsAppPhoneNumberService(accounts, audits, conversations, users, roles);
+    }
+
+    private static ChannelAccountEntity accountInScope(UUID owner, long version, UUID scopeId) {
+        ChannelAccountEntity account = account(owner, version);
+        account.setProviderScopeId(scopeId);
+        return account;
     }
 
     private static RoleMapper adminRoles() {

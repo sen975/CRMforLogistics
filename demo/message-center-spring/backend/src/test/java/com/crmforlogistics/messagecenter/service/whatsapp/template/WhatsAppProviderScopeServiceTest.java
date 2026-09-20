@@ -71,21 +71,29 @@ class WhatsAppProviderScopeServiceTest {
         verify(scopeMapper).updateEncryptedConfigIfEmpty(SCOPE_ID, "encrypted");
     }
 
+    /** Each CAMS space keeps its own template library, so a second space is not a conflict. */
     @Test
-    void rejectsASecondProviderScopeWithoutLeakingCredentials() {
+    void acceptsAnAccountThatNamesASpaceOtherThanAnExistingOne() {
         ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
         WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
         ChatAppAccountCredentialsResolver resolver = mock(ChatAppAccountCredentialsResolver.class);
-        when(scopeMapper.findAllByProvider("ALIYUN_CAMS"))
-                .thenReturn(List.of(scope(SCOPE_ID, "space-1")));
         WhatsAppProviderScopeService service = service(accountMapper, scopeMapper, resolver);
 
-        assertThatThrownBy(() -> service.assertCompatible("space-2-secret-value"))
-                .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
-                    assertThat(error.code()).isEqualTo("WHATSAPP_PROVIDER_SCOPE_MISMATCH");
-                    assertThat(error.getMessage()).doesNotContain("space-2-secret-value");
-                });
+        service.assertCompatible("space-2");
+
         verify(scopeMapper, never()).insertIgnore(any(), any());
+    }
+
+    @Test
+    void rejectsAnAccountThatNamesNoSpace() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChatAppAccountCredentialsResolver resolver = mock(ChatAppAccountCredentialsResolver.class);
+        WhatsAppProviderScopeService service = service(accountMapper, scopeMapper, resolver);
+
+        assertThatThrownBy(() -> service.assertCompatible("  "))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class,
+                        error -> assertThat(error.code()).isEqualTo("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"));
     }
 
     @Test
@@ -132,6 +140,64 @@ class WhatsAppProviderScopeServiceTest {
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class,
                         error -> assertThat(error.code()).isEqualTo("WHATSAPP_ACCOUNT_INACTIVE"));
         verify(resolver, never()).resolve(any());
+    }
+
+    @Test
+    void aNamedSpaceKeepsUsingTheCallersOwnAccountWhenItLivesThere() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChannelAccountEntity owned = activeAccount();
+        owned.setProviderScopeId(SCOPE_ID);
+        when(scopeMapper.selectById(SCOPE_ID)).thenReturn(scope(SCOPE_ID, "space-1"));
+        when(accountMapper.findByOwnerAndChannelType(USER_ID, "chatapp")).thenReturn(List.of(owned));
+        WhatsAppProviderScopeService service = service(accountMapper, scopeMapper,
+                mock(ChatAppAccountCredentialsResolver.class));
+
+        WhatsAppProviderScopeService.ScopeAccount resolved = service.requireScopeAccount(USER_ID, SCOPE_ID);
+
+        assertThat(resolved.account().getId()).isEqualTo(ACCOUNT_ID);
+        assertThat(resolved.scope().getId()).isEqualTo(SCOPE_ID);
+        verify(accountMapper, never()).findActiveByScope(any());
+    }
+
+    @Test
+    void aNamedSpaceFallsBackToAnAccountBoundToIt() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChannelAccountEntity owned = activeAccount();
+        owned.setProviderScopeId(UUID.fromString("30000000-0000-0000-0000-0000000000ff"));
+        ChannelAccountEntity bound = activeAccount();
+        bound.setId(UUID.fromString("20000000-0000-0000-0000-0000000000ff"));
+        bound.setProviderScopeId(SCOPE_ID);
+        when(scopeMapper.selectById(SCOPE_ID)).thenReturn(scope(SCOPE_ID, "space-1"));
+        when(accountMapper.findByOwnerAndChannelType(USER_ID, "chatapp")).thenReturn(List.of(owned));
+        when(accountMapper.findActiveByScope(SCOPE_ID)).thenReturn(List.of(bound));
+        WhatsAppProviderScopeService service = service(accountMapper, scopeMapper,
+                mock(ChatAppAccountCredentialsResolver.class));
+
+        WhatsAppProviderScopeService.ScopeAccount resolved = service.requireScopeAccount(USER_ID, SCOPE_ID);
+
+        assertThat(resolved.account().getId()).isEqualTo(bound.getId());
+    }
+
+    @Test
+    void aNamedSpaceWithoutAnActiveAccountIsRefused() {
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChannelAccountEntity expired = activeAccount();
+        expired.setProviderScopeId(SCOPE_ID);
+        expired.setAuthStatus("expired");
+        when(scopeMapper.selectById(SCOPE_ID)).thenReturn(scope(SCOPE_ID, "space-1"));
+        when(accountMapper.findByOwnerAndChannelType(USER_ID, "chatapp")).thenReturn(List.of());
+        when(accountMapper.findActiveByScope(SCOPE_ID)).thenReturn(List.of(expired));
+        WhatsAppProviderScopeService service = service(accountMapper, scopeMapper,
+                mock(ChatAppAccountCredentialsResolver.class));
+
+        assertThatThrownBy(() -> service.requireScopeAccount(USER_ID, SCOPE_ID))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
+                    assertThat(error.code()).isEqualTo("WHATSAPP_SCOPE_ACCOUNT_REQUIRED");
+                    assertThat(error.statusCode()).isEqualTo(HttpStatus.CONFLICT);
+                });
     }
 
     @Test

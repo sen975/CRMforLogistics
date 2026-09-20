@@ -52,8 +52,6 @@ public interface UserMapper extends BaseMapper<UserEntity> {
     long countUsers();
 
     @Select("select " + USER_COLUMNS + " from users u where u.id = #{id}::uuid " +
-            "and u.status = 'active' and u.deleted_at is null " +
-            "and not exists (select 1 from user_roles ur join roles r on r.id = ur.role_id " +
-            "where ur.user_id = u.id and r.code = 'admin') limit 1")
-    Optional<UserEntity> findAssignableSalesUser(@Param("id") UUID id);
+            "and u.status = 'active' and u.deleted_at is null limit 1")
+    Optional<UserEntity> findAssignableUser(@Param("id") UUID id);
 }

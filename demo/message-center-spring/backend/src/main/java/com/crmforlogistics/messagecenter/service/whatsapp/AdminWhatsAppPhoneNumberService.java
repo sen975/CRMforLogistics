@@ -50,17 +50,30 @@ public class AdminWhatsAppPhoneNumberService {
 
     @Transactional(readOnly = true)
     public List<AccountProjection> list(UUID actorId) {
+        return list(actorId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AccountProjection> list(UUID actorId, UUID scopeId) {
         if (actorId != null) requireAdmin(actorId);
-        List<ChannelAccountEntity> values = accounts.findAllWhatsAppForSync();
+        List<ChannelAccountEntity> values = scopeId == null
+                ? accounts.findAllWhatsAppForSync() : accounts.findAllWhatsAppByScope(scopeId);
         return values == null ? List.of() : values.stream().map(AdminWhatsAppPhoneNumberService::project).toList();
     }
 
     @Transactional
     public AccountProjection assign(UUID actorId, UUID accountId, UUID targetOwnerId,
                                     String reason, Long expectedVersion) {
+        return assign(actorId, null, accountId, targetOwnerId, reason, expectedVersion);
+    }
+
+    @Transactional
+    public AccountProjection assign(UUID actorId, UUID scopeId, UUID accountId, UUID targetOwnerId,
+                                    String reason, Long expectedVersion) {
         requireAdmin(actorId);
         validateInput(targetOwnerId, reason, expectedVersion);
         ChannelAccountEntity account = lockAccount(accountId);
+        checkScope(account, scopeId);
         validateTarget(targetOwnerId);
         checkVersion(account, expectedVersion);
         if (targetOwnerId.equals(account.getOwnerUserId())) return project(account);
@@ -80,9 +93,15 @@ public class AdminWhatsAppPhoneNumberService {
 
     @Transactional
     public AccountProjection reclaim(UUID actorId, UUID accountId, String reason, Long expectedVersion) {
+        return reclaim(actorId, null, accountId, reason, expectedVersion);
+    }
+
+    @Transactional
+    public AccountProjection reclaim(UUID actorId, UUID scopeId, UUID accountId, String reason, Long expectedVersion) {
         requireAdmin(actorId);
         validateInput(null, reason, expectedVersion);
         ChannelAccountEntity account = lockAccount(accountId);
+        checkScope(account, scopeId);
         checkVersion(account, expectedVersion);
         if (account.getOwnerUserId() == null) {
             throw failure("WHATSAPP_ASSIGNMENT_CONFLICT", HttpStatus.CONFLICT);
@@ -100,9 +119,16 @@ public class AdminWhatsAppPhoneNumberService {
     @Transactional
     public AccountProjection transfer(UUID actorId, UUID accountId, UUID targetOwnerId,
                                       String reason, Long expectedVersion) {
+        return transfer(actorId, null, accountId, targetOwnerId, reason, expectedVersion);
+    }
+
+    @Transactional
+    public AccountProjection transfer(UUID actorId, UUID scopeId, UUID accountId, UUID targetOwnerId,
+                                      String reason, Long expectedVersion) {
         requireAdmin(actorId);
         validateInput(targetOwnerId, reason, expectedVersion);
         ChannelAccountEntity account = lockAccount(accountId);
+        checkScope(account, scopeId);
         validateTarget(targetOwnerId);
         checkVersion(account, expectedVersion);
         if (targetOwnerId.equals(account.getOwnerUserId())) return project(account);
@@ -123,11 +149,17 @@ public class AdminWhatsAppPhoneNumberService {
 
     @Transactional(readOnly = true)
     public List<AssignmentAuditProjection> assignmentHistory(UUID actorId, UUID accountId) {
+        return assignmentHistory(actorId, null, accountId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AssignmentAuditProjection> assignmentHistory(UUID actorId, UUID scopeId, UUID accountId) {
         requireAdmin(actorId);
         ChannelAccountEntity account = accounts.selectById(accountId);
         if (!isWhatsApp(account)) {
             throw failure("WHATSAPP_ACCOUNT_NOT_FOUND", HttpStatus.NOT_FOUND);
         }
+        checkScope(account, scopeId);
         List<WhatsAppAccountAssignmentAuditEntity> values = audits.findByAccountId(account.getId());
         return values == null ? List.of() : values.stream()
                 .map(value -> new AssignmentAuditProjection(value.getId(), value.getPreviousOwnerUserId(),
@@ -147,7 +179,7 @@ public class AdminWhatsAppPhoneNumberService {
 
     private void validateTarget(UUID targetOwnerId) {
         if (users == null) return;
-        Optional<?> target = targetOwnerId == null ? Optional.empty() : users.findAssignableSalesUser(targetOwnerId);
+        Optional<?> target = targetOwnerId == null ? Optional.empty() : users.findAssignableUser(targetOwnerId);
         if (target == null || target.isEmpty()) {
             throw failure("WHATSAPP_TARGET_USER_INVALID", HttpStatus.CONFLICT);
         }
@@ -194,6 +226,12 @@ public class AdminWhatsAppPhoneNumberService {
         long current = account.getVersion() == null ? 0L : account.getVersion();
         if (current != expectedVersion) {
             throw failure("WHATSAPP_ASSIGNMENT_CONFLICT", HttpStatus.CONFLICT);
+        }
+    }
+
+    private static void checkScope(ChannelAccountEntity account, UUID scopeId) {
+        if (scopeId != null && !scopeId.equals(account.getProviderScopeId())) {
+            throw failure("WHATSAPP_ACCOUNT_SCOPE_MISMATCH", HttpStatus.CONFLICT);
         }
     }
 

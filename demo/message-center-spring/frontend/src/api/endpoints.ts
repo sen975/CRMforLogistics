@@ -48,6 +48,7 @@ import type {
   WeComViewerSessionDetail,
   WeComViewerSessionResponse,
   WeComInstallationSummary,
+  WeComExternalContactLink,
   WeComProviderData,
   WeComThreadResponse,
   WeComGroupThreadResponse,
@@ -69,6 +70,10 @@ import type {
   AdminWhatsAppAssignmentRequest,
   AdminWhatsAppSyncResult,
   AdminWhatsAppVersionedReasonRequest,
+  AdminCamsScope,
+  AdminCamsRequest,
+  AdminWhatsAppOverview,
+  AdminScopedWhatsAppAccount,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -200,6 +205,17 @@ export async function toggleConversationPinned(targetType: 'CONTACT' | 'WECOM_GR
 
 export async function hideConversation(targetType: 'CONTACT' | 'WECOM_GROUP', targetId: string): Promise<void> {
   await client.post('/conversations/preferences/delete', { targetType, targetId });
+}
+
+/**
+ * Clears a stored hidden preference for a conversation the account opens on purpose.
+ * Idempotent: it is safe to call for conversations that were never hidden.
+ */
+export async function restoreConversation(targetType: 'CONTACT' | 'WECOM_GROUP', targetId: string) {
+  const res = await client.post<{ targetType: string; targetId: string; pinned: boolean; hidden: boolean }>(
+    '/conversations/preferences/restore', { targetType, targetId },
+  );
+  return res.data;
 }
 
 export async function reorderConversations(request: import('./types').ConversationOrderRequest): Promise<void> {
@@ -336,6 +352,22 @@ export async function listWeComExternalContacts(
   authCorpId: string,
 ): Promise<WeComProviderData> {
   const res = await client.get<WeComProviderData>(`${weComInstallationBase(authCorpId)}/external-contacts`);
+  return res.data;
+}
+
+/**
+ * Asks the server which CRM contact each 客户联系 row may open. The client never derives
+ * accessibility itself; contacts without a CRM contact come back with a null contactId.
+ */
+export async function listWeComExternalContactLinks(
+  authCorpId: string,
+  externalUserIds: string[],
+): Promise<WeComExternalContactLink[]> {
+  if (externalUserIds.length === 0) return [];
+  const res = await client.get<WeComExternalContactLink[]>(
+    `${weComInstallationBase(authCorpId)}/external-contacts/contact-links`,
+    { params: { externalUserIds } },
+  );
   return res.data;
 }
 
@@ -740,6 +772,17 @@ export async function sendWeCom(data: { corpId: string; agentId: string; to: str
   await client.post('/wecom/send', data);
 }
 
+export async function sendTodoReminder(data: { date: string; text: string }): Promise<{ messageId: string; status: string }> {
+  const res = await client.post<{ messageId: string; status: string }>('/wecom/send-todo-reminder', data);
+  return res.data;
+}
+
+export type TodoApiItem = { id: string; date: string; title: string; time?: string | null; note?: string | null; completed: boolean; createdAt: string };
+export async function fetchTodos(): Promise<TodoApiItem[]> { return (await client.get<TodoApiItem[]>('/todos')).data; }
+export async function createTodoApi(data: { date: string; title: string; time?: string; note?: string }): Promise<TodoApiItem> { return (await client.post<TodoApiItem>('/todos', data)).data; }
+export async function updateTodoApi(id: string, completed: boolean): Promise<void> { await client.patch(`/todos/${encodeURIComponent(id)}`, { completed }); }
+export async function deleteTodoApi(id: string): Promise<void> { await client.delete(`/todos/${encodeURIComponent(id)}`); }
+
 export async function sendChatAppMedia(data: {
   contactId: string;
   recipientIdentityId: string;
@@ -864,10 +907,63 @@ export async function fetchAdminWhatsAppAccounts(): Promise<AdminWhatsAppAccount
   return res.data;
 }
 
+export async function fetchAdminCams(): Promise<AdminCamsScope[]> {
+  return (await client.get<AdminCamsScope[]>('/admin/whatsapp/cams')).data;
+}
+
+export async function fetchAdminWhatsAppOverview(): Promise<AdminWhatsAppOverview> {
+  return (await client.get<AdminWhatsAppOverview>('/admin/whatsapp/overview')).data;
+}
+
+export async function createAdminCams(data: AdminCamsRequest): Promise<AdminCamsScope> {
+  return (await client.post<AdminCamsScope>('/admin/whatsapp/cams', data)).data;
+}
+
+export async function updateAdminCams(scopeId: string, data: AdminCamsRequest): Promise<AdminCamsScope> {
+  return (await client.put<AdminCamsScope>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}`, data)).data;
+}
+
+export async function blockAdminCams(scopeId: string, expectedVersion: number): Promise<AdminCamsScope> {
+  return (await client.delete<AdminCamsScope>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}`, { data: { expectedVersion } })).data;
+}
+
+export async function testAdminCams(scopeId: string): Promise<{ success: boolean; phoneCount: number; message: string }> {
+  return (await client.post(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/test`)).data;
+}
+
+export async function syncAdminCams(scopeId: string): Promise<AdminWhatsAppSyncResult> {
+  return (await client.post<AdminWhatsAppSyncResult>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/sync`)).data;
+}
+
+export async function fetchAdminScopedWhatsAppAccounts(scopeId: string): Promise<AdminScopedWhatsAppAccount[]> {
+  return (await client.get<AdminScopedWhatsAppAccount[]>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts`)).data;
+}
+
+export async function assignAdminScopedWhatsAppAccount(scopeId: string, accountId: string, request: AdminWhatsAppAssignmentRequest): Promise<AdminWhatsAppAccountProjection> {
+  return (await client.post<AdminWhatsAppAccountProjection>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts/${encodeURIComponent(accountId)}/assign`, request)).data;
+}
+
+export async function reclaimAdminScopedWhatsAppAccount(scopeId: string, accountId: string, request: AdminWhatsAppVersionedReasonRequest): Promise<AdminWhatsAppAccountProjection> {
+  return (await client.post<AdminWhatsAppAccountProjection>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts/${encodeURIComponent(accountId)}/reclaim`, request)).data;
+}
+
+export async function transferAdminScopedWhatsAppAccount(scopeId: string, accountId: string, request: AdminWhatsAppAssignmentRequest): Promise<AdminWhatsAppAccountProjection> {
+  return (await client.post<AdminWhatsAppAccountProjection>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts/${encodeURIComponent(accountId)}/transfer`, request)).data;
+}
+
+export async function fetchAdminScopedAssignmentHistory(scopeId: string, accountId: string): Promise<AdminWhatsAppAssignmentAuditProjection[]> {
+  return (await client.get<AdminWhatsAppAssignmentAuditProjection[]>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts/${encodeURIComponent(accountId)}/assignment-history`)).data;
+}
+
 export async function syncAdminWhatsAppAccounts(): Promise<AdminWhatsAppSyncResult> {
   const res = await client.post<AdminWhatsAppSyncResult>('/admin/whatsapp/accounts/sync');
   return res.data;
 }
+
+export type WhatsAppCamsConfig = { configured: boolean; custSpaceId: string; accessKeyIdMasked: string; region: string; endpoint: string; source: string };
+export async function fetchWhatsAppCamsConfig(): Promise<WhatsAppCamsConfig> { return (await client.get<WhatsAppCamsConfig>('/admin/whatsapp/cams')).data; }
+export async function saveWhatsAppCamsConfig(data: { custSpaceId: string; accessKeyId: string; accessKeySecret: string; region: string; endpoint: string }): Promise<WhatsAppCamsConfig> { return (await client.put<WhatsAppCamsConfig>('/admin/whatsapp/cams', data)).data; }
+export async function testWhatsAppCamsConfig(): Promise<{ success: boolean; phoneCount: number; message: string }> { return (await client.post('/admin/whatsapp/cams/test')).data; }
 
 export async function assignAdminWhatsAppAccount(
   accountId: string,
@@ -1093,13 +1189,17 @@ export async function fetchSharedTemplates(params?: SharedTemplateListFilters): 
   return res.data;
 }
 
-export async function fetchSharedTemplate(templateId: string): Promise<SharedTemplate> {
-  const res = await client.get<SharedTemplate>(`${sharedWhatsAppBase}/templates/${encodeURIComponent(templateId)}`);
+export async function fetchSharedTemplate(templateId: string, scopeId?: string): Promise<SharedTemplate> {
+  const res = await client.get<SharedTemplate>(
+    `${sharedWhatsAppBase}/templates/${encodeURIComponent(templateId)}`, { params: { scopeId } },
+  );
   return res.data;
 }
 
-export async function createSharedTemplate(command: TemplateCommand): Promise<TemplateOperation> {
-  const res = await client.post<TemplateOperation>(`${sharedWhatsAppBase}/templates/applications`, command);
+export async function createSharedTemplate(command: TemplateCommand, scopeId?: string): Promise<TemplateOperation> {
+  const res = await client.post<TemplateOperation>(
+    `${sharedWhatsAppBase}/templates/applications`, command, { params: { scopeId } },
+  );
   return res.data;
 }
 
@@ -1112,9 +1212,9 @@ export interface TemplateChangeCommand {
   remark?: string;
 }
 
-export async function createTemplateChangeRequest(templateId: string, command: TemplateChangeCommand): Promise<TemplateChangeOutcome> {
+export async function createTemplateChangeRequest(templateId: string, command: TemplateChangeCommand, scopeId?: string): Promise<TemplateChangeOutcome> {
   const res = await client.post<TemplateChangeOutcome>(
-    `${sharedWhatsAppBase}/templates/${encodeURIComponent(templateId)}/change-requests`, command,
+    `${sharedWhatsAppBase}/templates/${encodeURIComponent(templateId)}/change-requests`, command, { params: { scopeId } },
   );
   return res.data;
 }
@@ -1124,8 +1224,15 @@ export async function fetchMyTemplateChangeRequests(page = 1, size = 20): Promis
   return res.data;
 }
 
-export async function fetchTemplateChangeRequestsForReview(page = 1, size = 20): Promise<TemplateChangeRequestPage> {
-  const res = await client.get<TemplateChangeRequestPage>('/v1/admin/whatsapp/template-change-requests', { params: { page, size } });
+export async function fetchTemplateChangeRequestsForReview(
+  page = 1,
+  size = 20,
+  filters: { status?: string | null; search?: string } = {},
+): Promise<TemplateChangeRequestPage> {
+  // The review queue is filtered server-side: total then describes the filtered set.
+  const status = filters.status?.trim() || undefined;
+  const search = filters.search?.trim() || undefined;
+  const res = await client.get<TemplateChangeRequestPage>('/v1/admin/whatsapp/template-change-requests', { params: { page, size, status, search } });
   return res.data;
 }
 
@@ -1150,8 +1257,8 @@ export async function retryTemplateChangeRequest(requestId: string, clientReques
   return res.data;
 }
 
-export async function syncSharedTemplates(): Promise<TemplateSyncResult> {
-  const res = await client.post<TemplateSyncResult>(`${sharedWhatsAppBase}/templates/sync`);
+export async function syncSharedTemplates(scopeId?: string): Promise<TemplateSyncResult> {
+  const res = await client.post<TemplateSyncResult>(`${sharedWhatsAppBase}/templates/sync`, undefined, { params: { scopeId } });
   return res.data;
 }
 
@@ -1286,6 +1393,7 @@ export async function uploadTemplateMedia(
   fileOrRequestId: File | string,
   requestIdOrSignal?: string | AbortSignal,
   signal?: AbortSignal,
+  scopeId?: string,
 ): Promise<TemplateMediaAsset> {
   const sharedCall = typeof formatOrFile !== 'string';
   const format = (sharedCall ? accountOrFormat : formatOrFile) as TemplateMediaFormat;
@@ -1296,9 +1404,10 @@ export async function uploadTemplateMedia(
   formData.append('format', format);
   formData.append('file', file);
   formData.append('clientRequestId', clientRequestId);
+  const params = { scopeId };
   const res = requestSignal
-    ? await client.post<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media`, formData, { signal: requestSignal })
-    : await client.post<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media`, formData);
+    ? await client.post<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media`, formData, { params, signal: requestSignal })
+    : await client.post<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media`, formData, { params });
   return res.data;
 }
 
@@ -1306,13 +1415,15 @@ export async function fetchTemplateMediaUpload(
   accountOrRequestId: string,
   requestIdOrSignal?: string | AbortSignal,
   signal?: AbortSignal,
+  scopeId?: string,
 ): Promise<TemplateMediaAsset> {
   const clientRequestId = typeof requestIdOrSignal === 'string' ? requestIdOrSignal : accountOrRequestId;
   const requestSignal = typeof requestIdOrSignal === 'string' ? signal : requestIdOrSignal;
   const encoded = encodeURIComponent(clientRequestId);
+  const params = { scopeId };
   const res = requestSignal
-    ? await client.get<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media/uploads/${encoded}`, { signal: requestSignal })
-    : await client.get<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media/uploads/${encoded}`);
+    ? await client.get<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media/uploads/${encoded}`, { params, signal: requestSignal })
+    : await client.get<TemplateMediaAsset>(`${sharedWhatsAppBase}/template-media/uploads/${encoded}`, { params });
   return res.data;
 }
 
@@ -1320,11 +1431,12 @@ export async function fetchTemplateOperations(
   templateIdOrAccountId: string,
   templateCode?: string,
   language?: string,
+  scopeId?: string,
 ): Promise<TemplateOperation[]> {
   const templateId = templateCode ?? templateIdOrAccountId;
   const res = await client.get<TemplateOperation[]>(
     `${sharedWhatsAppBase}/templates/${encodeURIComponent(templateId)}/operations`,
-    templateCode ? { params: { language } } : undefined,
+    { params: { language: templateCode ? language : undefined, scopeId } },
   );
   return res.data;
 }
@@ -1348,12 +1460,11 @@ function boundedPublicTemplateQuery(query: PublicTemplateQuery): Record<string, 
 }
 
 export async function fetchPublicTemplates(
-  queryOrAccountId: PublicTemplateQuery | string = {},
-  legacyQuery: PublicTemplateQuery = {},
+  query: PublicTemplateQuery = {},
+  scopeId?: string,
 ): Promise<PublicTemplateListPage> {
-  const query = typeof queryOrAccountId === 'string' ? legacyQuery : queryOrAccountId;
   const res = await client.get<PublicTemplateListPage>(`${sharedWhatsAppBase}/public-templates`, {
-    params: boundedPublicTemplateQuery(query),
+    params: { ...boundedPublicTemplateQuery(query), scopeId },
     paramsSerializer: { indexes: null },
   });
   return res.data;

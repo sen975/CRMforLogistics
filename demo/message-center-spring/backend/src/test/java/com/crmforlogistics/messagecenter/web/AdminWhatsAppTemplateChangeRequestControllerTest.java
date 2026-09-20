@@ -30,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AdminWhatsAppTemplateChangeRequestControllerTest {
     private static final UUID ADMIN_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final UUID REQUEST_ID = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    private static final UUID SCOPE_ID = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
     @Autowired MockMvc mvc;
     @MockitoBean WhatsAppTemplateChangeRequestService changeRequestService;
@@ -38,12 +39,13 @@ class AdminWhatsAppTemplateChangeRequestControllerTest {
     @Test
     @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void administratorListsAndApprovesPendingChangeRequests() throws Exception {
-        when(changeRequestService.listForReview(ADMIN_ID, 1, 20))
+        when(changeRequestService.listForReview(ADMIN_ID, 1, 20, "PENDING_APPROVAL", "发货"))
                 .thenReturn(new TemplateChangeRequestResponse.Page(List.of(view("PENDING_APPROVAL")), 1, 1, 20));
         when(changeRequestService.approve(ADMIN_ID, REQUEST_ID, "review-1", "trace-1"))
                 .thenReturn(new WhatsAppTemplateChangeRequestService.ChangeOutcome(null, view("SUCCEEDED"), null));
 
-        mvc.perform(get("/api/v1/admin/whatsapp/template-change-requests"))
+        mvc.perform(get("/api/v1/admin/whatsapp/template-change-requests")
+                        .param("status", "PENDING_APPROVAL").param("search", "发货"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].status").value("PENDING_APPROVAL"));
         mvc.perform(post("/api/v1/admin/whatsapp/template-change-requests/{requestId}/approve", REQUEST_ID)
@@ -67,6 +69,7 @@ class AdminWhatsAppTemplateChangeRequestControllerTest {
     private static TemplateChangeRequestResponse view(String status) {
         return new TemplateChangeRequestResponse(REQUEST_ID, UUID.randomUUID(), "模板（template）", 2,
                 "SET_SEND_PERMISSION", status, List.of(), "申请人", null, null,
-                null, null, "provider-1", Instant.EPOCH, null, null);
+                null, null, "provider-1", Instant.EPOCH, null, null,
+                SCOPE_ID, "小森", "cams-9jvb6o87e6m8", "ENTERPRISE_API");
     }
 }

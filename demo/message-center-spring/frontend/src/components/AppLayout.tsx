@@ -16,6 +16,7 @@ import {
   FileSearchOutlined,
   WhatsAppOutlined,
   MailOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../hooks/useAuth';
 import { DetailPanelProvider, useDetailPanel } from '../hooks/useDetailPanel';
@@ -193,6 +194,13 @@ function AppLayoutInner() {
     },
   ].filter((item): item is NonNullable<typeof item> => item !== null);
 
+  const adminItems: MenuProps['items'] = [
+    { key: 'admin-home', icon: <SettingOutlined aria-hidden="true" />, label: '管理员工作台', onClick: () => navigate('/admin') },
+    { key: 'admin-platforms', icon: <SettingOutlined aria-hidden="true" />, label: '平台接入', onClick: () => navigate('/admin/platforms') },
+    { key: 'admin-accounts', icon: <WhatsAppOutlined aria-hidden="true" />, label: 'WhatsApp 账号', onClick: () => navigate('/admin/whatsapp/accounts') },
+    { key: 'admin-approvals', icon: <FileTextOutlined aria-hidden="true" />, label: '模板审批', onClick: () => navigate('/admin/whatsapp/template-approvals') },
+  ];
+
   return (
     <Layout style={{ height: '100vh' }}>
       <Header
@@ -223,8 +231,10 @@ function AppLayoutInner() {
           {navigationDropdown('WhatsApp', <WhatsAppOutlined />, whatsappItems)}
           {navigationDropdown('邮件', <MailOutlined />, [{ key: 'email-address-book', icon: <ContactsOutlined aria-hidden="true" />, label: '通讯录', onClick: () => navigate('/address-book/email') }])}
           {isAdmin && navigationButton('企业微信', <WechatOutlined />, () => navigate('/settings/wecom'))}
+          {isAdmin && navigationDropdown('管理员', <SettingOutlined />, adminItems)}
           {navigationDropdown('电话', <PhoneOutlined />, phoneItems)}
           {navigationDropdown('系统设置', <SettingOutlined />, systemItems)}
+          {navigationButton('待办日历', <CalendarOutlined />, () => navigate('/todo-calendar'))}
           {supportsDetailPanel && (
             <Button
               aria-label={detailPanelOpen ? '收起右侧栏' : '展开右侧栏'}

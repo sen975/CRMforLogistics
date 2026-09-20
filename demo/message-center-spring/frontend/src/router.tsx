@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 import { Button, Result, Spin } from 'antd';
 import { AuthProvider } from './hooks/useAuth';
+import { useAuth } from './hooks/useAuth';
 
 const AppLayout = lazy(() => import('./components/AppLayout'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -17,6 +18,17 @@ const BroadcastsPage = lazy(() => import('./pages/BroadcastsPage'));
 const TopicRepositoryPage = lazy(() => import('./pages/TopicRepositoryPage'));
 const UserManagementPage = lazy(() => import('./pages/UserManagementPage'));
 const ChannelAddressBookPage = lazy(() => import('./pages/ChannelAddressBookPage'));
+const TodoCalendarPage = lazy(() => import('./pages/TodoCalendarPage'));
+const AdminHomePage = lazy(() => import('./pages/AdminHomePage'));
+const AdminPlatformsPage = lazy(() => import('./pages/AdminPlatformsPage'));
+const AdminWhatsAppAccountsPage = lazy(() => import('./pages/AdminWhatsAppAccountsPage'));
+const AdminWhatsAppTemplateApprovalsPage = lazy(() => import('./pages/AdminWhatsAppTemplateApprovalsPage'));
+
+function AdminGuard({ children }: { children: ReactNode }) {
+  const { isAdmin } = useAuth();
+  if (!isAdmin) return <Result status="403" title="无权访问" subTitle="只有管理员可以访问平台管理功能。" />;
+  return <>{children}</>;
+}
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const token = localStorage.getItem('token');
@@ -108,6 +120,11 @@ export const router = createBrowserRouter([
       { path: 'phone-repository', element: <RouteBoundary><PhoneRepositoryPage /></RouteBoundary> },
       { path: 'address-book/:channel', element: <RouteBoundary><ChannelAddressBookPage /></RouteBoundary> },
       { path: 'topic-repository', element: <RouteBoundary><TopicRepositoryPage /></RouteBoundary> },
+      { path: 'todo-calendar', element: <RouteBoundary><TodoCalendarPage /></RouteBoundary> },
+      { path: 'admin', element: <RouteBoundary><AdminGuard><AdminHomePage /></AdminGuard></RouteBoundary> },
+      { path: 'admin/platforms', element: <RouteBoundary><AdminGuard><AdminPlatformsPage /></AdminGuard></RouteBoundary> },
+      { path: 'admin/whatsapp/accounts', element: <RouteBoundary><AdminGuard><AdminWhatsAppAccountsPage /></AdminGuard></RouteBoundary> },
+      { path: 'admin/whatsapp/template-approvals', element: <RouteBoundary><AdminGuard><AdminWhatsAppTemplateApprovalsPage /></AdminGuard></RouteBoundary> },
     ],
   },
 ]);

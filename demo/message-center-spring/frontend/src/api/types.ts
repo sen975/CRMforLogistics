@@ -464,6 +464,18 @@ export interface WeComInstallationSummary {
 
 export type WeComProviderData = Record<string, unknown>;
 
+/**
+ * Server-owned mapping from a 企业微信 external contact id to the CRM contact this account
+ * may open. `contactId` is null when the external contact has no CRM contact yet, and
+ * `accessible` mirrors the conversation accessibility rule.
+ */
+export interface WeComExternalContactLink {
+  externalUserId: string;
+  contactId: string | null;
+  identityId: string | null;
+  accessible: boolean;
+}
+
 export interface WeComCursorPage<T = WeComProviderData> {
   items: T[];
   nextCursor?: string | null;
@@ -577,13 +589,87 @@ export interface AdminWhatsAppAccountProjection {
   version: number;
 }
 
+/**
+ * One number CAMS answered for, in CAMS's own words. The statuses reach the page unmapped, because a
+ * number that is not ACTIVE is never imported and this is the only place that says why.
+ */
+export interface AdminWhatsAppProviderPhoneReport {
+  maskedPhone: string;
+  providerStatus: string | null;
+  verificationStatus: string | null;
+  /** True once the number is ACTIVE and therefore imported or refreshed. */
+  accepted: boolean;
+}
+
 export interface AdminWhatsAppSyncResult {
   importedCount: number;
   refreshedCount: number;
   unavailableCount: number;
+  providerPhones: AdminWhatsAppProviderPhoneReport[];
   accounts: Array<Omit<AdminWhatsAppAccountProjection, 'version'> & {
     lastSyncedAt: string | null;
   }>;
+}
+
+export interface AdminCamsScope {
+  scopeId: string;
+  configured: boolean;
+  displayName: string;
+  custSpaceId: string;
+  accessKeyIdMasked: string;
+  region: string;
+  endpoint: string;
+  status: string;
+  version: number;
+  lastTestedAt: string | null;
+  lastTestStatus: string | null;
+  lastTestErrorCode: string | null;
+  lastSyncedAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncErrorCode: string | null;
+  source: string;
+  /** A Business App space is the one an employee authorized and needs no administrator approval. */
+  scopeType: AdminCamsScopeType;
+  ownerUserId: string | null;
+}
+
+export type AdminCamsScopeType = 'ENTERPRISE_API' | 'EMPLOYEE_BUSINESS_APP';
+
+export interface AdminWhatsAppScopeOverview {
+  scopeId: string;
+  displayName: string;
+  custSpaceId: string;
+  status: string;
+  usableAccountCount: number;
+  pendingApprovalCount: number;
+  lastTestedAt: string | null;
+  lastTestStatus: string | null;
+  lastTestErrorCode: string | null;
+  lastSyncedAt: string | null;
+  lastSyncStatus: string | null;
+  lastSyncErrorCode: string | null;
+}
+
+export interface AdminWhatsAppOverview {
+  scopes: AdminWhatsAppScopeOverview[];
+  totalPendingApprovalCount: number;
+}
+
+export interface AdminCamsRequest {
+  displayName?: string;
+  custSpaceId: string;
+  accessKeyId: string;
+  accessKeySecret?: string;
+  region: string;
+  endpoint: string;
+  expectedVersion?: number;
+  scopeType?: AdminCamsScopeType;
+  /** Required when scopeType is EMPLOYEE_BUSINESS_APP: the space belongs to this employee. */
+  ownerUserId?: string | null;
+}
+
+export interface AdminScopedWhatsAppAccount extends AdminWhatsAppAccountProjection {
+  lastSyncedAt?: string | null;
 }
 
 export interface AdminWhatsAppAssignmentRequest {
@@ -951,6 +1037,8 @@ export interface SharedTemplateListFilters {
   language?: string;
   allowSend?: boolean;
   deleted?: boolean;
+  /** Each CAMS space keeps its own library; only an administrator may name a space other than their own. */
+  scopeId?: string;
 }
 
 export type TemplateChangeType = 'MODIFY' | 'SET_SEND_PERMISSION' | 'DELETE' | 'BIND_MEDIA';
@@ -975,6 +1063,11 @@ export interface TemplateChangeRequestView {
   createdAt: string;
   reviewedAt: string | null;
   executionCompletedAt: string | null;
+  /** The CAMS space the template belongs to; null when the template row is gone or unbound. */
+  providerScopeId: string | null;
+  providerScopeName: string | null;
+  providerScopeExternalId: string | null;
+  providerScopeType: 'ENTERPRISE_API' | 'EMPLOYEE_BUSINESS_APP' | null;
 }
 
 export interface TemplateChangeRequestPage {

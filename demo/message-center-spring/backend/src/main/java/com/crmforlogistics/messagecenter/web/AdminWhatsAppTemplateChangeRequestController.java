@@ -26,8 +26,10 @@ public class AdminWhatsAppTemplateChangeRequestController {
 
     @GetMapping
     public TemplateChangeRequestResponse.Page list(@RequestParam(defaultValue = "1") int page,
-                                                    @RequestParam(defaultValue = "20") int size) {
-        return changeRequests.listForReview(SecurityUtil.currentUserId(), page, size);
+                                                    @RequestParam(defaultValue = "20") int size,
+                                                    @RequestParam(required = false) String status,
+                                                    @RequestParam(required = false) String search) {
+        return changeRequests.listForReview(SecurityUtil.currentUserId(), page, size, status, search);
     }
 
     @PostMapping("/{requestId}/approve")

@@ -13,6 +13,7 @@ import {
   transferAdminWhatsAppAccount,
 } from '../../api/endpoints';
 import type { AdminWhatsAppAccountProjection, AdminWhatsAppAssignmentAuditProjection } from '../../api/types';
+import { camsSyncSummary } from './camsSyncSummary';
 
 const { Text } = Typography;
 
@@ -78,7 +79,7 @@ export function AdminWhatsAppAccountPanel({ isAdmin }: { isAdmin: boolean }) {
   const sync = useMutation({
     mutationFn: syncAdminWhatsAppAccounts,
     onSuccess: (result) => {
-      setSyncSummary(`本次同步：导入 ${result.importedCount}，刷新 ${result.refreshedCount}，不可用 ${result.unavailableCount}`);
+      setSyncSummary(camsSyncSummary(result));
       message.success('CAMS 同步完成');
       refreshAccounts();
     },
@@ -110,9 +111,7 @@ export function AdminWhatsAppAccountPanel({ isAdmin }: { isAdmin: boolean }) {
     () => new Map((users.data?.items ?? []).map((user) => [user.id, user.displayName || user.username])),
     [users.data?.items],
   );
-  const selectableSales = (users.data?.items ?? []).filter(
-    (user) => user.status === 'active' && !user.roles.includes('admin'),
-  );
+  const selectableOwners = (users.data?.items ?? []).filter((user) => user.status === 'active');
 
   if (!isAdmin) {
     return <section aria-label="我的 WhatsApp 发送账号">
@@ -215,14 +214,14 @@ export function AdminWhatsAppAccountPanel({ isAdmin }: { isAdmin: boolean }) {
       >
         {assignment?.action !== 'reclaim' ? <Form.Item
           name="targetOwnerId"
-          label="目标销售"
-          rules={[{ required: true, message: '请选择目标销售' }]}
+          label="目标用户"
+          rules={[{ required: true, message: '请选择目标用户' }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="选择可用销售"
-            options={selectableSales.map((user) => ({
+            placeholder="选择活跃用户"
+            options={selectableOwners.map((user) => ({
               value: user.id,
               label: `${user.displayName || user.username}（${user.username}）`,
             }))}

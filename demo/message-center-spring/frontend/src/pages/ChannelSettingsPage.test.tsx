@@ -63,23 +63,21 @@ beforeEach(() => {
   api.fetchWhatsAppCapability.mockResolvedValue({ ready: true });
 });
 
-it('管理员看到 WhatsApp 账号管理入口而非自助绑定入口', async () => {
+it('管理员看到 WhatsApp 平台管理迁移入口', async () => {
   auth.isAdmin = true;
   renderPage();
 
-  expect(await screen.findByText('管理员 WhatsApp 账号管理')).toBeVisible();
-  expect(screen.queryByText('绑定 Business App 共存')).not.toBeInTheDocument();
-  expect(screen.queryByText('绑定企业 API 电话')).not.toBeInTheDocument();
+  expect(await screen.findByText('WhatsApp 平台管理已迁移')).toBeVisible();
+  expect(screen.getByRole('link', { name: /进入管理员平台工作台/ })).toHaveAttribute('href', '/admin/platforms');
+  expect(screen.queryByText('我的 WhatsApp 发送账号')).not.toBeInTheDocument();
 });
 
-it('销售只看到自己的 WhatsApp 发送账号摘要入口', async () => {
+it('销售看到自己的 WhatsApp 发送账号摘要且不看到管理员迁移入口', async () => {
   auth.isAdmin = false;
   renderPage();
 
   expect(await screen.findByText('我的 WhatsApp 发送账号')).toBeVisible();
-  expect(screen.queryByText('管理员 WhatsApp 账号管理')).not.toBeInTheDocument();
-  expect(screen.queryByText('绑定 Business App 共存')).not.toBeInTheDocument();
-  expect(screen.queryByText('绑定企业 API 电话')).not.toBeInTheDocument();
+  expect(screen.queryByText('WhatsApp 平台管理已迁移')).not.toBeInTheDocument();
 });
 
 it('仍保留邮件和企业微信配置入口', async () => {

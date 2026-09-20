@@ -54,6 +54,40 @@ public class WhatsAppProviderScopeService {
         return new ScopeAccount(account, bind(account));
     }
 
+    /**
+     * A write into a named space needs that space's credentials, which any of its accounts carries.
+     * The caller's own account is preferred, so an ordinary write keeps using the same number it
+     * always did, and only a space the caller owns nothing in falls back to the space's others.
+     */
+    @Transactional
+    public ScopeAccount requireScopeAccount(UUID userId, UUID scopeId) {
+        WhatsAppProviderScopeEntity scope = requireScope(scopeId);
+        List<ChannelAccountEntity> owned = accountMapper.findByOwnerAndChannelType(userId, "chatapp");
+        if (owned != null) {
+            for (ChannelAccountEntity account : owned) {
+                if (scope.getId().equals(account.getProviderScopeId()) && usable(account)) {
+                    return new ScopeAccount(account, scope);
+                }
+            }
+        }
+        for (ChannelAccountEntity account : accountMapper.findActiveByScope(scope.getId())) {
+            if (usable(account)) {
+                return new ScopeAccount(account, scope);
+            }
+        }
+        throw failure("WHATSAPP_SCOPE_ACCOUNT_REQUIRED", HttpStatus.CONFLICT,
+                "该 CAMS 空间下没有可用于提交的 WhatsApp 账号");
+    }
+
+    /** Resolves a space the caller named explicitly, e.g. an administrator switching between CAMS spaces. */
+    public WhatsAppProviderScopeEntity requireScope(UUID scopeId) {
+        WhatsAppProviderScopeEntity scope = scopeId == null ? null : scopeMapper.selectById(scopeId);
+        if (scope == null || !PROVIDER.equalsIgnoreCase(scope.getProvider())) {
+            throw failure("WHATSAPP_PROVIDER_SCOPE_UNAVAILABLE", HttpStatus.NOT_FOUND, "WhatsApp 模板空间不存在");
+        }
+        return scope;
+    }
+
     @Transactional
     public WhatsAppProviderScopeEntity bind(ChannelAccountEntity account) {
         verifyActive(account);
@@ -85,15 +119,14 @@ public class WhatsAppProviderScopeService {
         return scope;
     }
 
+    /**
+     * Each CAMS space keeps its own template library, so an account may name any space; the only
+     * thing left to check is that it names one at all.
+     */
     public void assertCompatible(String custSpaceId) {
         if (custSpaceId == null || custSpaceId.isBlank()) {
             throw failure("CHATAPP_ACCOUNT_CREDENTIALS_MISSING", HttpStatus.BAD_REQUEST,
                     "WhatsApp 账号缺少必要凭证");
-        }
-        List<WhatsAppProviderScopeEntity> scopes = scopeMapper.findAllByProvider(PROVIDER);
-        if (scopes.stream().anyMatch(scope -> !custSpaceId.trim().equals(scope.getExternalScopeId()))) {
-            throw failure("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
-                    "所有 WhatsApp 账号必须属于同一个模板空间");
         }
     }
 
@@ -104,6 +137,12 @@ public class WhatsAppProviderScopeService {
         if (!"active".equalsIgnoreCase(account.getAuthStatus())) {
             throw failure("WHATSAPP_ACCOUNT_INACTIVE", HttpStatus.CONFLICT, "WhatsApp 账号未启用");
         }
+    }
+
+    /** A candidate is only usable while it is still bound to the space and able to reach CAMS. */
+    private static boolean usable(ChannelAccountEntity account) {
+        return isChatApp(account) && account.getDeletedAt() == null
+                && "active".equalsIgnoreCase(account.getAuthStatus());
     }
 
     private static boolean isChatApp(ChannelAccountEntity account) {
