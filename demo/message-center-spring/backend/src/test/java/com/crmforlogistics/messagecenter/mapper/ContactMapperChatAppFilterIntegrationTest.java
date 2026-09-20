@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = ContactMapperChatAppFilterTestConfiguration.class)
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ContactMapperChatAppFilterIntegrationTest {
 
     @Container

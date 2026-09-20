@@ -6,7 +6,10 @@ import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -17,7 +20,8 @@ class ContactMemoryConsolidationServiceTest {
 
     private static final UUID CONTACT_ID = UUID.randomUUID();
     private static final UUID OWNER_ID = UUID.randomUUID();
-    private static final Instant NOW = Instant.parse("2026-09-11T04:00:00Z");
+    private static final Instant NOW = Instant.parse("2026-09-20T04:00:00Z");
+    private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     @Test
     void sameSemanticObservationIsMergedAndOnlyStableEvidencePromotesFact() {
@@ -27,7 +31,7 @@ class ContactMemoryConsolidationServiceTest {
                 messageId, "客户明确偏好海运", "prefers sea freight");
         ContactMemoryModels.LlmOutput output = output(List.of(repeated, repeated), null);
 
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(context, output);
 
         assertThat(result.observations()).hasSize(1);
@@ -35,7 +39,7 @@ class ContactMemoryConsolidationServiceTest {
 
         ContactMemoryModels.ObservationCandidate independent = observation(
                 UUID.randomUUID(), "客户再次确认偏好海运", "prefers sea freight");
-        ContactMemoryModels.ConsolidationResult promoted = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult promoted = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(contextWithMessages(messageId, independent.evidence().get(0).id()),
                         output(List.of(repeated, independent), null));
 
@@ -55,7 +59,7 @@ class ContactMemoryConsolidationServiceTest {
                         ContactMemoryModels.EvidenceType.MESSAGE, changeEvidenceId())),
                 "明确询价");
 
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(contextWithMessage(changeEvidenceId()), output(List.of(), List.of(change)));
 
         ContactMemoryModels.LabelCandidate label = result.labels().get(0);
@@ -76,7 +80,7 @@ class ContactMemoryConsolidationServiceTest {
                 "明确询价");
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                new ContactMemoryConsolidationService().consolidate(
+                new ContactMemoryConsolidationService(CLOCK).consolidate(
                         contextWithMessage(changeEvidenceId()), output(List.of(), List.of(change))))
                 .isInstanceOf(ContactMemoryModels.ValidationException.class)
                 .hasMessage("INVALID_OUTPUT");
@@ -101,7 +105,7 @@ class ContactMemoryConsolidationServiceTest {
                 UUID.randomUUID(), "再次确认偏好海运", "prefers sea freight");
         context = contextWithMessage(observation.evidence().get(0).id(), List.of(existingFact));
 
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(context, output(List.of(observation), null));
 
         assertThat(result.facts()).singleElement()
@@ -121,7 +125,7 @@ class ContactMemoryConsolidationServiceTest {
         ContactMemoryModels.Context secondContext = contextWithHistory(
                 secondEvidenceId, historical);
 
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(secondContext, output(List.of(secondObservation), null));
 
         assertThat(result.facts()).singleElement()
@@ -140,10 +144,10 @@ class ContactMemoryConsolidationServiceTest {
         UUID historicalEvidenceId = UUID.randomUUID();
         ContactMemoryObservationEntity expired = historicalObservation(historicalEvidenceId, 1,
                 Instant.parse("2026-09-10T04:00:00Z"));
-        expired.setExpiresAt(Instant.parse("2026-09-11T03:00:00Z"));
+        expired.setExpiresAt(NOW.minus(Duration.ofDays(1)));
 
         UUID currentEvidenceId = UUID.randomUUID();
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(contextWithHistory(currentEvidenceId, expired),
                         output(List.of(observation(currentEvidenceId, "当前消息", "prefers sea freight")), null));
 
@@ -157,7 +161,7 @@ class ContactMemoryConsolidationServiceTest {
         ContactMemoryModels.ObservationCandidate observation = observation(
                 firstMessageId, "客户确认偏好海运", "prefers sea freight");
 
-        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService()
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryConsolidationService(CLOCK)
                 .consolidate(contextWithMessages(firstMessageId, secondMessageId),
                         outputWithProfile(List.of(observation), new ContactMemoryModels.ProfileCandidate("关注海运")));
 
@@ -224,7 +228,9 @@ class ContactMemoryConsolidationServiceTest {
         observation.setStatus(ContactMemoryModels.ObservationStatus.CANDIDATE.name());
         observation.setEvidenceCount(evidenceCount);
         observation.setObservedAt(observedAt);
-        observation.setExpiresAt(Instant.parse("2026-09-20T04:00:00Z"));
+        // 过期判定以注入的 Clock 为准（ContactMemoryConsolidationService 里的 clock.instant()），
+        // 因此这里相对固定时刻 NOW 生成即可，结果不再随真实墙钟漂移。
+        observation.setExpiresAt(NOW.plus(Duration.ofDays(1)));
         com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity evidence =
                 new com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEvidenceEntity();
         evidence.setEvidenceType(ContactMemoryModels.EvidenceType.MESSAGE.name());

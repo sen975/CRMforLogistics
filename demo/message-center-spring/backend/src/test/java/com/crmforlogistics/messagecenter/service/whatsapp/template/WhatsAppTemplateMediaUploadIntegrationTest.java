@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(
         classes = {com.crmforlogistics.messagecenter.App.class, WhatsAppTemplateMediaUploadTestConfiguration.class},
         properties = "spring.profiles.active=test")
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class WhatsAppTemplateMediaUploadIntegrationTest {
     private static final String ONE_BYTE_SHA256 =
             "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a";

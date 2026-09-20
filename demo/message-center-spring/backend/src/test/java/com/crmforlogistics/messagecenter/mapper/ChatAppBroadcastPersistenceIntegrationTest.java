@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = ChatAppBroadcastPersistenceTestConfiguration.class)
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ChatAppBroadcastPersistenceIntegrationTest {
 
     @Container

@@ -1,8 +1,10 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -21,6 +23,17 @@ import java.util.stream.Collectors;
 public class ContactMemoryConsolidationService {
     private static final int MAX_LABEL_CHANGES = 20;
     private static final Map<ContactMemoryModels.Category, String> COLORS = colors();
+
+    private final Clock clock;
+
+    @Autowired
+    public ContactMemoryConsolidationService() {
+        this(Clock.systemUTC());
+    }
+
+    ContactMemoryConsolidationService(Clock clock) {
+        this.clock = clock;
+    }
 
     public ContactMemoryModels.ConsolidationResult consolidate(
             ContactMemoryModels.Context context,
@@ -41,7 +54,7 @@ public class ContactMemoryConsolidationService {
         }
         validateContextEvidence(context, output);
 
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         List<ContactMemoryModels.ObservationCandidate> observations = consolidateObservations(
                 output.observations());
         List<ContactMemoryModels.FactCandidate> facts = promoteFacts(context, observations, now);
