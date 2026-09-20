@@ -62,12 +62,16 @@ public class WhatsAppTemplateScopeMigrationService {
             }
         }
         List<WhatsAppProviderScopeEntity> scopes = scopeMapper.findAllByProvider("ALIYUN_CAMS");
-        if (scopes.size() != 1) {
-            String code = scopes.size() > 1 ? "WHATSAPP_PROVIDER_SCOPE_MISMATCH" : "WHATSAPP_ACCOUNT_REQUIRED";
-            gate.fail(code, scopes.size() > 1
-                    ? "检测到多个 WhatsApp 模板空间，已停止共享模板迁移"
-                    : "尚未绑定有效的 WhatsApp 模板空间");
-            return new MigrationReport(MigrationStatus.BLOCKED, scopes.size(), 0, 1);
+        if (scopes.isEmpty()) {
+            gate.fail("WHATSAPP_ACCOUNT_REQUIRED", "尚未绑定有效的 WhatsApp 模板空间");
+            return new MigrationReport(MigrationStatus.BLOCKED, 0, 0, 1);
+        }
+        if (scopes.size() > 1) {
+            // Several CAMS spaces coexist. Binding the shared catalog to one of them is enough to keep
+            // the template APIs usable, and skipping merge/reconcile means no other space's rows are
+            // re-scoped or retired — which is what used to make a second space a hard outage.
+            gate.open(sharedCatalogScope(scopes, allAccounts));
+            return new MigrationReport(MigrationStatus.READY, scopes.size(), 0, 0);
         }
 
         UUID scopeId = scopes.get(0).getId();
@@ -96,6 +100,27 @@ public class WhatsAppTemplateScopeMigrationService {
         }
         gate.open(scopeId);
         return new MigrationReport(MigrationStatus.READY, 1, canonical, 0);
+    }
+
+    /**
+     * Picks the space the shared template catalog belongs to when more than one CAMS space is bound:
+     * the one that already owns templates, then the one with the most active chatapp accounts, then the
+     * lowest id. Every term is derived from existing rows, so the same database always resolves to the
+     * same space and no other space's data is touched.
+     */
+    private UUID sharedCatalogScope(List<WhatsAppProviderScopeEntity> scopes,
+                                    List<ChannelAccountEntity> allAccounts) {
+        Comparator<WhatsAppProviderScopeEntity> order = Comparator
+                .comparingLong((WhatsAppProviderScopeEntity scope) -> templateMapper.countLiveSharedForScope(scope.getId()))
+                .reversed()
+                .thenComparing(Comparator.comparingLong(
+                        (WhatsAppProviderScopeEntity scope) -> countAccounts(allAccounts, scope.getId())).reversed())
+                .thenComparing(WhatsAppProviderScopeEntity::getId);
+        return scopes.stream().min(order).orElseThrow().getId();
+    }
+
+    private static long countAccounts(List<ChannelAccountEntity> allAccounts, UUID scopeId) {
+        return allAccounts.stream().filter(account -> scopeId.equals(account.getProviderScopeId())).count();
     }
 
     private static List<ChannelAccountEntity> activeAccounts(List<ChannelAccountEntity> allAccounts, UUID scopeId) {

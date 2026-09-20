@@ -6,11 +6,13 @@ import com.crmforlogistics.messagecenter.entity.TemplateChangeRequestEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
 import com.crmforlogistics.messagecenter.entity.UserEntity;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.mapper.TemplateChangeRequestMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMediaAssetMapper;
 import com.crmforlogistics.messagecenter.mapper.RoleMapper;
 import com.crmforlogistics.messagecenter.mapper.UserMapper;
+import com.crmforlogistics.messagecenter.mapper.WhatsAppProviderScopeMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ChangeCommand;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ChangeMode;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ChangeRequestStatus;
@@ -32,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,10 +44,13 @@ import java.util.UUID;
 public class WhatsAppTemplateChangeRequestService {
     private static final int MAX_PAYLOAD_BYTES = 65_536;
     private static final int MAX_PAGE_SIZE = 100;
+    private static final List<String> STATUS_NAMES = Arrays.stream(ChangeRequestStatus.values())
+            .map(status -> status.name()).toList();
 
     private final TemplateMapper templateMapper;
     private final TemplateChangeRequestMapper changeRequestMapper;
     private final TemplateMediaAssetMapper mediaAssetMapper;
+    private final WhatsAppProviderScopeMapper scopeMapper;
     private final WhatsAppProviderScopeService providerScopeService;
     private final UserMapper userMapper;
     private final RoleMapper roleMapper;
@@ -56,6 +62,7 @@ public class WhatsAppTemplateChangeRequestService {
     public WhatsAppTemplateChangeRequestService(TemplateMapper templateMapper,
                                                 TemplateChangeRequestMapper changeRequestMapper,
                                                 TemplateMediaAssetMapper mediaAssetMapper,
+                                                WhatsAppProviderScopeMapper scopeMapper,
                                                 WhatsAppProviderScopeService providerScopeService,
                                                 UserMapper userMapper,
                                                 RoleMapper roleMapper,
@@ -66,6 +73,7 @@ public class WhatsAppTemplateChangeRequestService {
         this.templateMapper = templateMapper;
         this.changeRequestMapper = changeRequestMapper;
         this.mediaAssetMapper = mediaAssetMapper;
+        this.scopeMapper = scopeMapper;
         this.providerScopeService = providerScopeService;
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
@@ -75,8 +83,13 @@ public class WhatsAppTemplateChangeRequestService {
         this.clock = clock;
     }
 
+    /**
+     * The space to change is resolved by the caller, so an administrator reviewing another CAMS
+     * space changes the template they can see rather than the one their own account happens to own.
+     */
     @Transactional
-    public ChangeOutcome submit(UUID userId, UUID templateId, ChangeCommand command, String traceId) {
+    public ChangeOutcome submit(UUID userId, UUID templateId, ChangeCommand command,
+                                WhatsAppProviderScopeService.ScopeAccount scopeAccount, String traceId) {
         requireUser(userId);
         requireTemplateId(templateId);
         validateCommand(command);
@@ -86,7 +99,6 @@ public class WhatsAppTemplateChangeRequestService {
             throw failure("WHATSAPP_TEMPLATE_DIRECT_OPERATION_REQUIRED", HttpStatus.CONFLICT,
                     "Business App 私有模板必须由账号 owner 直接操作");
         }
-        WhatsAppProviderScopeService.ScopeAccount scopeAccount = providerScopeService.requireOwnedActive(userId);
         if (template.getProviderScopeId() == null || !template.getProviderScopeId().equals(scopeAccount.scope().getId())) {
             throw failure("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
                     "WhatsApp account does not belong to the template scope");
@@ -94,7 +106,7 @@ public class WhatsAppTemplateChangeRequestService {
 
         Payload payload = new Payload(command.changeType(), command.expectedVersion(), command.clientRequestId(),
                 command.template(), command.allowSend(), command.remark());
-        if (isAdmin(userId)) {
+        if (isAdmin(userId) || operatesOwnBusinessAppSpace(template)) {
             validateDraftAndMedia(command, scopeAccount.account().getId(), template);
             WhatsAppTemplateApplicationService.OperationView operation = execute(scopeAccount.scope().getId(),
                     scopeAccount.account().getId(), template, payload, command.clientRequestId(), userId, null, traceId);
@@ -149,12 +161,21 @@ public class WhatsAppTemplateChangeRequestService {
         return new TemplateChangeRequestResponse.Page(items, changeRequestMapper.countByRequester(userId), page, size);
     }
 
-    public TemplateChangeRequestResponse.Page listForReview(UUID reviewerId, int page, int size) {
+    /**
+     * The review queue is filtered on the server: the page query and the count query receive the same
+     * filters, so {@code total} describes the filtered set rather than the whole table. A blank filter is
+     * "no filter". An unrecognised status is rejected with the project's validation error shape instead of
+     * being ignored, so a bad parameter can never silently widen the queue back to every status.
+     */
+    public TemplateChangeRequestResponse.Page listForReview(UUID reviewerId, int page, int size,
+                                                             String status, String search) {
         requireAdmin(reviewerId);
         validatePage(page, size);
-        long total = changeRequestMapper.countForReview();
+        String statusFilter = requireKnownStatus(status);
+        String searchFilter = blankToNull(search);
+        long total = changeRequestMapper.countForReview(statusFilter, searchFilter);
         List<TemplateChangeRequestEntity> records = total == 0 ? List.of()
-                : changeRequestMapper.listForReview((long) (page - 1) * size, size);
+                : changeRequestMapper.listForReview((long) (page - 1) * size, size, statusFilter, searchFilter);
         return new TemplateChangeRequestResponse.Page(records.stream().map(request -> view(request,
                 templateMapper.findSharedForUpdate(request.getTemplateId()).orElse(null))).toList(), total, page, size);
     }
@@ -383,6 +404,24 @@ public class WhatsAppTemplateChangeRequestService {
         }
     }
 
+    /** Blank means "no status filter"; anything else must name a real change-request status. */
+    private static String requireKnownStatus(String status) {
+        String value = blankToNull(status);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return ChangeRequestStatus.valueOf(value).name();
+        } catch (IllegalArgumentException error) {
+            throw WhatsAppTemplateException.validation(
+                    Map.of("status", "must be one of " + String.join(", ", STATUS_NAMES)));
+        }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
     private static void requireReviewClientRequestId(String clientRequestId) {
         if (clientRequestId == null || clientRequestId.isBlank() || clientRequestId.length() > 255) {
             throw WhatsAppTemplateException.validation(Map.of("clientRequestId", "must contain 1 to 255 characters"));
@@ -397,11 +436,32 @@ public class WhatsAppTemplateChangeRequestService {
         Payload payload = parse(request.getRequestedPayloadJsonb());
         String requestedBy = displayName(request.getRequestedByUserId());
         String reviewedBy = displayName(request.getReviewedByUserId());
+        WhatsAppProviderScopeEntity scope = scopeOf(template);
         return new TemplateChangeRequestResponse(request.getId(), request.getTemplateId(), displayName(template),
                 request.getBaseVersion() == null ? 0 : request.getBaseVersion(), request.getChangeType(), request.getStatus(),
                 diffs(template, payload), requestedBy, reviewedBy, request.getReviewReason(), request.getExecutionErrorCode(),
                 request.getExecutionErrorMessage(), request.getProviderRequestId(), request.getCreatedAt(), request.getReviewedAt(),
-                request.getExecutionCompletedAt());
+                request.getExecutionCompletedAt(),
+                scope == null ? null : scope.getId(), scope == null ? null : scope.getDisplayName(),
+                scope == null ? null : scope.getExternalScopeId(), scope == null ? null : scope.getScopeType());
+    }
+
+    /** The CAMS space a template lives in, or null when the template row is gone or unbound. */
+    private WhatsAppProviderScopeEntity scopeOf(TemplateEntity template) {
+        if (template == null || template.getProviderScopeId() == null) {
+            return null;
+        }
+        return scopeMapper.selectById(template.getProviderScopeId());
+    }
+
+    /**
+     * A Business App space belongs to the single employee who authorized it, and only an account in
+     * that space can submit against it, so that employee's edit needs no second pair of eyes. An
+     * enterprise API space is shared by many accounts, so a non-administrator's edit still queues.
+     */
+    private boolean operatesOwnBusinessAppSpace(TemplateEntity template) {
+        WhatsAppProviderScopeEntity scope = scopeOf(template);
+        return scope != null && "EMPLOYEE_BUSINESS_APP".equalsIgnoreCase(scope.getScopeType());
     }
 
     private List<FieldDiff> diffs(TemplateEntity template, Payload payload) {

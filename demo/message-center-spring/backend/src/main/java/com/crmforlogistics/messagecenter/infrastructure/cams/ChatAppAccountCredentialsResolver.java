@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.infrastructure.cams;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import org.springframework.stereotype.Component;
 
@@ -44,10 +45,42 @@ public final class ChatAppAccountCredentialsResolver {
                 chatappFrom, region, endpoint);
     }
 
+    /**
+     * A CAMS space is itself a credential holder — an administrator enters its AccessKey when the space
+     * is registered — so it answers for its own space. The account acting on it decides who is asking,
+     * not which provider space is addressed, which is what lets a space with no account still be used.
+     */
+    public ChatAppAccountCredentials resolveSpace(WhatsAppProviderScopeEntity scope) {
+        if (scope == null) {
+            throw new ChatAppAccountCredentialsException("CHATAPP_SPACE_CREDENTIALS_MISSING");
+        }
+        String encrypted = scope.getEncryptedConfig();
+        if (encrypted == null || encrypted.isBlank() || "{}".equals(encrypted.trim())) {
+            throw new ChatAppAccountCredentialsException("CHATAPP_SPACE_CREDENTIALS_MISSING");
+        }
+        final Map<String, String> values;
+        try {
+            values = cipher.decrypt(encrypted);
+        } catch (Exception exception) {
+            throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_UNREADABLE", exception);
+        }
+        return new ChatAppAccountCredentials(required(values, "accessKeyId"), required(values, "accessKeySecret"),
+                requiredText(scope.getExternalScopeId()), "",
+                firstNonBlank(values.get("region"), DEFAULT_REGION),
+                firstNonBlank(values.get("endpoint"), DEFAULT_ENDPOINT));
+    }
+
     private static String required(Map<String, String> values, String key) {
         String value = values == null ? null : values.get(key);
         if (value == null || value.isBlank()) {
             throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+        }
+        return value.trim();
+    }
+
+    private static String requiredText(String value) {
+        if (value == null || value.isBlank()) {
+            throw new ChatAppAccountCredentialsException("CHATAPP_SPACE_CREDENTIALS_MISSING");
         }
         return value.trim();
     }

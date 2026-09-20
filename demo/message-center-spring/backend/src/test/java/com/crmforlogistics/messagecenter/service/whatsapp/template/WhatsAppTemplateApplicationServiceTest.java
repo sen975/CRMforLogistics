@@ -7,19 +7,26 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMediaAssetMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateOperationMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.ComponentType;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.PropertyResult;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateComponent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.time.Clock;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,7 +72,7 @@ class WhatsAppTemplateApplicationServiceTest {
         when(operationMapper.findByIdempotency(ACCOUNT_ID, "request-2")).thenReturn(Optional.empty());
         when(operationMapper.insertIgnore(any())).thenReturn(1);
         when(operationMapper.findByIdForUpdate(any())).thenReturn(Optional.empty());
-        when(gateway.setSendPermission(ACCOUNT_ID, "shipping_notice", "zh_CN", true))
+        when(gateway.setSendPermission(TemplateCredentialSource.space(SCOPE_ID), "shipping_notice", "zh_CN", true))
                 .thenReturn(new PropertyResult(false, "provider-request"));
 
         assertThatThrownBy(() -> service().setSendPermissionShared(SCOPE_ID, ACCOUNT_ID, templateId,
@@ -85,6 +92,27 @@ class WhatsAppTemplateApplicationServiceTest {
                 .extracting("code").isEqualTo("WHATSAPP_ACCOUNT_NOT_FOUND");
 
         verify(gateway, never()).modify(any(), any(), any(), any());
+    }
+
+    @Test
+    void aTakenTemplateNameFailsTheOperationInsteadOfAwaitingReconciliation() {
+        TemplateCommand command = new TemplateCommand("account_creation_confirmation_3_custom", "zh_CN", "MARKETING",
+                List.of(new TemplateComponent(ComponentType.BODY, null, "hello", null, List.of())),
+                Map.of(), null, "request-name-taken");
+        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(activeAccount(SCOPE_ID));
+        when(validator.validate(command)).thenReturn(command);
+        when(operationMapper.findByIdempotency(ACCOUNT_ID, "request-name-taken")).thenReturn(Optional.empty());
+        when(operationMapper.insertIgnore(any())).thenReturn(1);
+        when(operationMapper.findByIdForUpdate(any())).thenReturn(Optional.empty());
+        when(gateway.create(TemplateCredentialSource.space(SCOPE_ID), command)).thenThrow(new WhatsAppTemplateException(
+                "TEMPLATE_NAME_EXISTS", HttpStatus.CONFLICT, "taken", Map.of(), "provider-request", false));
+
+        assertThatThrownBy(() -> service().create(SCOPE_ID, ACCOUNT_ID, command, UUID.randomUUID(), "trace-name"))
+                .isInstanceOf(WhatsAppTemplateException.class)
+                .extracting("code").isEqualTo("TEMPLATE_NAME_EXISTS");
+
+        verify(operationMapper).markFailed(any(), eq("provider-request"), eq("TEMPLATE_NAME_EXISTS"), any(), any());
+        verify(operationMapper, never()).markUnknown(any(), any(), any(), any());
     }
 
     private WhatsAppTemplateApplicationService service() {

@@ -53,13 +53,14 @@ const page: PublicTemplateListPage = { items: [publicTemplate], total: 1, page: 
 function renderLibrary(
   selectedAccount: typeof account | null = account,
   onCreateFromPublicTemplate: (draft: PublicTemplateConversionResult) => void = vi.fn(),
+  scopeId?: string,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const rendered = render(
     <QueryClientProvider client={queryClient}>
       <ConfigProvider>
         <AntApp>
-          <PublicTemplateLibrary hasWhatsAppAccount={Boolean(selectedAccount)} onCreateFromPublicTemplate={onCreateFromPublicTemplate} />
+          <PublicTemplateLibrary hasWhatsAppAccount={Boolean(selectedAccount)} scopeId={scopeId} onCreateFromPublicTemplate={onCreateFromPublicTemplate} />
         </AntApp>
       </ConfigProvider>
     </QueryClientProvider>,
@@ -96,7 +97,14 @@ describe('PublicTemplateLibrary', () => {
 
     await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({
       name: 'account', language: 'zh_CN', industries: ['电商'], usecases: ['账号创建确认'], page: 1, size: 20,
-    })));
+    }), undefined));
+  });
+
+  it('每套 CAMS 空间有自己的公共模板目录，所选空间随查询一起发出', async () => {
+    renderLibrary(account, vi.fn(), 'cams-2');
+
+    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: 'zh_CN', page: 1, size: 20 }), 'cams-2'));
   });
 
   it('opens a workbench that switches between parameter and example previews', async () => {
@@ -207,7 +215,7 @@ describe('PublicTemplateLibrary', () => {
     await user.click(screen.getByRole('button', { name: '重试加载' }));
     expect(await screen.findByRole('button', { name: `查看公共模板 ${publicTemplate.code}` })).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('Next Page'));
-    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, size: 20 })));
+    await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, size: 20 }), undefined));
   });
 
   it('does not query without an account and closes the detail when the account changes', async () => {

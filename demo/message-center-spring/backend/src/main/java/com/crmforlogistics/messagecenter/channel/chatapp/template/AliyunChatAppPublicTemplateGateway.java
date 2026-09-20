@@ -5,7 +5,11 @@ import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCrede
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.WhatsAppProviderScopeMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateCredentialSource;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.aliyun.teaopenapi.Client;
 import com.aliyun.tea.TeaException;
@@ -35,6 +39,7 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
 
     private final ObjectMapper objectMapper;
     private final ChannelAccountMapper accountMapper;
+    private final WhatsAppProviderScopeMapper scopeMapper;
     private final ChatAppAccountCredentialsResolver credentialsResolver;
     private final Client fixedClient;
     private final String fixedCustSpaceId;
@@ -43,9 +48,11 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
     @Autowired
     public AliyunChatAppPublicTemplateGateway(ObjectMapper objectMapper,
                                               ChannelAccountMapper accountMapper,
+                                              WhatsAppProviderScopeMapper scopeMapper,
                                               ChatAppAccountCredentialsResolver credentialsResolver) {
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.accountMapper = Objects.requireNonNull(accountMapper);
+        this.scopeMapper = Objects.requireNonNull(scopeMapper);
         this.credentialsResolver = Objects.requireNonNull(credentialsResolver);
         this.fixedClient = null;
         this.fixedCustSpaceId = null;
@@ -56,6 +63,7 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
                                        Duration timeout, String custSpaceId) {
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.accountMapper = null;
+        this.scopeMapper = null;
         this.credentialsResolver = null;
         this.fixedClient = Objects.requireNonNull(client);
         this.fixedCustSpaceId = required(custSpaceId, "custSpaceId");
@@ -64,9 +72,9 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
     }
 
     @Override
-    public Page list(UUID accountId, Query query) {
+    public Page list(TemplateCredentialSource source, Query query) {
         try {
-            ChatAppAccountCredentials credentials = fixedClient == null ? credentialsFor(accountId) : null;
+            ChatAppAccountCredentials credentials = fixedClient == null ? credentials(source) : null;
             String custSpaceId = fixedClient == null ? credentials.custSpaceId() : fixedCustSpaceId;
             Client client = fixedClient == null ? createClient(credentials) : fixedClient;
             Map<String, String> request = listQuery(query, custSpaceId, objectMapper);
@@ -104,16 +112,22 @@ public class AliyunChatAppPublicTemplateGateway implements ChatAppPublicTemplate
         }
     }
 
-    private ChatAppAccountCredentials credentialsFor(UUID accountId) {
-        ChannelAccountEntity account = accountId == null || accountMapper == null
-                ? null : accountMapper.selectById(accountId);
-        if (account == null || account.getDeletedAt() != null
-                || !("chatapp".equalsIgnoreCase(account.getChannelType())
-                || "whatsapp".equalsIgnoreCase(account.getChannelType()))
-                || !"active".equalsIgnoreCase(account.getAuthStatus())) {
-            throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+    private ChatAppAccountCredentials credentials(TemplateCredentialSource source) {
+        if (source instanceof TemplateCredentialSource.Space space) {
+            return credentialsResolver.resolveSpace(scopeById(space.providerScopeId()));
         }
-        return credentialsResolver.resolve(account);
+        if (source instanceof TemplateCredentialSource.Account account) {
+            return credentialsResolver.resolve(accountById(account.accountId()));
+        }
+        throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+    }
+
+    private WhatsAppProviderScopeEntity scopeById(UUID providerScopeId) {
+        return providerScopeId == null ? null : scopeMapper.selectById(providerScopeId);
+    }
+
+    private ChannelAccountEntity accountById(UUID accountId) {
+        return accountId == null ? null : accountMapper.selectById(accountId);
     }
 
     private static Params params(String action) {

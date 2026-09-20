@@ -7,6 +7,8 @@ import com.crmforlogistics.messagecenter.dto.response.TemplateChangeRequestRespo
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAdminAuthorization;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAuthorizationException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateApplicationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.Page;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
@@ -42,8 +44,11 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -59,6 +64,7 @@ class WhatsAppTemplateControllerTest {
     private static final UUID AGENT_ID = UUID.fromString("00000000-0000-0000-0000-000000000003");
     private static final UUID ACCOUNT_ID = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final UUID SCOPE_ID = UUID.fromString("00000000-0000-0000-0000-000000000005");
+    private static final UUID OTHER_SCOPE_ID = UUID.fromString("00000000-0000-0000-0000-00000000000a");
     private static final UUID TEMPLATE_ID = UUID.fromString("00000000-0000-0000-0000-000000000006");
 
     @Autowired MockMvc mvc;
@@ -69,6 +75,7 @@ class WhatsAppTemplateControllerTest {
     @MockitoBean WhatsAppTemplateReconciliationService reconciliationService;
     @MockitoBean WhatsAppTemplateMediaUploadService mediaUploadService;
     @MockitoBean WhatsAppProviderScopeService providerScopeService;
+    @MockitoBean WhatsAppAdminAuthorization adminAuthorization;
     @MockitoBean WhatsAppTemplateScopeGate scopeGate;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -81,8 +88,8 @@ class WhatsAppTemplateControllerTest {
     @Test
     @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
     void agentReadsTheSharedCatalogWithoutAnAccountAuthorizationCheck() throws Exception {
-        when(catalogService.list(eq(AGENT_ID), eq(1), eq(20), any())).thenReturn(page());
-        when(catalogService.detail(AGENT_ID, TEMPLATE_ID)).thenReturn(template());
+        when(catalogService.list(eq(SCOPE_ID), eq(1), eq(20), any())).thenReturn(page());
+        when(catalogService.detail(SCOPE_ID, TEMPLATE_ID)).thenReturn(template());
 
         mvc.perform(get("/api/v1/whatsapp/templates"))
                 .andExpect(status().isOk())
@@ -95,6 +102,138 @@ class WhatsAppTemplateControllerTest {
                 .andExpect(jsonPath("$.accountId").doesNotExist());
 
         verify(providerScopeService, never()).requireOwnedActive(AGENT_ID);
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void adminReadsAnotherCamsSpaceLibraryByNamingIt() throws Exception {
+        when(providerScopeService.requireScope(OTHER_SCOPE_ID)).thenReturn(scope(OTHER_SCOPE_ID));
+        when(catalogService.list(eq(OTHER_SCOPE_ID), eq(1), eq(20), any())).thenReturn(page());
+        when(catalogService.detail(OTHER_SCOPE_ID, TEMPLATE_ID)).thenReturn(template());
+        when(publicTemplateService.list(eq(OTHER_SCOPE_ID), any())).thenReturn(new Page(List.of(), 0, 1, 20));
+
+        mvc.perform(get("/api/v1/whatsapp/templates").param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/whatsapp/templates/{templateId}", TEMPLATE_ID)
+                        .param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/whatsapp/public-templates").param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isOk());
+
+        verify(publicTemplateService).list(eq(OTHER_SCOPE_ID), any());
+        verify(adminAuthorization, times(3)).requireAdmin(ADMIN_ID);
+        verify(scopeGate, never()).requireReady();
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
+    void agentCannotReadAnotherCamsSpaceLibraryByNamingIt() throws Exception {
+        doThrow(new WhatsAppAuthorizationException("WHATSAPP_ADMIN_REQUIRED", HttpStatus.FORBIDDEN))
+                .when(adminAuthorization).requireAdmin(AGENT_ID);
+
+        mvc.perform(get("/api/v1/whatsapp/templates").param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WHATSAPP_ADMIN_REQUIRED"));
+
+        verify(providerScopeService, never()).requireScope(any());
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void adminWritesIntoTheCamsSpaceTheyName() throws Exception {
+        ChannelAccountEntity otherAccount = new ChannelAccountEntity();
+        otherAccount.setId(ACCOUNT_ID);
+        when(providerScopeService.requireScopeAccount(ADMIN_ID, OTHER_SCOPE_ID))
+                .thenReturn(new WhatsAppProviderScopeService.ScopeAccount(otherAccount, scope(OTHER_SCOPE_ID)));
+        when(templateApplicationService.create(eq(OTHER_SCOPE_ID), eq(ACCOUNT_ID), any(), eq(ADMIN_ID), any()))
+                .thenReturn(operation());
+        when(reconciliationService.syncScope(OTHER_SCOPE_ID, ACCOUNT_ID))
+                .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 1, 1, true));
+
+        mvc.perform(post("/api/v1/whatsapp/templates/applications")
+                        .param("scopeId", OTHER_SCOPE_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(createJson()))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/whatsapp/templates/sync").param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isOk());
+
+        verify(adminAuthorization, times(2)).requireAdmin(ADMIN_ID);
+        verify(templateApplicationService).create(eq(OTHER_SCOPE_ID), eq(ACCOUNT_ID), any(), eq(ADMIN_ID), any());
+        verify(reconciliationService).syncScope(OTHER_SCOPE_ID, ACCOUNT_ID);
+        verify(scopeGate, never()).requireReady();
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
+    void agentCannotWriteIntoAnotherCamsSpace() throws Exception {
+        doThrow(new WhatsAppAuthorizationException("WHATSAPP_ADMIN_REQUIRED", HttpStatus.FORBIDDEN))
+                .when(adminAuthorization).requireAdmin(AGENT_ID);
+
+        mvc.perform(post("/api/v1/whatsapp/templates/applications")
+                        .param("scopeId", OTHER_SCOPE_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(createJson()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WHATSAPP_ADMIN_REQUIRED"));
+
+        verify(templateApplicationService, never()).create(any(), any(), any(), any(), any());
+        verify(providerScopeService, never()).requireScopeAccount(any(), any());
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void adminChangesAndUploadsMediaInTheCamsSpaceTheyName() throws Exception {
+        ChannelAccountEntity otherAccount = new ChannelAccountEntity();
+        otherAccount.setId(ACCOUNT_ID);
+        when(providerScopeService.requireScopeAccount(ADMIN_ID, OTHER_SCOPE_ID))
+                .thenReturn(new WhatsAppProviderScopeService.ScopeAccount(otherAccount, scope(OTHER_SCOPE_ID)));
+        when(changeRequestService.submit(eq(ADMIN_ID), eq(TEMPLATE_ID), any(), any(), any()))
+                .thenReturn(changeOutcome());
+        WhatsAppTemplateMediaUploadService.MediaAssetView asset = media("upload-1");
+        when(mediaUploadService.uploadForUser(eq(ADMIN_ID), any(WhatsAppProviderScopeService.ScopeAccount.class),
+                eq(HeaderFormat.IMAGE), any(), eq(3L), eq("header.png"), eq("image/png"), eq("upload-1"), any()))
+                .thenReturn(new WhatsAppTemplateMediaUploadService.UploadResult(asset, true));
+        when(mediaUploadService.findForUser(any(WhatsAppProviderScopeService.ScopeAccount.class), eq("upload-1")))
+                .thenReturn(asset);
+
+        mvc.perform(post("/api/v1/whatsapp/templates/{templateId}/change-requests", TEMPLATE_ID)
+                        .param("scopeId", OTHER_SCOPE_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(changeJson()))
+                .andExpect(status().isCreated());
+        mvc.perform(multipart("/api/v1/whatsapp/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3}))
+                        .param("format", "IMAGE").param("clientRequestId", "upload-1")
+                        .param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isCreated());
+        mvc.perform(get("/api/v1/whatsapp/template-media/uploads/upload-1")
+                        .param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isOk());
+
+        verify(adminAuthorization, times(3)).requireAdmin(ADMIN_ID);
+        verify(providerScopeService, times(3)).requireScopeAccount(ADMIN_ID, OTHER_SCOPE_ID);
+        verify(scopeGate, never()).requireReady();
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
+    void agentCannotChangeOrUploadMediaIntoAnotherCamsSpace() throws Exception {
+        doThrow(new WhatsAppAuthorizationException("WHATSAPP_ADMIN_REQUIRED", HttpStatus.FORBIDDEN))
+                .when(adminAuthorization).requireAdmin(AGENT_ID);
+
+        mvc.perform(post("/api/v1/whatsapp/templates/{templateId}/change-requests", TEMPLATE_ID)
+                        .param("scopeId", OTHER_SCOPE_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON).content(changeJson()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WHATSAPP_ADMIN_REQUIRED"));
+        mvc.perform(multipart("/api/v1/whatsapp/template-media")
+                        .file(new MockMultipartFile("file", "header.png", "image/png", new byte[]{1, 2, 3}))
+                        .param("format", "IMAGE").param("clientRequestId", "upload-1")
+                        .param("scopeId", OTHER_SCOPE_ID.toString()))
+                .andExpect(status().isForbidden());
+
+        verify(changeRequestService, never()).submit(any(), any(), any(), any(), any());
+        verify(mediaUploadService, never()).uploadForUser(any(), any(), any(), any(), anyLong(), any(), any(),
+                any(), any());
+        verify(providerScopeService, never()).requireScopeAccount(any(), any());
     }
 
     @Test
@@ -117,17 +256,17 @@ class WhatsAppTemplateControllerTest {
 
         verify(templateApplicationService).create(eq(SCOPE_ID), eq(ACCOUNT_ID), any(), eq(AGENT_ID), any());
         verify(reconciliationService).syncScope(SCOPE_ID, ACCOUNT_ID);
-        verify(publicTemplateService).listForUser(eq(AGENT_ID), any());
-        verify(mediaUploadService).uploadForUser(eq(AGENT_ID), eq(HeaderFormat.IMAGE), any(), eq(3L),
-                eq("header.png"), eq("image/png"), eq("upload-1"), any());
-        verify(mediaUploadService).findForUser(AGENT_ID, "upload-1");
+        verify(publicTemplateService).list(eq(SCOPE_ID), any());
+        verify(mediaUploadService).uploadForUser(eq(AGENT_ID), any(WhatsAppProviderScopeService.ScopeAccount.class),
+                eq(HeaderFormat.IMAGE), any(), eq(3L), eq("header.png"), eq("image/png"), eq("upload-1"), any());
+        verify(mediaUploadService).findForUser(any(WhatsAppProviderScopeService.ScopeAccount.class), eq("upload-1"));
     }
 
     @Test
     @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
     void adminCanUseTheSameSharedTemplateRoutes() throws Exception {
-        when(catalogService.list(eq(ADMIN_ID), eq(1), eq(20), any())).thenReturn(page());
-        when(catalogService.detail(ADMIN_ID, TEMPLATE_ID)).thenReturn(template());
+        when(catalogService.list(eq(SCOPE_ID), eq(1), eq(20), any())).thenReturn(page());
+        when(catalogService.detail(SCOPE_ID, TEMPLATE_ID)).thenReturn(template());
         stubInteractiveEndpoints(ADMIN_ID);
 
         mvc.perform(get("/api/v1/whatsapp/templates")).andExpect(status().isOk());
@@ -168,7 +307,7 @@ class WhatsAppTemplateControllerTest {
     @Test
     @WithMockUser(username = "00000000-0000-0000-0000-000000000003", roles = "AGENT")
     void agentSubmitsAndListsOnlyOwnTemplateChangeRequests() throws Exception {
-        when(changeRequestService.submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any()))
+        when(changeRequestService.submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any(), any()))
                 .thenReturn(changeOutcome());
         when(changeRequestService.listMine(AGENT_ID, 1, 20)).thenReturn(changePage());
 
@@ -181,7 +320,7 @@ class WhatsAppTemplateControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].templateId").value(TEMPLATE_ID.toString()));
 
-        verify(changeRequestService).submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any());
+        verify(changeRequestService).submit(eq(AGENT_ID), eq(TEMPLATE_ID), any(), any(), any());
         verify(changeRequestService).listMine(AGENT_ID, 1, 20);
     }
 
@@ -190,20 +329,25 @@ class WhatsAppTemplateControllerTest {
                 .thenReturn(operation());
         when(reconciliationService.syncScope(SCOPE_ID, ACCOUNT_ID))
                 .thenReturn(new WhatsAppTemplateReconciliationService.SyncResult(1, 1, 1, true));
-        when(publicTemplateService.listForUser(eq(actorId), any())).thenReturn(new Page(List.of(), 0, 1, 20));
+        when(publicTemplateService.list(eq(SCOPE_ID), any())).thenReturn(new Page(List.of(), 0, 1, 20));
         WhatsAppTemplateMediaUploadService.MediaAssetView asset = media("upload-1");
-        when(mediaUploadService.uploadForUser(eq(actorId), eq(HeaderFormat.IMAGE), any(), eq(3L),
-                eq("header.png"), eq("image/png"), eq("upload-1"), any()))
+        when(mediaUploadService.uploadForUser(eq(actorId), any(WhatsAppProviderScopeService.ScopeAccount.class),
+                eq(HeaderFormat.IMAGE), any(), eq(3L), eq("header.png"), eq("image/png"), eq("upload-1"), any()))
                 .thenReturn(new WhatsAppTemplateMediaUploadService.UploadResult(asset, true));
-        when(mediaUploadService.findForUser(actorId, "upload-1")).thenReturn(asset);
+        when(mediaUploadService.findForUser(any(WhatsAppProviderScopeService.ScopeAccount.class), eq("upload-1")))
+                .thenReturn(asset);
     }
 
     private static WhatsAppProviderScopeService.ScopeAccount scopeAccount() {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(ACCOUNT_ID);
+        return new WhatsAppProviderScopeService.ScopeAccount(account, scope(SCOPE_ID));
+    }
+
+    private static WhatsAppProviderScopeEntity scope(UUID scopeId) {
         WhatsAppProviderScopeEntity scope = new WhatsAppProviderScopeEntity();
-        scope.setId(SCOPE_ID);
-        return new WhatsAppProviderScopeService.ScopeAccount(account, scope);
+        scope.setId(scopeId);
+        return scope;
     }
 
     private static SharedTemplateResponse.Page page() {
@@ -240,7 +384,8 @@ class WhatsAppTemplateControllerTest {
     private static TemplateChangeRequestResponse changeView() {
         return new TemplateChangeRequestResponse(UUID.fromString("00000000-0000-0000-0000-000000000007"), TEMPLATE_ID,
                 "发货提醒（shipping_notice）", 3, "SET_SEND_PERMISSION", "PENDING_APPROVAL", List.of(),
-                "申请人", null, null, null, null, null, Instant.EPOCH, null, null);
+                "申请人", null, null, null, null, null, Instant.EPOCH, null, null,
+                SCOPE_ID, "小森", "cams-9jvb6o87e6m8", "ENTERPRISE_API");
     }
 
     private static String changeJson() {

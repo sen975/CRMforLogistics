@@ -23,24 +23,21 @@ import java.util.UUID;
 public class WhatsAppSharedTemplateCatalogService {
     private static final int MAX_PAGE_SIZE = 100;
 
-    private final WhatsAppTemplateScopeGate gate;
     private final TemplateMapper templateMapper;
     private final TemplateOperationMapper operationMapper;
     private final ObjectMapper objectMapper;
 
-    public WhatsAppSharedTemplateCatalogService(WhatsAppTemplateScopeGate gate,
-                                                TemplateMapper templateMapper,
+    public WhatsAppSharedTemplateCatalogService(TemplateMapper templateMapper,
                                                 TemplateOperationMapper operationMapper,
                                                 ObjectMapper objectMapper) {
-        this.gate = Objects.requireNonNull(gate);
         this.templateMapper = Objects.requireNonNull(templateMapper);
         this.operationMapper = Objects.requireNonNull(operationMapper);
         this.objectMapper = Objects.requireNonNull(objectMapper);
     }
 
-    public SharedTemplateResponse.Page list(UUID actorUserId, int page, int size, TemplateFilters filters) {
-        Objects.requireNonNull(actorUserId);
-        UUID scopeId = gate.requireReady();
+    /** The library is scoped to one CAMS space; the caller decides which one. */
+    public SharedTemplateResponse.Page list(UUID scopeId, int page, int size, TemplateFilters filters) {
+        Objects.requireNonNull(scopeId);
         if (page < 1 || size < 1 || size > MAX_PAGE_SIZE) {
             throw validation("page", "page must be >= 1 and size must be between 1 and 100");
         }
@@ -82,9 +79,8 @@ public class WhatsAppSharedTemplateCatalogService {
         return view(template);
     }
 
-    public SharedTemplateResponse detail(UUID actorUserId, UUID templateId) {
-        Objects.requireNonNull(actorUserId);
-        UUID scopeId = gate.requireReady();
+    public SharedTemplateResponse detail(UUID scopeId, UUID templateId) {
+        Objects.requireNonNull(scopeId);
         TemplateEntity template = templateMapper.selectOne(new QueryWrapper<TemplateEntity>()
                 .eq("id", templateId).eq("provider_scope_id", scopeId)
                 .eq("template_domain", "ENTERPRISE_API").last("LIMIT 1"));
@@ -94,8 +90,8 @@ public class WhatsAppSharedTemplateCatalogService {
         return view(template);
     }
 
-    public List<OperationHistoryView> history(UUID actorUserId, UUID templateId) {
-        detail(actorUserId, templateId);
+    public List<OperationHistoryView> history(UUID scopeId, UUID templateId) {
+        detail(scopeId, templateId);
         return operationMapper.selectList(new QueryWrapper<TemplateOperationEntity>()
                         .eq("template_id", templateId).orderByDesc("started_at").last("LIMIT 100"))
                 .stream().map(WhatsAppSharedTemplateCatalogService::operationView).toList();

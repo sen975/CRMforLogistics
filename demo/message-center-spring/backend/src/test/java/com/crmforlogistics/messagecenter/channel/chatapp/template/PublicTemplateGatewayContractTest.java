@@ -7,6 +7,9 @@ import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCrede
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.WhatsAppProviderScopeMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateCredentialSource;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,9 @@ import static org.mockito.Mockito.when;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
 
 class PublicTemplateGatewayContractTest {
+    private static final TemplateCredentialSource SOURCE =
+            TemplateCredentialSource.space(UUID.fromString("00000000-0000-0000-0000-000000000007"));
+
     @Test
     void buildsOnlyTheConfirmedListBaseTemplateQuery() throws Exception {
         Map<String, String> query = AliyunChatAppPublicTemplateGateway.listQuery(
@@ -59,7 +65,7 @@ class PublicTemplateGatewayContractTest {
 
         assertThat(methods).singleElement().satisfies(method -> {
             assertThat(method.getName()).isEqualTo("list");
-            assertThat(method.getParameterTypes()).containsExactly(UUID.class, Query.class);
+            assertThat(method.getParameterTypes()).containsExactly(TemplateCredentialSource.class, Query.class);
             assertThat(method.getReturnType()).isEqualTo(
                     com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels.Page.class);
         });
@@ -88,7 +94,6 @@ class PublicTemplateGatewayContractTest {
 
     @Test
     void preservesSanitizedProviderDiagnosticsWhenListBaseTemplateIsRejected() throws Exception {
-        UUID accountId = UUID.randomUUID();
         Client client = mock(Client.class);
         TeaException providerError = new TeaException(Map.of(
                 "code", "MissingMessageCategory",
@@ -101,7 +106,7 @@ class PublicTemplateGatewayContractTest {
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
                 new ObjectMapper(), client, Duration.ofSeconds(1), "space-1");
 
-        assertThatThrownBy(() -> gateway.list(accountId, new Query(
+        assertThatThrownBy(() -> gateway.list(SOURCE, new Query(
                 null, "zh_CN", null, List.of(), List.of(), 1, 20)))
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class, failure -> {
                     assertThat(failure.code()).isEqualTo("PUBLIC_TEMPLATE_LIST_FAILED");
@@ -113,7 +118,6 @@ class PublicTemplateGatewayContractTest {
 
     @Test
     void fallsBackToProviderHttpStatusWhenTeaErrorCodeIsMissing() throws Exception {
-        UUID accountId = UUID.randomUUID();
         Client client = mock(Client.class);
         TeaException providerError = new TeaException(Map.of(
                 "code", "null",
@@ -123,7 +127,7 @@ class PublicTemplateGatewayContractTest {
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
                 new ObjectMapper(), client, Duration.ofSeconds(1), "space-1");
 
-        assertThatThrownBy(() -> gateway.list(accountId, new Query(
+        assertThatThrownBy(() -> gateway.list(SOURCE, new Query(
                 null, "zh_CN", null, List.of(), List.of(), 1, 20)))
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class, failure -> {
                     assertThat(failure.getMessage()).isEqualTo("Public template list failed: HTTP_403");
@@ -133,14 +137,13 @@ class PublicTemplateGatewayContractTest {
 
     @Test
     void fallsBackToRootExceptionTypeForNonTeaFailures() throws Exception {
-        UUID accountId = UUID.randomUUID();
         Client client = mock(Client.class);
         when(client.callApi(any(), any(), any())).thenThrow(
                 new IllegalStateException("provider call failed", new SocketException("connection denied")));
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
                 new ObjectMapper(), client, Duration.ofSeconds(1), "space-1");
 
-        assertThatThrownBy(() -> gateway.list(accountId, new Query(
+        assertThatThrownBy(() -> gateway.list(SOURCE, new Query(
                 null, "zh_CN", null, List.of(), List.of(), 1, 20)))
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class, failure ->
                         assertThat(failure.getMessage()).isEqualTo("Public template list failed: SocketException"));
@@ -154,16 +157,21 @@ class PublicTemplateGatewayContractTest {
                 .singleElement()
                 .extracting(Constructor::getParameterTypes)
                 .isEqualTo(new Class<?>[]{ObjectMapper.class, ChannelAccountMapper.class,
-                        ChatAppAccountCredentialsResolver.class});
+                        WhatsAppProviderScopeMapper.class, ChatAppAccountCredentialsResolver.class});
         assertThat(constructors).anySatisfy(constructor -> {
             assertThat(constructor.getParameterTypes()).containsExactly(ObjectMapper.class,
-                    ChannelAccountMapper.class, ChatAppAccountCredentialsResolver.class);
+                    ChannelAccountMapper.class, WhatsAppProviderScopeMapper.class,
+                    ChatAppAccountCredentialsResolver.class);
             assertThat(constructor.isAnnotationPresent(Autowired.class)).isTrue();
         });
         assertThat(constructors).anySatisfy(constructor -> assertThat(constructor.getParameterTypes())
                 .containsExactly(ObjectMapper.class, Client.class, Duration.class, String.class));
-        assertThat(constructors).noneMatch(constructor -> constructor.getParameterCount() == 4
-                && constructor.isAnnotationPresent(Autowired.class));
+        assertThat(constructors.stream()
+                .filter(constructor -> constructor.isAnnotationPresent(Autowired.class)))
+                .singleElement()
+                .extracting(Constructor::getParameterTypes)
+                .isEqualTo(new Class<?>[]{ObjectMapper.class, ChannelAccountMapper.class,
+                        WhatsAppProviderScopeMapper.class, ChatAppAccountCredentialsResolver.class});
     }
 
     @Test
@@ -181,12 +189,14 @@ class PublicTemplateGatewayContractTest {
                 "ap-southeast-1", "cams.ap-southeast-1.aliyuncs.com"));
 
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
-                new ObjectMapper(), accountMapper, credentialsResolver);
+                new ObjectMapper(), accountMapper, mock(WhatsAppProviderScopeMapper.class),
+                credentialsResolver);
 
         Method credentialsMethod = AliyunChatAppPublicTemplateGateway.class
-                .getDeclaredMethod("credentialsFor", UUID.class);
+                .getDeclaredMethod("credentials", TemplateCredentialSource.class);
         credentialsMethod.setAccessible(true);
-        ChatAppAccountCredentials credentials = (ChatAppAccountCredentials) credentialsMethod.invoke(gateway, accountId);
+        ChatAppAccountCredentials credentials = (ChatAppAccountCredentials) credentialsMethod.invoke(
+                gateway, TemplateCredentialSource.account(accountId));
 
         assertThat(credentials.custSpaceId()).isEqualTo("account-space");
         org.mockito.Mockito.verify(credentialsResolver).resolve(account);
@@ -206,9 +216,10 @@ class PublicTemplateGatewayContractTest {
                 new com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException(
                         "CHATAPP_ACCOUNT_CREDENTIALS_UNREADABLE"));
         AliyunChatAppPublicTemplateGateway gateway = new AliyunChatAppPublicTemplateGateway(
-                new ObjectMapper(), accountMapper, credentialsResolver);
+                new ObjectMapper(), accountMapper, mock(WhatsAppProviderScopeMapper.class),
+                credentialsResolver);
 
-        assertThatThrownBy(() -> gateway.list(accountId, new Query(
+        assertThatThrownBy(() -> gateway.list(TemplateCredentialSource.account(accountId), new Query(
                 null, "zh_CN", null, List.of(), List.of(), 1, 20)))
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class, failure -> {
                     assertThat(failure.code()).isEqualTo("CHATAPP_ACCOUNT_CREDENTIALS_UNREADABLE");

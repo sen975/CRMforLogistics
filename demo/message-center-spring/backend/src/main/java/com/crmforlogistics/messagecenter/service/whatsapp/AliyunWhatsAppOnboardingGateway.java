@@ -127,6 +127,12 @@ public class AliyunWhatsAppOnboardingGateway implements WhatsAppOnboardingGatewa
     }
 
     @Override
+    public List<ProviderPhone> syncConfiguredPhoneNumbers(WhatsAppProviderScopeEntity scope) {
+        String custSpaceId = requireScope(scope);
+        return syncPhoneNumbers(custSpaceId, credentials(scope));
+    }
+
+    @Override
     public String encryptedProviderConfig() {
         return encryptedProviderConfig(config.chatappFrom());
     }

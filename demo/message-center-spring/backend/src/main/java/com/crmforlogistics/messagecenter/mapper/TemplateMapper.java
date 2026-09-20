@@ -45,6 +45,10 @@ public interface TemplateMapper extends BaseMapper<TemplateEntity> {
             + "and template_domain = 'ENTERPRISE_API' and deleted_at is null order by updated_at desc, id")
     List<TemplateEntity> findScopeTemplates(@Param("scopeId") UUID scopeId);
 
+    @Select("select count(*) from message_templates where provider_scope_id = #{scopeId}::uuid "
+            + "and template_domain = 'ENTERPRISE_API' and deleted_at is null")
+    long countLiveSharedForScope(@Param("scopeId") UUID scopeId);
+
     @Select("select * from message_templates where channel_account_id = #{accountId}::uuid "
             + "and template_domain = 'EMPLOYEE_BUSINESS_APP' and deleted_at is null "
             + "order by updated_at desc nulls last, id")

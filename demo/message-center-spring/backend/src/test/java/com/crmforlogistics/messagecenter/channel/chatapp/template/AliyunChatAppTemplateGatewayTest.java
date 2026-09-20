@@ -26,7 +26,10 @@ import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOssMediaUploader
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.WhatsAppProviderScopeMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateCredentialSource;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.CreateResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.TemplateCommand;
@@ -42,6 +45,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.Map;
@@ -56,12 +60,15 @@ import static com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsA
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 class AliyunChatAppTemplateGatewayTest {
+    private static final TemplateCredentialSource SOURCE =
+            TemplateCredentialSource.space(UUID.fromString("00000000-0000-0000-0000-000000000009"));
 
     @Mock
     private AsyncClient client;
@@ -84,7 +91,7 @@ class AliyunChatAppTemplateGatewayTest {
                                 .templateCode("tpl-1").templateName("delivery_notice").build())
                         .build()).build()));
 
-        CreateResult result = gateway.create(UUID.randomUUID(), command());
+        CreateResult result = gateway.create(SOURCE, command());
 
         ArgumentCaptor<CreateChatappTemplateRequest> request = ArgumentCaptor.forClass(CreateChatappTemplateRequest.class);
         verify(client).createChatappTemplate(request.capture());
@@ -103,25 +110,52 @@ class AliyunChatAppTemplateGatewayTest {
 
     @Test
     void exposesAccountCredentialFailureInsteadOfGenericProviderError() {
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
         ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
         ChatAppAccountCredentialsResolver credentialsResolver = mock(ChatAppAccountCredentialsResolver.class);
         UUID accountId = UUID.randomUUID();
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(accountId);
-        account.setChannelType("chatapp");
-        account.setAuthStatus("active");
-        account.setAccountIdentifier("60122222222");
         when(accountMapper.selectById(accountId)).thenReturn(account);
         when(credentialsResolver.resolve(account)).thenThrow(
                 new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING"));
         AliyunChatAppTemplateGateway accountGateway = new AliyunChatAppTemplateGateway(
-                uploader, accountMapper, credentialsResolver);
+                uploader, scopeMapper, accountMapper, credentialsResolver);
 
-        assertThatThrownBy(() -> accountGateway.create(accountId, command()))
+        assertThatThrownBy(() -> accountGateway.create(TemplateCredentialSource.account(accountId), command()))
                 .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
                     assertThat(error.code()).isEqualTo("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
                     assertThat(error.retryable()).isFalse();
                 });
+    }
+
+    /**
+     * A shared library belongs to a CAMS space, so naming one has to answer with that space's own
+     * AccessKey rather than with any account's — the account is what the caller is, not where it writes.
+     */
+    @Test
+    void aNamedSpaceIsAnsweredWithItsOwnCredentialsRatherThanAnAccounts() {
+        WhatsAppProviderScopeMapper scopeMapper = mock(WhatsAppProviderScopeMapper.class);
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        ChatAppAccountCredentialsResolver credentialsResolver = mock(ChatAppAccountCredentialsResolver.class);
+        UUID scopeId = UUID.randomUUID();
+        WhatsAppProviderScopeEntity space = new WhatsAppProviderScopeEntity();
+        space.setId(scopeId);
+        space.setExternalScopeId("cams-other-space");
+        when(scopeMapper.selectById(scopeId)).thenReturn(space);
+        when(credentialsResolver.resolveSpace(space)).thenThrow(
+                new ChatAppAccountCredentialsException("CHATAPP_SPACE_CREDENTIALS_MISSING"));
+        AliyunChatAppTemplateGateway spaceGateway = new AliyunChatAppTemplateGateway(
+                uploader, scopeMapper, accountMapper, credentialsResolver);
+
+        assertThatThrownBy(() -> spaceGateway.create(TemplateCredentialSource.space(scopeId), command()))
+                .isInstanceOfSatisfying(WhatsAppTemplateException.class, error -> {
+                    assertThat(error.code()).isEqualTo("CHATAPP_SPACE_CREDENTIALS_MISSING");
+                    assertThat(error.retryable()).isFalse();
+                });
+
+        verify(credentialsResolver).resolveSpace(space);
+        verify(accountMapper, never()).selectById(any());
     }
 
     @Test
@@ -133,7 +167,7 @@ class AliyunChatAppTemplateGatewayTest {
                                 .templateCode("tpl-1").templateName("delivery_notice").build())
                         .build()).build()));
 
-        gateway.modify(UUID.randomUUID(), "tpl-1", "en_US", command());
+        gateway.modify(SOURCE, "tpl-1", "en_US", command());
 
         ArgumentCaptor<ModifyChatappTemplateRequest> request = ArgumentCaptor.forClass(ModifyChatappTemplateRequest.class);
         verify(client).modifyChatappTemplate(request.capture());
@@ -148,7 +182,7 @@ class AliyunChatAppTemplateGatewayTest {
                 ModifyChatappTemplatePropertiesResponse.create().toBuilder().body(ModifyChatappTemplatePropertiesResponseBody.builder()
                         .code("OK").success(true).requestId("req-props").build()).build()));
 
-        var result = gateway.setSendPermission(UUID.randomUUID(), "tpl-1", "en_US", false);
+        var result = gateway.setSendPermission(SOURCE, "tpl-1", "en_US", false);
 
         ArgumentCaptor<ModifyChatappTemplatePropertiesRequest> request =
                 ArgumentCaptor.forClass(ModifyChatappTemplatePropertiesRequest.class);
@@ -164,7 +198,7 @@ class AliyunChatAppTemplateGatewayTest {
                 DeleteChatappTemplateResponse.create().toBuilder().body(DeleteChatappTemplateResponseBody.builder()
                         .code("OK").success(true).requestId("req-delete").build()).build()));
 
-        var result = gateway.delete(UUID.randomUUID(), "tpl-1", "en_US");
+        var result = gateway.delete(SOURCE, "tpl-1", "en_US");
 
         ArgumentCaptor<DeleteChatappTemplateRequest> request = ArgumentCaptor.forClass(DeleteChatappTemplateRequest.class);
         verify(client).deleteChatappTemplate(request.capture());
@@ -181,7 +215,7 @@ class AliyunChatAppTemplateGatewayTest {
                 ListChatappTemplateResponse.create().toBuilder().body(ListChatappTemplateResponseBody.builder()
                         .code("OK").success(true).total(3).listTemplate(List.of(row)).build()).build()));
 
-        var page = gateway.list(UUID.randomUUID(), 2, 1);
+        var page = gateway.list(SOURCE, 2, 1);
 
         ArgumentCaptor<ListChatappTemplateRequest> request = ArgumentCaptor.forClass(ListChatappTemplateRequest.class);
         verify(client).listChatappTemplate(request.capture());
@@ -211,7 +245,7 @@ class AliyunChatAppTemplateGatewayTest {
                 GetChatappTemplateDetailResponse.create().toBuilder().body(GetChatappTemplateDetailResponseBody.builder()
                         .code("OK").data(data).build()).build()));
 
-        var detail = gateway.detail(UUID.randomUUID(), "tpl-1", "en_US");
+        var detail = gateway.detail(SOURCE, "tpl-1", "en_US");
 
         ArgumentCaptor<GetChatappTemplateDetailRequest> request = ArgumentCaptor.forClass(GetChatappTemplateDetailRequest.class);
         verify(client).getChatappTemplateDetail(request.capture());
@@ -235,7 +269,7 @@ class AliyunChatAppTemplateGatewayTest {
         var uploaded = new ChatAppOssMediaUploader.UploadedObject("templates/a.png", "https://cams-media.oss.example.com/templates/a.png");
         when(uploader.upload(authorization, new byte[]{1, 2}, "a.png", "image/png")).thenReturn(uploaded);
 
-        var result = gateway.upload(UUID.randomUUID(), HeaderFormat.IMAGE, new byte[]{1, 2}, "a.png", "image/png");
+        var result = gateway.upload(SOURCE, HeaderFormat.IMAGE, new byte[]{1, 2}, "a.png", "image/png");
 
         ArgumentCaptor<GetChatappUploadAuthorizationRequest> request =
                 ArgumentCaptor.forClass(GetChatappUploadAuthorizationRequest.class);
@@ -250,7 +284,7 @@ class AliyunChatAppTemplateGatewayTest {
         when(client.createChatappTemplate(any())).thenReturn(CompletableFuture.completedFuture(
                 CreateChatappTemplateResponse.create().toBuilder().body(CreateChatappTemplateResponseBody.builder()
                         .code(" ").requestId("req-blank").build()).build()));
-        assertThatThrownBy(() -> gateway.create(UUID.randomUUID(), command()))
+        assertThatThrownBy(() -> gateway.create(SOURCE, command()))
                 .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
                     var e = (WhatsAppTemplateException) error;
                     assertThat(e.code()).isEqualTo("TEMPLATE_PROVIDER_REJECTED");
@@ -260,7 +294,7 @@ class AliyunChatAppTemplateGatewayTest {
         when(client.deleteChatappTemplate(any())).thenReturn(CompletableFuture.completedFuture(
                 DeleteChatappTemplateResponse.create().toBuilder().body(DeleteChatappTemplateResponseBody.builder()
                         .code("OK").requestId("req-no-success").build()).build()));
-        assertThatThrownBy(() -> gateway.delete(UUID.randomUUID(), "tpl-1", "en_US"))
+        assertThatThrownBy(() -> gateway.delete(SOURCE, "tpl-1", "en_US"))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("providerRequestId").isEqualTo("req-no-success");
 
@@ -268,14 +302,14 @@ class AliyunChatAppTemplateGatewayTest {
                 ModifyChatappTemplatePropertiesResponse.create().toBuilder().body(
                         ModifyChatappTemplatePropertiesResponseBody.builder().code("OK").success(false)
                                 .requestId("req-false-success").build()).build()));
-        assertThatThrownBy(() -> gateway.setSendPermission(UUID.randomUUID(), "tpl-1", "en_US", true))
+        assertThatThrownBy(() -> gateway.setSendPermission(SOURCE, "tpl-1", "en_US", true))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("providerRequestId").isEqualTo("req-false-success");
 
         when(client.listChatappTemplate(any())).thenReturn(CompletableFuture.completedFuture(
                 ListChatappTemplateResponse.create().toBuilder().body(ListChatappTemplateResponseBody.builder()
                         .code("OK").requestId("req-list-no-success").build()).build()));
-        assertThatThrownBy(() -> gateway.list(UUID.randomUUID(), 1, 10))
+        assertThatThrownBy(() -> gateway.list(SOURCE, 1, 10))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("providerRequestId").isEqualTo("req-list-no-success");
     }
@@ -285,7 +319,7 @@ class AliyunChatAppTemplateGatewayTest {
         when(client.createChatappTemplate(any())).thenReturn(new CompletableFuture<>());
         AliyunChatAppTemplateGateway shortGateway = new AliyunChatAppTemplateGateway(
                 client, uploader, Duration.ofMillis(10), "cams-space");
-        assertThatThrownBy(() -> shortGateway.create(UUID.randomUUID(), command()))
+        assertThatThrownBy(() -> shortGateway.create(SOURCE, command()))
                 .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
                     var e = (WhatsAppTemplateException) error;
                     assertThat(e.code()).isEqualTo("TEMPLATE_PROVIDER_TIMEOUT");
@@ -298,12 +332,43 @@ class AliyunChatAppTemplateGatewayTest {
         PopClientException provider = new PopClientException("provider failed");
         provider.setRequestId("pop-req-1");
         when(client.createChatappTemplate(any())).thenReturn(CompletableFuture.failedFuture(provider));
-        assertThatThrownBy(() -> gateway.create(UUID.randomUUID(), command()))
+        assertThatThrownBy(() -> gateway.create(SOURCE, command()))
                 .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
                     var e = (WhatsAppTemplateException) error;
                     assertThat(e.code()).isEqualTo("TEMPLATE_PROVIDER_ERROR");
                     assertThat(e.providerRequestId()).isEqualTo("pop-req-1");
                 });
+    }
+
+    @Test
+    void reportsATakenNameAsADefinitiveConflictRatherThanAnUnknownOutcome() {
+        PopClientException provider = new PopClientException(
+                "(Code: InvalidParameter.TemplateNameExist Message: code: 400, Template name already exists "
+                        + "request id: 01A0ACD2-14AC-3D34-BAE8-2FDA98C4A227)");
+        provider.setErrCode("InvalidParameter.TemplateNameExist");
+        provider.setRequestId("01A0ACD2-14AC-3D34-BAE8-2FDA98C4A227");
+        when(client.createChatappTemplate(any())).thenReturn(CompletableFuture.failedFuture(provider));
+
+        assertThatThrownBy(() -> gateway.create(SOURCE, command()))
+                .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
+                    var e = (WhatsAppTemplateException) error;
+                    assertThat(e.code()).isEqualTo("TEMPLATE_NAME_EXISTS");
+                    assertThat(e.retryable()).isFalse();
+                    assertThat(e.statusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.providerRequestId()).isEqualTo("01A0ACD2-14AC-3D34-BAE8-2FDA98C4A227");
+                });
+    }
+
+    @Test
+    void readsTheTakenNameFromTheProviderMessageWhenNoErrorCodeIsSet() {
+        PopClientException provider = new PopClientException(
+                "(Code: InvalidParameter.TemplateNameExist Message: code: 400, Template name already exists)");
+        when(client.createChatappTemplate(any())).thenReturn(CompletableFuture.failedFuture(provider));
+
+        assertThatThrownBy(() -> gateway.create(SOURCE, command()))
+                .isInstanceOf(WhatsAppTemplateException.class)
+                .satisfies(error -> assertThat(((WhatsAppTemplateException) error).code())
+                        .isEqualTo("TEMPLATE_NAME_EXISTS"));
     }
 
     @Test
@@ -317,7 +382,7 @@ class AliyunChatAppTemplateGatewayTest {
         when(client.createChatappTemplate(any())).thenReturn(interrupted);
 
         try {
-            assertThatThrownBy(() -> gateway.create(UUID.randomUUID(), command()))
+            assertThatThrownBy(() -> gateway.create(SOURCE, command()))
                     .isInstanceOf(WhatsAppTemplateException.class)
                     .extracting("code").isEqualTo("TEMPLATE_PROVIDER_INTERRUPTED");
             assertThat(Thread.currentThread().isInterrupted()).isTrue();

@@ -33,21 +33,22 @@ public class PublicTemplateApplicationService {
         this.providerScopeService = Objects.requireNonNull(providerScopeService);
     }
 
-    public Page listForUser(UUID actorUserId, Query query) {
-        return list(providerScopeService.requireOwnedActive(actorUserId).account().getId(), query);
-    }
-
-    public Page list(UUID accountId, Query query) {
-        providerScopeService.requireAccount(accountId);
+    /**
+     * Every CAMS space keeps its own public-template catalogue, so the query is answered with the
+     * credentials of the space the caller named, and the cache is keyed by that space rather than by
+     * whichever account happened to ask.
+     */
+    public Page list(UUID providerScopeId, Query query) {
         Query validated = validate(query);
-        CacheKey key = new CacheKey(validated);
+        String custSpaceId = providerScopeService.requireScope(providerScopeId).getExternalScopeId();
+        CacheKey key = new CacheKey(custSpaceId, validated);
         Instant now = clock.instant();
         synchronized (cache) {
             CacheEntry cached = cache.get(key);
             if (cached != null && cached.expiresAt().isAfter(now)) return cached.page();
             if (cached != null) cache.remove(key);
         }
-        Page page = gateway.list(accountId, validated);
+        Page page = gateway.list(TemplateCredentialSource.space(providerScopeId), validated);
         synchronized (cache) {
             cache.put(key, new CacheEntry(page, now.plusSeconds(CACHE_TTL_SECONDS)));
             while (cache.size() > MAX_CACHE_ENTRIES) cache.remove(cache.keySet().iterator().next());
@@ -97,6 +98,6 @@ public class PublicTemplateApplicationService {
         return new WhatsAppTemplateException(code, status, message, Map.of(), null, retryable);
     }
 
-    private record CacheKey(Query query) {}
+    private record CacheKey(String custSpaceId, Query query) {}
     private record CacheEntry(Page page, Instant expiresAt) {}
 }

@@ -11,21 +11,20 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTempl
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.UploadedMedia;
 
 import java.util.Optional;
-import java.util.UUID;
 
 public interface WhatsAppTemplateGateway {
 
-    CreateResult create(UUID accountId, TemplateCommand command);
+    CreateResult create(TemplateCredentialSource source, TemplateCommand command);
 
-    ModifyResult modify(UUID accountId, String templateCode, String language, TemplateCommand command);
+    ModifyResult modify(TemplateCredentialSource source, String templateCode, String language, TemplateCommand command);
 
-    PropertyResult setSendPermission(UUID accountId, String templateCode, String language, boolean allowSend);
+    PropertyResult setSendPermission(TemplateCredentialSource source, String templateCode, String language, boolean allowSend);
 
-    DeleteResult delete(UUID accountId, String templateCode, String language);
+    DeleteResult delete(TemplateCredentialSource source, String templateCode, String language);
 
-    ProviderTemplatePage list(UUID accountId, int page, int size);
+    ProviderTemplatePage list(TemplateCredentialSource source, int page, int size);
 
-    Optional<TemplateSnapshot> detail(UUID accountId, String templateCode, String language);
+    Optional<TemplateSnapshot> detail(TemplateCredentialSource source, String templateCode, String language);
 
-    UploadedMedia upload(UUID accountId, HeaderFormat format, byte[] bytes, String fileName, String contentType);
+    UploadedMedia upload(TemplateCredentialSource source, HeaderFormat format, byte[] bytes, String fileName, String contentType);
 }

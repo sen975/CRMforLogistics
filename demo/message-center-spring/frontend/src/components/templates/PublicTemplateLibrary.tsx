@@ -22,9 +22,12 @@ function filterValues(value: string): string[] | undefined {
 
 export default function PublicTemplateLibrary({
   hasWhatsAppAccount,
+  scopeId,
   onCreateFromPublicTemplate,
 }: {
   hasWhatsAppAccount: boolean;
+  /** Administrators browse the catalogue of the CAMS space they picked; others own a single space. */
+  scopeId?: string;
   onCreateFromPublicTemplate?: (draft: PublicTemplateConversionResult) => void;
 }) {
   const [query, setQuery] = useState<PublicTemplateQuery>({ language: 'zh_CN', page: 1, size: 20 });
@@ -34,8 +37,8 @@ export default function PublicTemplateLibrary({
   const [selectedPageIndex, setSelectedPageIndex] = useState<number | null>(null);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('parameter');
   const templatesQuery = useQuery({
-    queryKey: ['public-templates', query],
-    queryFn: () => fetchPublicTemplates(query),
+    queryKey: ['public-templates', scopeId, query],
+    queryFn: () => fetchPublicTemplates(query, scopeId),
     enabled: hasWhatsAppAccount,
     retry: false,
   });
@@ -56,7 +59,7 @@ export default function PublicTemplateLibrary({
   useEffect(() => {
     setSelectedTemplate(null);
     setSelectedPageIndex(null);
-  }, [hasWhatsAppAccount]);
+  }, [hasWhatsAppAccount, scopeId]);
 
   const customize = () => {
     if (!selectedTemplate || selectedPageIndex === null || !onCreateFromPublicTemplate) return;

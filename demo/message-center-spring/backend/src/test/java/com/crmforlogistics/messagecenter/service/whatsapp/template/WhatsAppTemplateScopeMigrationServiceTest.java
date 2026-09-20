@@ -21,6 +21,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,14 +64,51 @@ class WhatsAppTemplateScopeMigrationServiceTest {
     }
 
     @Test
-    void migrateBlocksWhenMoreThanOneProviderScopeExists() {
-        when(scopeMapper.findAllByProvider("ALIYUN_CAMS")).thenReturn(List.of(
-                scope(SCOPE_ID, "space-1"), scope(UUID.randomUUID(), "space-2")));
+    void migrateBlocksWhenNoProviderScopeExists() {
+        when(scopeMapper.findAllByProvider("ALIYUN_CAMS")).thenReturn(List.of());
+        when(accountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of());
 
         WhatsAppTemplateScopeMigrationService.MigrationReport report = service().migrate();
 
         assertThat(report.status()).isEqualTo(WhatsAppTemplateScopeMigrationService.MigrationStatus.BLOCKED);
-        verify(gate).fail(eq("WHATSAPP_PROVIDER_SCOPE_MISMATCH"), any(String.class));
+        verify(gate).fail(eq("WHATSAPP_ACCOUNT_REQUIRED"), any(String.class));
+    }
+
+    /**
+     * A second CAMS space must not take the template APIs down. Nothing is merged or re-scoped, so the
+     * template-owning space keeps its rows and the other space is simply left alone.
+     */
+    @Test
+    void migrateOpensTheGateOnTheTemplateOwningScopeWithoutRewritingOtherSpaces() {
+        UUID otherScopeId = UUID.fromString("51000000-0000-0000-0000-000000000005");
+        when(scopeMapper.findAllByProvider("ALIYUN_CAMS")).thenReturn(List.of(
+                scope(SCOPE_ID, "space-1"), scope(otherScopeId, "space-2")));
+        when(accountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account(ACCOUNT_ID, otherScopeId)));
+        when(templateMapper.countLiveSharedForScope(SCOPE_ID)).thenReturn(3L);
+        when(templateMapper.countLiveSharedForScope(otherScopeId)).thenReturn(0L);
+
+        WhatsAppTemplateScopeMigrationService.MigrationReport report = service().migrate();
+
+        assertThat(report.status()).isEqualTo(WhatsAppTemplateScopeMigrationService.MigrationStatus.READY);
+        assertThat(report.scopeCount()).isEqualTo(2);
+        verify(gate).open(SCOPE_ID);
+        verify(templateMapper, never()).assignProviderScope(any(), any(), any());
+        verify(templateMapper, never()).retireDuplicate(any(), any());
+        verify(reconciliation, never()).syncScope(any(), any());
+    }
+
+    @Test
+    void migrateFallsBackToTheSpaceHoldingActiveAccountsWhenNoSpaceOwnsTemplates() {
+        UUID otherScopeId = UUID.fromString("51000000-0000-0000-0000-000000000005");
+        when(scopeMapper.findAllByProvider("ALIYUN_CAMS")).thenReturn(List.of(
+                scope(SCOPE_ID, "space-1"), scope(otherScopeId, "space-2")));
+        when(accountMapper.selectActiveChatAppAccountsForSync()).thenReturn(List.of(account(ACCOUNT_ID, otherScopeId)));
+        when(templateMapper.countLiveSharedForScope(SCOPE_ID)).thenReturn(0L);
+        when(templateMapper.countLiveSharedForScope(otherScopeId)).thenReturn(0L);
+
+        service().migrate();
+
+        verify(gate).open(otherScopeId);
     }
 
     private WhatsAppTemplateScopeMigrationService service() {

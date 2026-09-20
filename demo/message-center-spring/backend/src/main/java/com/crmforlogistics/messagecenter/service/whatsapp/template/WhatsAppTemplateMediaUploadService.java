@@ -47,29 +47,24 @@ public class WhatsAppTemplateMediaUploadService {
         this.providerScopeService = providerScopeService;
     }
 
-    public UploadResult uploadForUser(UUID actorUserId, HeaderFormat format, InputStream input, long declaredSize,
+    /** The space to upload into is resolved by the caller, so the media lands beside its template. */
+    public UploadResult uploadForUser(UUID actorUserId, WhatsAppProviderScopeService.ScopeAccount scopeAccount,
+                                      HeaderFormat format, InputStream input, long declaredSize,
                                       String fileName, String contentType, String clientRequestId, String traceId) {
-        if (providerScopeService == null) {
-            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
-        }
-        UUID accountId = providerScopeService.requireOwnedActive(actorUserId).account().getId();
-        return upload(accountId, format, input, declaredSize, fileName, contentType, clientRequestId,
-                actorUserId, traceId);
+        return upload(scopeAccount.account().getId(), format, input, declaredSize, fileName, contentType,
+                clientRequestId, actorUserId, traceId);
     }
 
-    public MediaAssetView findForUser(UUID actorUserId, String clientRequestId) {
-        if (providerScopeService == null) {
-            throw new IllegalStateException("WhatsApp provider scope service is unavailable");
-        }
-        UUID accountId = providerScopeService.requireOwnedActive(actorUserId).account().getId();
-        return find(accountId, clientRequestId);
+    public MediaAssetView findForUser(WhatsAppProviderScopeService.ScopeAccount scopeAccount, String clientRequestId) {
+        return find(scopeAccount.account().getId(), clientRequestId);
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public UploadResult upload(UUID accountId, HeaderFormat format, InputStream input, long declaredSize,
                                String fileName, String contentType, String clientRequestId,
                                UUID actorUserId, String traceId) {
-        providerScopeService.requireAccount(accountId);
+        WhatsAppProviderScopeService.ScopeAccount scopeAccount = providerScopeService.requireAccount(accountId);
+        TemplateCredentialSource source = TemplateCredentialSource.space(scopeAccount.scope().getId());
         String normalizedContentType = normalizeContentType(contentType);
         byte[] bytes = readBoundedAndValidate(format, input, declaredSize, normalizedContentType);
         String digest = sha256(bytes);
@@ -85,7 +80,7 @@ public class WhatsAppTemplateMediaUploadService {
             return replay(reservation.asset());
         }
         try {
-            UploadedMedia uploaded = gateway.upload(accountId, format, bytes, fileName, normalizedContentType);
+            UploadedMedia uploaded = gateway.upload(source, format, bytes, fileName, normalizedContentType);
             return new UploadResult(view(store.markUploaded(candidate.getId(), uploaded, clock.instant())), true);
         } catch (WhatsAppTemplateException error) {
             TemplateMediaAssetEntity terminal = error.retryable()

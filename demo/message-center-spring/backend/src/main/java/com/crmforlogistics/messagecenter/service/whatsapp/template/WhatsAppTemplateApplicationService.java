@@ -107,10 +107,13 @@ public class WhatsAppTemplateApplicationService {
         }
 
         TemplateOperationEntity operation = begun.operation();
+        TemplateCredentialSource source = privateDomain
+                ? TemplateCredentialSource.account(accountId)
+                : TemplateCredentialSource.space(providerScopeId);
         try {
-            CreateResult result = gateway.create(accountId, prepared.providerCommand());
-            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(accountId, result.templateCode(), validated.language())
-                    .orElseGet(() -> unknownSnapshot(accountId, result.templateCode(), validated));
+            CreateResult result = gateway.create(source, prepared.providerCommand());
+            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(source, result.templateCode(), validated.language())
+                    .orElseGet(() -> unknownSnapshot(result.templateCode(), validated));
             persistSnapshot(snapshot, providerScopeId, accountId, actorUserId, privateDomain);
             attach(prepared.asset());
             succeed(operation, result.templateCode(), result.providerRequestId());
@@ -145,12 +148,13 @@ public class WhatsAppTemplateApplicationService {
         }
 
         TemplateOperationEntity operation = begun.operation();
+        TemplateCredentialSource source = TemplateCredentialSource.space(providerScopeId);
         try {
-            ModifyResult result = gateway.modify(credentialAccountId, current.getProviderTemplateId(),
+            ModifyResult result = gateway.modify(source, current.getProviderTemplateId(),
                     current.getLanguageCode(), prepared.providerCommand());
-            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(credentialAccountId,
+            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(source,
                     current.getProviderTemplateId(), current.getLanguageCode()).orElseGet(() -> unknownSnapshot(
-                    credentialAccountId, current.getProviderTemplateId(), validated));
+                    current.getProviderTemplateId(), validated));
             persistSnapshot(snapshot, providerScopeId, credentialAccountId, actorUserId);
             attach(prepared.asset());
             succeed(operation, result.templateCode(), result.providerRequestId());
@@ -182,11 +186,12 @@ public class WhatsAppTemplateApplicationService {
                 current.getId(), null);
         if (begun.existing()) return operationView(begun.operation());
         TemplateOperationEntity operation = begun.operation();
+        TemplateCredentialSource source = TemplateCredentialSource.account(accountId);
         try {
-            ModifyResult result = gateway.modify(accountId, current.getProviderTemplateId(),
+            ModifyResult result = gateway.modify(source, current.getProviderTemplateId(),
                     current.getLanguageCode(), prepared.providerCommand());
-            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(accountId, current.getProviderTemplateId(),
-                    current.getLanguageCode()).orElseGet(() -> unknownSnapshot(accountId,
+            TemplateSnapshot snapshot = detailAfterAcknowledgedWrite(source, current.getProviderTemplateId(),
+                    current.getLanguageCode()).orElseGet(() -> unknownSnapshot(
                     current.getProviderTemplateId(), validated));
             persistSnapshot(snapshot, account.getProviderScopeId(), accountId, actorUserId, true);
             attach(prepared.asset());
@@ -221,8 +226,8 @@ public class WhatsAppTemplateApplicationService {
 
         TemplateOperationEntity operation = begun.operation();
         try {
-            PropertyResult result = gateway.setSendPermission(credentialAccountId, current.getProviderTemplateId(),
-                    current.getLanguageCode(), allowSend);
+            PropertyResult result = gateway.setSendPermission(TemplateCredentialSource.space(providerScopeId),
+                    current.getProviderTemplateId(), current.getLanguageCode(), allowSend);
             current.setAllowSend(result.allowSend());
             if (result.allowSend() != allowSend) {
                 throw business("TEMPLATE_PERMISSION_NOT_CONFIRMED", HttpStatus.BAD_GATEWAY,
@@ -245,7 +250,7 @@ public class WhatsAppTemplateApplicationService {
     @Transactional(noRollbackFor = WhatsAppTemplateException.class)
     public OperationView setSendPermissionPrivate(UUID accountId, UUID actorUserId, UUID templateId,
                                                   boolean allowSend, String clientRequestId, String traceId) {
-        ChannelAccountEntity account = requireOwnedBusinessAppAccount(accountId, actorUserId);
+        requireOwnedBusinessAppAccount(accountId, actorUserId);
         TemplateEntity current = lockPrivateTemplate(accountId, templateId);
         boolean previousAllowSend = Boolean.TRUE.equals(current.getAllowSend());
         BeginOperation begun = beginOperation(accountId, clientRequestId, OperationType.SET_SEND_PERMISSION,
@@ -254,8 +259,8 @@ public class WhatsAppTemplateApplicationService {
         if (begun.existing()) return operationView(begun.operation());
         TemplateOperationEntity operation = begun.operation();
         try {
-            PropertyResult result = gateway.setSendPermission(accountId, current.getProviderTemplateId(),
-                    current.getLanguageCode(), allowSend);
+            PropertyResult result = gateway.setSendPermission(TemplateCredentialSource.account(accountId),
+                    current.getProviderTemplateId(), current.getLanguageCode(), allowSend);
             if (result.allowSend() != allowSend) {
                 throw business("TEMPLATE_PERMISSION_NOT_CONFIRMED", HttpStatus.BAD_GATEWAY,
                         "Provider did not confirm the requested permission");
@@ -291,7 +296,8 @@ public class WhatsAppTemplateApplicationService {
 
         TemplateOperationEntity operation = begun.operation();
         try {
-            DeleteResult result = gateway.delete(credentialAccountId, current.getProviderTemplateId(), current.getLanguageCode());
+            DeleteResult result = gateway.delete(TemplateCredentialSource.space(providerScopeId),
+                    current.getProviderTemplateId(), current.getLanguageCode());
             if (!result.success()) {
                 throw providerRejected("TEMPLATE_DELETE_NOT_CONFIRMED", result.providerRequestId());
             }
@@ -313,7 +319,7 @@ public class WhatsAppTemplateApplicationService {
     @Transactional(noRollbackFor = WhatsAppTemplateException.class)
     public OperationView deletePrivate(UUID accountId, UUID actorUserId, UUID templateId,
                                        String clientRequestId, String traceId) {
-        ChannelAccountEntity account = requireOwnedBusinessAppAccount(accountId, actorUserId);
+        requireOwnedBusinessAppAccount(accountId, actorUserId);
         TemplateEntity current = lockPrivateTemplate(accountId, templateId);
         BeginOperation begun = beginOperation(accountId, clientRequestId, OperationType.DELETE,
                 current.getProviderTemplateId(), current.getLanguageCode(),
@@ -322,7 +328,8 @@ public class WhatsAppTemplateApplicationService {
         if (begun.existing()) return operationView(begun.operation());
         TemplateOperationEntity operation = begun.operation();
         try {
-            DeleteResult result = gateway.delete(accountId, current.getProviderTemplateId(), current.getLanguageCode());
+            DeleteResult result = gateway.delete(TemplateCredentialSource.account(accountId),
+                    current.getProviderTemplateId(), current.getLanguageCode());
             if (!result.success()) throw providerRejected("TEMPLATE_DELETE_NOT_CONFIRMED", result.providerRequestId());
             current.setDeletedAt(now());
             current.setAllowSend(false);
@@ -532,16 +539,16 @@ public class WhatsAppTemplateApplicationService {
         entity.setDeletedAt(snapshot.deletedAt());
     }
 
-    private TemplateSnapshot unknownSnapshot(UUID accountId, String templateCode, TemplateCommand command) {
-        return new TemplateSnapshot(accountId, templateCode, command.name(), command.language(), command.category(),
+    private TemplateSnapshot unknownSnapshot(String templateCode, TemplateCommand command) {
+        return new TemplateSnapshot(templateCode, command.name(), command.language(), command.category(),
                 ReviewStatus.UNKNOWN, null, null, false, command.components(), command.examples(),
                 command.messageSendTtlSeconds(), now(), null);
     }
 
     private Optional<TemplateSnapshot> detailAfterAcknowledgedWrite(
-            UUID accountId, String templateCode, String language) {
+            TemplateCredentialSource source, String templateCode, String language) {
         try {
-            return gateway.detail(accountId, templateCode, language);
+            return gateway.detail(source, templateCode, language);
         } catch (WhatsAppTemplateException ignored) {
             return Optional.empty();
         }

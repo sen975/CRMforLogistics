@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 public final class WhatsAppTemplateModels {
 
@@ -108,7 +107,6 @@ public final class WhatsAppTemplateModels {
     }
 
     public record TemplateSnapshot(
-            UUID accountId,
             String templateCode,
             String templateName,
             String language,

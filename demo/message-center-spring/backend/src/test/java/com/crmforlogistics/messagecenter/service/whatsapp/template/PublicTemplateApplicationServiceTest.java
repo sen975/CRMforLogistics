@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
 import com.crmforlogistics.messagecenter.service.whatsapp.template.ChatAppPublicTemplateGateway;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,7 +28,7 @@ class PublicTemplateApplicationServiceTest {
     @Mock ChatAppPublicTemplateGateway gateway;
 
     private PublicTemplateApplicationService service;
-    private final UUID accountId = UUID.randomUUID();
+    private final UUID providerScopeId = UUID.randomUUID();
     private final Clock clock = Clock.fixed(Instant.parse("2026-08-14T00:00:00Z"), ZoneOffset.UTC);
 
     @BeforeEach
@@ -49,42 +50,70 @@ class PublicTemplateApplicationServiceTest {
     }
 
     @Test
-    void listsProjectedTemplatesForValidatedWhatsAppAccount() {
+    void listsProjectedTemplatesForTheNamedSpace() {
         Query query = new Query("", "zh_CN", "UTILITY", List.of(), List.of(), 1, 20);
         Page providerPage = new Page(List.of(new PublicTemplate("code-1", "name-1", "zh_CN", "UTILITY",
                 List.of(), "ORDER_MANAGEMENT", "ORDER", new Content("name-1", "name-1", "external-1",
                 "zh_CN", "UTILITY", List.of(new MessagePage("page1", "Hello $(name)", List.of(
                         new Button("Open", "visitWebsite", "https://example.com")))), List.of()))), 1, 1, 20);
-        when(gateway.list(accountId, query)).thenReturn(providerPage);
+        when(providerScopeService.requireScope(providerScopeId)).thenReturn(space("cams-1"));
+        when(gateway.list(TemplateCredentialSource.space(providerScopeId), query)).thenReturn(providerPage);
 
-        Page result = service.list(accountId, query);
+        Page result = service.list(providerScopeId, query);
 
-        verify(providerScopeService).requireAccount(accountId);
-        verify(gateway).list(accountId, query);
+        verify(providerScopeService).requireScope(providerScopeId);
+        verify(gateway).list(TemplateCredentialSource.space(providerScopeId), query);
         assertThat(result).isEqualTo(providerPage);
     }
 
     @Test
-    void sharesPublicTemplateListCacheAcrossAccountsInTheSameCustSpace() {
+    void sharesPublicTemplateListCacheAcrossSpacesRegisteredInTheSameCustSpace() {
         Query query = new Query(null, "zh_CN", null, List.of(), List.of(), 1, 20);
         Page providerPage = new Page(List.of(), 1, 0, 20);
-        UUID secondAccountId = UUID.randomUUID();
-        when(gateway.list(accountId, query)).thenReturn(providerPage);
+        UUID secondScopeId = UUID.randomUUID();
+        when(providerScopeService.requireScope(any())).thenReturn(space("cams-1"));
+        when(gateway.list(TemplateCredentialSource.space(providerScopeId), query)).thenReturn(providerPage);
 
-        assertThat(service.list(accountId, query)).isEqualTo(providerPage);
-        assertThat(service.list(secondAccountId, query)).isEqualTo(providerPage);
+        assertThat(service.list(providerScopeId, query)).isEqualTo(providerPage);
+        assertThat(service.list(secondScopeId, query)).isEqualTo(providerPage);
 
-        verify(providerScopeService).requireAccount(accountId);
-        verify(providerScopeService).requireAccount(secondAccountId);
-        verify(gateway).list(accountId, query);
-        verify(gateway, never()).list(secondAccountId, query);
+        verify(providerScopeService).requireScope(providerScopeId);
+        verify(providerScopeService).requireScope(secondScopeId);
+        verify(gateway).list(TemplateCredentialSource.space(providerScopeId), query);
+        verify(gateway, never()).list(TemplateCredentialSource.space(secondScopeId), query);
+    }
+
+    /** Each CAMS space has its own catalogue, so a cached page must never answer for another space. */
+    @Test
+    void neverAnswersAcrossCustSpaces() {
+        Query query = new Query(null, "zh_CN", null, List.of(), List.of(), 1, 20);
+        UUID otherScopeId = UUID.randomUUID();
+        when(providerScopeService.requireScope(providerScopeId)).thenReturn(space("cams-1"));
+        when(providerScopeService.requireScope(otherScopeId)).thenReturn(space("cams-2"));
+        when(gateway.list(TemplateCredentialSource.space(providerScopeId), query))
+                .thenReturn(new Page(List.of(), 1, 0, 20));
+        when(gateway.list(TemplateCredentialSource.space(otherScopeId), query))
+                .thenReturn(new Page(List.of(), 1, 0, 20));
+
+        service.list(providerScopeId, query);
+        service.list(otherScopeId, query);
+
+        verify(gateway).list(TemplateCredentialSource.space(providerScopeId), query);
+        verify(gateway).list(TemplateCredentialSource.space(otherScopeId), query);
+    }
+
+    private static WhatsAppProviderScopeEntity space(String custSpaceId) {
+        WhatsAppProviderScopeEntity scope = new WhatsAppProviderScopeEntity();
+        scope.setId(UUID.randomUUID());
+        scope.setExternalScopeId(custSpaceId);
+        return scope;
     }
 
     @Test
     void rejectsInvalidPaginationBeforeCallingProvider() {
         Query query = new Query("", "zh_CN", "UTILITY", List.of(), List.of(), 0, 201);
 
-        assertThatThrownBy(() -> service.list(accountId, query))
+        assertThatThrownBy(() -> service.list(providerScopeId, query))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("code").isEqualTo("PUBLIC_TEMPLATE_QUERY_INVALID");
         verifyNoInteractions(gateway);
@@ -121,10 +150,10 @@ class PublicTemplateApplicationServiceTest {
         Query overlongIndustry = new Query(null, "zh_CN", null, List.of("x".repeat(121)), List.of(), 1, 20);
         Query overlongUsecase = new Query(null, "zh_CN", null, List.of(), List.of("x".repeat(121)), 1, 20);
 
-        assertThatThrownBy(() -> service.list(accountId, overlongIndustry))
+        assertThatThrownBy(() -> service.list(providerScopeId, overlongIndustry))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("code").isEqualTo("PUBLIC_TEMPLATE_QUERY_INVALID");
-        assertThatThrownBy(() -> service.list(accountId, overlongUsecase))
+        assertThatThrownBy(() -> service.list(providerScopeId, overlongUsecase))
                 .isInstanceOf(WhatsAppTemplateException.class)
                 .extracting("code").isEqualTo("PUBLIC_TEMPLATE_QUERY_INVALID");
 
@@ -140,7 +169,7 @@ class PublicTemplateApplicationServiceTest {
                 new Query(null, "zh_CN", "x".repeat(41), List.of(), List.of(), 1, 20));
 
         for (Query query : invalidQueries) {
-            assertThatThrownBy(() -> service.list(accountId, query))
+            assertThatThrownBy(() -> service.list(providerScopeId, query))
                     .isInstanceOf(WhatsAppTemplateException.class)
                     .extracting("code").isEqualTo("PUBLIC_TEMPLATE_QUERY_INVALID");
         }

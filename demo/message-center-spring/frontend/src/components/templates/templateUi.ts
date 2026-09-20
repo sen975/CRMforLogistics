@@ -57,6 +57,25 @@ export function templatePermissionState(template: SharedTemplate): {
   };
 }
 
+export const templateScopeTypeLabels: Record<string, string> = {
+  ENTERPRISE_API: '企业 API',
+  EMPLOYEE_BUSINESS_APP: 'Business App 共存',
+};
+
+/**
+ * Names the CAMS space a change request touches. Reviewers need it because each space owns its own
+ * library and a Business App space is not the same operation as the enterprise API space.
+ */
+export function templateSpaceLabel(scope: {
+  providerScopeId: string | null;
+  providerScopeName: string | null;
+  providerScopeExternalId: string | null;
+}): string | null {
+  if (!scope.providerScopeId) return null;
+  const name = scope.providerScopeName || scope.providerScopeId;
+  return scope.providerScopeExternalId ? `${name}（${scope.providerScopeExternalId}）` : name;
+}
+
 export const headerFormatLabels: Record<TemplateHeaderFormat, string> = {
   TEXT: '文本',
   IMAGE: '图片',

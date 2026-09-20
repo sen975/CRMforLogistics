@@ -90,10 +90,10 @@ test('maps every management API to the shared WhatsApp scope', () => {
   assert.match(endpoints, /const sharedWhatsAppBase = ['"]\/v1\/whatsapp['"]/);
   assert.doesNotMatch(endpoints, /\/v1\/channel-accounts\/\$\{accountId\}\/whatsapp/);
   assert.match(functionSource('fetchSharedTemplates'), /client\.get<SharedTemplateListPage>\(`\$\{sharedWhatsAppBase\}\/templates`/);
-  assert.match(functionSource('fetchSharedTemplate'), /client\.get<SharedTemplate>\(`\$\{sharedWhatsAppBase\}\/templates/);
-  assert.match(functionSource('createSharedTemplate'), /client\.post<TemplateOperation>\(`\$\{sharedWhatsAppBase\}\/templates\/applications`, command\)/);
+  assert.match(functionSource('fetchSharedTemplate'), /client\.get<SharedTemplate>\(\s*`\$\{sharedWhatsAppBase\}\/templates/);
+  assert.match(functionSource('createSharedTemplate'), /client\.post<TemplateOperation>\(\s*`\$\{sharedWhatsAppBase\}\/templates\/applications`, command, \{ params: \{ scopeId \} \}/);
   assert.match(functionSource('createTemplateChangeRequest'), /\/templates\/\$\{encodeURIComponent\(templateId\)\}\/change-requests`/);
-  assert.match(functionSource('syncSharedTemplates'), /client\.post<TemplateSyncResult>\(`\$\{sharedWhatsAppBase\}\/templates\/sync`\)/);
+  assert.match(functionSource('syncSharedTemplates'), /client\.post<TemplateSyncResult>\(`\$\{sharedWhatsAppBase\}\/templates\/sync`, undefined, \{ params: \{ scopeId \} \}\)/);
   assert.match(functionSource('fetchPublicTemplates'), /client\.get<PublicTemplateListPage>\(`\$\{sharedWhatsAppBase\}\/public-templates`/);
   assert.doesNotMatch(endpoints, /copyPublicTemplate|\/public-templates\/.*\/copy/);
   assert.doesNotMatch(publicTemplateLibrary, /copyPublicTemplate|复制此模板|复制并送审/);

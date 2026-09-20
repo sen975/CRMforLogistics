@@ -45,6 +45,7 @@ public class WhatsAppTemplateReconciliationService {
     private static final Duration LEASE_DURATION = Duration.ofMinutes(2);
     private static final Duration RECONCILIATION_WINDOW = Duration.ofHours(24);
     private static final Duration MAX_BACKOFF = Duration.ofHours(3);
+    private static final Duration CREATE_MATCH_SKEW = Duration.ofMinutes(5);
 
     private final WhatsAppTemplateGateway gateway;
     private final ChannelAccountMapper accountMapper;
@@ -77,7 +78,28 @@ public class WhatsAppTemplateReconciliationService {
     public SyncResult syncScope(UUID providerScopeId, UUID credentialAccountId) {
         UUID scopeId = Objects.requireNonNull(providerScopeId);
         UUID accountId = Objects.requireNonNull(credentialAccountId);
+        requireScopeAccount(scopeId, accountId);
         return sync("scope:" + scopeId, scopeId, accountId, false);
+    }
+
+    /**
+     * The scope decides which provider space the catalog is read from and which rows it lands in, while
+     * the account only decides which provider credentials are used. Deriving one from the other at every
+     * call site is a convention, not a guarantee, so the pairing is checked here: a mismatch would file
+     * one space's templates under another.
+     */
+    private void requireScopeAccount(UUID providerScopeId, UUID credentialAccountId) {
+        ChannelAccountEntity account = accountMapper.selectById(credentialAccountId);
+        if (account == null || account.getDeletedAt() != null) {
+            throw new WhatsAppTemplateException("WHATSAPP_ACCOUNT_NOT_FOUND",
+                    org.springframework.http.HttpStatus.NOT_FOUND,
+                    "WhatsApp account not found", Map.of(), null, false);
+        }
+        if (!Objects.equals(providerScopeId, account.getProviderScopeId())) {
+            throw new WhatsAppTemplateException("WHATSAPP_PROVIDER_SCOPE_MISMATCH",
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "WhatsApp account does not belong to the shared template scope", Map.of(), null, false);
+        }
     }
 
     public SyncResult syncPrivateAccount(UUID accountId) {
@@ -112,9 +134,10 @@ public class WhatsAppTemplateReconciliationService {
 
     private SyncResult doSync(UUID providerScopeId, UUID accountId, boolean privateDomain) {
         Instant now = now();
+        TemplateCredentialSource source = credentialSource(providerScopeId, accountId, privateDomain);
         ProviderSnapshot provider;
         try {
-            provider = loadProviderSnapshot(accountId);
+            provider = loadProviderSnapshot(source);
         } catch (RuntimeException error) {
             return new SyncResult(0, 0, 0, false);
         }
@@ -125,8 +148,8 @@ public class WhatsAppTemplateReconciliationService {
             TemplateKey key = key(summary.templateCode(), summary.language());
             TemplateEntity current = existing.get(key);
             try {
-                Optional<TemplateSnapshot> detail = verifiedDetail(accountId, summary.templateCode(),
-                        summary.language(), gateway.detail(accountId, summary.templateCode(), summary.language()));
+                Optional<TemplateSnapshot> detail = verifiedDetail(summary.templateCode(),
+                        summary.language(), gateway.detail(source, summary.templateCode(), summary.language()));
                 if (detail.isPresent()) {
                     persistSnapshot(detail.orElseThrow(), current, providerScopeId, accountId, now, privateDomain);
                 } else {
@@ -180,7 +203,7 @@ public class WhatsAppTemplateReconciliationService {
                 continue;
             }
             try {
-                ProviderSnapshot provider = loadProviderSnapshot(operation.getChannelAccountId());
+                ProviderSnapshot provider = loadProviderSnapshot(sourceFor(operation));
                 if (!provider.complete()) {
                     retry(operation, "RECONCILIATION_NOT_CONFIRMED", "Provider pagination is incomplete", now);
                     continue;
@@ -220,7 +243,9 @@ public class WhatsAppTemplateReconciliationService {
         }
         List<ProviderTemplateSummary> matches = summaries.stream()
                 .filter(summary -> same(summary.templateName(), command.name())
-                        && same(summary.language(), command.language()))
+                        && same(summary.language(), command.language())
+                        && sameCategory(summary.category(), command.category())
+                        && createdByThisOperation(summary, operation))
                 .toList();
         if (matches.size() != 1) {
             retry(operation, matches.size() > 1 ? "RECONCILIATION_AMBIGUOUS" : "RECONCILIATION_NOT_CONFIRMED",
@@ -266,17 +291,17 @@ public class WhatsAppTemplateReconciliationService {
                                     TemplateCommand command,
                                     Instant now,
                                     boolean create) {
-        Optional<TemplateSnapshot> detail = verifiedDetail(operation.getChannelAccountId(), summary.templateCode(),
-                summary.language(), gateway.detail(operation.getChannelAccountId(),
-                        summary.templateCode(), summary.language()));
+        TemplateEntity current = templateForOperation(operation).orElse(null);
+        UUID providerScopeId = current == null ? scopeForOperation(operation) : current.getProviderScopeId();
+        boolean privateDomain = isPrivateAccount(operation.getChannelAccountId());
+        TemplateCredentialSource source = sourceFor(operation);
+        Optional<TemplateSnapshot> detail = verifiedDetail(summary.templateCode(),
+                summary.language(), gateway.detail(source, summary.templateCode(), summary.language()));
         if (detail.isEmpty()) {
             retry(operation, "RECONCILIATION_NOT_CONFIRMED", "Provider detail is not yet available", now);
             return false;
         }
         TemplateSnapshot snapshot = detail.orElseThrow();
-        TemplateEntity current = templateForOperation(operation).orElse(null);
-        UUID providerScopeId = current == null ? scopeForOperation(operation) : current.getProviderScopeId();
-        boolean privateDomain = isPrivateAccount(operation.getChannelAccountId());
         persistSnapshot(snapshot, current, providerScopeId,
                 operation.getChannelAccountId(), now, privateDomain);
         if (create && snapshot.reviewStatus() == ReviewStatus.REJECTED) {
@@ -313,11 +338,11 @@ public class WhatsAppTemplateReconciliationService {
                         .anyMatch(url -> same(url, asset.getProviderUrl())));
     }
 
-    private ProviderSnapshot loadProviderSnapshot(UUID accountId) {
+    private ProviderSnapshot loadProviderSnapshot(TemplateCredentialSource source) {
         Map<TemplateKey, ProviderTemplateSummary> items = new LinkedHashMap<>();
         boolean unambiguous = true;
         for (int page = 1; page <= MAX_PAGES; page++) {
-            ProviderTemplatePage result = gateway.list(accountId, page, PAGE_SIZE);
+            ProviderTemplatePage result = gateway.list(source, page, PAGE_SIZE);
             if (result == null || result.items() == null) {
                 throw new IllegalStateException("Provider returned an invalid template page");
             }
@@ -336,16 +361,14 @@ public class WhatsAppTemplateReconciliationService {
         return new ProviderSnapshot(new ArrayList<>(items.values()), MAX_PAGES, false);
     }
 
-    private static Optional<TemplateSnapshot> verifiedDetail(UUID accountId, String templateCode, String language,
+    private static Optional<TemplateSnapshot> verifiedDetail(String templateCode, String language,
                                                               Optional<TemplateSnapshot> detail) {
         if (detail.isEmpty()) {
             return detail;
         }
         TemplateSnapshot snapshot = detail.orElseThrow();
-        if (!Objects.equals(accountId, snapshot.accountId())
-                || !same(templateCode, snapshot.templateCode())
-                || !same(language, snapshot.language())) {
-            throw new IllegalStateException("Provider template detail does not match the requested account and key");
+        if (!same(templateCode, snapshot.templateCode()) || !same(language, snapshot.language())) {
+            throw new IllegalStateException("Provider template detail does not match the requested key");
         }
         return detail;
     }
@@ -400,7 +423,7 @@ public class WhatsAppTemplateReconciliationService {
     private void persistSummary(ProviderTemplateSummary summary, TemplateEntity entity, UUID providerScopeId,
                                 UUID accountId, Instant now, boolean privateDomain) {
         if (entity == null) {
-            TemplateSnapshot snapshot = new TemplateSnapshot(accountId, summary.templateCode(), summary.templateName(),
+            TemplateSnapshot snapshot = new TemplateSnapshot(summary.templateCode(), summary.templateName(),
                     summary.language(), summary.category(), reviewStatus(summary.rawAuditStatus()),
                     summary.rawAuditStatus(), summary.reason(), false, List.of(), Map.of(), null,
                     summary.providerUpdatedAt(), null);
@@ -460,6 +483,25 @@ public class WhatsAppTemplateReconciliationService {
             throw new IllegalStateException("WHATSAPP_PROVIDER_SCOPE_REQUIRED");
         }
         return account.getProviderScopeId();
+    }
+
+    /**
+     * The shared library of a space is reached with that space's own credentials, so an operation on it
+     * reads the space it belongs to; a Business App operation keeps using its account's credentials.
+     */
+    private TemplateCredentialSource sourceFor(TemplateOperationEntity operation) {
+        UUID accountId = operation.getChannelAccountId();
+        if (isPrivateAccount(accountId)) {
+            return TemplateCredentialSource.account(accountId);
+        }
+        return TemplateCredentialSource.space(scopeForOperation(operation));
+    }
+
+    private static TemplateCredentialSource credentialSource(UUID providerScopeId, UUID accountId,
+                                                             boolean privateDomain) {
+        return privateDomain
+                ? TemplateCredentialSource.account(accountId)
+                : TemplateCredentialSource.space(providerScopeId);
     }
 
     private void markRequestSucceeded(TemplateOperationEntity operation, String providerRequestId, Instant now) {
@@ -528,6 +570,30 @@ public class WhatsAppTemplateReconciliationService {
 
     private static boolean same(String left, String right) {
         return Objects.equals(left, right);
+    }
+
+    /** Absent on either side means the provider did not state it, which cannot disprove a match. */
+    private static boolean sameCategory(String left, String right) {
+        if (left == null || right == null) {
+            return true;
+        }
+        return left.trim().equalsIgnoreCase(right.trim());
+    }
+
+    /**
+     * A submitted create is proven only by a template the provider published after we submitted it.
+     * Name, language and category alone cannot tell our template apart from an older one the provider
+     * still holds under that name — the provider keeps a name reserved after the template is gone from
+     * its catalog, so a create that was refused can match a template that predates it.
+     */
+    private static boolean createdByThisOperation(ProviderTemplateSummary summary,
+                                                  TemplateOperationEntity operation) {
+        Instant submittedAt = operation.getStartedAt();
+        Instant publishedAt = summary.providerUpdatedAt();
+        if (submittedAt == null || publishedAt == null) {
+            return true;
+        }
+        return !publishedAt.isBefore(submittedAt.minus(CREATE_MATCH_SKEW));
     }
 
     private Instant now() {

@@ -21,6 +21,10 @@ public interface WhatsAppOnboardingGateway {
         throw new UnsupportedOperationException("Configured phone sync is not supported");
     }
 
+    default List<ProviderPhone> syncConfiguredPhoneNumbers(WhatsAppProviderScopeEntity scope) {
+        return syncConfiguredPhoneNumbers();
+    }
+
     ProviderResult add(AddCommand command, WhatsAppProviderScopeEntity scope);
 
     ProviderResult sendCode(CodeCommand command, WhatsAppProviderScopeEntity scope);

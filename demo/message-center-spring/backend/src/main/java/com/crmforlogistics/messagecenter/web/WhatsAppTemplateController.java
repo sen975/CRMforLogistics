@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.dto.response.SharedTemplateResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateChangeRequestResponse;
 import com.crmforlogistics.messagecenter.dto.response.TemplateOperationResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAdminAuthorization;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateApplicationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.PublicTemplateModels;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
@@ -56,6 +57,7 @@ public class WhatsAppTemplateController {
     private final WhatsAppTemplateReconciliationService reconciliationService;
     private final WhatsAppTemplateMediaUploadService mediaUploadService;
     private final WhatsAppProviderScopeService providerScopeService;
+    private final WhatsAppAdminAuthorization adminAuthorization;
     private final WhatsAppTemplateScopeGate scopeGate;
 
     public WhatsAppTemplateController(WhatsAppSharedTemplateCatalogService catalogService,
@@ -65,6 +67,7 @@ public class WhatsAppTemplateController {
                                       WhatsAppTemplateReconciliationService reconciliationService,
                                       WhatsAppTemplateMediaUploadService mediaUploadService,
                                       WhatsAppProviderScopeService providerScopeService,
+                                      WhatsAppAdminAuthorization adminAuthorization,
                                       WhatsAppTemplateScopeGate scopeGate) {
         this.catalogService = catalogService;
         this.templateApplicationService = templateApplicationService;
@@ -73,11 +76,13 @@ public class WhatsAppTemplateController {
         this.reconciliationService = reconciliationService;
         this.mediaUploadService = mediaUploadService;
         this.providerScopeService = providerScopeService;
+        this.adminAuthorization = adminAuthorization;
         this.scopeGate = scopeGate;
     }
 
     @GetMapping("/templates")
     public SharedTemplateResponse.Page list(
+            @RequestParam(required = false) UUID scopeId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String search,
@@ -86,33 +91,33 @@ public class WhatsAppTemplateController {
             @RequestParam(required = false) String language,
             @RequestParam(required = false) Boolean allowSend,
             @RequestParam(required = false) Boolean deleted) {
-        scopeGate.requireReady();
-        return catalogService.list(actorUserId(), page, size,
+        return catalogService.list(resolveTemplateScope(actorUserId(), scopeId), page, size,
                 new WhatsAppSharedTemplateCatalogService.TemplateFilters(
                         search, status, category, language, allowSend, deleted));
     }
 
     @GetMapping("/templates/{templateId}")
-    public SharedTemplateResponse detail(@PathVariable UUID templateId) {
-        scopeGate.requireReady();
-        return catalogService.detail(actorUserId(), templateId);
+    public SharedTemplateResponse detail(@PathVariable UUID templateId,
+                                         @RequestParam(required = false) UUID scopeId) {
+        return catalogService.detail(resolveTemplateScope(actorUserId(), scopeId), templateId);
     }
 
     @PostMapping("/templates/applications")
     @ResponseStatus(HttpStatus.CREATED)
     public TemplateOperationResponse create(@RequestBody TemplateCreateRequest request,
+                                            @RequestParam(required = false) UUID scopeId,
                                             HttpServletRequest servletRequest) {
         UUID actorUserId = actorUserId();
-        WhatsAppProviderScopeService.ScopeAccount scopeAccount = requireCurrentScopeAccount(actorUserId);
+        WhatsAppProviderScopeService.ScopeAccount scopeAccount = resolveWriteScopeAccount(actorUserId, scopeId);
         String traceId = traceId(servletRequest);
         return TemplateOperationResponse.from(templateApplicationService.create(scopeAccount.scope().getId(),
                 scopeAccount.account().getId(), request.toCommand(), actorUserId, traceId), traceId);
     }
 
     @PostMapping("/templates/sync")
-    public WhatsAppTemplateReconciliationService.SyncResult sync() {
+    public WhatsAppTemplateReconciliationService.SyncResult sync(@RequestParam(required = false) UUID scopeId) {
         UUID actorUserId = actorUserId();
-        WhatsAppProviderScopeService.ScopeAccount scopeAccount = requireCurrentScopeAccount(actorUserId);
+        WhatsAppProviderScopeService.ScopeAccount scopeAccount = resolveWriteScopeAccount(actorUserId, scopeId);
         return reconciliationService.syncScope(scopeAccount.scope().getId(), scopeAccount.account().getId());
     }
 
@@ -203,9 +208,11 @@ public class WhatsAppTemplateController {
     @ResponseStatus(HttpStatus.CREATED)
     public WhatsAppTemplateChangeRequestService.ChangeOutcome submitChangeRequest(
             @PathVariable UUID templateId, @RequestBody TemplateChangeCommandRequest request,
-            HttpServletRequest servletRequest) {
-        scopeGate.requireReady();
-        return changeRequestService.submit(actorUserId(), templateId, request.toCommand(), traceId(servletRequest));
+            @RequestParam(required = false) UUID scopeId, HttpServletRequest servletRequest) {
+        UUID actorUserId = actorUserId();
+        WhatsAppProviderScopeService.ScopeAccount scopeAccount = resolveWriteScopeAccount(actorUserId, scopeId);
+        return changeRequestService.submit(actorUserId, templateId, request.toCommand(), scopeAccount,
+                traceId(servletRequest));
     }
 
     @GetMapping("/template-change-requests/mine")
@@ -216,15 +223,16 @@ public class WhatsAppTemplateController {
     }
 
     @GetMapping("/templates/{templateId}/operations")
-    public List<TemplateOperationResponse> history(@PathVariable UUID templateId) {
-        scopeGate.requireReady();
-        return catalogService.history(actorUserId(), templateId).stream()
+    public List<TemplateOperationResponse> history(@PathVariable UUID templateId,
+                                                    @RequestParam(required = false) UUID scopeId) {
+        return catalogService.history(resolveTemplateScope(actorUserId(), scopeId), templateId).stream()
                 .map(TemplateOperationResponse::from)
                 .toList();
     }
 
     @GetMapping("/public-templates")
     public PublicTemplateModels.Page listPublicTemplates(
+            @RequestParam(required = false) UUID scopeId,
             @RequestParam(required = false) String name,
             @RequestParam(defaultValue = "zh_CN") String language,
             @RequestParam(required = false) String category,
@@ -232,31 +240,61 @@ public class WhatsAppTemplateController {
             @RequestParam(required = false) List<String> usecases,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        scopeGate.requireReady();
-        return publicTemplateService.listForUser(actorUserId(),
+        UUID actorUserId = actorUserId();
+        return publicTemplateService.list(resolveTemplateScope(actorUserId, scopeId),
                 new PublicTemplateModels.Query(name, language, category, industries, usecases, page, size));
     }
 
     @PostMapping("/template-media")
     public ResponseEntity<MediaAssetView> uploadMedia(@RequestParam HeaderFormat format,
                                                        @RequestParam String clientRequestId,
+                                                       @RequestParam(required = false) UUID scopeId,
                                                        @RequestParam("file") MultipartFile file,
                                                        HttpServletRequest servletRequest) throws IOException {
-        scopeGate.requireReady();
         UUID actorUserId = actorUserId();
+        WhatsAppProviderScopeService.ScopeAccount scopeAccount = resolveWriteScopeAccount(actorUserId, scopeId);
         String traceId = traceId(servletRequest);
         String fileName = file.getOriginalFilename() == null ? "upload" : file.getOriginalFilename();
         try (InputStream input = file.getInputStream()) {
-            UploadResult result = mediaUploadService.uploadForUser(actorUserId, format, input, file.getSize(),
-                    fileName, file.getContentType(), clientRequestId, traceId);
+            UploadResult result = mediaUploadService.uploadForUser(actorUserId, scopeAccount, format, input,
+                    file.getSize(), fileName, file.getContentType(), clientRequestId, traceId);
             return ResponseEntity.status(uploadStatus(result)).body(result.asset());
         }
     }
 
     @GetMapping("/template-media/uploads/{clientRequestId}")
-    public MediaAssetView findMediaUpload(@PathVariable String clientRequestId) {
-        scopeGate.requireReady();
-        return mediaUploadService.findForUser(actorUserId(), clientRequestId);
+    public MediaAssetView findMediaUpload(@PathVariable String clientRequestId,
+                                          @RequestParam(required = false) UUID scopeId) {
+        UUID actorUserId = actorUserId();
+        return mediaUploadService.findForUser(resolveWriteScopeAccount(actorUserId, scopeId), clientRequestId);
+    }
+
+    /**
+     * Each CAMS space keeps its own template library, so a reader must name the space they mean.
+     * Only an administrator may read a space other than the one the migration gate opened; for
+     * everyone else an explicit {@code scopeId} is refused rather than silently ignored.
+     */
+    private UUID resolveTemplateScope(UUID actorUserId, UUID requestedScopeId) {
+        if (requestedScopeId == null) {
+            return scopeGate.requireReady();
+        }
+        adminAuthorization.requireAdmin(actorUserId);
+        return providerScopeService.requireScope(requestedScopeId).getId();
+    }
+
+    /**
+     * A write — and the lookup of the media it produced — has to land in the space the caller names,
+     * or a library they are looking at is not the one they are writing into. Naming a space other
+     * than the default is an administrator action, exactly as reading one is, so both go through the
+     * same gate.
+     */
+    private WhatsAppProviderScopeService.ScopeAccount resolveWriteScopeAccount(UUID actorUserId,
+                                                                               UUID requestedScopeId) {
+        if (requestedScopeId == null) {
+            return requireCurrentScopeAccount(actorUserId);
+        }
+        adminAuthorization.requireAdmin(actorUserId);
+        return providerScopeService.requireScopeAccount(actorUserId, requestedScopeId);
     }
 
     private WhatsAppProviderScopeService.ScopeAccount requireCurrentScopeAccount(UUID actorUserId) {

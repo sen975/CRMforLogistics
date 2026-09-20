@@ -1,6 +1,8 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
+import com.crmforlogistics.messagecenter.entity.WhatsAppProviderScopeEntity;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadStore.Reservation;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateModels.HeaderFormat;
@@ -33,6 +35,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class WhatsAppTemplateMediaUploadServiceTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
+    private static final UUID SCOPE_ID = UUID.fromString("30000000-0000-0000-0000-000000000001");
     private static final UUID ACTOR_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-11T01:00:00Z");
     private static final String ONE_BYTE_SHA256 =
@@ -48,6 +51,17 @@ class WhatsAppTemplateMediaUploadServiceTest {
     void setUp() {
         service = new WhatsAppTemplateMediaUploadService(store, gateway,
                 Clock.fixed(NOW, ZoneOffset.UTC), providerScopeService);
+        when(providerScopeService.requireAccount(ACCOUNT_ID)).thenReturn(scopeAccount());
+    }
+
+    /** Media belongs to the space of the account it is uploaded for, so the space is what answers. */
+    private static WhatsAppProviderScopeService.ScopeAccount scopeAccount() {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(ACCOUNT_ID);
+        WhatsAppProviderScopeEntity scope = new WhatsAppProviderScopeEntity();
+        scope.setId(SCOPE_ID);
+        scope.setExternalScopeId("cams-1");
+        return new WhatsAppProviderScopeService.ScopeAccount(account, scope);
     }
 
     @Test
@@ -127,7 +141,8 @@ class WhatsAppTemplateMediaUploadServiceTest {
         TemplateMediaAssetEntity uploaded = asset("request-new", "UPLOADED", ONE_BYTE_SHA256);
         when(store.reserve(any())).thenAnswer(invocation ->
                 new Reservation(invocation.getArgument(0), true));
-        when(gateway.upload(ACCOUNT_ID, HeaderFormat.IMAGE, new byte[]{1}, "a.png", "image/png"))
+        when(gateway.upload(TemplateCredentialSource.space(SCOPE_ID), HeaderFormat.IMAGE,
+                new byte[]{1}, "a.png", "image/png"))
                 .thenReturn(new UploadedMedia("templates/a.png", "https://provider.invalid/a.png",
                         HeaderFormat.IMAGE, "image/png", 1, ONE_BYTE_SHA256));
         when(store.markUploaded(any(), any(), eq(NOW))).thenReturn(uploaded);
@@ -137,7 +152,8 @@ class WhatsAppTemplateMediaUploadServiceTest {
         assertThat(result.created()).isTrue();
         assertThat(result.asset().assetStatus()).isEqualTo(MediaAssetStatus.UPLOADED);
         verify(providerScopeService).requireAccount(ACCOUNT_ID);
-        verify(gateway).upload(ACCOUNT_ID, HeaderFormat.IMAGE, new byte[]{1}, "a.png", "image/png");
+        verify(gateway).upload(TemplateCredentialSource.space(SCOPE_ID), HeaderFormat.IMAGE,
+                new byte[]{1}, "a.png", "image/png");
     }
 
     @Test

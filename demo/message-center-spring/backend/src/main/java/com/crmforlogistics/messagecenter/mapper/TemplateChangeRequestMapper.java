@@ -39,11 +39,38 @@ public interface TemplateChangeRequestMapper extends BaseMapper<TemplateChangeRe
     @Select("select * from template_change_requests where id = #{requestId}::uuid limit 1")
     Optional<TemplateChangeRequestEntity> findByIdForUpdate(@Param("requestId") UUID requestId);
 
-    @Select("select * from template_change_requests order by created_at desc, id desc limit #{limit} offset #{offset}")
-    List<TemplateChangeRequestEntity> listForReview(@Param("offset") long offset, @Param("limit") int limit);
+    /**
+     * Review-queue page for the admin approvals screen. {@code status} and {@code search} are optional;
+     * {@code null} (or blank, normalised away by the service) means "no filter", which is the historical
+     * unfiltered behaviour. The joins are LEFT joins so a request whose template or requester row is gone
+     * still shows up in the unfiltered queue, exactly as before.
+     */
+    @Select("<script>"
+            + "select request.* from template_change_requests request "
+            + "left join message_templates template on template.id = request.template_id "
+            + "left join users requester on requester.id = request.requested_by_user_id "
+            + "where 1 = 1 "
+            + "<if test=\"status != null and status != ''\">and request.status = #{status} </if>"
+            + "<if test=\"search != null and search != ''\">and (template.name ilike '%' || #{search} || '%' "
+            + "or template.provider_template_id ilike '%' || #{search} || '%' "
+            + "or requester.display_name ilike '%' || #{search} || '%') </if>"
+            + "order by request.created_at desc, request.id desc limit #{limit} offset #{offset}"
+            + "</script>")
+    List<TemplateChangeRequestEntity> listForReview(@Param("offset") long offset, @Param("limit") int limit,
+                                                     @Param("status") String status, @Param("search") String search);
 
-    @Select("select count(*) from template_change_requests")
-    long countForReview();
+    /** Same filters as {@link #listForReview}, so the reported total always describes the filtered set. */
+    @Select("<script>"
+            + "select count(*) from template_change_requests request "
+            + "left join message_templates template on template.id = request.template_id "
+            + "left join users requester on requester.id = request.requested_by_user_id "
+            + "where 1 = 1 "
+            + "<if test=\"status != null and status != ''\">and request.status = #{status} </if>"
+            + "<if test=\"search != null and search != ''\">and (template.name ilike '%' || #{search} || '%' "
+            + "or template.provider_template_id ilike '%' || #{search} || '%' "
+            + "or requester.display_name ilike '%' || #{search} || '%') </if>"
+            + "</script>")
+    long countForReview(@Param("status") String status, @Param("search") String search);
 
     @Update("update template_change_requests request set status = 'EXECUTING', reviewed_by_user_id = #{reviewerId}::uuid, "
             + "reviewed_at = #{now}, execution_started_at = #{now}, execution_error_code = null, "
@@ -82,4 +109,13 @@ public interface TemplateChangeRequestMapper extends BaseMapper<TemplateChangeRe
             + "execution_error_message = null, execution_completed_at = null, updated_at = #{now} "
             + "where id = #{requestId}::uuid and status = 'EXECUTION_FAILED'")
     int retry(@Param("requestId") UUID requestId, @Param("now") Instant now);
+
+    @Select("select template.provider_scope_id as scope_id, count(*) as total "
+            + "from template_change_requests request "
+            + "join message_templates template on template.id = request.template_id "
+            + "where request.status = 'PENDING_APPROVAL' "
+            + "group by template.provider_scope_id")
+    List<PendingApprovalCountRow> countPendingApprovalsByScope();
+
+    record PendingApprovalCountRow(UUID scopeId, long total) { }
 }
