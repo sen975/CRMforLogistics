@@ -18,6 +18,7 @@ vi.mock('../hooks/useContacts', () => ({
   }),
   useMergeContacts: () => ({ mutateAsync: vi.fn() }),
   useConversationPreference: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useRestoreConversation: () => ({ mutate: vi.fn() }),
 }));
 vi.mock('../hooks/useSse', () => ({ useSse: vi.fn() }));
 vi.mock('../components/ContactCard', () => ({ default: ({ contact }: { contact: { displayName: string } }) => <div>{contact.displayName}</div> }));

@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComContactLinkService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
@@ -34,6 +35,7 @@ class WeComP0ControllerSecurityTest {
     @MockitoBean WeComDirectoryService directory;
     @MockitoBean WeComProfileBackfillService profileBackfill;
     @MockitoBean WeComUserBindingService bindings;
+    @MockitoBean WeComContactLinkService contactLinks;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 

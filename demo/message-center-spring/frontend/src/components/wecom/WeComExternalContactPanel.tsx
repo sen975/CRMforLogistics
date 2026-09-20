@@ -1,7 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Alert, Avatar, Button, Drawer, List, Spin, Typography } from 'antd';
-import { fetchWeComBinding, getWeComExternalContact, listWeComExternalContacts } from '../../api/endpoints';
+import { useNavigate } from 'react-router-dom';
+import {
+  fetchWeComBinding,
+  getWeComExternalContact,
+  listWeComExternalContactLinks,
+  listWeComExternalContacts,
+} from '../../api/endpoints';
+import type { WeComExternalContactLink } from '../../api/types';
 import WeComProviderView from './WeComProviderView';
 import { externalContactIds } from './wecomProviderData';
 import { wecomAvatarColor, wecomAvatarLetter } from './wecomAvatar';
@@ -28,6 +35,7 @@ function contactProfile(data: Record<string, unknown> | undefined): ExternalCont
 
 export default function WeComExternalContactPanel({ authCorpId }: { authCorpId: string }) {
   const [externalUserId, setExternalUserId] = useState('');
+  const navigate = useNavigate();
   const binding = useQuery({ queryKey: ['wecom', 'binding'], queryFn: fetchWeComBinding, retry: false });
   const boundToSelectedCorp = binding.data?.bound === true && binding.data.authCorpId === authCorpId;
   const contacts = useQuery({
@@ -37,6 +45,23 @@ export default function WeComExternalContactPanel({ authCorpId }: { authCorpId: 
     retry: false,
   });
   const contactIds = useMemo(() => externalContactIds(contacts.data), [contacts.data]);
+  const requestedIds = useMemo(() => contactIds.slice(0, 100), [contactIds]);
+  // The server decides which external contacts this account may open; the panel only renders it.
+  const contactLinks = useQuery({
+    queryKey: ['wecom', 'external-contact-links', authCorpId, requestedIds],
+    queryFn: () => listWeComExternalContactLinks(authCorpId, requestedIds),
+    enabled: boundToSelectedCorp && requestedIds.length > 0,
+    retry: false,
+  });
+  const linkByExternalUserId = useMemo(
+    () => new Map((contactLinks.data ?? []).map((link) => [link.externalUserId, link])),
+    [contactLinks.data],
+  );
+  const openContact = (link: WeComExternalContactLink) => {
+    const params = new URLSearchParams({ channel: 'wecom' });
+    if (link.identityId) params.set('identityId', link.identityId);
+    navigate(`/conversations/contact/${link.contactId}?${params.toString()}`);
+  };
   const customerDetails = useQueries({
     queries: contactIds.slice(0, 100).map((externalId) => ({
       queryKey: ['wecom', 'external-contact', authCorpId, externalId],
@@ -73,7 +98,10 @@ export default function WeComExternalContactPanel({ authCorpId }: { authCorpId: 
             size="small"
             header={<Text strong>外部联系人 ({contactIds.length})</Text>}
             dataSource={contactIds}
-            renderItem={(externalId) => (
+            renderItem={(externalId) => {
+              const link = linkByExternalUserId.get(externalId);
+              const openable = link && link.accessible && link.contactId ? link : null;
+              return (
               <List.Item
                 actions={[<Button key="detail" type="link" size="small" onClick={() => setExternalUserId(externalId)}>查看详情</Button>]}
               >
@@ -91,13 +119,25 @@ export default function WeComExternalContactPanel({ authCorpId }: { authCorpId: 
                           {wecomAvatarLetter(profile.name)}
                         </Avatar>
                       )}
-                      title={profile.name}
+                      title={openable
+                        ? (
+                          <Button
+                            type="link"
+                            size="small"
+                            style={{ padding: 0, height: 'auto' }}
+                            onClick={() => openContact(openable)}
+                          >
+                            {profile.name}
+                          </Button>
+                        )
+                        : profile.name}
                       description={queryState?.isFetching ? '正在获取客户资料' : undefined}
                     />
                   );
                 })()}
               </List.Item>
-            )}
+              );
+            }}
           />
         )}
         {boundToSelectedCorp && contactIds.length === 0 && <WeComProviderView data={contacts.data} emptyText="当前绑定成员暂无客户" />}

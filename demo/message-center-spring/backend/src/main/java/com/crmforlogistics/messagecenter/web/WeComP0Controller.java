@@ -4,9 +4,11 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
+import com.crmforlogistics.messagecenter.dto.response.WeComExternalContactLinkResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComContactLinkService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @ConditionalOnWeComEnabled
@@ -42,13 +45,15 @@ public class WeComP0Controller {
     private final WeComDirectoryService directory;
     private final WeComProfileBackfillService profileBackfill;
     private final WeComUserBindingService bindings;
+    private final WeComContactLinkService contactLinks;
 
     public WeComP0Controller(AppConfig config, WeComInstallationService installations,
                              WeComAppChatService appChats,
                              WeComExternalContactService externalContacts,
                              WeComDirectoryService directory,
                              WeComProfileBackfillService profileBackfill,
-                             WeComUserBindingService bindings) {
+                             WeComUserBindingService bindings,
+                             WeComContactLinkService contactLinks) {
         this.config = config;
         this.installations = installations;
         this.appChats = appChats;
@@ -56,6 +61,7 @@ public class WeComP0Controller {
         this.directory = directory;
         this.profileBackfill = profileBackfill;
         this.bindings = bindings;
+        this.contactLinks = contactLinks;
     }
 
     @GetMapping("/installations")
@@ -106,6 +112,23 @@ public class WeComP0Controller {
                     "当前账号绑定的企业微信企业与请求不一致");
         }
         return externalContacts.list(authCorpId, binding.wecomUserId(), actor(servletRequest));
+    }
+
+    /**
+     * Reports which CRM contact each 客户联系 row can open for the current account, so the
+     * console only offers entries the account may actually read. This reads CRM data only.
+     */
+    @GetMapping("/installations/{authCorpId}/external-contacts/contact-links")
+    public List<WeComExternalContactLinkResponse> externalContactLinks(
+            @PathVariable String authCorpId,
+            @RequestParam("externalUserIds") List<String> externalUserIds) {
+        UUID userId = SecurityUtil.currentUserId();
+        WeComUserBindingService.BoundIdentity binding = bindings.requireByUserId(userId);
+        if (!authCorpId.equals(binding.authCorpId())) {
+            throw new WeComException("WECOM_BINDING_CORP_MISMATCH", 403,
+                    "当前账号绑定的企业微信企业与请求不一致");
+        }
+        return contactLinks.resolve(userId, externalUserIds);
     }
 
     @GetMapping("/installations/{authCorpId}/external-contacts/{externalUserId}")

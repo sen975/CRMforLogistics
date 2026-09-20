@@ -1,8 +1,8 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Dropdown, Input, List, Typography, Spin, Empty, message, Tooltip } from 'antd';
 import { DeleteOutlined, PushpinFilled, PushpinOutlined, SearchOutlined, WechatOutlined } from '@ant-design/icons';
-import { useUnifiedConversations, useMergeContacts, useConversationPreference } from '../hooks/useContacts';
+import { useUnifiedConversations, useMergeContacts, useConversationPreference, useRestoreConversation } from '../hooks/useContacts';
 import { useSse } from '../hooks/useSse';
 import { useQueryClient } from '@tanstack/react-query';
 import ContactCard from '../components/ContactCard';
@@ -24,6 +24,21 @@ export default function ContactsPage() {
   const { data, isLoading } = useUnifiedConversations(search || undefined, searchMode);
   const mergeMutation = useMergeContacts();
   const preferenceMutation = useConversationPreference();
+  const restoreMutation = useRestoreConversation();
+  const restoreAttempted = useRef<Set<string>>(new Set());
+
+  // Deliberately opening a contact is intent to keep it reachable. A hidden contact is
+  // absent from the list, so the first time a visit is observed we clear the stored
+  // hidden preference. Marking the visit before the check keeps a later right-click
+  // "delete" on the conversation that is open from being undone.
+  const restoreMutate = restoreMutation.mutate;
+  useEffect(() => {
+    if (!contactId || search || isLoading || !data) return;
+    if (restoreAttempted.current.has(contactId)) return;
+    restoreAttempted.current.add(contactId);
+    if (data.records.some((item) => item.type === 'CONTACT' && item.id === contactId)) return;
+    restoreMutate({ targetType: 'CONTACT', targetId: contactId });
+  }, [contactId, search, isLoading, data, restoreMutate]);
 
   const changeSearchMode = (mode: SearchMode) => {
     setSearchMode(mode);

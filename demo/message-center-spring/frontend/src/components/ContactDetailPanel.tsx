@@ -222,10 +222,8 @@ export default function ContactDetailPanel() {
             )}
           </Space>
         </Descriptions.Item>
-        <Descriptions.Item label="消息数">{contact.messageCount}</Descriptions.Item>
         <Descriptions.Item label="最后消息">{contact.lastMessageAt ? new Date(contact.lastMessageAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
         <Descriptions.Item label="未读数">{contact.unreadCount}</Descriptions.Item>
-        {contact.lastText && <Descriptions.Item label="最近内容"><Text ellipsis style={{ maxWidth: 200 }}>{contact.lastText}</Text></Descriptions.Item>}
       </Descriptions>
     </div>
   );

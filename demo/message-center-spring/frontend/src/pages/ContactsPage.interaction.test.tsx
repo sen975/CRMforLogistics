@@ -9,6 +9,7 @@ import ContactsPage from './ContactsPage';
 const hooks = vi.hoisted(() => ({
   useUnifiedConversations: vi.fn(),
   useConversationPreference: vi.fn(),
+  useRestoreConversation: vi.fn(),
   useMergeContacts: vi.fn(),
   useSse: vi.fn(),
 }));
@@ -24,6 +25,7 @@ beforeEach(() => {
   ], total: 2 }, isLoading: false });
   hooks.useMergeContacts.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false });
   hooks.useConversationPreference.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false });
+  hooks.useRestoreConversation.mockReturnValue({ mutate: vi.fn() });
 });
 
 function dataTransfer() {

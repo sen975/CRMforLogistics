@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComContactLinkService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComProfileBackfillService;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -53,6 +55,7 @@ class WeComP0ControllerTest {
     @MockitoBean WeComDirectoryService directory;
     @MockitoBean WeComProfileBackfillService profileBackfill;
     @MockitoBean WeComUserBindingService bindings;
+    @MockitoBean WeComContactLinkService contactLinks;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -124,6 +127,34 @@ class WeComP0ControllerTest {
         verify(appChats).send(eq(new WeComAppChatService.SendCommand("corp-1", "chat-1", "text",
                 objectMapper.readTree("{\"content\":\"你好\"}"), true)),
                 eq(new WeComApiActor(ADMIN_ID, "trace-chat-send")));
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void resolvesExternalContactLinksOnlyForTheBoundCorp() throws Exception {
+        UUID contactId = UUID.randomUUID();
+        when(bindings.requireByUserId(ADMIN_ID)).thenReturn(new WeComUserBindingService.BoundIdentity(
+                ADMIN_ID, "suite-1", "corp-1", "bound-member", "BOUND_EXISTING", null, "admin"));
+        when(contactLinks.resolve(ADMIN_ID, List.of("external-1", "external-2"))).thenReturn(List.of(
+                new com.crmforlogistics.messagecenter.dto.response.WeComExternalContactLinkResponse(
+                        "external-1", contactId, UUID.randomUUID(), true),
+                new com.crmforlogistics.messagecenter.dto.response.WeComExternalContactLinkResponse(
+                        "external-2", null, null, false)));
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-1/external-contacts/contact-links")
+                        .param("externalUserIds", "external-1,external-2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].externalUserId").value("external-1"))
+                .andExpect(jsonPath("$[0].contactId").value(contactId.toString()))
+                .andExpect(jsonPath("$[0].accessible").value(true))
+                .andExpect(jsonPath("$[1].externalUserId").value("external-2"))
+                .andExpect(jsonPath("$[1].contactId").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$[1].accessible").value(false));
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-other/external-contacts/contact-links")
+                        .param("externalUserIds", "external-1"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(externalContacts);
     }
 
     @Test

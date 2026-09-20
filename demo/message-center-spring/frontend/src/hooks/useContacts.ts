@@ -7,6 +7,7 @@ import {
   splitContact,
   toggleConversationPinned,
   hideConversation,
+  restoreConversation,
   reorderConversations,
   fetchChannelAddressBook,
   createManualChannelContact,
@@ -148,5 +149,20 @@ export function useConversationPreference() {
       }
     },
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['conversations'] }); },
+  });
+}
+
+/**
+ * Deliberately opening a conversation counts as intent to keep it reachable, so a
+ * previously stored hidden preference is cleared and the list is refreshed.
+ */
+export function useRestoreConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { targetType: ConversationTargetType; targetId: string }) =>
+      restoreConversation(vars.targetType, vars.targetId),
+    onSuccess: async (data) => {
+      if (data?.hidden === false) await qc.invalidateQueries({ queryKey: ['conversations'] });
+    },
   });
 }
