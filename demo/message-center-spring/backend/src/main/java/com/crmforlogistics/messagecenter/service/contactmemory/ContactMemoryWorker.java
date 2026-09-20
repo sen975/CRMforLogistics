@@ -62,6 +62,7 @@ public class ContactMemoryWorker {
         if (now == null) {
             return 0;
         }
+        states.markStaleDirty(now, config.batchSize());
         List<ContactMemoryStateEntity> runnable = states.listRunnable(now, null, config.batchSize());
         if (runnable == null || runnable.isEmpty()) {
             return 0;

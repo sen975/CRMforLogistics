@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.contactmemory;
 
 import com.crmforlogistics.messagecenter.entity.ContactAiLabelEntity;
+import com.crmforlogistics.messagecenter.entity.ContactAiLabelEvidenceEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryObservationEntity;
 import com.crmforlogistics.messagecenter.config.ContactMemoryConfig;
@@ -108,6 +109,40 @@ class ContactMemoryMutationServiceTest {
                 .persist(OWNER_ID, CONTACT_ID, lease(), result, attempt(result)))
                 .doesNotThrowAnyException();
         verify(states).complete(eq(STATE_ID), eq(LEASE_TOKEN), eq("cursor"), eq((UUID) null), any());
+    }
+
+    @Test
+    void addedLabelWithoutSupportingFactPersistsWithNoFactLink() {
+        ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        when(memory.insertAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
+        when(memory.insertAiLabelEvidence(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
+        when(memory.updateAiLabel(any(), eq(CONTACT_ID), eq(OWNER_ID))).thenReturn(1);
+        when(states.complete(any(), any(), any(), any(), any())).thenReturn(1);
+
+        // A first run for a contact: no facts promoted yet and nothing to look up.
+        ContactMemoryModels.LabelCandidate label = new ContactMemoryModels.LabelCandidate(
+                ContactMemoryModels.LabelOperation.ADD,
+                ContactMemoryModels.Category.NEED,
+                "software_customization",
+                "软件定制需求",
+                "blue",
+                ContactMemoryModels.LabelStatus.ACTIVE,
+                new BigDecimal("0.70"),
+                List.of(new ContactMemoryModels.EvidenceRef(
+                        ContactMemoryModels.EvidenceType.MESSAGE, UUID.randomUUID())),
+                "首次咨询");
+        ContactMemoryModels.ConsolidationResult result = new ContactMemoryModels.ConsolidationResult(
+                UUID.randomUUID(), null, "cursor", List.of(), List.of(), List.of(label), null, "model");
+
+        assertThatCode(() -> new ContactMemoryMutationService(memory, states, mock(ContactMemoryAttemptService.class))
+                .persist(OWNER_ID, CONTACT_ID, lease(), result, attempt(result)))
+                .doesNotThrowAnyException();
+
+        ArgumentCaptor<ContactAiLabelEvidenceEntity> evidence =
+                ArgumentCaptor.forClass(ContactAiLabelEvidenceEntity.class);
+        verify(memory).insertAiLabelEvidence(evidence.capture(), eq(CONTACT_ID), eq(OWNER_ID));
+        assertThat(evidence.getValue().getFactId()).isNull();
     }
 
     @Test

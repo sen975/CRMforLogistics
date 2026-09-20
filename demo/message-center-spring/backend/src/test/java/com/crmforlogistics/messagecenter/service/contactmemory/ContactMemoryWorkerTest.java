@@ -191,7 +191,20 @@ class ContactMemoryWorkerTest {
                 .runOnce(NOW);
 
         assertThat(processed).isZero();
+        verify(states).markStaleDirty(NOW, 7);
         verify(states).listRunnable(NOW, null, 7);
+    }
+
+    @Test
+    void runOnceWithoutAClockInstantNeitherDiscoversNorClaims() {
+        ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+        ContactMemoryWorker worker = worker(states, mock(ContactMemoryContextService.class),
+                mock(ContactMemoryLlmGateway.class), mock(ContactMemoryConsolidationService.class),
+                mock(ContactMemoryMutationService.class));
+
+        assertThat(worker.runOnce(null)).isZero();
+        verify(states, never()).markStaleDirty(any(), anyInt());
+        verify(states, never()).listRunnable(any(), any(), anyInt());
     }
 
     private static ContactMemoryWorker worker(ContactMemoryStateMapper states,

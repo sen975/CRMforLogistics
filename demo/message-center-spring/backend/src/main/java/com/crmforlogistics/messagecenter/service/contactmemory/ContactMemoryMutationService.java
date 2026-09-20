@@ -257,7 +257,10 @@ public class ContactMemoryMutationService {
         if (entity != null && entity.getId() != null) {
             return entity.getId();
         }
-        throw new ContactMemoryModels.ValidationException("INVALID_EVIDENCE");
+        // A label can be derived from evidence before any fact corroborates it --
+        // facts need two distinct evidence refs, which a contact's first run cannot
+        // produce. Link the evidence without a fact instead of failing the run.
+        return null;
     }
 
     private UUID persistProfile(UUID ownerUserId, UUID contactId,

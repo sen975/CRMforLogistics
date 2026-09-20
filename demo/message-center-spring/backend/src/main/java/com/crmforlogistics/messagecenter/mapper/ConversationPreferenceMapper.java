@@ -33,6 +33,12 @@ public interface ConversationPreferenceMapper {
     int setHiddenNow(@Param("userId") UUID userId, @Param("targetType") String targetType,
                      @Param("targetId") UUID targetId);
 
+    @Update("update conversation_preferences set hidden_at = null, updated_at = now() "
+            + "where user_id = #{userId}::uuid and target_type = #{targetType} and target_id = #{targetId}::uuid "
+            + "and hidden_at is not null")
+    int clearHidden(@Param("userId") UUID userId, @Param("targetType") String targetType,
+                    @Param("targetId") UUID targetId);
+
     @Select("select 1 from pg_advisory_xact_lock(hashtextextended(#{userId}::text, 0))")
     Integer lockForUser(@Param("userId") UUID userId);
 

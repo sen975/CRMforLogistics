@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = ConversationMapperAssignmentTestConfiguration.class)
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ConversationMapperTagSearchIntegrationTest {
 
     @Container
@@ -94,6 +94,47 @@ class ConversationMapperTagSearchIntegrationTest {
 
         assertThat(idsOf(conversationMapper.listUnified(
                 userId, "客户", true, null, null, null, null, 20))).isEmpty();
+    }
+
+    @Test
+    void tagModeMatchesAiLabels() {
+        UUID aiLabelled = insertContact("张经理", userId);
+        insertAiLabel(aiLabelled, userId, "软件定制需求", "ACTIVE");
+        UUID namedLikeLabel = insertContact("软件定制需求", userId);
+
+        List<UUID> tagModeIds = idsOf(conversationMapper.listUnified(
+                userId, "定制", true, null, null, null, null, 20));
+        List<UUID> contactModeIds = idsOf(conversationMapper.listUnified(
+                userId, "定制", false, null, null, null, null, 20));
+
+        assertThat(tagModeIds).containsExactly(aiLabelled);
+        assertThat(contactModeIds).containsExactly(namedLikeLabel);
+    }
+
+    @Test
+    void tagModeIgnoresNonActiveAndForeignAiLabels() {
+        UUID target = insertContact("李四", userId);
+        insertAiLabel(target, userId, "停用AI标签", "STALE");
+
+        UUID otherUser = UUID.randomUUID();
+        jdbc.update("insert into users (id, username, username_normalized, password_hash, display_name) "
+                + "values (?, ?, ?, 'hash', 'other')", otherUser, "other" + otherUser,
+                "other" + otherUser);
+        insertAiLabel(target, otherUser, "外部AI标签", "ACTIVE");
+
+        assertThat(idsOf(conversationMapper.listUnified(
+                userId, "AI标签", true, null, null, null, null, 20))).isEmpty();
+    }
+
+    private UUID insertAiLabel(UUID contactId, UUID ownerId, String name, String status) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into contact_ai_labels (id, contact_id, owner_user_id, category, "
+                + "normalized_name, display_name, color_token, status, confidence, first_seen_at, "
+                + "last_seen_at, last_evidence_at, generation_batch_id) "
+                + "values (?, ?, ?, 'NEED', ?, ?, 'blue', ?, 0.600, now(), now(), now(), "
+                + "gen_random_uuid())",
+                id, contactId, ownerId, name.toLowerCase(), name, status);
+        return id;
     }
 
     private List<UUID> idsOf(List<ConversationMapper.UnifiedConversationRow> rows) {

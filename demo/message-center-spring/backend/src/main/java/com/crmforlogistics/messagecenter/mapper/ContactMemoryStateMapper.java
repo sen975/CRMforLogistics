@@ -70,6 +70,56 @@ public interface ContactMemoryStateMapper extends BaseMapper<ContactMemoryStateE
                                                 @Param("after") Instant after,
                                                 @Param("limit") int limit);
 
+    /**
+     * Marks contacts whose stored inbound messages are newer than the memory that has already
+     * been derived from them, so a run picks them up even when no trigger event was ever
+     * persisted for those messages. The owner is {@code contacts.created_by} because that is the
+     * identity {@link com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryContextService}
+     * validates against; {@code contacts.owner_user_id} may be null.
+     */
+    @Insert("""
+            with stale as (
+                select c.id as contact_id,
+                       c.created_by as owner_user_id,
+                       max(m.received_at) as last_inbound_at
+                from messages m
+                join conversations cv on cv.id = m.conversation_id
+                join contact_identities ci on ci.id = cv.contact_identity_id
+                join contacts c on c.id = ci.contact_id
+                where c.created_by is not null
+                  and c.deleted_at is null
+                  and ci.deleted_at is null
+                  and m.direction = 'inbound'
+                  and m.received_at <= #{now}::timestamptz
+                group by c.id, c.created_by
+            )
+            insert into contact_memory_states
+                (id, contact_id, owner_user_id, status, last_inbound_at, retry_count, updated_at)
+            select gen_random_uuid(), s.contact_id, s.owner_user_id, 'DIRTY', s.last_inbound_at, 0, now()
+            from stale s
+            left join contact_memory_states st
+                   on st.contact_id = s.contact_id
+                  and st.owner_user_id = s.owner_user_id
+            where st.id is null
+               or (st.status = 'CLEAN'
+                   and (st.last_success_cursor is null
+                        or s.last_inbound_at > split_part(st.last_success_cursor, '|', 1)::timestamptz))
+            order by s.last_inbound_at, s.contact_id
+            limit #{limit}
+            on conflict (contact_id, owner_user_id) do update
+            set status = 'DIRTY',
+                last_inbound_at = greatest(
+                    coalesce(contact_memory_states.last_inbound_at, excluded.last_inbound_at),
+                    excluded.last_inbound_at),
+                retry_count = 0,
+                next_retry_at = null,
+                last_failure_code = null,
+                last_failure_message = null,
+                updated_at = now()
+            where contact_memory_states.status = 'CLEAN'
+            """)
+    int markStaleDirty(@Param("now") Instant now, @Param("limit") int limit);
+
     @Select("""
             with claimed as (
                 update contact_memory_states

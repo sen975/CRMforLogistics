@@ -69,17 +69,30 @@ public interface ContactTagMapper {
 
     @Select("""
             <script>
-            select ct.contact_id as contact_id, t.name as name
-            from contact_taggings ct
-            join contact_tags t on t.id = ct.tag_id
-            where t.owner_user_id = #{ownerId}::uuid
-              and t.status = 'active'
-              and t.name ilike '%' || #{search} || '%'
-              and ct.contact_id in
-              <foreach item="contactId" collection="contactIds" open="(" separator="," close=")">
-                #{contactId}::uuid
-              </foreach>
-            order by lower(t.name), t.id
+            select contact_id, name from (
+              select ct.contact_id as contact_id, t.name as name
+              from contact_taggings ct
+              join contact_tags t on t.id = ct.tag_id
+              where t.owner_user_id = #{ownerId}::uuid
+                and t.status = 'active'
+                and t.name ilike '%' || #{search} || '%'
+                and ct.contact_id in
+                <foreach item="contactId" collection="contactIds" open="(" separator="," close=")">
+                  #{contactId}::uuid
+                </foreach>
+              union all
+              select al.contact_id, al.display_name
+              from contact_ai_labels al
+              where al.owner_user_id = #{ownerId}::uuid
+                and al.status = 'ACTIVE'
+                and al.display_name ilike '%' || #{search} || '%'
+                and al.contact_id in
+                <foreach item="contactId" collection="contactIds" open="(" separator="," close=")">
+                  #{contactId}::uuid
+                </foreach>
+            ) matched
+            group by contact_id, name
+            order by lower(name), contact_id
             </script>
             """)
     List<MatchedTagRow> findMatchedByContactIds(@Param("ownerId") UUID ownerId,

@@ -12,6 +12,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 class ConversationPreferenceServiceTest {
@@ -84,8 +87,71 @@ class ConversationPreferenceServiceTest {
     }
 
     @Test
-    void reorderMaterializesTheCompleteServerOwnedSequence() {
+    void openingAHiddenContactRestoresVisibilityWithoutCreatingAPreferenceRow() {
         ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        var service = new ConversationPreferenceService(preferences, contacts, conversations);
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        when(contacts.findAccessibleById(eq(contactId), eq(userId), anyBoolean()))
+                .thenReturn(java.util.Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
+        when(preferences.clearHidden(userId, "CONTACT", contactId)).thenReturn(1);
+        var restored = new ConversationPreferenceEntity();
+        restored.setHiddenAt(null);
+        restored.setPinned(true);
+        when(preferences.find(userId, "CONTACT", contactId)).thenReturn(restored);
+
+        var result = service.restore(userId, "CONTACT", contactId);
+
+        assertThat(result.hidden()).isFalse();
+        assertThat(result.pinned()).isTrue();
+        verify(preferences).clearHidden(userId, "CONTACT", contactId);
+        verify(preferences, never()).ensure(any(), anyString(), any());
+        verify(preferences, never()).setHiddenNow(any(), anyString(), any());
+        verify(preferences, never()).setPinned(any(), anyString(), any(), anyBoolean());
+        verify(conversations, never()).listUnified(any(), any(), anyBoolean(), any(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void restoreIsIdempotentForContactsThatWereNeverHidden() {
+        ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        var service = new ConversationPreferenceService(preferences, contacts, conversations);
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        when(contacts.findAccessibleById(eq(contactId), eq(userId), anyBoolean()))
+                .thenReturn(java.util.Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
+        when(preferences.clearHidden(userId, "CONTACT", contactId)).thenReturn(0);
+        when(preferences.find(userId, "CONTACT", contactId)).thenReturn(null);
+
+        var result = service.restore(userId, "CONTACT", contactId);
+
+        assertThat(result.hidden()).isFalse();
+        assertThat(result.pinned()).isFalse();
+        verify(preferences, never()).ensure(any(), anyString(), any());
+    }
+
+    @Test
+    void restoreRejectsConversationsTheCurrentAccountCannotOpen() {
+        ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        var service = new ConversationPreferenceService(preferences, contacts, conversations);
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        when(contacts.findAccessibleById(eq(contactId), eq(userId), anyBoolean()))
+                .thenReturn(java.util.Optional.empty());
+
+        assertThat(org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> service.restore(userId, "CONTACT", contactId)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(preferences, never()).clearHidden(any(), anyString(), any());
+    }
+
+    @Test
+    void reorderMaterializesTheCompleteServerOwnedSequence() {        ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);
         ContactMapper contacts = mock(ContactMapper.class);
         ConversationMapper conversations = mock(ConversationMapper.class);
         var service = new ConversationPreferenceService(preferences, contacts, conversations);

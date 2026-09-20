@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.conversation;
 
 import com.crmforlogistics.messagecenter.dto.response.ConversationPreferenceResponse;
+import com.crmforlogistics.messagecenter.entity.ConversationPreferenceEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationPreferenceMapper;
@@ -47,6 +48,22 @@ public class ConversationPreferenceService {
         if (preferences.setHiddenNow(userId, targetType, targetId) != 1) {
             throw new IllegalStateException("Conversation preference was not hidden");
         }
+    }
+
+    /**
+     * Deliberately opening a conversation is an explicit intent to keep it reachable,
+     * so it clears a previously stored hidden preference. Idempotent: it never creates
+     * a preference row for a conversation the current account never personalised, and
+     * it leaves pinned state and sort rank untouched.
+     */
+    @Transactional
+    public ConversationPreferenceResponse restore(UUID userId, String targetType, UUID targetId) {
+        authorize(userId, targetType, targetId);
+        preferences.clearHidden(userId, targetType, targetId);
+        ConversationPreferenceEntity current = preferences.find(userId, targetType, targetId);
+        return new ConversationPreferenceResponse(targetType, targetId,
+                current != null && Boolean.TRUE.equals(current.getPinned()),
+                current != null && current.getHiddenAt() != null);
     }
 
     @Transactional

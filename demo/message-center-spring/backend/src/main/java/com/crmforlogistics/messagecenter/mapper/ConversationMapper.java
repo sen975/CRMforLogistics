@@ -90,6 +90,11 @@ public interface ConversationMapper extends BaseMapper<ConversationEntity> {
                             and t.status = 'active'
                             and t.owner_user_id = #{userId}::uuid
                             and t.name ilike '%' || #{search} || '%')
+                  or exists (select 1 from contact_ai_labels al
+                             where al.contact_id = c.id
+                               and al.status = 'ACTIVE'
+                               and al.owner_user_id = #{userId}::uuid
+                               and al.display_name ilike '%' || #{search} || '%')
                 </when>
                 <otherwise>
                   c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark, '') ilike '%' || #{search} || '%'

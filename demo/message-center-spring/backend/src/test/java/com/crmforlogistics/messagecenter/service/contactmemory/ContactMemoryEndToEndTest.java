@@ -49,7 +49,7 @@ import static org.mockito.Mockito.when;
                 "contact-memory.time-zone=UTC"
         }
 )
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ContactMemoryEndToEndTest {
 
     private static final Instant FIRST_MESSAGE_AT = Instant.parse("2026-09-13T01:00:00Z");
@@ -237,6 +237,38 @@ class ContactMemoryEndToEndTest {
                 "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ? and status = 'FAILED'",
                 Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
         assertThat(third.getId()).isNotNull();
+    }
+
+    @Test
+    void unsummarizedInboundMessagesAreDiscoveredWithoutATriggerEvent() {
+        TestFixture fixture = fixture();
+        MessageEntity first = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户关注海运方案。");
+        MessageEntity second = insertInboundMessage(fixture, SECOND_MESSAGE_AT, "客户希望了解海运报价和时效。");
+        // No markInboundPersisted here: the messages exist and the contact has no memory state,
+        // which is exactly the backlog the nightly run has to pick up on its own.
+        // contacts.owner_user_id is unset on real rows, so the discovery has to key off
+        // contacts.created_by, the identity the context service validates the owner against.
+        jdbc.update("update contacts set owner_user_id = null where id = ?", fixture.contactId());
+        Instant processingNow = Instant.now();
+        ContactMemoryModels.Context context = contextFor(fixture, processingNow);
+        when(gateway.generate(any())).thenReturn(outputFor(context, first, second));
+
+        int processed = worker.runOnce(processingNow);
+
+        assertThat(processed).isEqualTo(1);
+        ContactMemoryStateEntity caughtUp = state(fixture);
+        assertThat(caughtUp.getStatus()).isEqualTo("CLEAN");
+        assertThat(caughtUp.getLastSuccessCursor()).isEqualTo(receivedCursor(second));
+        assertThat(memory.findCurrentProfile(fixture.ownerId(), fixture.contactId())).isNotNull();
+        verify(gateway).generate(any(ContactMemoryModels.Context.class));
+
+        // A second run must find nothing left to do for this contact rather than recomputing it.
+        worker.runOnce(Instant.now());
+
+        assertThat(state(fixture).getLastSuccessCursor()).isEqualTo(receivedCursor(second));
+        assertThat(jdbc.queryForObject(
+                "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ?",
+                Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
     }
 
     private ContactMemoryModels.Context contextFor(TestFixture fixture, Instant cutoff) {

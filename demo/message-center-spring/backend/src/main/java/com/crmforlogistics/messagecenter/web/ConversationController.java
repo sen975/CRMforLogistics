@@ -51,6 +51,15 @@ public class ConversationController {
         preferences.hide(SecurityUtil.currentUserId(), request.targetType(), request.targetId());
     }
 
+    /**
+     * Clears a stored hidden preference for a conversation the current account opens
+     * on purpose. Idempotent, and it never creates a preference row on its own.
+     */
+    @PostMapping("/preferences/restore")
+    public ConversationPreferenceResponse restore(@RequestBody ConversationPreferenceRequest request) {
+        return preferences.restore(SecurityUtil.currentUserId(), request.targetType(), request.targetId());
+    }
+
     @PostMapping("/preferences/order")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void reorder(@RequestBody ConversationPreferenceRequest.OrderRequest request) {

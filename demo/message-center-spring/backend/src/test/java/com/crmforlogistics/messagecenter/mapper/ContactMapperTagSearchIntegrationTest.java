@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = ContactMapperChatAppFilterTestConfiguration.class)
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ContactMapperTagSearchIntegrationTest {
 
     @Container
@@ -128,6 +128,48 @@ class ContactMapperTagSearchIntegrationTest {
                 "标签", true, null, null, false, null, null))).isEmpty();
     }
 
+    @Test
+    void addressBookTagModeMatchesAiLabels() {
+        UUID aiLabelled = insertContact("张经理", userId);
+        insertAiLabel(aiLabelled, userId, "软件定制需求", "ACTIVE");
+        UUID namedLikeLabel = insertContact("软件定制需求", userId);
+
+        List<UUID> tagMode = contactMapper.listAddressBookByOwner(
+                        userId, "email", "定制", true, 20, 0).stream()
+                .map(ContactMapper.ChannelAddressBookRow::contactId).toList();
+        List<UUID> contactMode = contactMapper.listAddressBookByOwner(
+                        userId, "email", "定制", false, 20, 0).stream()
+                .map(ContactMapper.ChannelAddressBookRow::contactId).toList();
+
+        assertThat(tagMode).containsExactly(aiLabelled);
+        assertThat(contactMode).containsExactly(namedLikeLabel);
+    }
+
+    @Test
+    void contactListTagModeMatchesAiLabels() {
+        UUID aiLabelled = insertContact("张经理", userId);
+        insertAiLabel(aiLabelled, userId, "软件定制需求", "ACTIVE");
+
+        assertThat(idsOf(contactMapper.listForUser(new Page<>(1, 20), userId,
+                "定制", true, null, null, false, null, null))).containsExactly(aiLabelled);
+    }
+
+    @Test
+    void tagModeIgnoresNonActiveAndForeignAiLabels() {
+        UUID target = insertContact("李四", userId);
+        insertAiLabel(target, userId, "停用AI标签", "STALE");
+        insertAiLabel(target, userId, "作废AI标签", "INACTIVE");
+
+        assertThat(contactMapper.listAddressBookByOwner(
+                userId, "email", "AI标签", true, 20, 0)).isEmpty();
+
+        UUID otherUser = insertUser("other");
+        insertAiLabel(target, otherUser, "外部AI标签", "ACTIVE");
+
+        assertThat(contactMapper.listAddressBookByOwner(
+                userId, "email", "AI标签", true, 20, 0)).isEmpty();
+    }
+
     private static List<UUID> idsOf(com.baomidou.mybatisplus.core.metadata.IPage<ContactEntity> page) {
         return page.getRecords().stream().map(ContactEntity::getId).toList();
     }
@@ -153,6 +195,17 @@ class ContactMapperTagSearchIntegrationTest {
         UUID id = UUID.randomUUID();
         jdbc.update("insert into contact_tags (id, owner_user_id, name, color, status) "
                 + "values (?, ?, ?, 'blue', ?)", id, ownerId, name, status);
+        return id;
+    }
+
+    private UUID insertAiLabel(UUID contactId, UUID ownerId, String name, String status) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into contact_ai_labels (id, contact_id, owner_user_id, category, "
+                + "normalized_name, display_name, color_token, status, confidence, first_seen_at, "
+                + "last_seen_at, last_evidence_at, generation_batch_id) "
+                + "values (?, ?, ?, 'NEED', ?, ?, 'blue', ?, 0.600, now(), now(), now(), "
+                + "gen_random_uuid())",
+                id, contactId, ownerId, name.toLowerCase(), name, status);
         return id;
     }
 

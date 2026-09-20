@@ -72,6 +72,11 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                             and t.status = 'active'
                             and t.owner_user_id = #{ownerId}::uuid
                             and t.name ilike '%' || #{query} || '%')
+                  or exists (select 1 from contact_ai_labels al
+                             where al.contact_id = c.id
+                               and al.status = 'ACTIVE'
+                               and al.owner_user_id = #{ownerId}::uuid
+                               and al.display_name ilike '%' || #{query} || '%')
                 </when>
                 <otherwise>
                   coalesce(c.remark, '') ilike '%' || #{query} || '%'
@@ -164,6 +169,10 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "          where ct.contact_id = c.id and t.status = 'active' " +
         "          and t.owner_user_id = #{userId}::uuid " +
         "          and t.name ilike '%' || #{search} || '%') " +
+        "        or exists (select 1 from contact_ai_labels al " +
+        "          where al.contact_id = c.id and al.status = 'ACTIVE' " +
+        "          and al.owner_user_id = #{userId}::uuid " +
+        "          and al.display_name ilike '%' || #{search} || '%') " +
         "      </when>" +
         "      <otherwise>" +
         "        c.display_name ilike '%' || #{search} || '%' or coalesce(c.remark,'') ilike '%' || #{search} || '%' " +

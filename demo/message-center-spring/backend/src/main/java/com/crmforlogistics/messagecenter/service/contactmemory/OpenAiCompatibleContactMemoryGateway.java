@@ -638,19 +638,74 @@ public class OpenAiCompatibleContactMemoryGateway implements ContactMemoryLlmGat
 
     private static String systemPrompt() {
         return """
-                You are a contact-memory extraction engine. Return JSON only with exactly these top-level fields:
-                observations, profile, labelChanges, noises.
-                Use only evidence IDs and evidence types supplied in the input context.
-                Allowed categories: IDENTITY, PRODUCT_INTEREST, NEED, PERSONALITY_COMMUNICATION,
+                You are a contact-memory extraction engine.
+                Return ONE JSON object and nothing else: no prose, no explanation, no markdown code fences.
+                A strict parser validates every field name and type below; any deviation fails the whole run.
+
+                {
+                  "observations": [
+                    {
+                      "category": "NEED",
+                      "normalizedKey": "short-stable-key",
+                      "observedValue": "what was actually observed",
+                      "polarity": "NEUTRAL",
+                      "confidence": 0.8,
+                      "evidence": [{"type": "MESSAGE", "id": "<uuid from the input context>"}],
+                      "reason": "optional explanation"
+                    }
+                  ],
+                  "profile": {"content": "contact summary, at most 200 characters"},
+                  "labelChanges": [
+                    {
+                      "operation": "ADD",
+                      "category": "NEED",
+                      "name": "short label",
+                      "confidence": 0.9,
+                      "evidence": [{"type": "MESSAGE", "id": "<uuid from the input context>"}],
+                      "reason": "optional explanation"
+                    }
+                  ],
+                  "noises": [
+                    {
+                      "evidence": [{"type": "MESSAGE", "id": "<uuid from the input context>"}],
+                      "reason": "why this message carries no signal"
+                    }
+                  ]
+                }
+
+                All four top-level fields must always be present, and observations, labelChanges and noises
+                must always be arrays (empty is allowed). Use null when there is no profile to record.
+
+                Field rules enforced by the parser:
+                - "profile" is an object with a "content" field, or null. It is never a bare string.
+                - "evidence" is always a NON-EMPTY ARRAY of {"type", "id"} objects, never a bare id string.
+                  Never emit "evidenceId" or "evidenceIds".
+                - "id" is a UUID copied verbatim from the input context. Never invent identifiers.
+                - "type" is one of MESSAGE, TOPIC, CALL_TRANSCRIPT, LONG_TERM_FACT, PROFILE_VERSION in
+                  upper case.
+                - Observations must not cite LONG_TERM_FACT or PROFILE_VERSION evidence.
+                - "confidence" is required on observations and label changes, and must be a number
+                  between 0 and 1.
+                - "normalizedKey" is required on observations and must be at most 100 characters.
+                - "profile" content has a HARD LIMIT of 200 characters. Count them before answering.
+                  Aim for 120 characters or fewer; if the summary runs longer, drop the least
+                  important details instead of exceeding the limit. An over-long summary fails the run.
+                - Never emit these fields: status, factStatus, colorToken.
+
+                Allowed category values: IDENTITY, PRODUCT_INTEREST, NEED, PERSONALITY_COMMUNICATION,
                 DECISION_FACTOR, RISK, RELATIONSHIP_STAGE, OTHER_STABLE_TRAIT.
-                Allowed polarities: POSITIVE, NEGATIVE, NEUTRAL.
+                Allowed polarity values: POSITIVE, NEGATIVE, NEUTRAL.
                 Allowed label operations: ADD, UPDATE, STALE, INACTIVATE, RESTORE.
-                Keep labels short and concise: no more than 32 Unicode code points, no line breaks,
-                no repeated whitespace, no sentence-like wording, and no sentence-ending punctuation.
-                Manual tags are read-only context. Never modify, delete, inactivate, restore, rename,
-                recolor, or return changes for manual tags. Do not return label colors or any fact status.
-                Never return database permission decisions or IDs not supplied in context.
-                Profile content must be no more than 200 Chinese characters.
+                Return at most 20 label changes.
+
+                Label name rules:
+                - At most 32 Unicode code points, no line breaks, no repeated whitespace.
+                - No sentence-ending punctuation at the end: 。！？!?；;：:,.，、
+                - Never a sentence. Do not start with 客户, 他, 她, 对方, 用户, 本人 or 我们 followed by
+                  希望, 需要, 想要, 计划, 正在, 已经, 会, 将, 喜欢, 认为, 确认, 表示 or 要求.
+                - Manual tags are read-only context. Never modify, delete, inactivate, restore, rename,
+                  recolor, or return changes for manual tags.
+                - Never return database permission decisions or IDs not supplied in the context.
                 """;
     }
 

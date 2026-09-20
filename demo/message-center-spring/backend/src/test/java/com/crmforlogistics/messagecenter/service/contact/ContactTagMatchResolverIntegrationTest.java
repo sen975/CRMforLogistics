@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(SpringExtension.class)
 @ContextConfiguration(classes = ContactTagMapperTestConfiguration.class)
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class ContactTagMatchResolverIntegrationTest {
 
     @Container
@@ -107,6 +107,52 @@ class ContactTagMatchResolverIntegrationTest {
 
         assertThat(resolver.matchNamesByContact(ownerId, List.of(contactId), "客户", SearchMode.TAG))
                 .isEmpty();
+    }
+
+    @Test
+    void returnsMatchedAiLabelsAlongsideManualTags() {
+        UUID contactId = insertContact("张经理", ownerId);
+        attachTag(contactId, insertTag(ownerId, "A级客户", "active"));
+        insertAiLabel(contactId, ownerId, "B类客户需求", "ACTIVE");
+        ContactTagMatchResolver resolver = new ContactTagMatchResolver(tagMapper);
+
+        assertThat(resolver.matchNamesByContact(ownerId, List.of(contactId), "客户", SearchMode.TAG))
+                .containsExactlyInAnyOrderEntriesOf(
+                        java.util.Map.of(contactId, List.of("A级客户", "B类客户需求")));
+    }
+
+    @Test
+    void collapsesAiLabelThatDuplicatesAManualTagName() {
+        UUID contactId = insertContact("张经理", ownerId);
+        attachTag(contactId, insertTag(ownerId, "VIP客户", "active"));
+        insertAiLabel(contactId, ownerId, "VIP客户", "ACTIVE");
+        ContactTagMatchResolver resolver = new ContactTagMatchResolver(tagMapper);
+
+        assertThat(resolver.matchNamesByContact(ownerId, List.of(contactId), "VIP", SearchMode.TAG))
+                .containsExactlyInAnyOrderEntriesOf(
+                        java.util.Map.of(contactId, List.of("VIP客户")));
+    }
+
+    @Test
+    void ignoresNonActiveAndForeignAiLabels() {
+        UUID contactId = insertContact("李四", ownerId);
+        insertAiLabel(contactId, ownerId, "停用AI标签", "STALE");
+        insertAiLabel(contactId, otherUserId, "外部AI标签", "ACTIVE");
+        ContactTagMatchResolver resolver = new ContactTagMatchResolver(tagMapper);
+
+        assertThat(resolver.matchNamesByContact(ownerId, List.of(contactId), "AI标签", SearchMode.TAG))
+                .isEmpty();
+    }
+
+    private UUID insertAiLabel(UUID contactId, UUID ownerId, String name, String status) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into contact_ai_labels (id, contact_id, owner_user_id, category, "
+                + "normalized_name, display_name, color_token, status, confidence, first_seen_at, "
+                + "last_seen_at, last_evidence_at, generation_batch_id) "
+                + "values (?, ?, ?, 'NEED', ?, ?, 'blue', ?, 0.600, now(), now(), now(), "
+                + "gen_random_uuid())",
+                id, contactId, ownerId, name.toLowerCase(), name, status);
+        return id;
     }
 
     private void insertUser(UUID id, String name) {
