@@ -109,8 +109,9 @@ public class AppIntegrationTest {
     void templateUpsertPersistsProviderAuditStatus() {
         UUID channelAccountId = UUID.randomUUID();
         UUID providerScopeId = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes (id, provider, external_scope_id) VALUES (?, 'aliyun', ?)",
-                providerScopeId, "scope-" + providerScopeId);
+        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes "
+                        + "(id, provider, external_scope_id, display_name) VALUES (?, 'aliyun', ?, ?)",
+                providerScopeId, "scope-" + providerScopeId, "scope-" + providerScopeId);
         jdbcTemplate.update("""
                 INSERT INTO channel_accounts
                     (id, channel_type, name, account_identifier, account_identifier_normalized,
@@ -138,11 +139,30 @@ public class AppIntegrationTest {
     }
 
     @Test
+    void sharedTemplateSyncStoresProviderTemplatesWithoutAChannelAccount() {
+        UUID providerScopeId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes "
+                        + "(id, provider, external_scope_id, display_name) VALUES (?, 'aliyun', ?, ?)",
+                providerScopeId, "scope-" + providerScopeId, "scope-" + providerScopeId);
+
+        TemplateEntity shared = sharedTemplate(null, providerScopeId, "Hello $(name)", "APPROVED", "pass");
+        templateMapper.upsertShared(shared);
+        shared.setStatus("REJECTED");
+        templateMapper.upsertShared(shared);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from message_templates where provider_scope_id = ? and channel_account_id is null "
+                        + "and provider_template_id = 'welcome_001' and status = 'REJECTED'",
+                Integer.class, providerScopeId)).isEqualTo(1);
+    }
+
+    @Test
     void templateLifecyclePersistenceEnforcesIdempotencyAndSendEligibility() {
         UUID channelAccountId = UUID.randomUUID();
         UUID providerScopeId = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes (id, provider, external_scope_id) VALUES (?, 'aliyun', ?)",
-                providerScopeId, "scope-" + providerScopeId);
+        jdbcTemplate.update("INSERT INTO whatsapp_provider_scopes "
+                        + "(id, provider, external_scope_id, display_name) VALUES (?, 'aliyun', ?, ?)",
+                providerScopeId, "scope-" + providerScopeId, "scope-" + providerScopeId);
         jdbcTemplate.update("""
                 INSERT INTO channel_accounts
                     (id, channel_type, name, account_identifier, account_identifier_normalized,
