@@ -8,11 +8,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * 助手对话的落地：把「用户说了什么、助手回了什么」写成追加行，使面板能跨刷新/重开接上。
+ * 助手对话的落地与读回：把「用户说了什么、助手回了什么」写成追加行，使面板能跨刷新/重开接上，
+ * 并让**服务端**能装配下一轮的会话语境。
+ *
+ * <h2>两个读方法，两种消费者</h2>
+ * <ul>
+ *   <li>{@link #replay} —— 给**用户**看：从会话开头正序读，带 {@code kind} 与时间戳。</li>
+ *   <li>{@link #recentForPrompt} —— 给**模型**看：从会话尾部取最近若干条，只留角色与正文。</li>
+ * </ul>
+ * 不合并成一个方法，因为两者要的东西不同：时间戳对模型没有意义，而只给用户最近几条会让
+ * 面板缺失开头。共用的是 mapper 里那一份归属谓词 —— 归属条件不会写第二遍。
  *
  * <h2>它和审计表的分工</h2>
  * {@link AssistantAuditService} 回答「AI 做了什么」（决策、参数、策略、结果、模型、耗时），
@@ -80,7 +91,7 @@ public class AssistantConversationLogService {
     }
 
     /**
-     * 回放某会话的历史，时间正序。
+     * 回放某会话的历史，时间正序。面板打开时用它接上上次的对话。
      *
      * <p>跨用户的会话读不到 —— 归属条件在 SQL 里，不靠调用方记得校验。
      */
@@ -92,6 +103,35 @@ public class AssistantConversationLogService {
         return mapper.listByConversation(userId, conversationId, bounded).stream()
                 .map(row -> new Message(row.getRole(), row.getKind(), row.getText(), row.getCreatedAt()))
                 .toList();
+    }
+
+    /**
+     * 装配下一轮请求所需的会话语境：**最近**的若干条，时间正序，只含角色与正文。
+     *
+     * <p>为什么从尾部取而不是从头部：语境是用来理解指代的（「那条」「改成后天」），
+     * 指代永远指向刚说过的话。长会话里从头部取会把刚说过的话全部丢掉 ——
+     * 而那时模型看到的是一个开头就断掉的对话，且它无从察觉。
+     *
+     * <p>{@code limit} 由调用方给（通常等于 {@code assistant.max-history-turns}）：
+     * 「需要多少语境」是提示词预算的知识，不属于这一层。这里只保证不越过 {@link #MAX_REPLAY}。
+     *
+     * <p>空文本行不会出现 —— {@link #append} 写入前就过滤了。因此返回条数通常就等于
+     * {@code limit} 与库中条数的较小者。
+     */
+    public List<AssistantMessage> recentForPrompt(UUID userId, UUID conversationId, int limit) {
+        if (userId == null || conversationId == null) {
+            return List.of();
+        }
+        int bounded = Math.max(1, Math.min(limit, MAX_REPLAY));
+        List<AssistantMessage> recent = new ArrayList<>();
+        for (AssistantConversationMessageEntity row : mapper.listRecentByConversation(userId, conversationId, bounded)) {
+            // role 在库里是 'user' / 'assistant' 两个字面量（见 V85 的 CHECK 约束），
+            // fromWire 未识别时落 USER —— 这个兜底在这里不会触发，但保持一致比依赖约束更稳。
+            recent.add(new AssistantMessage(AssistantMessage.Role.fromWire(row.getRole()), row.getText()));
+        }
+        // 上面是倒序（最新在前），交出去要正序：提示词里对话从旧到新读。
+        Collections.reverse(recent);
+        return List.copyOf(recent);
     }
 
     /**

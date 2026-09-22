@@ -18,10 +18,15 @@ const EXAMPLES = [
  * 面板不去猜「这一轮大概做成了什么」，而是严格按服务端给的终点分支。这样「已执行」
  * 就永远只可能来自服务端的 `EXECUTED` —— 前端没有第二条能产出成功的路径。
  *
- * <h2>做不成的三件事都必须说出来</h2>
+ * <h2>三件做不成的事都必须说出来</h2>
  * 模型不可用（503）、参数不合法（400）、引用的待办已消失（200 里的 `ERROR`）：
  * 三种都不是「再试一次可能就好了」，但用户需要的都是同一件事 ——
  * 知道**这次没成**，以及**为什么**。所以它们在对话里各留一条失败消息，而不是一个 3 秒就消失的提示。
+ *
+ * <p><b>第四件：助手看不见前面了。</b> 它比前三种更隐蔽 —— 上下文被裁剪之后，
+ * 模型不但失去了那段对话，还**不知道自己失去了**，于是会拿着断掉的开头照常作答。
+ * 所以服务端把裁剪规模放进响应，面板在输入框上方把它说出来。宁可提示显得多余，
+ * 也不要让用户在毫无察觉的情况下收到一个依据不足的回答。
  *
  * <h2>打开时回放历史</h2>
  * 对话正文已经落库（`assistant_conversation_messages`），面板第一次打开时按当前会话号拉回一次，
@@ -29,7 +34,7 @@ const EXAMPLES = [
  */
 export function AssistantPanel() {
   const {
-    items, busy, pending, unavailable,
+    items, busy, pending, unavailable, trimmedHistory,
     send, confirm, cancel, retry, loadHistory, startNewConversation,
   } = useAssistant();
   const [draft, setDraft] = useState('');
@@ -126,6 +131,17 @@ export function AssistantPanel() {
         gap={8}
         style={{ padding: 16, borderTop: `1px solid ${token.colorBorderSecondary}` }}
       >
+        {/*
+          语境被裁剪的提示。放在这里（而不是每条消息上）是因为它是**会话级状态**：
+          一旦开始丢，后面每一轮都会丢，逐条显示只会变成一片重复的噪音。
+          措辞用「记不住」而不是「不在上下文里」—— 后者是术语，用户要判断的是
+          「我需不需要重说一遍」，那句话得直接给出这个判断。
+        */}
+        {trimmedHistory !== null && (
+          <Text type="secondary" style={{ fontSize: 12 }} data-testid="assistant-history-trim-note">
+            较早的 {trimmedHistory} 条对话我已经记不住了；需要时请再提一次。
+          </Text>
+        )}
         {pending && (
           <Text type="warning">
             有一条操作等着你确认，确认前不会执行。

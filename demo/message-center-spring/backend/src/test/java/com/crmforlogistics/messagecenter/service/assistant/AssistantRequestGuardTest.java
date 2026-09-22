@@ -85,4 +85,61 @@ class AssistantRequestGuardTest {
         assertThat(AssistantMessage.Role.fromWire("assistant")).isEqualTo(AssistantMessage.Role.ASSISTANT);
         assertThat(AssistantMessage.Role.fromWire(" Assistant ")).isEqualTo(AssistantMessage.Role.ASSISTANT);
     }
+
+    /**
+     * 裁剪必须被数出来。这是整套「不许静默」立场的落点：模型不会察觉自己少了语境，
+     * 所以只有把「丢了多少」传到响应里，用户才有可能知道助手已经看不见前面了。
+     */
+    @Test
+    void theNumberOfDroppedHistoryEntriesIsReported() {
+        List<AssistantMessage> history = List.of(
+                AssistantMessage.user("第一轮"),
+                AssistantMessage.assistant("第二轮"),
+                AssistantMessage.user("第三轮"),
+                AssistantMessage.assistant("第四轮"));
+
+        AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(history, "现在这句");
+
+        assertThat(normalised.history()).hasSize(3);
+        assertThat(normalised.droppedHistoryMessages()).isEqualTo(1);
+    }
+
+    @Test
+    void nothingIsReportedAsDroppedWhenEverythingFits() {
+        AssistantRequestGuard.NormalisedRequest normalised =
+                guard.normalise(List.of(AssistantMessage.user("只有一轮")), "现在这句");
+
+        assertThat(normalised.droppedHistoryMessages()).isZero();
+    }
+
+    /**
+     * 空消息不能计入分母。它们本来就没有内容，算进去会让「丢了 3 条」这个数字不可信 ——
+     * 而一个不可信的数字比不显示更糟：用户会按它去判断助手到底记得多少。
+     */
+    @Test
+    void blankHistoryEntriesAreNotCountedAsDropped() {
+        List<AssistantMessage> history = new ArrayList<>();
+        history.add(AssistantMessage.user("   "));
+        history.add(null);
+        history.add(AssistantMessage.user("有效的一轮"));
+
+        AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(history, "现在这句");
+
+        assertThat(normalised.history()).hasSize(1);
+        assertThat(normalised.droppedHistoryMessages()).isZero();
+    }
+
+    /** 字符预算也会导致丢弃，那条路径同样要计数（两条 break 是分开写的，容易只改一处）。 */
+    @Test
+    void aHistoryDroppedByTheCharacterBudgetIsAlsoCounted() {
+        AssistantRequestGuard narrow = new AssistantRequestGuard(
+                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 70, 600, 3));
+
+        AssistantRequestGuard.NormalisedRequest normalised = narrow.normalise(List.of(
+                AssistantMessage.user("12345678"),
+                AssistantMessage.assistant("abcdefgh")), "现在这句");
+
+        assertThat(normalised.history()).hasSize(1);
+        assertThat(normalised.droppedHistoryMessages()).isEqualTo(1);
+    }
 }

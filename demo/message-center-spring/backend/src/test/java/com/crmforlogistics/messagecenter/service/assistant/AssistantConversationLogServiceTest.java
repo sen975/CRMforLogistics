@@ -114,4 +114,71 @@ class AssistantConversationLogServiceTest {
         assertEquals("这条待办安排在哪一天？", messages.get(0).text());
         assertEquals(Instant.parse("2026-09-22T01:00:00Z"), messages.get(0).createdAt());
     }
+
+    // ---------- 装配下一轮语境：最近若干条，正序 ----------
+
+    /**
+     * 必须读**最近**的若干条，而不是最早的。
+     *
+     * <p>断言的是「调用了哪个 mapper 方法」，因为两者返回的形状完全一样（都是
+     * {@code List<Entity>}），只有在会话变长之后才看得出差别 —— 而那已经是生产环境了。
+     * 用错方法拿到的是这段对话的**开头**，把「刚说过的话」全部丢掉，
+     * 而指代（「那条」「改成后天」）恰恰指向刚说过的话。
+     */
+    @Test
+    void recentForPromptReadsTheLatestEntriesNotTheEarliest() {
+        when(mapper.listRecentByConversation(eq(USER), eq(CONVERSATION), anyInt())).thenReturn(List.of());
+
+        service.recentForPrompt(USER, CONVERSATION, 8);
+
+        verify(mapper).listRecentByConversation(USER, CONVERSATION, 8);
+        verify(mapper, never()).listByConversation(any(), any(), anyInt());
+    }
+
+    /**
+     * mapper 按「最新在前」返回，提示词要「旧在前」—— 这个反转必须发生。
+     *
+     * <p>漏掉它的后果不是少一条消息，而是**整段对话的顺序反过来**：模型会看到助手先答、
+     * 用户后问，指代与因果全错。而这个错误在界面上完全看不出来 —— 提示词是不可见的。
+     */
+    @Test
+    void recentForPromptRestoresChronologicalOrderForThePrompt() {
+        when(mapper.listRecentByConversation(eq(USER), eq(CONVERSATION), anyInt())).thenReturn(List.of(
+                row("assistant", "安排在什么时间？"),
+                row("user", "帮我建个待办")));
+
+        List<AssistantMessage> messages = service.recentForPrompt(USER, CONVERSATION, 8);
+
+        assertEquals(2, messages.size());
+        assertEquals("帮我建个待办", messages.get(0).text());
+        assertEquals(AssistantMessage.Role.USER, messages.get(0).role());
+        assertEquals("安排在什么时间？", messages.get(1).text());
+        assertEquals(AssistantMessage.Role.ASSISTANT, messages.get(1).role());
+    }
+
+    @Test
+    void recentForPromptWithoutIdentityReadsNothing() {
+        assertTrue(service.recentForPrompt(null, CONVERSATION, 8).isEmpty());
+        assertTrue(service.recentForPrompt(USER, null, 8).isEmpty());
+
+        verify(mapper, never()).listRecentByConversation(any(), any(), anyInt());
+    }
+
+    @Test
+    void recentForPromptClampsTheLimitIntoRange() {
+        when(mapper.listRecentByConversation(eq(USER), eq(CONVERSATION), anyInt())).thenReturn(List.of());
+
+        service.recentForPrompt(USER, CONVERSATION, 0);
+        service.recentForPrompt(USER, CONVERSATION, 10_000);
+
+        verify(mapper).listRecentByConversation(USER, CONVERSATION, 1);
+        verify(mapper).listRecentByConversation(USER, CONVERSATION, 200);
+    }
+
+    private static AssistantConversationMessageEntity row(String role, String text) {
+        AssistantConversationMessageEntity entity = new AssistantConversationMessageEntity();
+        entity.setRole(role);
+        entity.setText(text);
+        return entity;
+    }
 }

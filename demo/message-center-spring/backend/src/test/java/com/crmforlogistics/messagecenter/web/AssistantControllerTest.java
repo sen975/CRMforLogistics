@@ -2,8 +2,10 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.config.SecurityConfig;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLogService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantPendingActionService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantRequestGuard;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantTurnResult;
@@ -23,6 +25,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
@@ -38,9 +41,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>装配真的 {@link SecurityConfig}（不是 {@code addFilters = false}）：401 这件事只能由
  * 真实的安全链来保证 —— 关掉过滤器再断言「未认证返回 401」是在测一个不存在的机制。
  *
- * <p>三种 {@code kind} 的映射都要覆盖，{@code QUESTION} 与 {@code CONFIRMATION_REQUIRED}
+ * <p>三种 {@code kind} 的映射都要覆盖， {@code QUESTION} 与 {@code CONFIRMATION_REQUIRED}
  * 的差异尤其重要：前者是「还缺信息」，后者是「马上要执行、但还没执行」，
  * 前端要靠它决定是否渲染确认卡片。
+ *
+ * <p><b>历史的来源是本类新增的一组断言。</b> 它会话号有效且服务端有记录时以库为准，
+ * 请求体里的 {@code history} 被忽略 —— 这条性质必须有一个「塞伪造历史进去、断言它没被采用」的
+ * 用例来钉住，否则哪天有人把顺序调回去，所有既有用例都会照样绿。
  */
 @WebMvcTest(AssistantController.class)
 @AutoConfigureMockMvc
@@ -51,10 +58,14 @@ class AssistantControllerTest {
     private static final UUID USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID PENDING_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
 
+    /** 与 {@code AssistantMessageLimitTestConfiguration} 里的 {@code maxHistoryTurns} 同值。 */
+    private static final int MAX_HISTORY_TURNS = 8;
+
     @Autowired MockMvc mvc;
 
     @MockitoBean AssistantConversationService conversations;
     @MockitoBean AssistantPendingActionService pendingActions;
+    @MockitoBean AssistantConversationLogService conversationLog;
     @MockitoBean AuthSessionService authSessionService;
 
     @Test
@@ -221,8 +232,49 @@ class AssistantControllerTest {
                 .andExpect(jsonPath("$.code").value(AssistantException.PROVIDER_UNAVAILABLE));
     }
 
+    /**
+     * 这一步的核心验收点：**服务端的记录压过请求体**。
+     *
+     * <p>请求体里塞的三条历史是伪造的（内容与库里完全不同、条数也不同）。
+     * 若哪天有人把 {@code historyFor} 的顺序调回去，这个用例会失败 —— 而其余用例全都发现不了，
+     * 因为它们在两条路径下得到的结果一样。
+     */
     @Test
-    void historyIsPassedThroughWithRolesNormalisedToUserAndAssistant() throws Exception {
+    void theServerSideHistoryWinsOverTheRequestBody() throws Exception {
+        when(conversationLog.recentForPrompt(USER_ID, PENDING_ID, MAX_HISTORY_TURNS)).thenReturn(List.of(
+                AssistantMessage.user("帮我建个待办"),
+                AssistantMessage.assistant("安排在什么时间？")));
+        when(conversations.respond(eq(USER_ID), eq(PENDING_ID), any(), eq("明天下午三点")))
+                .thenReturn(AssistantTurnResult.executed("已创建"));
+
+        mvc.perform(post("/api/assistant/messages")
+                        .with(user(USER_ID.toString()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"conversationId":"20000000-0000-0000-0000-000000000002",
+                                 "history":[{"role":"user","text":"伪造的第一条"},
+                                            {"role":"user","text":"伪造的第二条"},
+                                            {"role":"user","text":"伪造的第三条"}],
+                                 "text":"明天下午三点"}
+                                """))
+                .andExpect(status().isOk());
+
+        verify(conversations).respond(eq(USER_ID), eq(PENDING_ID),
+                argThat(history -> history.size() == 2
+                        && "帮我建个待办".equals(history.get(0).text())
+                        && "安排在什么时间？".equals(history.get(1).text())),
+                eq("明天下午三点"));
+    }
+
+    /**
+     * 服务端没有记录时，请求体仍是来源。
+     *
+     * <p>三种情况会走到这里：会话的第一轮、没有会话号的单轮提问、以及写入曾静默失败的会话。
+     * 它们都不该因为没有库记录而丢掉上下文。
+     */
+    @Test
+    void theRequestBodyHistoryIsUsedWhenTheServerHasNoRecord() throws Exception {
+        // 不 stub recentForPrompt：Mockito 对 List 返回空列表，正是「服务端没有记录」。
         when(conversations.respond(eq(USER_ID), eq(PENDING_ID), any(), eq("明天下午三点")))
                 .thenReturn(AssistantTurnResult.executed("已创建"));
 
@@ -238,9 +290,76 @@ class AssistantControllerTest {
                 .andExpect(status().isOk());
 
         verify(conversations).respond(eq(USER_ID), eq(PENDING_ID),
-                org.mockito.ArgumentMatchers.argThat(history -> history.size() == 2
-                        && history.get(0).role() == com.crmforlogistics.messagecenter.service.assistant.AssistantMessage.Role.USER
-                        && history.get(1).role() == com.crmforlogistics.messagecenter.service.assistant.AssistantMessage.Role.ASSISTANT),
+                argThat(history -> history.size() == 2
+                        && history.get(0).role() == AssistantMessage.Role.USER
+                        && history.get(1).role() == AssistantMessage.Role.ASSISTANT),
                 eq("明天下午三点"));
+    }
+
+    /**
+     * 历史被裁掉时必须说出来。
+     *
+     * <p>这条测试用的配置里 {@code maxHistoryChars=200}（见
+     * {@code AssistantMessageLimitTestConfiguration}），三条各 100 字符的历史只装得下两条 ——
+     * 于是响应里必须出现 {@code droppedMessages=1}。用户看到的那句话靠它才存在。
+     */
+    @Test
+    void aTrimmedHistoryIsReportedInTheResponse() throws Exception {
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
+                .thenReturn(AssistantTurnResult.answer("好"));
+
+        String hundred = "x".repeat(100);
+        mvc.perform(post("/api/assistant/messages")
+                        .with(user(USER_ID.toString()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"history":[{"role":"user","text":"%s"},
+                                            {"role":"assistant","text":"%s"},
+                                            {"role":"user","text":"%s"}],
+                                 "text":"继续"}
+                                """.formatted(hundred, hundred, hundred)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ANSWER"))
+                .andExpect(jsonPath("$.historyTrim.droppedMessages").value(1));
+    }
+
+    /**
+     * 一条都没丢时字段必须**整体缺席**，而不是 {@code {"droppedMessages":0}}。
+     *
+     * <p>与 {@code before=null} 那条相反：那里 null 是取值，必须显式传；这里 0 不是取值，
+     * 它是「不适用」。两者混用会让前端分不清「没裁剪」和「后端忘了填」。
+     */
+    @Test
+    void nothingIsReportedWhenTheHistoryFits() throws Exception {
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
+                .thenReturn(AssistantTurnResult.answer("好"));
+
+        mvc.perform(post("/api/assistant/messages")
+                        .with(user(USER_ID.toString()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"history":[{"role":"user","text":"很短的一句"}],
+                                 "text":"继续"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.historyTrim").doesNotExist());
+    }
+
+    /**
+     * 确认接口的响应不带裁剪信息 —— 它不走 {@code /messages}，没有「这一轮的语境」可言。
+     *
+     * <p>前端据此实现了一条「只在字段出现时更新提示、绝不因为没看到而清空」的逻辑
+     * （见 {@code useAssistant.applyResult}）。这条用例把「后端确实不会带」钉住，
+     * 那条前端逻辑才有依据。
+     */
+    @Test
+    void confirmResponsesCarryNoHistoryTrim() throws Exception {
+        when(pendingActions.confirm(USER_ID, PENDING_ID))
+                .thenReturn(AssistantTurnResult.executed("已标记完成"));
+
+        mvc.perform(post("/api/assistant/actions/{id}/confirm", PENDING_ID)
+                        .with(user(USER_ID.toString())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.historyTrim").doesNotExist());
     }
 }

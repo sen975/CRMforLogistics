@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.web;
 
+import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLogService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
@@ -29,10 +30,16 @@ import java.util.UUID;
  * 的依赖并显式返回 503「功能未开启」，是唯一同时保住「能启动」与「原因清楚」的写法。
  *
  * <h2>身份只来自认证上下文</h2>
- * 三个端点都只通过 {@link SecurityUtil#currentUserId()} 取用户。<b>请求体里没有任何身份字段</b>，
+ * 所有端点都只通过 {@link SecurityUtil#currentUserId()} 取用户。<b>请求体里没有任何身份字段</b>，
  * 即使有人塞 {@code userId} 进来，它也不会被读取（{@link MessagesRequest} 里根本没有这个分量）。
  * {@code /api/assistant/**} 落在既有 {@code SecurityConfig} 的
  * {@code .requestMatchers("/api/**").authenticated()} 之下，无需改动安全配置。
+ *
+ * <h2>会话语境由服务端提供，请求体只是回退</h2>
+ * {@code POST /messages} 的 {@code history} 不再是权威来源 —— 会话号有效且服务端有记录时，
+ * 历史从库里读（见 {@link #historyFor}）。这一层的职责因此变成三件事：
+ * 决定**历史的来源**、**裁剪**它（交给 {@link AssistantRequestGuard}）、
+ * 把「裁剪了什么」带回响应（{@link AssistantTurnResult#withTrimmedHistory}）。
  *
  * <h2>确认接口只接受 pendingActionId</h2>
  * 不接受工具名或参数的重放：参数以服务端落库的那一份为准，并在执行前重新校验。
@@ -49,15 +56,18 @@ public class AssistantController {
     private final ObjectProvider<AssistantPendingActionService> pendingActions;
     private final ObjectProvider<AssistantConversationLogService> conversationLog;
     private final AssistantRequestGuard guard;
+    private final AssistantConfig config;
 
     public AssistantController(ObjectProvider<AssistantConversationService> conversations,
                                ObjectProvider<AssistantPendingActionService> pendingActions,
                                ObjectProvider<AssistantConversationLogService> conversationLog,
-                               AssistantRequestGuard guard) {
+                               AssistantRequestGuard guard,
+                               AssistantConfig config) {
         this.conversations = conversations;
         this.pendingActions = pendingActions;
         this.conversationLog = conversationLog;
         this.guard = guard;
+        this.config = config;
     }
 
     /** 一轮对话：解析 → 追问 / 直接执行 / 落待确认。 */
@@ -65,10 +75,43 @@ public class AssistantController {
     public AssistantTurnResult messages(@RequestBody(required = false) MessagesRequest request) {
         AssistantConversationService service = require(conversations);
         UUID userId = SecurityUtil.currentUserId();
+        UUID conversationId = request == null ? null : request.conversationId();
         AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(
-                historyOf(request), request == null ? null : request.text());
-        return service.respond(userId, request == null ? null : request.conversationId(),
+                historyFor(userId, conversationId, request), request == null ? null : request.text());
+        AssistantTurnResult result = service.respond(userId, conversationId,
                 normalised.history(), normalised.text());
+        // 裁剪是 guard 做的，但 guard 不认识响应体；把「丢了」这件事带上响应是这一层的活。
+        return result.withTrimmedHistory(normalised.droppedHistoryMessages());
+    }
+
+    /**
+     * 历史的来源：**会话号存在且服务端有记录时，以服务端为准。**
+     *
+     * <p>为什么不再信请求体：那条路径下「模型看到什么」由浏览器决定。刷新后前端 items 为空、
+     * 旧版本前端只带 8 条、有人改了前端 —— 服务端都无从察觉，只会看到一个比真实更短的对话，
+     * 而模型照样基于它自信作答。会话消息本来就落在库里
+     * （{@code assistant_conversation_messages}），读回来是同一个真相，
+     * 没有理由让浏览器转述，也没有理由把「最多带几条」交给它决定。
+     *
+     * <p>为什么保留请求体回退：三种情况下库里确实没有东西 —— 会话的第一轮、
+     * 没有会话号的单轮提问、以及未装配日志服务的环境（如 {@code @WebMvcTest}）。
+     * 回退不是兼容妥协，而是「没有更好来源时用次好的」。
+     *
+     * <p>{@code limit} 取 {@code max-history-turns}：读多了会被 guard 裁掉，是白读；
+     * 读少了则让「条数上限」这个配置失去意义 —— 两个数字必须同源。
+     */
+    private List<AssistantMessage> historyFor(UUID userId, UUID conversationId, MessagesRequest request) {
+        if (conversationId != null) {
+            AssistantConversationLogService log = conversationLog.getIfAvailable();
+            if (log != null) {
+                List<AssistantMessage> fromServer =
+                        log.recentForPrompt(userId, conversationId, config.maxHistoryTurns());
+                if (!fromServer.isEmpty()) {
+                    return fromServer;
+                }
+            }
+        }
+        return historyOf(request);
     }
 
     /** 确认并执行一条待确认动作。 */
@@ -119,8 +162,8 @@ public class AssistantController {
     /**
      * {@code POST /messages} 的请求体。
      *
-     * <p>{@code history} 可空（单轮提问）；{@code conversationId} 可空（前端还没有会话号时
-     * 不该阻塞对话，只是审计串不起来）。
+     * <p>{@code history} 可空（单轮提问），且**只在服务端没有该会话的记录时才会被采用**；
+     * {@code conversationId} 可空（前端还没有会话号时不该阻塞对话，只是审计串不起来）。
      */
     public record MessagesRequest(UUID conversationId, List<HistoryTurn> history, String text) {
     }

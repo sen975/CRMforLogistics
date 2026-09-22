@@ -19,7 +19,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AssistantTurnResult(Kind kind, String message, List<String> missing, Proposal proposal,
-                                  String errorCode) {
+                                  String errorCode, HistoryTrim historyTrim) {
 
     public enum Kind {
         /** 需要用户补充信息（缺参数，或指代有歧义）。 */
@@ -32,6 +32,45 @@ public record AssistantTurnResult(Kind kind, String message, List<String> missin
         ANSWER,
         /** 这一轮失败了。{@code errorCode} 必填。 */
         ERROR
+    }
+
+    /**
+     * 这一轮的语境里，**有多少更早的消息没有带上**。
+     *
+     * <p>存在的理由是一条容易被忽视的失败：历史超限时静默丢掉最旧的几轮，
+     * 模型拿着一个断掉的开头照样自信作答，而用户不知道助手已经看不见前面了。
+     * 那比报错更难发现 —— 报错至少会让人换一种问法。
+     *
+     * <p>报错本身不可接受（为了语境而拒绝一条指令是本末倒置，理由见
+     * {@link AssistantRequestGuard} 的类注释），于是唯一的出路是让「丢了」这件事**被看见**。
+     *
+     * <p>为 {@code null}（字段整体缺席）表示**一条都没丢**。刻意不用 {@code 0}：
+     * 那样前端每次都要判「等于 0 还是不存在」，而两者在语义上本就是一回事。
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record HistoryTrim(int droppedMessages) {
+        public HistoryTrim {
+            // 只有在真的丢了东西时才允许出现。传 0 进来是调用方的错，不是「没裁剪」的表达方式。
+            if (droppedMessages <= 0) {
+                throw new IllegalArgumentException("historyTrim requires droppedMessages > 0");
+            }
+        }
+    }
+
+    /**
+     * 附上「历史被裁剪」这一事实。
+     *
+     * <p>为什么是实例方法而不是构造参数：裁剪发生在 **HTTP 边界**
+     * （{@link AssistantRequestGuard} 整理入参时），而这里只负责把它带到响应体上。
+     * 编排层（{@link AssistantConversationService}）不该知道 HTTP 入参是怎么被整理的 ——
+     * 那是「一处职责一处落点」的既有分工，加参数会让这条边界模糊掉。
+     */
+    public AssistantTurnResult withTrimmedHistory(int droppedMessages) {
+        if (droppedMessages <= 0) {
+            return this;
+        }
+        return new AssistantTurnResult(kind, message, missing, proposal, errorCode,
+                new HistoryTrim(droppedMessages));
     }
 
     /**
@@ -69,23 +108,23 @@ public record AssistantTurnResult(Kind kind, String message, List<String> missin
     }
 
     public static AssistantTurnResult question(String question, List<String> missing) {
-        return new AssistantTurnResult(Kind.QUESTION, question, missing, null, null);
+        return new AssistantTurnResult(Kind.QUESTION, question, missing, null, null, null);
     }
 
     public static AssistantTurnResult confirmationRequired(Proposal proposal) {
         return new AssistantTurnResult(Kind.CONFIRMATION_REQUIRED,
-                "请确认后我再执行：" + proposal.summary(), null, proposal, null);
+                "请确认后我再执行：" + proposal.summary(), null, proposal, null, null);
     }
 
     public static AssistantTurnResult executed(String message) {
-        return new AssistantTurnResult(Kind.EXECUTED, message, null, null, null);
+        return new AssistantTurnResult(Kind.EXECUTED, message, null, null, null, null);
     }
 
     public static AssistantTurnResult answer(String message) {
-        return new AssistantTurnResult(Kind.ANSWER, message, null, null, null);
+        return new AssistantTurnResult(Kind.ANSWER, message, null, null, null, null);
     }
 
     public static AssistantTurnResult error(String errorCode, String message) {
-        return new AssistantTurnResult(Kind.ERROR, message, null, null, errorCode);
+        return new AssistantTurnResult(Kind.ERROR, message, null, null, errorCode, null);
     }
 }

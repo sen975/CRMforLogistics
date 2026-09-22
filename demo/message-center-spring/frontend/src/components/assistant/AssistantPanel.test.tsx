@@ -416,3 +416,58 @@ it('starting a new conversation switches the id and clears the transcript', asyn
   // 换了会话号也不该回头去拉旧会话的历史。
   expect(api.fetchAssistantConversation).toHaveBeenCalledTimes(1);
 });
+
+// ---------- 语境被裁剪：「我已经记不住前面了」必须说出来 ----------
+
+it('says so when the earlier conversation is no longer in context', async () => {
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ANSWER',
+    message: '好的',
+    historyTrim: { droppedMessages: 3 },
+  });
+  renderPanel();
+
+  await ask('接着上面那条继续说');
+
+  // 这个提示不是装饰。上下文被裁掉之后，模型不但失去了那段对话，还**不知道自己失去了**，
+  // 于是会拿着断掉的开头照常作答 —— 用户看不到任何异常。这是唯一能让他知道的地方。
+  const note = await screen.findByTestId('assistant-history-trim-note');
+  expect(note).toBeVisible();
+  expect(note).toHaveTextContent('3');
+});
+
+it('keeps the trim notice when a later response carries no trim information', async () => {
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ANSWER',
+    message: '好的',
+    historyTrim: { droppedMessages: 2 },
+  });
+  renderPanel();
+  await ask('第一条');
+  expect(await screen.findByTestId('assistant-history-trim-note')).toBeVisible();
+
+  // 第二轮**不带** historyTrim（服务端一条没丢时就会省略它）。
+  // 若按「没看到 = 没裁剪」把提示清掉，用户会以为助手又全都记得了 —— 而它并没有。
+  // 注意这条与「确认 / 取消的响应不带该字段」是同一个坑（见 useAssistant.applyResult）。
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '接着答' });
+  await ask('第二条');
+
+  expect(screen.getByTestId('assistant-history-trim-note')).toBeVisible();
+});
+
+it('clears the trim notice when starting a new conversation', async () => {
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ANSWER',
+    message: '好的',
+    historyTrim: { droppedMessages: 1 },
+  });
+  renderPanel();
+  await ask('你好');
+  expect(await screen.findByTestId('assistant-history-trim-note')).toBeVisible();
+
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: /新\s*会\s*话/ }));
+
+  // 新会话从零开始，上一段对话的裁剪与它无关 —— 留着那句提示会变成纯粹的误导。
+  expect(screen.queryByTestId('assistant-history-trim-note')).not.toBeInTheDocument();
+});

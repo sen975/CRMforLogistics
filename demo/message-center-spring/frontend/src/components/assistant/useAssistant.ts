@@ -43,7 +43,15 @@ export const AssistantCodes = {
   PROVIDER_UNAVAILABLE: 'ASSISTANT_UNAVAILABLE',
 } as const;
 
-/** 与服务端 `assistant.max-history-turns` 的默认值同口径；服务端还会再裁一次。 */
+/**
+ * 前端最多回带几条历史。
+ *
+ * 它现在**只是兜底**：会话号有效且服务端有该会话的记录时，历史以库为准
+ * （见 `AssistantController.historyFor`），这段前端历史只在服务端查不到时才被采用。
+ * 保留它是因为「写入曾静默失败」会留下库里有缺口的会话，那时它是唯一的来源 ——
+ * 但要清楚：**改这个常量不再能改变模型看到什么**。
+ * 与服务端 `assistant.max-history-turns` 的默认值同口径。
+ */
 const MAX_HISTORY_TURNS = 8;
 
 /** 会话号在前端的存放位置。刷新页面后靠它接上同一段对话。 */
@@ -190,6 +198,14 @@ function isRetryable(failure: HttpFailure): boolean {
  * 所有失败都会变成一条 `kind=ERROR` 的消息留在对话里（而不是一个转瞬即逝的 toast）——
  * 用户回翻时能看见「那次没成」，而不是只记得自己说过。
  *
+ * <h2>「我记不住前面了」也必须有出口</h2>
+ * 服务端会裁剪过长的历史，而模型**察觉不到**自己少了语境 —— 它会拿着断掉的开头照样自信作答。
+ * 所以服务端把「丢了多少条」放进响应（`historyTrim`），这里把它提升成会话级状态交给面板显示。
+ * 这是同一条底线的第二个面：不许把「能力已经变弱」静默掉。
+ *
+ * <p>已知取舍：`trimmedHistory` 只活在内存里。刷新后回放接口不返回这个信息，提示会消失 ——
+ * 要让它持久，得把裁剪规模落到消息行上（那是一次迁移，目前不做）。
+ *
  * <h2>会话号：前端生成、前端持久化</h2>
  * 拿到它就等于拿到「上一段对话」，所以它进 `localStorage` —— 刷新页面后接得上。
  * 换会话号（「新会话」）是清空上下文唯一的入口。
@@ -200,6 +216,13 @@ export function useAssistant() {
   const [pending, setPending] = useState<AssistantProposal | null>(null);
   const [unavailable, setUnavailable] = useState<AssistantUnavailable | null>(null);
   const [conversationId, setConversationId] = useState<string>(() => readStoredConversationId());
+  /**
+   * 最近一次「语境被裁剪」的规模，`null` 表示这个会话里还没发生过。
+   *
+   * 之所以是**会话级状态**而不是每条消息上的字段：同一个会话里一旦开始丢，后面每一轮都会丢，
+   * 逐条显示会变成一片重复的噪音。用户需要知道的是「助手从某一刻起看不见前面了」这件事本身。
+   */
+  const [trimmedHistory, setTrimmedHistory] = useState<number | null>(null);
 
   useEffect(() => {
     storeConversationId(conversationId);
@@ -251,6 +274,11 @@ export function useAssistant() {
   /** 处理一轮 200 的响应。 */
   const applyResult = useCallback((result: AssistantTurnResult) => {
     setUnavailable(null);
+    // 只在字段**出现**时更新，绝不因为「没看到」而清空：确认 / 取消的响应本来就不带
+    // `historyTrim`（它们不走 /messages），按「没看到 = 没裁剪」处理会把提示误清掉。
+    if (result.historyTrim) {
+      setTrimmedHistory(result.historyTrim.droppedMessages);
+    }
     append(itemOf(result));
     if (result.kind === 'CONFIRMATION_REQUIRED' && result.proposal) {
       // 服务端已把这条动作落库；卡片上的确认只认这个 id。
@@ -287,6 +315,9 @@ export function useAssistant() {
     const trimmed = text.trim();
     if (!trimmed || busyRef.current) return;
     // 历史只取角色与文本：不夹带任何前端状态，更不能借它给自己换个身份。
+    //
+    // 注意这段历史的**作用已经变了**：会话号有效且有记录时服务端以库为准，
+    // 所以这里带过去的历史只是「服务端查不到时」的兜底（见 MAX_HISTORY_TURNS）。
     const history: AssistantHistoryTurn[] = items
       .slice(-MAX_HISTORY_TURNS)
       .map((item) => ({ role: item.role, text: item.text }));
@@ -329,6 +360,8 @@ export function useAssistant() {
     setConversationId(newConversationId());
     setItems([]);
     setPending(null);
+    // 新会话从零开始，上一段对话的裁剪与它无关。
+    setTrimmedHistory(null);
     lastAttempt.current = null;
   }, []);
 
@@ -365,6 +398,7 @@ export function useAssistant() {
     pending,
     unavailable,
     conversationId,
+    trimmedHistory,
     send,
     confirm,
     cancel,

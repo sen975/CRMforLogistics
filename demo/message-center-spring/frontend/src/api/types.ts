@@ -1283,6 +1283,23 @@ export interface AssistantTurnResult {
   proposal?: AssistantProposal;
   /** 仅 `kind=ERROR` 时出现。与 HTTP 层的错误码不同族。 */
   errorCode?: string;
+  /**
+   * 仅当**这一轮的语境被裁剪过**时出现：服务端丢掉了更早的若干条历史。
+   *
+   * 这不是一个统计字段，而是一条安全信号 —— 模型没看到的那部分对话，它自己也察觉不到，
+   * 于是会拿着断掉的开头照样自信作答。把这件事说出来是唯一的补救。
+   *
+   * 字段**缺席**表示一条没丢（与后端 `@JsonInclude(NON_NULL)` 的口径一致），
+   * 而不是「后端忘了填」。另注意：确认 / 取消接口的响应本来就不带它。
+   */
+  historyTrim?: AssistantHistoryTrim;
+}
+
+/** 语境被裁剪的规模。`droppedMessages` 服务端保证为正。 */
+export interface AssistantHistoryTrim {
+  droppedMessages: number;
+}
+
 }
 
 export interface AssistantMessageRequest {
