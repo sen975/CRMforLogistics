@@ -28,13 +28,18 @@ const EXAMPLES = [
  * 所以服务端把裁剪规模放进响应，面板在输入框上方把它说出来。宁可提示显得多余，
  * 也不要让用户在毫无察觉的情况下收到一个依据不足的回答。
  *
+ * <p><b>第五件：打开时接不上上次。</b> 面板打开的第一件事是回放，而它失败时以前只留下一行
+ * `console.warn` —— 于是「助手没开启」与「他刚点了新会话」在界面上**完全一样**，都是一片空白，
+ * 而这两种情况的下一步动作正相反。现在前者走顶部的「AI 助手未开启」（并禁用输入框），
+ * 其余失败给一条独立提示：**上面这段对话不完整**。它不写进对话 —— 它不属于任何一轮对话。
+ *
  * <h2>打开时回放历史</h2>
  * 对话正文已经落库（`assistant_conversation_messages`），面板第一次打开时按当前会话号拉回一次，
  * 于是刷新页面不再等于失忆。回放只还原**消息与它的终点**，不还原确认卡片（见 `itemOfHistory`）。
  */
 export function AssistantPanel() {
   const {
-    items, busy, pending, unavailable, trimmedHistory,
+    items, busy, pending, unavailable, trimmedHistory, historyError,
     send, confirm, cancel, retry, loadHistory, startNewConversation,
   } = useAssistant();
   const [draft, setDraft] = useState('');
@@ -93,6 +98,21 @@ export function AssistantPanel() {
             description={disabled
               ? unavailable.message
               : `${unavailable.message}。稍后再发一次通常就好了。`}
+          />
+        )}
+
+        {/*
+          回放失败。它必须与「刚开了一段新会话」区分开 —— 两种情况的面板都是空的，
+          而用户要做的事完全相反（一个什么都不用做，一个得刷新或换台设备）。
+          **不写进对话**：那会让人以为「我刚才那句话失败了」，可他还什么都没说。
+        */}
+        {historyError && (
+          <Alert
+            type="warning"
+            showIcon
+            message="上面这段对话没能读回来"
+            description={`${historyError}。记录不会因此丢失，你可以直接开始新对话，或刷新后再试一次。`}
+            data-testid="assistant-history-unavailable"
           />
         )}
 

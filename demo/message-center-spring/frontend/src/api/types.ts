@@ -1300,6 +1300,17 @@ export interface AssistantHistoryTrim {
   droppedMessages: number;
 }
 
+/**
+ * 「我上次在哪个会话里」——服务端从消息表推出来的答案。
+ *
+ * `conversationId` 为 `null` 表示**服务端明确知道这个人还没有任何对话**，与「这次请求失败了」
+ * 是两件事：前者应当安静地开一段新对话，后者必须提示。它不从 204 / 404 表达这个区别，
+ * 就是为了让前端能分辨这两种情况。
+ */
+export interface AssistantLatestConversation {
+  conversationId: string | null;
+}
+
 }
 
 export interface AssistantMessageRequest {

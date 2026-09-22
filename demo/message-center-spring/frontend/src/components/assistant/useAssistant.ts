@@ -3,6 +3,7 @@ import {
   cancelAssistantAction,
   confirmAssistantAction,
   fetchAssistantConversation,
+  fetchLatestAssistantConversation,
   sendAssistantMessage,
 } from '../../api/endpoints';
 import type {
@@ -57,6 +58,25 @@ const MAX_HISTORY_TURNS = 8;
 /** 会话号在前端的存放位置。刷新页面后靠它接上同一段对话。 */
 const CONVERSATION_STORAGE_KEY = 'assistant.conversationId';
 
+/**
+ * 「用户在这个设备上主动开了一段新会话，而它还没说过话」。
+ *
+ * <h2>为什么需要单独记一件事</h2>
+ * 服务端能回答「你最近在哪个会话里」，但它是**从消息表推**出来的 ——
+ * 一段刚开、还没说过话的新会话在它眼里根本不存在，问它只会拿回上一段对话。
+ * 而「点过新会话、又重开面板」的用户要的恰恰是空白：那一刻服务端兜底会把用户
+ * 主动丢掉的那段对话自己拉回来，正好否定了他唯一那个「清空上下文」的入口。
+ *
+ * <p>所以这个标记只有一个作用：在它还在的时候，<b>不要去问服务端</b>。
+ * 服务端手里没有能区分「用户主动开了新会话」与「这是台新设备」的信息 ——
+ * 这个区别只存在于用户点那一下的意图里，只能由前端记着。
+ *
+ * <h2>什么时候撤掉</h2>
+ * 服务端确认收到这个会话的第一轮之后（见 `applyResult`）。那一刻库里已经有了新会话的行，
+ * 服务端的答案自动变成正确的那个，标记的使命就结束了。
+ */
+const NEW_CONVERSATION_STORAGE_KEY = 'assistant.conversationStarted';
+
 const TURN_KINDS: readonly AssistantTurnKind[] = [
   'QUESTION',
   'CONFIRMATION_REQUIRED',
@@ -104,6 +124,30 @@ function storeConversationId(id: string): void {
     window.localStorage.setItem(CONVERSATION_STORAGE_KEY, id);
   } catch {
     // 同上：存不下不是错误，只是刷新后接不上。
+  }
+}
+
+function readStoredNewConversation(): boolean {
+  try {
+    return window.localStorage.getItem(NEW_CONVERSATION_STORAGE_KEY) === '1';
+  } catch {
+    // 读不到就当它不在。后果只是「多问一次服务端」—— 那比误判成「用户刚开过新会话」
+    // 而永久不兜底要轻得多：后者会一直静默失效，且没有人会发现。
+    return false;
+  }
+}
+
+function storeNewConversation(value: boolean): void {
+  try {
+    if (value) {
+      window.localStorage.setItem(NEW_CONVERSATION_STORAGE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(NEW_CONVERSATION_STORAGE_KEY);
+    }
+  } catch {
+    // 存不下时行为退化成「每次打开都问一次服务端」：对一段没有内容的新会话，
+    // 服务端会答上一个会话，于是用户重开面板时旧对话会回来。
+    // 这是隐私模式下的已知退化，不额外处理 —— 那里 localStorage 本来就不作数。
   }
 }
 
@@ -206,9 +250,20 @@ function isRetryable(failure: HttpFailure): boolean {
  * <p>已知取舍：`trimmedHistory` 只活在内存里。刷新后回放接口不返回这个信息，提示会消失 ——
  * 要让它持久，得把裁剪规模落到消息行上（那是一次迁移，目前不做）。
  *
- * <h2>会话号：前端生成、前端持久化</h2>
- * 拿到它就等于拿到「上一段对话」，所以它进 `localStorage` —— 刷新页面后接得上。
- * 换会话号（「新会话」）是清空上下文唯一的入口。
+ * <h2>同一条底线的第三面：接不上上次，也要说出来</h2>
+ * 打开面板时若回放失败，以前只留下一行 `console.warn`，于是「助手没开启」与
+ * 「刚开了一段新会话」在界面上**完全一样**（都是一片空白）。现在它分两路说出来：
+ * 功能不可用（503）复用 `unavailable`（面板顶部显示「AI 助手未开启」并禁用输入框），
+ * 其余失败进 `historyError`（一条独立的提示，不写进对话 —— 它不属于任何一轮对话）。
+ *
+ * <h2>会话号的三个来源，优先级是刻意的</h2>
+ * <ol>
+ *   <li>浏览器本地存的那一个（常态）；</li>
+ *   <li>本地那个读不出东西时，问服务端「我最近在哪个会话里」（清缓存/换设备/换账号后接得上）；</li>
+ *   <li>都没有时新开一段。</li>
+ * </ol>
+ * 第 2 步<b>不许覆盖用户主动开的新会话</b>（见 `NEW_CONVERSATION_STORAGE_KEY`）。
+ * 换会话号（「新会话」）仍然是清空上下文唯一的入口。
  */
 export function useAssistant() {
   const [items, setItems] = useState<AssistantChatItem[]>([]);
@@ -223,6 +278,15 @@ export function useAssistant() {
    * 逐条显示会变成一片重复的噪音。用户需要知道的是「助手从某一刻起看不见前面了」这件事本身。
    */
   const [trimmedHistory, setTrimmedHistory] = useState<number | null>(null);
+  /**
+   * 上次的对话没能读回来。与 `unavailable` 分开：那个说的是「助手用不了」，
+   * 这个说的是「助手能用，但上面这段对话不完整」—— 两件事的下一步动作完全不同。
+   *
+   * 它不会因为后来某一轮成功就清掉：那条提示说的是**屏幕上缺了一段**，
+   * 一次成功的新请求并不能把缺掉的那段补回来（与 `trimmedHistory` 同一个道理）。
+   * 只有「新会话」会清它 —— 那时面板本来就不该有任何历史。
+   */
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     storeConversationId(conversationId);
@@ -250,6 +314,14 @@ export function useAssistant() {
    */
   const hydratedRef = useRef(false);
 
+  /**
+   * 当前这段会话里是否已经有**用户产生的内容**（说过话，或刚点了「新会话」）。
+   *
+   * 服务端兜底要换会话号之前会看它。用 ref 而不是读 `items`：`loadHistory` 是个
+   * 只依赖会话号的回调，闭包里的 `items` 停在挂载那一刻 —— 用它判断会永远看到空数组。
+   */
+  const localActivityRef = useRef(false);
+
   const append = useCallback((item: AssistantChatItem) => {
     setItems((prev) => [...prev, item]);
   }, []);
@@ -271,9 +343,33 @@ export function useAssistant() {
     });
   }, [append]);
 
+  /**
+   * 处理一次「回放历史」失败。与 {@link applyFailure} 的区别不是文案，而是**它不属于任何一轮对话**：
+   * 往对话里塞一条失败消息，用户会以为「我刚才那句话失败了」，而他还没说话。
+   *
+   * <p>503 走 `unavailable` 这一路（而不是 `historyError`）：助手没开启时，
+   * 面板要显示的是与发送失败时**同一句**「AI 助手未开启」，并顺手禁用输入框。
+   * 这一种失败最值得说出来 —— 它长得最像「这里本来就什么都没有」。
+   */
+  const applyReplayFailure = useCallback((error: unknown) => {
+    const failure = classify(error);
+    if (failure.status === 503
+      && (failure.code === AssistantCodes.DISABLED || failure.code === AssistantCodes.PROVIDER_UNAVAILABLE)) {
+      setUnavailable({ code: failure.code, message: failure.message });
+      return;
+    }
+    setHistoryError(failure.message);
+  }, []);
+
   /** 处理一轮 200 的响应。 */
   const applyResult = useCallback((result: AssistantTurnResult) => {
     setUnavailable(null);
+    // 服务端确认收到这一轮 ⇒ 库里已经有了这个会话的行，「服务端兜底」从此会给出正确的答案，
+    // 那个「别问服务端」的标记可以撤掉了。
+    //
+    // 撤掉的依据是「服务端确认」而不是「用户按下发送」：失败的发送不会在库里留下任何东西，
+    // 那时撤掉标记，重开面板就会把用户刚主动丢掉的那段对话又拉回来。
+    storeNewConversation(false);
     // 只在字段**出现**时更新，绝不因为「没看到」而清空：确认 / 取消的响应本来就不带
     // `historyTrim`（它们不走 /messages），按「没看到 = 没裁剪」处理会把提示误清掉。
     if (result.historyTrim) {
@@ -299,6 +395,9 @@ export function useAssistant() {
   ) => {
     lastAttempt.current = { history, text };
     if (appendUser) {
+      // 一旦用户在这里说过话，这段会话号就不能再被服务端兜底换掉 ——
+      // 换掉之后他刚说的话虽然还画在屏幕上，归属却已经不是当前上下文了。
+      localActivityRef.current = true;
       append({ id: nextId(), role: 'user', text });
     }
     setBusy(true);
@@ -332,36 +431,87 @@ export function useAssistant() {
   }, [dispatch]);
 
   /**
-   * 回放当前会话的历史。面板第一次打开时调用一次。
+   * 接上上次的对话。面板第一次打开时调用一次。
    *
-   * 拉不到历史**不报错**：这只是「接上上次」，失败不该让面板变成一个错误页 ——
-   * 退化成空白，用户照样能发消息。
+   * <h2>三程</h2>
+   * <ol>
+   *   <li><b>本地号读得出东西</b> → 用它。这是常态，也是唯一不多发一次请求的路。</li>
+   *   <li><b>本地号读回空</b> → 问服务端「我最近在哪个会话里」。覆盖三种「号在、但在这个账号下
+   *       什么都不对应」的情况：清过浏览器数据、换了设备、换了账号。</li>
+   *   <li><b>任何一程出错</b> → 说出来（{@link applyReplayFailure}），不再只留一行 console.warn。</li>
+   * </ol>
+   *
+   * <h2>为什么本地号优先，而不是「服务端说了算」</h2>
+   * 服务端的答案是从**消息表**推的，所以它看不见「刚开、还没说话」的新会话。
+   * 若让它说了算，用户点过「新会话」之后只要重开面板，他刚丢掉的那段对话就会自己回来 ——
+   * 那恰好否定了「新会话」这个唯一能清空上下文的入口。所以：本地优先，
+   * 且服务端兜底要过两道闸（`localActivityRef` 与 {@link NEW_CONVERSATION_STORAGE_KEY}）。
+   *
+   * <p>拉不到历史**从不阻塞使用**：面板退化成空白，用户照样能发消息 —— 只是这一次空白
+   * 会被说明原因，而不是与「新会话」混成同一个样子。
    */
   const loadHistory = useCallback(async () => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
+
+    let restored: AssistantConversationMessage[];
     try {
-      const messages = await fetchAssistantConversation(conversationId);
+      restored = await fetchAssistantConversation(conversationId);
+    } catch (error) {
+      // 这个 catch 覆盖的东西比它看起来多：除了网络故障，还有「助手没开启」（503），
+      // 以及「接口路径写错」「函数没导出」这类**编程错误** —— 后者的表现恰好也是
+      // 「历史永远是空的」。全都一声不响地吞掉，就没人会发现面板为什么总是空的。
+      console.warn('assistant: 回放会话历史失败', error);
+      applyReplayFailure(error);
+      return;
+    }
+    if (restored.length > 0) {
+      setItems(restored.map(itemOfHistory));
+      return;
+    }
+
+    // 本地那个号读不到东西。可能是「这段对话还没有内容」，也可能是「这个号不属于当前账号」——
+    // 前端无从区分，也不该自己下结论，问服务端。
+    if (readStoredNewConversation()) {
+      // 用户主动开的新会话：空就是它该有的样子。这里**不能问**服务端 ——
+      // 它看不见一段没有消息的新会话，只会把上一段对话还回来。
+      return;
+    }
+    if (localActivityRef.current || busyRef.current) {
+      // 用户已经开始在这里说话了（比如刚发出第一句话，而它还没落库）。
+      // 此刻换会话号会把他刚说的话留在被抛弃的那段里。
+      return;
+    }
+    try {
+      const latest = await fetchLatestAssistantConversation();
+      if (!latest.conversationId || latest.conversationId === conversationId) {
+        // `null` = 服务端明确说「你还没有任何对话」。这不是失败，安静地开始就好。
+        return;
+      }
+      setConversationId(latest.conversationId);
+      const messages = await fetchAssistantConversation(latest.conversationId);
       if (messages.length > 0) {
         setItems(messages.map(itemOfHistory));
       }
     } catch (error) {
-      // 拉不到历史不该阻塞使用：退化成空面板，用户照样能发消息。
-      //
-      // 但要留下痕迹：这个 catch 也覆盖「接口路径写错」「函数没导出」这类**编程错误**，
-      // 而它们的表现恰好也是「历史永远是空的」—— 一声不响地吞掉，就没人会发现。
-      console.warn('assistant: 回放会话历史失败', error);
+      console.warn('assistant: 查询最近会话失败', error);
+      applyReplayFailure(error);
     }
-  }, [conversationId]);
+  }, [conversationId, applyReplayFailure]);
 
   /** 开一段新对话：换会话号并清空本地记录。正在请求时不允许切换（会把结果写进错误的上下文）。 */
   const startNewConversation = useCallback(() => {
     if (busyRef.current) return;
     setConversationId(newConversationId());
+    // 这段新会话在服务端眼里还不存在（它从消息表推）。记下这件事，
+    // 否则下次打开面板时服务端兜底会把它换成上一段对话 —— 用户的「清空」当场作废。
+    storeNewConversation(true);
+    localActivityRef.current = true;
     setItems([]);
     setPending(null);
-    // 新会话从零开始，上一段对话的裁剪与它无关。
+    // 新会话从零开始，上一段对话的裁剪与读回失败都与它无关。
     setTrimmedHistory(null);
+    setHistoryError(null);
     lastAttempt.current = null;
   }, []);
 
@@ -399,6 +549,7 @@ export function useAssistant() {
     unavailable,
     conversationId,
     trimmedHistory,
+    historyError,
     send,
     confirm,
     cancel,

@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -361,5 +362,53 @@ class AssistantControllerTest {
                         .with(user(USER_ID.toString())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.historyTrim").doesNotExist());
+    }
+
+    // ---------- 会话号的兜底：浏览器忘了它时，服务端能交回来 ----------
+
+    /**
+     * 端点没有路径参数、没有请求参数，问的永远是**认证上下文里的那个人**。
+     *
+     * <p>这条用例故意在 URL 上挂两个伪造的身份参数（{@code userId} / {@code conversationId}）：
+     * 它们必须被完全忽略。一旦哪天有人「顺手支持」了其中一个，这个端点就从查询变成了
+     * 「用别人的号探路」的入口 —— 而它返回的正是别人的会话号，前端会拿它去回放。
+     */
+    @Test
+    void theLatestConversationIsAlwaysTheCallersOwn() throws Exception {
+        UUID other = UUID.fromString("30000000-0000-0000-0000-000000000003");
+        when(conversationLog.latestConversationId(USER_ID)).thenReturn(PENDING_ID);
+
+        mvc.perform(get("/api/assistant/conversations/latest")
+                        .with(user(USER_ID.toString()))
+                        .param("userId", other.toString())
+                        .param("conversationId", other.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.conversationId").value(PENDING_ID.toString()));
+
+        verify(conversationLog).latestConversationId(USER_ID);
+        verify(conversationLog, org.mockito.Mockito.never()).latestConversationId(other);
+    }
+
+    /**
+     * 还没有任何对话时是 200 + {@code null}，不是 204、不是 404。
+     *
+     * <p>前端靠这个区别分两件事：{@code null} = 「服务端明确说没有」→ 安静地开一段新对话；
+     * 非 2xx = 「这次没问出来」→ 必须提示。混成同一个形状，面板就会在
+     * 「新用户第一次打开」时弹一个假的错误，或者在真出错时假装没事。
+     */
+    @Test
+    void noConversationYetIsAnAnswerNotAnError() throws Exception {
+        // 不 stub：Mockito 对 UUID 返回 null，正是「库里还没有这个用户的任何消息」。
+        mvc.perform(get("/api/assistant/conversations/latest")
+                        .with(user(USER_ID.toString())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.conversationId").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    /** 认证先于一切：未认证的请求连「我有没有会话」都不该问得出来。 */
+    @Test
+    void theLatestConversationRequiresAuthentication() throws Exception {
+        mvc.perform(get("/api/assistant/conversations/latest"))
+                .andExpect(status().isUnauthorized());
     }
 }

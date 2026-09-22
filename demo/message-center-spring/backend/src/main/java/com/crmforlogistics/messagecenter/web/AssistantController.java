@@ -41,6 +41,11 @@ import java.util.UUID;
  * 决定**历史的来源**、**裁剪**它（交给 {@link AssistantRequestGuard}）、
  * 把「裁剪了什么」带回响应（{@link AssistantTurnResult#withTrimmedHistory}）。
  *
+ * <h2>会话号仍由前端持有，服务端只是兜底</h2>
+ * {@code GET /conversations/latest} 回答「我上次在哪个会话里」，但<b>不改变</b>会话号的归属：
+ * 它是分组标签而不是凭证（归属一律按登录用户判定），生成、保存、换新都留在前端。
+ * 这个端点只补一条路 —— 浏览器忘了那个号的时候（清缓存、换设备），别让用户
+ * 看起来像丢了整段对话，而记录明明还在库里。
  * <h2>确认接口只接受 pendingActionId</h2>
  * 不接受工具名或参数的重放：参数以服务端落库的那一份为准，并在执行前重新校验。
  * 若允许前端回传参数，确认就退化成「前端说了算」，而落库授权这件事就白做了。
@@ -140,6 +145,24 @@ public class AssistantController {
         return service.replay(SecurityUtil.currentUserId(), id, REPLAY_LIMIT);
     }
 
+    /**
+     * 我最近说过话的那个会话号，没有则 {@code {"conversationId": null}}。
+     *
+     * <p>它存在的唯一理由：会话号原本只活在浏览器里（前端 {@code localStorage}），
+     * 于是清缓存、换设备、换浏览器都会让用户凭空丢掉整段对话 —— 而记录一直在库里。
+     * 这个端点把号交回去，前端在「本地那个号读不出任何东西」时用它兜底。
+     *
+     * <p><b>它不改变会话号的归属。</b> 会话号是分组标签而不是凭证（归属一律按登录用户判定），
+     * 生成、保存、换新都仍然留在前端。这里既不能指定「用我的某个号」，也不接受任何会话号参数 ——
+     * 谁在问由认证上下文决定，回答的永远是「你自己的」那一个。<b>没有路径参数不是省略，
+     * 而是刻意的</b>：一旦允许传号进来，它就从「查询」变成了「用别人的号探路」的入口。
+     */
+    @GetMapping("/conversations/latest")
+    public LatestConversation latestConversation() {
+        AssistantConversationLogService service = require(conversationLog);
+        return new LatestConversation(service.latestConversationId(SecurityUtil.currentUserId()));
+    }
+
     private static <T> T require(ObjectProvider<T> provider) {
         T service = provider.getIfAvailable();
         if (service == null) {
@@ -166,6 +189,18 @@ public class AssistantController {
      * {@code conversationId} 可空（前端还没有会话号时不该阻塞对话，只是审计串不起来）。
      */
     public record MessagesRequest(UUID conversationId, List<HistoryTurn> history, String text) {
+    }
+
+    /**
+     * {@code GET /conversations/latest} 的响应体。
+     *
+     * <p>为什么用一个可能装着 {@code null} 的对象，而不是裸 UUID，也不是 204：
+     * <b>「没有」必须和「有一个号」走同一条 200 路径。</b> 用 204 / 404 表达「没有」，
+     * 会让前端把「服务端明确说没有」与「这次请求出错了」归成同一类，而这两件事的处置相反 ——
+     * 前者应当安安静静地开一段新对话，后者必须让用户看见。
+     * 在响应体里用 {@code null} 表达「没有」，正好是这个区别的载体。
+     */
+    public record LatestConversation(UUID conversationId) {
     }
 
     private static List<AssistantMessage> historyOf(MessagesRequest request) {

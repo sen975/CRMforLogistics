@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   confirmAssistantAction: vi.fn(),
   cancelAssistantAction: vi.fn(),
   fetchAssistantConversation: vi.fn(),
+  fetchLatestAssistantConversation: vi.fn(),
 }));
 
 vi.mock('../../api/endpoints', () => api);
@@ -44,6 +45,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   // 回放是面板挂载时的默认动作：不给默认值，每个用例都会走一遍 catch 分支。
   api.fetchAssistantConversation.mockResolvedValue([]);
+  // 本地会话号读回空时会问服务端「我上次在哪个会话里」。默认答「还没有任何对话」——
+  // 这正是新用户第一次打开面板时的答案，也就不该有任何历史被拉回来。
+  api.fetchLatestAssistantConversation.mockResolvedValue({ conversationId: null });
   // 会话号会写进 localStorage，测试之间不能互相继承。
   window.localStorage.clear();
   busEvents.length = 0;
@@ -351,7 +355,7 @@ it('does not resurrect a confirmation card from history', async () => {
   expect(screen.getByText('当时待确认')).toBeVisible();
 });
 
-it('a failed replay leaves the panel usable instead of turning it into an error page', async () => {
+it('a failed replay leaves the panel usable and says the history was not read', async () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   api.fetchAssistantConversation.mockRejectedValue(new Error('boom'));
   api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '好的' });
@@ -359,13 +363,34 @@ it('a failed replay leaves the panel usable instead of turning it into an error 
 
   await ask('你好');
 
+  // 拉不到历史不该把面板变成一个错误页：退化成空白，用户照样能发消息。
   expect(await screen.findByText('好的')).toBeVisible();
   expect(input()).toBeEnabled();
   // 回放失败不是「这一轮失败了」：对话里不该因此多出一条失败消息。
   expect(screen.queryByText('失败')).not.toBeInTheDocument();
-  // 但要留痕：否则「接口写错」这类编程错误会表现成「历史永远是空的」而无人发现。
+  // 但**必须在界面上出现**。以前它只留一行 console.warn，而「只留痕在人看不见的地方」
+  // 恰好让「助手没开启」与「他刚开了一段新会话」在屏幕上一模一样。
+  expect(screen.getByTestId('assistant-history-unavailable')).toBeVisible();
+  // 留痕仍然要有：否则「接口写错」这类编程错误会表现成「历史永远是空的」而无人发现。
   expect(warn).toHaveBeenCalled();
   warn.mockRestore();
+});
+
+it('explains a blank panel when the assistant is not enabled', async () => {
+  api.fetchAssistantConversation.mockRejectedValue({
+    response: {
+      status: 503,
+      data: { code: 'ASSISTANT_DISABLED', message: '助手功能未开启，请联系管理员配置' },
+    },
+  });
+  renderPanel();
+
+  // 这一屏以前是纯空白，与「他刚点了新会话」没有任何区别 —— 用户只会以为助手坏了。
+  expect(await screen.findByText('AI 助手未开启')).toBeVisible();
+  // 功能没开就别让他继续打字。
+  expect(input()).toBeDisabled();
+  // 功能都没开，再问「我上次在哪个会话里」只是明知故问。
+  expect(api.fetchLatestAssistantConversation).not.toHaveBeenCalled();
 });
 
 it('sends the conversation id so the server can group the trail', async () => {
@@ -470,4 +495,60 @@ it('clears the trim notice when starting a new conversation', async () => {
 
   // 新会话从零开始，上一段对话的裁剪与它无关 —— 留着那句提示会变成纯粹的误导。
   expect(screen.queryByTestId('assistant-history-trim-note')).not.toBeInTheDocument();
+});
+
+// ---------- 会话号的兜底：浏览器忘了，服务端还记得 ----------
+//
+// 记录一直在库里（`assistant_conversation_messages`），前端丢的从来只是那个号。
+// 这几条钉住的是「什么时候去问服务端」以及**什么时候不许问**。
+
+const REMEMBERED = '40000000-0000-0000-0000-000000000004';
+
+/** 只有被问到的那个会话号有内容，其余都空 —— 用来分辨「屏幕上这段是哪来的」。 */
+function replayOnly(conversationId: string, messages: unknown[]) {
+  api.fetchAssistantConversation.mockImplementation((id: string) =>
+    Promise.resolve(id === conversationId ? messages : []));
+}
+
+it('falls back to the conversation the server remembers when the local one has nothing', async () => {
+  // 清过浏览器数据 / 换了设备 / 换了账号：本地没有号，或者那个号在这个账号下什么都不对应。
+  replayOnly(REMEMBERED, [{ role: 'assistant', kind: 'ANSWER', text: '上次说的那件事' }]);
+  api.fetchLatestAssistantConversation.mockResolvedValue({ conversationId: REMEMBERED });
+  renderPanel();
+
+  expect(await screen.findByText('上次说的那件事')).toBeVisible();
+  // 只问一次：它是兜底，不是每开一次面板就查一遍的东西。
+  expect(api.fetchLatestAssistantConversation).toHaveBeenCalledTimes(1);
+});
+
+it('asks the server nothing when the local conversation still has content', async () => {
+  api.fetchAssistantConversation.mockResolvedValue([
+    { role: 'assistant', kind: 'ANSWER', text: '就在本地这段里' },
+  ]);
+  renderPanel();
+
+  expect(await screen.findByText('就在本地这段里')).toBeVisible();
+  // 常态路径多发一次请求换不来任何东西 —— 本地号优先，兜底只在它读空时才走。
+  expect(api.fetchLatestAssistantConversation).not.toHaveBeenCalled();
+});
+
+it('never overwrites a conversation the user started on purpose', async () => {
+  // 两次挂载之间 localStorage 保留着，等于「点过新会话，关掉面板，再打开」。
+  replayOnly(REMEMBERED, [{ role: 'assistant', kind: 'ANSWER', text: '很久以前的回答' }]);
+  api.fetchLatestAssistantConversation.mockResolvedValue({ conversationId: REMEMBERED });
+
+  const first = renderPanel();
+  expect(await screen.findByText('很久以前的回答')).toBeVisible();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: /新\s*会\s*话/ }));
+  expect(screen.queryByText('很久以前的回答')).not.toBeInTheDocument();
+  first.unmount();
+
+  renderPanel();
+
+  // 服务端看不见一段「刚开、还没说话」的新会话（它从消息表推），问它只会把用户刚丢掉的
+  // 那段还回来。所以这里**必须不问** —— 否则重开面板就撤销了用户唯一那个清空上下文的动作。
+  expect(screen.getByText('可以直接用一句话交代事情，比如：')).toBeVisible();
+  expect(screen.queryByText('很久以前的回答')).not.toBeInTheDocument();
+  expect(api.fetchLatestAssistantConversation).toHaveBeenCalledTimes(1);
 });

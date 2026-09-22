@@ -175,6 +175,44 @@ class AssistantConversationLogServiceTest {
         verify(mapper).listRecentByConversation(USER, CONVERSATION, 200);
     }
 
+    // ---------- 最近会话号：浏览器忘了它时的那一条路 ----------
+
+    /**
+     * 归属只由 {@code userId} 决定，方法上没有第二个筛选项。
+     *
+     * <p>刻意断言「问的是这个用户」。若哪天有人给它加上「按会话号再筛一下」之类的参数，
+     * 「我上次在哪个会话里」就可能在换设备后给出另一个答案 —— 而那时前端会拿它当成
+     * 用户的同一段对话来接。
+     */
+    @Test
+    void latestConversationIdAsksForTheUsersOwnRow() {
+        when(mapper.latestConversationId(USER)).thenReturn(CONVERSATION);
+
+        assertEquals(CONVERSATION, service.latestConversationId(USER));
+
+        verify(mapper).latestConversationId(USER);
+    }
+
+    /**
+     * 「没有」不是错误：这个用户还没有任何对话。
+     *
+     * <p>它与「查不到是因为出错了」必须给出同一个返回值（{@code null}），
+     * 因为调用方对两者的处置完全相同 —— 安静地开一段新对话。
+     */
+    @Test
+    void latestConversationIdIsNullWhenThereIsNothingToResume() {
+        when(mapper.latestConversationId(USER)).thenReturn(null);
+
+        assertNull(service.latestConversationId(USER));
+    }
+
+    @Test
+    void latestConversationIdWithoutIdentityReadsNothing() {
+        assertNull(service.latestConversationId(null));
+
+        verify(mapper, never()).latestConversationId(any());
+    }
+
     private static AssistantConversationMessageEntity row(String role, String text) {
         AssistantConversationMessageEntity entity = new AssistantConversationMessageEntity();
         entity.setRole(role);

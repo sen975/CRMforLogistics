@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.UUID;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -73,5 +74,25 @@ class AssistantDisabledControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"text\":\"帮我建个待办\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * 两个「读会话」的端点也在开关之下。
+     *
+     * <p>对前端而言这两条尤其要紧：面板一打开先走它们。若哪个漏了 503、退化成 404，
+     * 前端会判定「接口写错了」并去改代码，而真相是开关没打开 —— 那恰好是「打开面板一片空白」
+     * 最常见的成因之一。所以它们必须和写端点一样，把原因说成 503 + {@code ASSISTANT_DISABLED}。
+     */
+    @Test
+    void theConversationReadsAlsoReturn503() throws Exception {
+        mvc.perform(get("/api/assistant/conversations/{id}/messages", PENDING_ID)
+                        .with(user(USER_ID.toString())))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_DISABLED"));
+
+        mvc.perform(get("/api/assistant/conversations/latest")
+                        .with(user(USER_ID.toString())))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_DISABLED"));
     }
 }

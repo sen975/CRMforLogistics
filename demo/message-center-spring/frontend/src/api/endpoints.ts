@@ -1526,3 +1526,21 @@ export async function fetchAssistantConversation(
   );
   return res.data;
 }
+
+/**
+ * 问服务端「我上次在哪个会话里」。
+ *
+ * 它**不是**「新建会话」的替代品：会话号仍然由前端生成并保存（见 `useAssistant`），
+ * 这个端点只在本地那个号什么都读不出来时兜底 —— 清过浏览器数据、换了设备、换了账号，
+ * 记录一直在库里，丢的只是那个号。
+ *
+ * @returns `conversationId` 为 `null` 表示「服务端明确说还没有任何对话」，不是失败。
+ */
+export async function fetchLatestAssistantConversation(): Promise<
+  import('./types').AssistantLatestConversation
+> {
+  const res = await client.get<import('./types').AssistantLatestConversation>(
+    `${assistantBase}/conversations/latest`,
+  );
+  return res.data;
+}
