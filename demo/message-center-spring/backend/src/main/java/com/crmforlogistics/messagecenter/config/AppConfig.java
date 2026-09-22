@@ -105,7 +105,9 @@ public record AppConfig(
         @DefaultValue("false") boolean wecomUserNotificationEnabled,
         @DefaultValue("90000") long wecomUserNotificationWindowMs,
         @DefaultValue("1000") long wecomUserNotificationWorkerIntervalMs,
-        @DefaultValue("1000") long wecomUserNotificationWorkerInitialDelayMs
+        @DefaultValue("1000") long wecomUserNotificationWorkerInitialDelayMs,
+        // 业务时区：助手用它把「今天/明天」落到正确的日历日（与待办提醒共用同一口径）
+        @DefaultValue("Asia/Shanghai") String todoReminderZone
 ) {
     public AppConfig {
         imapHost = defaultIfBlank(imapHost, "imap.139.com");

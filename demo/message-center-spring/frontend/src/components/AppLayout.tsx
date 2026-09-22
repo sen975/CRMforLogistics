@@ -26,6 +26,7 @@ import CallRecordDetail from './CallRecordDetail';
 import WeComGroupDetailPanel from './WeComGroupDetailPanel';
 import { AccountPanel } from './AccountPanel';
 import { AccountAvatar } from './AccountAvatar';
+import { AssistantLauncher } from './assistant/AssistantLauncher';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -323,6 +324,7 @@ function AppLayoutInner() {
             ? <WeComGroupDetailPanel />
             : <ContactDetailPanel />}
       </Drawer>
+      <AssistantLauncher />
     </Layout>
   );
 }

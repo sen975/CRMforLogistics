@@ -74,6 +74,9 @@ import type {
   AdminCamsRequest,
   AdminWhatsAppOverview,
   AdminScopedWhatsAppAccount,
+  AssistantConversationMessage,
+  AssistantMessageRequest,
+  AssistantTurnResult,
 } from './types';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
@@ -1467,5 +1470,59 @@ export async function fetchPublicTemplates(
     params: { ...boundedPublicTemplateQuery(query), scopeId },
     paramsSerializer: { indexes: null },
   });
+  return res.data;
+}
+
+// ---------- AI 助手 ----------
+//
+// 三个端点都不带身份字段：用户身份只来自服务端的认证上下文（SecurityUtil.currentUserId()）。
+// 请求体里塞 userId 也不会被读取 —— 这是设计文档 §8.1 的「铁律」在客户端的体现。
+
+const assistantBase = '/assistant';
+
+/** 一轮对话：服务端解析 → 追问 / 直接执行 / 落待确认，前端只按返回的 `kind` 分支渲染。 */
+export async function sendAssistantMessage(
+  request: AssistantMessageRequest,
+): Promise<AssistantTurnResult> {
+  const res = await client.post<AssistantTurnResult>(`${assistantBase}/messages`, request);
+  return res.data;
+}
+
+/**
+ * 确认一条待确认动作。
+ *
+ * 只传 `pendingActionId`，不回传工具名与参数：参数以服务端落库的那一份为准，并在执行前重新校验。
+ * 若允许前端回传参数，确认就退化成「前端说了算」，而把授权落库这件事就白做了。
+ */
+export async function confirmAssistantAction(
+  pendingActionId: string,
+): Promise<AssistantTurnResult> {
+  const res = await client.post<AssistantTurnResult>(
+    `${assistantBase}/actions/${encodeURIComponent(pendingActionId)}/confirm`,
+  );
+  return res.data;
+}
+
+/** 取消一条待确认动作，什么都不会执行。 */
+export async function cancelAssistantAction(
+  pendingActionId: string,
+): Promise<AssistantTurnResult> {
+  const res = await client.post<AssistantTurnResult>(
+    `${assistantBase}/actions/${encodeURIComponent(pendingActionId)}/cancel`,
+  );
+  return res.data;
+}
+
+/**
+ * 回放某个会话的历史消息，时间正序。面板打开时用它接上上次的对话。
+ *
+ * 归属校验在服务端按登录用户做，前端不需要（也无法）提供身份。
+ */
+export async function fetchAssistantConversation(
+  conversationId: string,
+): Promise<AssistantConversationMessage[]> {
+  const res = await client.get<AssistantConversationMessage[]>(
+    `${assistantBase}/conversations/${encodeURIComponent(conversationId)}/messages`,
+  );
   return res.data;
 }

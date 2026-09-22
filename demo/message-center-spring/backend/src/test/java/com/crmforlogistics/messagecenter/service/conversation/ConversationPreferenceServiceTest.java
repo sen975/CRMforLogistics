@@ -66,6 +66,44 @@ class ConversationPreferenceServiceTest {
         verify(preferences).setPinned(userId, "CONTACT", contactId, true);
     }
 
+    /**
+     * 授权结果里带回被操作会话的显示名（助手执行回话要用它说人话），
+     * 而<b>没有</b>显示名的会话照样是「可以操作」—— 两者不是同一个判断。
+     *
+     * <p>守卫的是一处很细的塌缩：若实现写成
+     * {@code findAccessibleById(...).map(ContactEntity::getDisplayName).orElseThrow(...)}，
+     * 那么 {@code Optional.map} 在映射出 {@code null} 时会交出 empty，于是「存在但无名」
+     * 被判成「不存在」—— 授权范围被无声明地缩小，而两者只差一个 map 调用。
+     * 这条用例就是那次塌缩的回归守卫（它当时就是这么被抓到的）。
+     */
+    @Test
+    void aContactWithoutADisplayNameIsStillAuthorized() {
+        ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);
+        ContactMapper contacts = mock(ContactMapper.class);
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        var service = new ConversationPreferenceService(preferences, contacts, conversations);
+        UUID userId = UUID.randomUUID();
+        UUID named = UUID.randomUUID();
+        UUID anonymous = UUID.randomUUID();
+        var withName = new com.crmforlogistics.messagecenter.entity.ContactEntity();
+        withName.setDisplayName("悦为小森");
+        when(contacts.findAccessibleById(eq(named), eq(userId), anyBoolean()))
+                .thenReturn(java.util.Optional.of(withName));
+        when(contacts.findAccessibleById(eq(anonymous), eq(userId), anyBoolean()))
+                .thenReturn(java.util.Optional.of(new com.crmforlogistics.messagecenter.entity.ContactEntity()));
+        when(preferences.find(eq(userId), anyString(), any())).thenReturn(null);
+        when(preferences.setPinned(eq(userId), anyString(), any(), anyBoolean())).thenReturn(1);
+
+        var namedResult = service.setPinned(userId, "CONTACT", named, true);
+        var anonymousResult = service.setPinned(userId, "CONTACT", anonymous, true);
+
+        assertThat(namedResult.displayName()).isEqualTo("悦为小森");
+        assertThat(anonymousResult.displayName())
+                .as("拿不到名字就给 null，由调用方退回显示 id —— 但不许把它当成「找不到」")
+                .isNull();
+        assertThat(anonymousResult.pinned()).isTrue();
+    }
+
     @Test
     void deleteStoresHiddenTimestampAndDoesNotDeleteConversationData() {
         ConversationPreferenceMapper preferences = mock(ConversationPreferenceMapper.class);

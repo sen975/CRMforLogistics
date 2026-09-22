@@ -1213,3 +1213,102 @@ export interface PublicTemplateQuery {
   page?: number;
   size?: number;
 }
+
+/** 助手一轮对话的终点，与服务端 `AssistantTurnResult.Kind` 一一对应。 */
+export type AssistantTurnKind =
+  | 'QUESTION'
+  | 'CONFIRMATION_REQUIRED'
+  | 'EXECUTED'
+  | 'ANSWER'
+  | 'ERROR';
+
+/**
+ * 历史条目的角色。只有这两种：服务端把未识别的角色一律当作**用户内容**，
+ * 因此前端无法借历史把自己写成 `system` 去覆写提示词。
+ */
+export type AssistantHistoryRole = 'user' | 'assistant';
+
+export interface AssistantHistoryTurn {
+  role: AssistantHistoryRole;
+  text: string;
+}
+
+/**
+ * 确认卡片上「改前 → 改后」的一条。
+ *
+ * `before` 为 `null` 时表示**服务端拿不到「改前」的证据**（候选清单里没有这个字段）。
+ * 那时渲染成「当前未知」而不是一片空白 —— 空白会被读成「没有变化」，与服务端的本意相反。
+ * 服务端宁可留空也不猜：一个编出来的「改前」会被用户当成事实去核对。
+ */
+export interface AssistantProposalChange {
+  /** 机器可读的字段名，用于列表 key 与将来的程序化处理。 */
+  field: string;
+  /** 直接展示的中文标签（如「时间」「内容」）。由服务端给，避免前后端各写一套。 */
+  label: string;
+  /** `null` / 缺席 = 当前值未知。 */
+  before?: string | null;
+  after: string;
+}
+
+/**
+ * 确认卡片的载荷。
+ *
+ * `summary` 必须带**标题与日期** —— 自然语言匹配必然有歧义，真正的安全网不是让匹配更聪明，
+ * 而是让「执行前的人眼复核」足够便宜；只显示「确认要标记完成吗？」用户无法判断认的是哪一条。
+ *
+ * `changes` 是 `summary` 的结构化补充：一句话读不出「它以为当前是什么」，
+ * 而后者才是改动类动作里用户真正要核对的东西。空数组或缺席表示这个动作没有「改前」可言（如新建）。
+ *
+ * `arguments` 只用于只读展示：确认接口只接受 `pendingActionId`，
+ * 前端**无法**通过改这里的参数把确认落到别处。
+ */
+export interface AssistantProposal {
+  pendingActionId: string;
+  tool: string;
+  summary: string;
+  changes?: AssistantProposalChange[];
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * `POST /api/assistant/messages` 的响应体。
+ *
+ * 服务端用 `@JsonInclude(NON_NULL)`，因此「不适用」的字段是**整体缺席**而不是 `null`，
+ * 所以这里全部是可选的。渲染时必须按 `kind` 分支，而不是看某个字段在不在。
+ */
+export interface AssistantTurnResult {
+  kind: AssistantTurnKind;
+  message: string;
+  missing?: string[];
+  proposal?: AssistantProposal;
+  /** 仅 `kind=ERROR` 时出现。与 HTTP 层的错误码不同族。 */
+  errorCode?: string;
+}
+
+export interface AssistantMessageRequest {
+  /**
+   * 会话号。由**前端生成并持久化**，用于把同一段对话的消息与审计串起来。
+   *
+   * 它**不是凭证**：读写的归属一律按登录用户判定（服务端 SQL 带 `user_id`），
+   * 拿别人的会话号来试只会读回空列表。正因如此前端可以自由生成，无须先申领。
+   */
+  conversationId?: string;
+  history?: AssistantHistoryTurn[];
+  text: string;
+}
+
+/**
+ * `GET /api/assistant/conversations/{id}/messages` 的一条历史消息。
+ *
+ * 刻意**不含** `proposal` / `pendingActionId`：那张卡片能不能点取决于服务端待确认动作的
+ * **当前状态**（可能已确认、已取消、已过期），而不是取决于历史上出现过它。
+ * 靠历史恢复一张卡片，等于诱导用户去点一个大概率已经失效的按钮。
+ */
+export interface AssistantConversationMessage {
+  role: AssistantHistoryRole;
+  /** 仅助手行有值；用户行是 `null`（用户说的话没有「终点」这回事）。 */
+  kind?: AssistantTurnKind | null;
+  text: string;
+  /** 服务端时间戳，仅用于展示与排障；顺序已由服务端保证，前端不依赖它排序。 */
+  createdAt?: string;
+}

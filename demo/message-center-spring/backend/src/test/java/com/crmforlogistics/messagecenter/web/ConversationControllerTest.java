@@ -33,7 +33,7 @@ class ConversationControllerTest {
         UUID groupId = UUID.randomUUID();
         var preferences = mock(ConversationPreferenceService.class);
         when(preferences.togglePinned(userId, "CONTACT", contactId))
-                .thenReturn(new ConversationPreferenceResponse("CONTACT", contactId, true, false));
+                .thenReturn(new ConversationPreferenceResponse("CONTACT", contactId, true, false, "悦为小森"));
         SecurityContextHolder.getContext().setAuthentication(
                 UsernamePasswordAuthenticationToken.authenticated(userId.toString(), "n/a", java.util.List.of()));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(

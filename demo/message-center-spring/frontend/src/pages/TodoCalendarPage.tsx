@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Empty, Form, Input, Modal, Space, Tag, TimePicker, message } from 'antd';
 import { BellOutlined, CheckOutlined, DeleteOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { createTodoApi, deleteTodoApi, fetchTodos, sendTodoReminder, updateTodoApi, type TodoApiItem } from '../api/endpoints';
 import { getTodosForDate, loadReminderRecords, loadTodos, saveReminderRecord } from '../todos/todoStore';
+import { subscribeAssistantEvents } from '../assistant/assistantEvents';
 import './TodoCalendarPage.css';
 
 const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
@@ -39,6 +40,11 @@ export default function TodoCalendarPage() {
   const today = formatDate(dayjs());
 
   const refresh = () => { void fetchTodos().then(setTodos).catch(() => setError('待办同步失败，请刷新重试')); };
+  // 助手在**别的页面**改了待办时，这一页不会自己知道（它是 useState + 手动 fetch，不走 react-query）。
+  // 只订阅一次是安全的：refresh 只用到 setTodos / setError 这两个稳定引用，
+  // 因此首个渲染时捕获的那个闭包不会「过期」，不需要每次渲染重新订阅。
+  // 刻意不迁到 react-query：那是另一件事，且会把本次改动的回归面放大。
+  useEffect(() => subscribeAssistantEvents(() => refresh()), []);
   const addTodo = async (values: { title: string; time?: Dayjs; note?: string }) => {
     await createTodoApi({ date: selectedDate, title: values.title, time: values.time?.format('HH:mm'), note: values.note });
     refresh(); form.resetFields(); setModalOpen(false); message.success('待办已写入这一天');

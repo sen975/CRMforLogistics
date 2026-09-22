@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookAuthentic
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
 import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.service.account.AccountException;
@@ -113,6 +114,27 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleWeCom(WeComException e, HttpServletRequest request) {
         return ResponseEntity.status(e.httpStatus()).body(new ApiError(
                 e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    /**
+     * 助手链路的错误码 → 状态映射，集中在这一处。
+     *
+     * <p>三档刻意分开，因为前端要给三种完全不同的提示：
+     * {@code 503} 是「功能没开 / 服务不可用」（别重试，改配置或稍后再说）、
+     * {@code 404} 是「这条待确认动作不是你的」（不泄露存在性）、
+     * {@code 410} 是「你想确认的事已经过期了」（提示重新说一遍，而不是重试）。
+     * 混成一档会让前端只能显示一句含糊的「操作失败」。
+     */
+    @ExceptionHandler(AssistantException.class)
+    public ResponseEntity<ApiError> handleAssistant(AssistantException e, HttpServletRequest request) {
+        HttpStatus status = switch (e.code()) {
+            case AssistantException.DISABLED, AssistantException.PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case AssistantException.PENDING_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case AssistantException.PENDING_EXPIRED -> HttpStatus.GONE;
+            case AssistantException.PENDING_ALREADY_DECIDED -> HttpStatus.CONFLICT;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return ResponseEntity.status(status).body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
     @ExceptionHandler(ChatAppWebhookAuthenticationException.class)
