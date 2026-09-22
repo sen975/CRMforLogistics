@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.TodoAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
@@ -92,8 +93,15 @@ public class AssistantActionPolicy {
      * <p>「可以循环」为什么是安全的关键：只读动作没有副作用，多轮也只会让回答更准；
      * 而写动作在一次请求里仍然至多一个，且必须过确认（约束 4）。这条分界让
      * 「先查再改」成为可能，同时不给「多写」开任何口子。
+     *
+     * <p>当前四个：会话检索、联系人检索、联系人简报，以及它们的共同前提 ——
+     * 只读检索必须能<b>突破候选窗口</b>（检索结果替换候选集），否则「先查再改」在窗口之外无路可走。
+     * 这三条都只读库里的结构化字段与摘要，不含消息原文与通话转写（口径 b）。
      */
-    public static final Set<String> READ_ONLY_ALLOWLIST = Set.of(ConversationAssistantTools.TOOL_SEARCH);
+    public static final Set<String> READ_ONLY_ALLOWLIST = Set.of(
+            ConversationAssistantTools.TOOL_SEARCH,
+            ContactAssistantTools.TOOL_SEARCH,
+            ContactAssistantTools.TOOL_BRIEF);
 
     public enum Decision {
         /** 只读动作：免确认执行，结果回灌后继续下一轮。 */

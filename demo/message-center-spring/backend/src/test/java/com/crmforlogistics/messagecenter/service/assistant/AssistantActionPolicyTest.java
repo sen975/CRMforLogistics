@@ -1,5 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.TodoAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolResult;
@@ -12,6 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 动作策略：白名单持有权威，注解只作声明（设计文档 §9）。
@@ -83,6 +86,62 @@ class AssistantActionPolicyTest {
     void declaredDestructiveReadsTheExplicitHintWhenPresent() {
         assertThat(AssistantActionPolicy.declaredDestructive(tool("todo.create", false, false))).isFalse();
         assertThat(AssistantActionPolicy.declaredDestructive(tool("todo.create", true, false))).isTrue();
+    }
+
+    // ---------- 只读档 ----------
+
+    private final ContactAssistantTools contactTools = new ContactAssistantTools(
+            org.mockito.Mockito.mock(ContactCandidateProvider.class),
+            org.mockito.Mockito.mock(ContactBriefProvider.class));
+
+    /**
+     * 只读清单的<b>全部</b>成员。
+     *
+     * <p>写成逐个列举而不是 {@code contains}：这个集合决定的是「免确认且可以循环」，
+     * 多一个成员就是多一条无人复核的执行路径。加工具时这条断言必须一起改 ——
+     * 那一步正是让人停下来问「它真的只读吗」的地方。
+     */
+    @Test
+    void theReadOnlyAllowlistHoldsExactlyTheSearchAndBriefTools() {
+        assertThat(AssistantActionPolicy.READ_ONLY_ALLOWLIST).containsExactlyInAnyOrder(
+                ConversationAssistantTools.TOOL_SEARCH,
+                ContactAssistantTools.TOOL_SEARCH,
+                ContactAssistantTools.TOOL_BRIEF);
+    }
+
+    @Test
+    void readOnlyToolsRunWithoutConfirmation() {
+        assertThat(policy.decide(contactTools.contactSearchTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.READ);
+        assertThat(policy.decide(contactTools.contactBriefTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.READ);
+    }
+
+    /**
+     * READ 档的不一致<b>不允许</b>退化成 CONFIRM（与 AUTO 档刻意不同）。
+     *
+     * <p>只读清单意味着「免确认且可循环」，所以「名字在清单里、注解却说它可能写」这个方向
+     * 一旦按保守处理，就会留下一条<b>写动作被免确认连续执行</b>的路径。退保守在这里兜不住，
+     * 只能抛 —— 而且要在启动自检时抛（{@code AssistantPolicySelfCheck}），不是等用户发消息时才 500。
+     */
+    @Test
+    void aToolInTheReadOnlyListThatIsNotDeclaredReadOnlyIsAConfigurationError() {
+        ToolDefinition contradictory = new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name(ContactAssistantTools.TOOL_BRIEF)
+                        .title("查询联系人情况")
+                        .description("描述")
+                        .inputSchema(objectSchema())
+                        .annotations(McpSchema.ToolAnnotations.builder()
+                                .readOnlyHint(false)
+                                .destructiveHint(true)
+                                .build())
+                        .build(),
+                (UUID userId, Map<String, Object> arguments) -> ToolResult.ok("ok", Map.of()));
+
+        assertThatThrownBy(() -> policy.decide(contradictory))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(ContactAssistantTools.TOOL_BRIEF);
     }
 
     // ---------- 夹具 ----------

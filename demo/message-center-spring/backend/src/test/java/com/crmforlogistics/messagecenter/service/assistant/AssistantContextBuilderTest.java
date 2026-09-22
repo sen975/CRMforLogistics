@@ -37,23 +37,25 @@ class AssistantContextBuilderTest {
     private final TodoItemService todoService = mock(TodoItemService.class);
     private final ConversationCandidateProvider conversationCandidates =
             mock(ConversationCandidateProvider.class);
+    private final ContactCandidateProvider contactCandidates = mock(ContactCandidateProvider.class);
 
     /**
-     * 默认给一组空候选。
+     * 默认给两组空候选（会话、联系人）。
      *
      * <p>刻意放在 {@code @BeforeEach} 而不是 builder 里：Mockito 的规则是「最后一次 stub 生效」，
      * 而在 builder 里补 stub 会让它总在用例自己的 stub <b>之后</b>执行，把用例的意图覆盖掉 ——
      * 症状是「候选恒为空」，而且不会报错。
      */
     @BeforeEach
-    void defaultConversationCandidates() {
+    void defaultCandidates() {
         when(conversationCandidates.recent(any())).thenReturn(new ConversationCandidates(0, List.of()));
+        when(contactCandidates.recent(any())).thenReturn(new ContactCandidates(0, List.of()));
     }
 
     private AssistantContextBuilder builder(String instant, String zone) {
         AppConfig config = mock(AppConfig.class);
         when(config.todoReminderZone()).thenReturn(zone);
-        return new AssistantContextBuilder(todoService, conversationCandidates, config,
+        return new AssistantContextBuilder(todoService, conversationCandidates, contactCandidates, config,
                 Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
     }
 
@@ -109,26 +111,38 @@ class AssistantContextBuilderTest {
     }
 
     /**
-     * 多组候选的装配：待办那一组的上限来自配置，会话那一组的上限写在自己的声明里。
-     * 这条断言钉住的是「两组都在、且各自独立」，而不是具体的条数。
+     * 多组候选的装配：待办那一组的上限来自配置，会话与联系人两组的上限写在自己的声明里。
+     * 这条断言钉住的是「三组都在、且各自独立」，而不是具体的条数 ——
+     * 加了第三个域之后这个用例没有变形，正是候选集抽象要保证的事。
      */
     @Test
-    void bothCandidateGroupsAreAssembledIndependently() {
+    void threeCandidateGroupsAreAssembledIndependently() {
         when(todoService.listOpenForAssistant(AssistantFixtures.USER, 12)).thenReturn(List.of());
         when(conversationCandidates.recent(AssistantFixtures.USER))
                 .thenReturn(AssistantFixtures.conversationCandidates());
+        when(contactCandidates.recent(AssistantFixtures.USER))
+                .thenReturn(AssistantFixtures.contactCandidates());
 
         AssistantContext context = builder("2026-09-21T02:00:00Z", "Asia/Shanghai")
                 .build(AssistantFixtures.USER, 12);
 
         assertThat(context.candidateSets()).extracting(CandidateSet::name)
-                .containsExactly(TodoCandidates.NAME, ConversationCandidates.NAME);
+                .containsExactly(TodoCandidates.NAME, ConversationCandidates.NAME, ContactCandidates.NAME);
         assertThat(context.todoCandidates().limit()).isEqualTo(12);
         assertThat(context.candidateSet(ConversationCandidates.NAME).limit())
                 .isEqualTo(ConversationCandidateProvider.LIMIT);
+        assertThat(context.candidateSet(ContactCandidates.NAME).limit())
+                .isEqualTo(ContactCandidateProvider.LIMIT);
         assertThat(context.contains(ConversationCandidates.NAME, AssistantFixtures.CONVERSATION_ZHOU)).isTrue();
         assertThat(context.contains(TodoCandidates.NAME, AssistantFixtures.CONVERSATION_ZHOU))
                 .as("复合键不能串到待办那一组去")
+                .isFalse();
+        assertThat(context.contains(ContactCandidates.NAME, AssistantFixtures.CONTACT_ZHOU_REF)).isTrue();
+        assertThat(context.contains(ConversationCandidates.NAME, AssistantFixtures.CONTACT_ZHOU_REF))
+                .as("同一个 id 在两个域里都合法：它本来就是同一个联系人的 id")
+                .isTrue();
+        assertThat(context.contains(ContactCandidates.NAME, AssistantFixtures.CONVERSATION_SEA))
+                .as("企微群的 ref 不是联系人 —— 这正是 contact.brief 需要自己一组候选的理由")
                 .isFalse();
     }
 

@@ -258,6 +258,8 @@
    一条客户消息正文都不含 —— 于是可以在**不触碰 §0 合规口径 b** 的前提下，
    先把「只读工具如何突破候选集边界」与「observation 如何回灌」这两件事打通。
    联系人域（含画像、事实、标签、通话转写）等机制稳定后再接，那时只需再加一组候选 + 一个工具。
+   **后续**：该域已于同日接上，见 §7.5。那里有两处修正 —— 是「一组候选 + **两个**工具」
+   （补了 `contact.search`），且**不带通话转写与消息原文**（按口径 b，改走 `listStableContext`）。
 2. **`CandidateSet` 刻意不提供 `resolve(userId, text)`**（计划 §6 B1 列了这一项）。
    检索需要数据访问，是 provider 的职责；候选集是**纯声明**。留在接口里会把「候选集」
    变成第二个数据访问层，于是「加域只加一组声明」这句话就不再成立。
@@ -530,6 +532,93 @@ model=deepseek-chat  prompt=生产 dump（6965 字符）  temperature=0.1
 其余靠 CASCADE），核对 `walkc_users=0 / walkc_todos=0 / orphan_audit=0 / orphan_prefs=0`；
 删除临时 `vite.verify.config.ts`；停掉 8110 / 5273 / 9371。**V90 会留在 dev 库上**（加列 + 扩宽列宽，
 前向兼容；8107 上的旧代码不受影响）。
+
+## 7.5 · 阶段 D · 联系人只读域（2026-09-22）
+
+**为什么是这一步**：阶段 B 的偏离 #1 把第一批只读域从「联系人」换成了「会话」，理由是会话候选
+全是结构化元数据、可以先在不触碰 §0 合规口径的前提下把机制打通。机制已经稳了（B/C 两阶段
++ 两次真实走查），于是回到计划原本要接的那个域 —— 它是**三件真实需求**（会前准备 /
+判断成交意愿 / 发邮件）的共同前置：三者都以「点名一个人」开头。
+
+**改动清单**：
+
+| 层 | 文件 | 性质 |
+|---|---|---|
+| 候选 | `service/assistant/ContactCandidates.java` | 新增（`contact` 组；id 复用会话域的 `CONTACT:<uuid>` 格式） |
+| Provider | `service/assistant/ContactCandidateProvider.java` | 新增（`recent` / `search`，走 `ContactMapper.listForUser`） |
+| 投影 | `service/assistant/ContactBrief.java` | 新增（字段集合即合规白名单；`toData()` 是唯一出口） |
+| Provider | `service/assistant/ContactBriefProvider.java` | 新增（授权 + 记忆投影 + 分节裁剪） |
+| 工具 | `service/assistant/mcp/ContactAssistantTools.java` | 新增（`contact.search` 只读 / `contact.brief` 只读） |
+| 策略 | `service/assistant/AssistantActionPolicy.java` | 只读清单 1 → 3 |
+| 上下文 | `service/assistant/AssistantContextBuilder.java` | 候选集 2 → 3 组 |
+| 夹具 | `messagecentertest/assistant/AssistantFixtures.java` | 加 `contactCandidates()` / `registryWithContacts(...)` |
+| 测试 | `ContactCandidatesTest`（5）、`ContactBriefProviderTest`（11）、`ContactAssistantToolsTest`（12） | 新增 |
+
+**编排层、解析器、提示词三处<b>一行未改</b>** —— 这正是候选集抽象在阶段 B 立下的判据
+（「加一个域 = 加一组声明 + 一个工具」）第一次被真正检验，结果是成立的。
+
+**与计划的两处偏离**：
+
+1. **补了 `contact.search`**（计划 §6 B2 只列了 `contact.brief`）。候选窗口是「最近有往来的 20 人」，
+   而三件真实需求都以点名一个人开头 —— 名字很可能不在窗口里。没有检索工具时，这个域会以
+   「我找不到张总」的形式失败，而系统里明明有他：正是本项目一直在避免的「看起来正常、其实是坏的」。
+   会话域当初选的就是「search + act」两个工具，这里保持一致。
+2. **不复用 `ContactMemoryContextService.load`**（计划 §6 B2 明确写的是复用它）。两个理由：
+   - **合规**：`load` 的返回里带 `inboundMessages`（客户消息原文）与 `transcripts`（通话转写）。
+     那个方法的用途是喂给**本系统自己的**记忆提炼流水线，而助手的返回会被渲染进提示词、
+     发给**外部模型供应商**。同一个方法、两种去向，边界完全不同。
+     改走 `ContactMemoryMapper.listStableContext`（画像 + 事实 + 标签 + 话题四节摘要）——
+     **消息原文与通话转写在这条路上根本取不到**，这比「记得别取」是更强的保证。
+   - **授权**：`load` 要求调用者就是联系人的归属人（`findCreatedBy` 对不上即 `OWNER_MISMATCH`），
+     而联系人列表页的口径更宽（管理员 / 团队分配 / 授权表）。复用它会让「管理员看得到联系人、
+     却问不了这个联系人的情况」变成一个无法解释的按钮。
+
+**三条容易写错、因此专门钉住的边界**：
+
+- **记忆可见性 ≠ 联系人可见性**。记忆各表以联系人的 `created_by` 为归属人。所以一个由同事录入、
+  你通过团队分配才看到的联系人：你能看到**他本人**，看不到他的画像。这时返回
+  `memoryVisible=false` 并如实说明 —— 既不是错误，也不是「他没有画像」。
+  测试用 `never()` 钉住「看不见时**根本没去查**」（只「查了不返回」的话，某天有人把返回值接回去就静默泄漏）。
+- **企微群的 ref 不是联系人**。两域的 ref 长得一模一样（`CONTACT:<uuid>` / `WECOM_GROUP:<uuid>`），
+  而 `conversation.search` 返回的候选里两者都有。若 `contact.brief` 的 `contactRef` 绑到会话那一组，
+  解析层的候选比对会**放行**一个群 id，错误退化成运行时那句「联系人不存在」。
+  因此联系人必须有自己的一组候选 —— `briefRejectsAGroupReference` 就是这条的回归守卫。
+- **联系方式刻意不进简报**（姓名 / 备注 / 角色 / 记忆四节之外没有第二节）。
+  模型不需要知道怎么联系一个人：将来真要发邮件，那个工具应当拿 `contactRef` 由服务端解析地址。
+  让邮箱、手机号进提示词只是多一次出边界，换不到任何能力。
+
+**上限与预算**：各节上限（画像 400 / 事实 8×90 / 标签 10×24 / 话题 4×(40+120) / 备注 200 / 显示名 60）
+是**常量而不是配置项**，唯一理由是它们有硬天花板：整份结果会进一条 observation，
+而 `AssistantPromptBuilder` 对单条 observation 有字符上限（超出即截断并只留一句「已截断」）。
+做成配置就能调过那个天花板，症状是模型拿到半份数据却以为看全了 —— 这种「配置能制造的错误」不开放。
+`aWorstCaseBriefStillFitsInASingleObservation` 用**最坏情况 + 真实链路**
+（真 provider → 真工具 → `withReadResult`）断言那条「已截断」不出现，因此它是这套上限的守卫。
+
+**提示词未改动 ⇒ 未重跑探针**：本次只改了「工具清单」（由注册表渲染）与候选节（按集合名渲染），
+系统提示词里的硬规则、格式契约、分隔符声明都是**逐字节原样**。0.3 探针验的是那份文本，
+文本没变则结论仍然成立；`AssistantPromptBuilderTest` 也照旧全绿。
+域的约束写在各工具的 `description` 里（模型看得到），不靠提示词兜。
+
+**验收**：
+
+| 项 | 结果 |
+|---|---|
+| 联系人域定向测试 | 44 例 / 0 失败（含策略与上下文） |
+| `*Assistant*` + `*Tool*` + `Contact*Test` + `ArchitectureBoundaryTest` | **386 例 / 0 失败 / 0 错误 / 2 跳过 / BUILD SUCCESS**（含架构门禁 4 例、`AssistantReadLoopTest` 11、`AssistantPromptBuilderTest` 16） |
+| 真实启动（独立副本 `/tmp/mc-verify-d`，8110，dev profile） | `已注册 8 个助手工具：contact.search, contact.brief, conversation.search, conversation.pin, todo.create, todo.complete, todo.delete, todo.update`；`助手策略自检通过：只读 3 个、免确认 1 个`；`Started App in 3.467 seconds` |
+
+**为什么要单独起一次真实启动**：仓库里**没有**一个「全上下文 + 助手启用」的 `@SpringBootTest`
+能证明这件事 —— `AssistantControllerTest` 是 `@WebMvcTest` 收窄上下文（只装配待办工具，因此
+策略自检不在其中），而 `AssistantLiveConversationTest` 带 `@EnabledIfEnvironmentVariable`，
+条件不满足时 JUnit 在**创建 Spring 上下文之前**就跳过了。这个缺口在阶段 B 就存在
+（当时靠走查间接证明 `conversation.*` 能被装配），本阶段改用一次定向启动补上，
+顺带确认了「关掉助手也不该让错误的清单蒙混过关」那条设计确实成立
+（`ToolRegistry` / `AssistantPolicySelfCheck` 都是无条件的）。
+
+**未做（留给下一步）**：没有跑真实模型的端到端问答。理由：提示词文本未改，
+所以验过的那条安全性质不变；而「模型会不会在自然问法下选对 `contact.search` → `contact.brief`」
+属于模型行为，适合与三件真实需求的走查一起做，那时才需要真实数据与真实凭据。
+写在这里以免被读成「这条已经验过了」。
 
 ## 8 · 回滚
 

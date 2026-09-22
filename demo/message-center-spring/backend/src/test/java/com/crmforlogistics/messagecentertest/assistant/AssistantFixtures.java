@@ -3,9 +3,13 @@ package com.crmforlogistics.messagecentertest.assistant;
 import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantContext;
+import com.crmforlogistics.messagecenter.service.assistant.ContactBriefProvider;
+import com.crmforlogistics.messagecenter.service.assistant.ContactCandidateProvider;
+import com.crmforlogistics.messagecenter.service.assistant.ContactCandidates;
 import com.crmforlogistics.messagecenter.service.assistant.ConversationCandidateProvider;
 import com.crmforlogistics.messagecenter.service.assistant.ConversationCandidates;
 import com.crmforlogistics.messagecenter.service.assistant.TodoCandidates;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.TodoAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
@@ -49,6 +53,15 @@ public final class AssistantFixtures {
             ConversationCandidates.Item.idOf(ConversationCandidates.TYPE_CONTACT, CONTACT_ZHOU);
     public static final String CONVERSATION_SEA =
             ConversationCandidates.Item.idOf(ConversationCandidates.TYPE_WECOM_GROUP, GROUP_SEA);
+
+    /**
+     * 联系人候选的 id。
+     *
+     * <p>刻意与 {@link #CONVERSATION_ZHOU} <b>是同一个值</b>：统一会话查询里
+     * {@code type='CONTACT'} 那一支的 id 就是联系人 id，两域本来就是同一个 id 空间。
+     * 起两个名字只是为了在各自的用例里读得通，值相同这件事本身也是被测行为之一。
+     */
+    public static final String CONTACT_ZHOU_REF = CONVERSATION_ZHOU;
 
     /** 与阶段 0.3 探针里用的候选 id 一致，便于两边对照。 */
     public static final String TODO_QUOTE = "11111111-1111-4111-8111-111111111111";
@@ -106,6 +119,29 @@ public final class AssistantFixtures {
         return registryWithMapper(mock(TodoItemMapper.class));
     }
 
+    /**
+     * 三个域的完整注册表。
+     *
+     * <p>与 {@link #registryWithConversations} 分开的理由相同：只关心某一域的用例不该被
+     * 别的域的工具影响断言。这个工厂存在本身也是「加一个域 = 加一组候选 + 两个工具声明」的证据 ——
+     * 编排层、解析器、提示词这三处都没有为联系人域改过一行。
+     */
+    public static ToolRegistry registryWithContacts(TodoItemService service,
+                                                    ConversationCandidateProvider conversations,
+                                                    ContactCandidateProvider contacts,
+                                                    ContactBriefProvider briefs) {
+        TodoAssistantTools todos = new TodoAssistantTools(service);
+        ConversationAssistantTools conversationTools =
+                new ConversationAssistantTools(conversations, mock(ConversationPreferenceService.class));
+        ContactAssistantTools contactTools = new ContactAssistantTools(contacts, briefs);
+        return new ToolRegistry(
+                List.of(todos.todoCreateTool(), todos.todoCompleteTool(),
+                        todos.todoDeleteTool(), todos.todoUpdateTool(),
+                        conversationTools.conversationSearchTool(), conversationTools.conversationPinTool(),
+                        contactTools.contactSearchTool(), contactTools.contactBriefTool()),
+                new ToolInputValidator(), objectMapper());
+    }
+
     /** 三条未完成待办，覆盖「有时间」「无时间」两种形状。 */
     public static AssistantContext context() {
         return context(List.of(
@@ -116,7 +152,7 @@ public final class AssistantFixtures {
 
     public static AssistantContext context(List<AssistantContext.CandidateTodo> candidates) {
         return new AssistantContext("Asia/Shanghai", TODAY, "星期一",
-                List.of(new TodoCandidates(70, candidates), conversationCandidates()));
+                List.of(new TodoCandidates(70, candidates), conversationCandidates(), contactCandidates()));
     }
 
     public static AssistantContext emptyContext() {
@@ -130,5 +166,16 @@ public final class AssistantFixtures {
                         "周明", List.of("wechat"), "2026-09-21T02:00:00Z", 2, true),
                 new ConversationCandidates.Item(CONVERSATION_SEA, ConversationCandidates.TYPE_WECOM_GROUP,
                         "海运客户群", List.of("wecom"), "2026-09-20T08:00:00Z", 0, false)));
+    }
+
+    /**
+     * 一个联系人候选（周明）。
+     *
+     * <p>刻意比会话候选<b>少一条</b>：会话那组里的企微群不是联系人，这正是「两域不能共用一组候选」
+     * 的直观证据 —— 拿 {@link #CONVERSATION_SEA} 去调 {@code contact.brief} 应当被解析层拒掉。
+     */
+    public static ContactCandidates contactCandidates() {
+        return new ContactCandidates(ContactCandidateProvider.LIMIT, List.of(
+                new ContactCandidates.Item(CONTACT_ZHOU_REF, "周明", "张江物流 对接人")));
     }
 }

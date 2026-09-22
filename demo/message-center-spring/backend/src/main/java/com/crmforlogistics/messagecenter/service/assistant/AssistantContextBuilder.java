@@ -40,15 +40,18 @@ public class AssistantContextBuilder {
 
     private final TodoItemService todoService;
     private final ConversationCandidateProvider conversationCandidates;
+    private final ContactCandidateProvider contactCandidates;
     private final AppConfig appConfig;
     private final Clock clock;
 
     public AssistantContextBuilder(TodoItemService todoService,
                                    ConversationCandidateProvider conversationCandidates,
+                                   ContactCandidateProvider contactCandidates,
                                    AppConfig appConfig,
                                    Clock clock) {
         this.todoService = todoService;
         this.conversationCandidates = conversationCandidates;
+        this.contactCandidates = contactCandidates;
         this.appConfig = appConfig;
         this.clock = clock;
     }
@@ -61,8 +64,8 @@ public class AssistantContextBuilder {
      * 提示词与解析器都不用动（它们按集合名工作）。
      *
      * <p>待办那一组的条数上限来自配置（{@code assistant.candidate-todo-limit}），
-     * 会话那一组的上限写在自己的声明里 —— 两者的「合理条数」不是一个量级，
-     * 用一个配置项统一调只会得到一个对两边都不合适的值。
+     * 会话与联系人两组的上限写在自己的声明里 —— 三者的「合理条数」不是一个量级，
+     * 用一个配置项统一调只会得到一个对谁都不合适的值。
      */
     public AssistantContext build(java.util.UUID userId, int candidateLimit) {
         ZoneId zone = ZoneId.of(appConfig.todoReminderZone());
@@ -76,7 +79,8 @@ public class AssistantContextBuilder {
 
         return new AssistantContext(zone.getId(), today, weekdayOf(today),
                 List.of(new TodoCandidates(candidateLimit, candidates),
-                        conversationCandidates.recent(userId)));
+                        conversationCandidates.recent(userId),
+                        contactCandidates.recent(userId)));
     }
 
     /**
