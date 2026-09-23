@@ -292,6 +292,31 @@ COMMENT ON TABLE assistant_user_memory IS
 **验收**：`theServerSideHistoryWinsOverTheRequestBody` —— 请求体塞 3 条**伪造**的历史，
 断言 `respond` 收到的是库里那 2 条。其余用例在两条路径下结果相同，**只有这条能钉住顺序**。
 
+**修订（2026-09-23，评审 P2-1）：落点从 Controller 移到了 `respond()`。**
+
+上面「落点在 `AssistantController`」那一段的<b>理由</b>（「历史从哪来」与「裁剪」属于同一件事）
+仍然成立，错的是由此推出的「同一件事就该放在 Controller」。真正被低估的是**规则的保护强度**：
+控制器里的规则没有类型与测试的约束，第二个入口（语音端点、定时触发、内部调用）只要忘了先读库，
+就会静默退回「请求体说了算」—— 而 `respond(history, text)` 这个签名对此毫无意见，既有用例也照样绿。
+
+现签名：`respond(userId, conversationId, providedHistory, text)`。`providedHistory`
+**只在一处被采用**（服务端对该会话没有任何记录时）；选源、裁剪、附加 `historyTrim`
+全部收在 `AssistantConversationService.respond` 内部。控制器只剩两件事：把线上形状
+（小写 `role` 字符串）归一成领域对象、判定依赖缺失时返回 503。
+
+取舍写清楚：`AssistantConversationService` 因此注入 `AssistantRequestGuard`（此前「一行未改」）。
+这不是把 HTTP 细节漏进领域层 —— 注入的是 guard 这个**策略对象**，线上形状仍然只出现在控制器里。
+`AssistantRequestGuard` 的类注释与 `AssistantTurnResult.withTrimmedHistory` 的注释已同步改写；
+web 切片里那份「把上限压小」的测试替身 `AssistantMessageLimitTestConfiguration` 随用例迁出而删除。
+
+**验收（已迁出至新类 `AssistantPromptHistoryTest`）**：
+`theServerSideHistoryWinsOverTheProvidedOne`、`theProvidedHistoryIsUsedWhenTheServerHasNoRecord`、
+`noShapeOfProvidedHistoryCanBypassTheServerRecord`（null / 空表 / 伪造的 / 另一句原话 ——
+四种形状都不能让库里的记录输掉）、`aTrimmedHistoryIsReportedOnTheTurnResult`、
+`nothingIsReportedAsTrimmedWhenEverythingFits`。
+断言落在**发给模型的那串提示词**上（捕获 `complete(messages)` 实参后拼接），而不是编排层内部的
+中间变量 —— 「哪一份历史」唯一有意义的含义就是「模型看到了什么」。
+
 ### ② 让裁剪可见 —— 已完成（2026-09-22）
 
 - `AssistantRequestGuard.trimHistory` 现在同时数出「丢了多少条」。分母是**有效历史**
@@ -299,8 +324,11 @@ COMMENT ON TABLE assistant_user_memory IS
 - 两个 `break` 分支（条数触顶 / 单条超预算）都会计数，各有测试：只改一处是这里最容易犯的错。
 - 载体是 `AssistantTurnResult.HistoryTrim(droppedMessages)`，**`null` 表示一条没丢**（字段整体缺席），
   刻意不用 `0`：前端不该分两次判「是 0 还是不存在」。
-- 传递用 `withTrimmedHistory(int)` 实例方法而非加构造参数 —— 裁剪是 HTTP 边界的事，编排层不该知道。
-  所以 ② 同样**没有碰 `AssistantConversationService`**。
+- 传递用 `withTrimmedHistory(int)` 实例方法而非加构造参数：这个取值只有一处知道（guard 数出来的），
+  做成构造参数会让每个构造点都要考虑它，而多数构造点（confirm / cancel / 只读轮）根本没有
+  「这一轮的语境」可言。所以 ② 同样**没有碰 `AssistantConversationService`**。
+  **修订（2026-09-23）**：附加它的地方从控制器移到了 `AssistantConversationService.respond` ——
+  只有那里同时握着「选中的那份历史」与「裁剪结果」，也才说得清那个数字算的是谁。理由见 ① 的修订。
 - 前端做成**会话级状态**（`useAssistant.trimmedHistory`）而不是每条消息上的字段：
   一旦开始丢，后面每轮都会丢，逐条显示只是一片重复噪音。渲染在输入框上方，
   措辞用「记不住」而不是「不在上下文里」—— 用户要判断的是「我需不需要重说一遍」。
