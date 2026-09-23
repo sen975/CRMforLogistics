@@ -72,7 +72,8 @@ class AssistantConversationServiceTest {
         service = new AssistantConversationService(
                 contextBuilder,
                 new AssistantPromptBuilder(registry, CONFIG, AssistantFixtures.objectMapper()),
-                modelClient, parser, policy, pending, audit, conversationLog, registry, CONFIG);
+                modelClient, parser, policy, pending, audit, conversationLog,
+                new AssistantRequestGuard(CONFIG), registry, CONFIG);
     }
 
     // ---------- ask / reply：不碰任何存储 ----------
@@ -258,6 +259,37 @@ class AssistantConversationServiceTest {
     void aMissingUserIsRefusedRatherThanDegraded() {
         assertThatThrownBy(() -> service.respond(null, AssistantFixtures.CONVERSATION, List.of(), "帮我建个待办"))
                 .isInstanceOf(SecurityException.class);
+    }
+
+    /**
+     * 超长的原话在**任何模型调用之前**被拒绝。
+     *
+     * <p>这条用例原来住在 web 切片（{@code AssistantControllerTest}），断言的是
+     * {@code verifyNoInteractions(conversations)}。入参整理搬进编排层之后它跟着搬过来，
+     * 断言的对象换成更有分量的那个：<b>一次模型调用都没发生</b> —— 超长输入首先是一条成本边界。
+     *
+     * <p>与历史超限的处置刻意不同：历史是语境，丢掉最旧的不影响本轮意图；原话是这一次请求的
+     * 全部意图，静默截断会让模型按半个诉求去执行。所以一个裁剪、一个报错。
+     */
+    @Test
+    void anOversizeUtteranceIsRejectedBeforeAnyModelCall() {
+        assertThatThrownBy(() -> turn("x".repeat(CONFIG.maxMessageChars() + 1)))
+                .isInstanceOf(AssistantException.class)
+                .hasMessageContaining("太长");
+
+        verifyNoInteractions(modelClient);
+        verifyNoInteractions(todoMapper, pendingMapper);
+    }
+
+    /** 空话同样在编排之前就被挡下：模型没有机会为一句「什么都没说」编一个动作。 */
+    @Test
+    void aBlankUtteranceIsRejectedBeforeAnyModelCall() {
+        assertThatThrownBy(() -> turn("   "))
+                .isInstanceOf(AssistantException.class)
+                .hasMessageContaining("请先输入");
+
+        verifyNoInteractions(modelClient);
+        verifyNoInteractions(todoMapper, pendingMapper);
     }
 
     // ---------- 审计 ----------

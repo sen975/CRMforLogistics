@@ -2,7 +2,6 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.config.SecurityConfig;
-import com.crmforlogistics.messagecenter.service.assistant.AssistantRequestGuard;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantDisabledTestConfiguration;
 import org.junit.jupiter.api.Test;
@@ -34,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(AssistantController.class)
 @AutoConfigureMockMvc
-@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class, AssistantRequestGuard.class,
+@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class,
         AssistantDisabledTestConfiguration.class})
 class AssistantDisabledControllerTest {
 

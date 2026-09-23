@@ -95,7 +95,8 @@ class AssistantReadLoopTest {
         service = new AssistantConversationService(
                 contextBuilder,
                 new AssistantPromptBuilder(registry, CONFIG, AssistantFixtures.objectMapper()),
-                modelClient, parser, new AssistantActionPolicy(), pendingActions, audit, conversationLog, registry, CONFIG);
+                modelClient, parser, new AssistantActionPolicy(), pendingActions, audit, conversationLog,
+                new AssistantRequestGuard(CONFIG), registry, CONFIG);
         when(conversations.search(any(), any())).thenReturn(searchHitsZhang());
     }
 
@@ -262,7 +263,8 @@ class AssistantReadLoopTest {
                 new AssistantPendingActionService(pendingMapper, parser, registry, audit,
                         AssistantFixtures.config(0), AssistantFixtures.objectMapper(),
                         Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC)),
-                audit, conversationLog, registry, AssistantFixtures.config(0));
+                audit, conversationLog, new AssistantRequestGuard(AssistantFixtures.config(0)),
+                registry, AssistantFixtures.config(0));
         modelReplies(searchCall("张总"));
 
         AssistantTurnResult result = noRead.respond(AssistantFixtures.USER, AssistantFixtures.CONVERSATION,

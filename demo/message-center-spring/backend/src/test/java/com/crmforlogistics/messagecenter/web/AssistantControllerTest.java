@@ -5,12 +5,9 @@ import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLogService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
-import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantPendingActionService;
-import com.crmforlogistics.messagecenter.service.assistant.AssistantRequestGuard;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantTurnResult;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
-import com.crmforlogistics.messagecentertest.assistant.AssistantMessageLimitTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -25,7 +22,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
@@ -46,21 +42,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 的差异尤其重要：前者是「还缺信息」，后者是「马上要执行、但还没执行」，
  * 前端要靠它决定是否渲染确认卡片。
  *
- * <p><b>历史的来源是本类新增的一组断言。</b> 它会话号有效且服务端有记录时以库为准，
- * 请求体里的 {@code history} 被忽略 —— 这条性质必须有一个「塞伪造历史进去、断言它没被采用」的
- * 用例来钉住，否则哪天有人把顺序调回去，所有既有用例都会照样绿。
+ * <h2>这个类里<strong>不</strong>再有「历史来源」的断言（2026-09-23 迁出）</h2>
+ * 「服务端记录压过请求体」与「裁剪要报出来」两条性质原先在这里，现在归
+ * {@code AssistantPromptHistoryTest}。原因是落点变了：控制器不再选源、不再裁剪，
+ * 它只把线上的形状归一成领域对象（{@code role} 小写字符串 → {@link
+ * com.crmforlogistics.messagecenter.service.assistant.AssistantMessage}）。
+ * 留在这里的断言会变成「控制器把一份历史原样转交给 mock」——那是在测传参，不是在测规则。
+ * 判据见 {@code AssistantConversationService} 的类注释：**模型看到哪一份历史由编排层决定。**
+ *
+ * <p>相应地，这个类不再需要 {@code AssistantRequestGuard} 与那份「把上限压小」的
+ * {@code AssistantConfig} 替身 —— 校验、裁剪、选源都已经不在这一层了。
  */
 @WebMvcTest(AssistantController.class)
 @AutoConfigureMockMvc
-@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class, AssistantRequestGuard.class,
-        AssistantMessageLimitTestConfiguration.class})
+@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class})
 class AssistantControllerTest {
 
     private static final UUID USER_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID PENDING_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
-
-    /** 与 {@code AssistantMessageLimitTestConfiguration} 里的 {@code maxHistoryTurns} 同值。 */
-    private static final int MAX_HISTORY_TURNS = 8;
 
     @Autowired MockMvc mvc;
 
@@ -154,15 +153,25 @@ class AssistantControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("TODO_NOT_FOUND"));
     }
 
+    /**
+     * 入参不合法 → 400（不是 500、不是 200）。
+     *
+     * <p>这条断言<b>只</b>覆盖状态码映射。原话超长/为空的具体判定在编排层，
+     * 见 {@code AssistantConversationServiceTest.anOversizeUtteranceIsRejectedBeforeAnyModelCall} ——
+     * 那里的断言更有分量（一次模型调用都没发生）。这里补的是另一半：
+     * 那条 {@link AssistantException} 走到 HTTP 边界时会变成 400，且 {@code code} 原样带出。
+     */
     @Test
-    void oversizeInputIsRejectedBeforeAnyOrchestration() throws Exception {
+    void aRequestInvalidExceptionBecomes400() throws Exception {
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
+                .thenThrow(new AssistantException(AssistantException.REQUEST_INVALID, "这条消息太长了"));
+
         mvc.perform(post("/api/assistant/messages")
                         .with(user(USER_ID.toString()))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"text\":\"" + "x".repeat(AssistantMessageLimitTestConfiguration.MAX_MESSAGE_CHARS + 1) + "\"}"))
-                .andExpect(status().isBadRequest());
-
-        org.mockito.Mockito.verifyNoInteractions(conversations);
+                        .content("{\"text\":\"随便一句\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(AssistantException.REQUEST_INVALID));
     }
 
     @Test
@@ -234,124 +243,12 @@ class AssistantControllerTest {
     }
 
     /**
-     * 这一步的核心验收点：**服务端的记录压过请求体**。
-     *
-     * <p>请求体里塞的三条历史是伪造的（内容与库里完全不同、条数也不同）。
-     * 若哪天有人把 {@code historyFor} 的顺序调回去，这个用例会失败 —— 而其余用例全都发现不了，
-     * 因为它们在两条路径下得到的结果一样。
-     */
-    @Test
-    void theServerSideHistoryWinsOverTheRequestBody() throws Exception {
-        when(conversationLog.recentForPrompt(USER_ID, PENDING_ID, MAX_HISTORY_TURNS)).thenReturn(List.of(
-                AssistantMessage.user("帮我建个待办"),
-                AssistantMessage.assistant("安排在什么时间？")));
-        when(conversations.respond(eq(USER_ID), eq(PENDING_ID), any(), eq("明天下午三点")))
-                .thenReturn(AssistantTurnResult.executed("已创建"));
-
-        mvc.perform(post("/api/assistant/messages")
-                        .with(user(USER_ID.toString()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"conversationId":"20000000-0000-0000-0000-000000000002",
-                                 "history":[{"role":"user","text":"伪造的第一条"},
-                                            {"role":"user","text":"伪造的第二条"},
-                                            {"role":"user","text":"伪造的第三条"}],
-                                 "text":"明天下午三点"}
-                                """))
-                .andExpect(status().isOk());
-
-        verify(conversations).respond(eq(USER_ID), eq(PENDING_ID),
-                argThat(history -> history.size() == 2
-                        && "帮我建个待办".equals(history.get(0).text())
-                        && "安排在什么时间？".equals(history.get(1).text())),
-                eq("明天下午三点"));
-    }
-
-    /**
-     * 服务端没有记录时，请求体仍是来源。
-     *
-     * <p>三种情况会走到这里：会话的第一轮、没有会话号的单轮提问、以及写入曾静默失败的会话。
-     * 它们都不该因为没有库记录而丢掉上下文。
-     */
-    @Test
-    void theRequestBodyHistoryIsUsedWhenTheServerHasNoRecord() throws Exception {
-        // 不 stub recentForPrompt：Mockito 对 List 返回空列表，正是「服务端没有记录」。
-        when(conversations.respond(eq(USER_ID), eq(PENDING_ID), any(), eq("明天下午三点")))
-                .thenReturn(AssistantTurnResult.executed("已创建"));
-
-        mvc.perform(post("/api/assistant/messages")
-                        .with(user(USER_ID.toString()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"conversationId":"20000000-0000-0000-0000-000000000002",
-                                 "history":[{"role":"user","text":"帮我建个待办"},
-                                            {"role":"assistant","text":"安排在什么时间？"}],
-                                 "text":"明天下午三点"}
-                                """))
-                .andExpect(status().isOk());
-
-        verify(conversations).respond(eq(USER_ID), eq(PENDING_ID),
-                argThat(history -> history.size() == 2
-                        && history.get(0).role() == AssistantMessage.Role.USER
-                        && history.get(1).role() == AssistantMessage.Role.ASSISTANT),
-                eq("明天下午三点"));
-    }
-
-    /**
-     * 历史被裁掉时必须说出来。
-     *
-     * <p>这条测试用的配置里 {@code maxHistoryChars=200}（见
-     * {@code AssistantMessageLimitTestConfiguration}），三条各 100 字符的历史只装得下两条 ——
-     * 于是响应里必须出现 {@code droppedMessages=1}。用户看到的那句话靠它才存在。
-     */
-    @Test
-    void aTrimmedHistoryIsReportedInTheResponse() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
-                .thenReturn(AssistantTurnResult.answer("好"));
-
-        String hundred = "x".repeat(100);
-        mvc.perform(post("/api/assistant/messages")
-                        .with(user(USER_ID.toString()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"history":[{"role":"user","text":"%s"},
-                                            {"role":"assistant","text":"%s"},
-                                            {"role":"user","text":"%s"}],
-                                 "text":"继续"}
-                                """.formatted(hundred, hundred, hundred)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.kind").value("ANSWER"))
-                .andExpect(jsonPath("$.historyTrim.droppedMessages").value(1));
-    }
-
-    /**
-     * 一条都没丢时字段必须**整体缺席**，而不是 {@code {"droppedMessages":0}}。
-     *
-     * <p>与 {@code before=null} 那条相反：那里 null 是取值，必须显式传；这里 0 不是取值，
-     * 它是「不适用」。两者混用会让前端分不清「没裁剪」和「后端忘了填」。
-     */
-    @Test
-    void nothingIsReportedWhenTheHistoryFits() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
-                .thenReturn(AssistantTurnResult.answer("好"));
-
-        mvc.perform(post("/api/assistant/messages")
-                        .with(user(USER_ID.toString()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"history":[{"role":"user","text":"很短的一句"}],
-                                 "text":"继续"}
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.historyTrim").doesNotExist());
-    }
-
-    /**
      * 确认接口的响应不带裁剪信息 —— 它不走 {@code /messages}，没有「这一轮的语境」可言。
      *
      * <p>前端据此实现了一条「只在字段出现时更新提示、绝不因为没看到而清空」的逻辑
      * （见 {@code useAssistant.applyResult}）。这条用例把「后端确实不会带」钉住，
-     * 那条前端逻辑才有依据。
+     * 那条前端逻辑才有依据。裁剪信息整体由编排层附加（见 {@code AssistantPromptHistoryTest}），
+     * 确认路径没有编排层参与，所以这里天然为空。
      */
     @Test
     void confirmResponsesCarryNoHistoryTrim() throws Exception {
@@ -362,6 +259,26 @@ class AssistantControllerTest {
                         .with(user(USER_ID.toString())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.historyTrim").doesNotExist());
+    }
+
+    /**
+     * 「历史被裁剪」这件事由编排层附加，控制器<b>不</b>增删 —— 它原样转交服务返回的结果。
+     *
+     * <p>这条用例取代了原来那条「三条 100 字符的历史被裁掉一条」：裁剪算得对不对归编排层
+     * （{@code AssistantPromptHistoryTest.aTrimmedHistoryIsReportedOnTheTurnResult}），
+     * 这里只钉住「控制器不吞掉它、也不自己造一个」。
+     */
+    @Test
+    void theTrimReportedByTheServiceReachesTheResponseUnchanged() throws Exception {
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any()))
+                .thenReturn(AssistantTurnResult.answer("好").withTrimmedHistory(2));
+
+        mvc.perform(post("/api/assistant/messages")
+                        .with(user(USER_ID.toString()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"继续\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.historyTrim.droppedMessages").value(2));
     }
 
     // ---------- 会话号的兜底：浏览器忘了它时，服务端能交回来 ----------

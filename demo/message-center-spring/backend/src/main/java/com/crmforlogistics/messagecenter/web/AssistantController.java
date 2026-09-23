@@ -1,13 +1,11 @@
 package com.crmforlogistics.messagecenter.web;
 
-import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLogService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantPendingActionService;
-import com.crmforlogistics.messagecenter.service.assistant.AssistantRequestGuard;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantTurnResult;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,11 +33,17 @@ import java.util.UUID;
  * {@code /api/assistant/**} 落在既有 {@code SecurityConfig} 的
  * {@code .requestMatchers("/api/**").authenticated()} 之下，无需改动安全配置。
  *
- * <h2>会话语境由服务端提供，请求体只是回退</h2>
- * {@code POST /messages} 的 {@code history} 不再是权威来源 —— 会话号有效且服务端有记录时，
- * 历史从库里读（见 {@link #historyFor}）。这一层的职责因此变成三件事：
- * 决定**历史的来源**、**裁剪**它（交给 {@link AssistantRequestGuard}）、
- * 把「裁剪了什么」带回响应（{@link AssistantTurnResult#withTrimmedHistory}）。
+ * <h2>会话语境由服务端提供，但那条规则<b>不</b>住在这一层</h2>
+ * {@code POST /messages} 的 {@code history} 不是权威来源 —— 会话号有效且服务端有记录时，
+ * 历史从库里读。这条规则此前写在这里（一个私有方法），现已收进
+ * {@link AssistantConversationService#respond}：「跑一轮」只有一个入口，规则就无处可跳。
+ * 摆在控制器里的规则没有类型与测试的保护，第二个入口（语音、定时触发、内部调用）
+ * 一旦忘了先读库，就会静默退回「请求体说了算」。
+ *
+ * <p>这一层因此只剩两件事：把线上的形状归一成领域对象（{@code role} 是小写字符串，
+ * 见 {@link #historyOf}），以及判定「依赖不存在时返回 503」。
+ * {@code history} 的裁剪与「丢了几条」的报告都在编排层 —— 只有那里同时握着
+ * 「选中的那份历史」与「裁剪结果」。
  *
  * <h2>会话号仍由前端持有，服务端只是兜底</h2>
  * {@code GET /conversations/latest} 回答「我上次在哪个会话里」，但<b>不改变</b>会话号的归属：
@@ -60,63 +64,30 @@ public class AssistantController {
     private final ObjectProvider<AssistantConversationService> conversations;
     private final ObjectProvider<AssistantPendingActionService> pendingActions;
     private final ObjectProvider<AssistantConversationLogService> conversationLog;
-    private final AssistantRequestGuard guard;
-    private final AssistantConfig config;
 
     public AssistantController(ObjectProvider<AssistantConversationService> conversations,
                                ObjectProvider<AssistantPendingActionService> pendingActions,
-                               ObjectProvider<AssistantConversationLogService> conversationLog,
-                               AssistantRequestGuard guard,
-                               AssistantConfig config) {
+                               ObjectProvider<AssistantConversationLogService> conversationLog) {
         this.conversations = conversations;
         this.pendingActions = pendingActions;
         this.conversationLog = conversationLog;
-        this.guard = guard;
-        this.config = config;
-    }
-
-    /** 一轮对话：解析 → 追问 / 直接执行 / 落待确认。 */
-    @PostMapping("/messages")
-    public AssistantTurnResult messages(@RequestBody(required = false) MessagesRequest request) {
-        AssistantConversationService service = require(conversations);
-        UUID userId = SecurityUtil.currentUserId();
-        UUID conversationId = request == null ? null : request.conversationId();
-        AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(
-                historyFor(userId, conversationId, request), request == null ? null : request.text());
-        AssistantTurnResult result = service.respond(userId, conversationId,
-                normalised.history(), normalised.text());
-        // 裁剪是 guard 做的，但 guard 不认识响应体；把「丢了」这件事带上响应是这一层的活。
-        return result.withTrimmedHistory(normalised.droppedHistoryMessages());
     }
 
     /**
-     * 历史的来源：**会话号存在且服务端有记录时，以服务端为准。**
+     * 一轮对话：解析 → 追问 / 直接执行 / 落待确认。
      *
-     * <p>为什么不再信请求体：那条路径下「模型看到什么」由浏览器决定。刷新后前端 items 为空、
-     * 旧版本前端只带 8 条、有人改了前端 —— 服务端都无从察觉，只会看到一个比真实更短的对话，
-     * 而模型照样基于它自信作答。会话消息本来就落在库里
-     * （{@code assistant_conversation_messages}），读回来是同一个真相，
-     * 没有理由让浏览器转述，也没有理由把「最多带几条」交给它决定。
-     *
-     * <p>为什么保留请求体回退：三种情况下库里确实没有东西 —— 会话的第一轮、
-     * 没有会话号的单轮提问、以及未装配日志服务的环境（如 {@code @WebMvcTest}）。
-     * 回退不是兼容妥协，而是「没有更好来源时用次好的」。
-     *
-     * <p>{@code limit} 取 {@code max-history-turns}：读多了会被 guard 裁掉，是白读；
-     * 读少了则让「条数上限」这个配置失去意义 —— 两个数字必须同源。
+     * <p>控制器不做任何校验与选源 —— 原话的长度上限、历史的来源与裁剪，全都发生在
+     * {@link AssistantConversationService#respond} 里。这里只把请求体翻译成领域入参：
+     * 身份取认证上下文，历史 {@link #historyOf} 归一，其余原样交出去。
      */
-    private List<AssistantMessage> historyFor(UUID userId, UUID conversationId, MessagesRequest request) {
-        if (conversationId != null) {
-            AssistantConversationLogService log = conversationLog.getIfAvailable();
-            if (log != null) {
-                List<AssistantMessage> fromServer =
-                        log.recentForPrompt(userId, conversationId, config.maxHistoryTurns());
-                if (!fromServer.isEmpty()) {
-                    return fromServer;
-                }
-            }
-        }
-        return historyOf(request);
+    @PostMapping("/messages")
+    public AssistantTurnResult messages(@RequestBody(required = false) MessagesRequest request) {
+        // 「功能没开启」必须先于一切：它要能答出 503，而不是在入参校验里变成 400。
+        AssistantConversationService service = require(conversations);
+        return service.respond(SecurityUtil.currentUserId(),
+                request == null ? null : request.conversationId(),
+                historyOf(request),
+                request == null ? null : request.text());
     }
 
     /** 确认并执行一条待确认动作。 */
@@ -203,6 +174,12 @@ public class AssistantController {
     public record LatestConversation(UUID conversationId) {
     }
 
+    /**
+     * 线上形状 → 领域对象。
+     *
+     * <p>这是这一层唯一还留着的历史相关代码，因为它处理的是<b>形状</b>而不是<b>来源</b>：
+     * 大小写、未知角色、空元素都只在这里出现。来源与裁剪归编排层。
+     */
     private static List<AssistantMessage> historyOf(MessagesRequest request) {
         if (request == null || request.history() == null) {
             return List.of();

@@ -14,18 +14,35 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 一轮对话的编排：上下文 → 模型 → 解析 → 策略 → 执行或待确认 → 审计；只读动作可以循环。
+ * 一轮对话的编排：**选定历史** → 上下文 → 模型 → 解析 → 策略 → 执行或待确认 → 审计；只读动作可以循环。
  *
  * <h2>职责边界</h2>
  * 这个类<b>不</b>解析模型输出（交给 {@link AssistantDecisionParser}）、
  * <b>不</b>判断能不能直接执行（交给 {@link AssistantActionPolicy}）、
- * <b>不</b>实现工具（交给注册表）。它只负责把这几步按正确顺序串起来，
+ * <b>不</b>实现工具（交给注册表）、
+ * <b>不</b>解析线上请求的形状（{@code history} 的小写 role 字符串在控制器就归一成
+ * {@link AssistantMessage} 了）。它只负责把这几步按正确顺序串起来，
  * 并在每一步之间做那个「谁来决定」的裁决。
  *
  * <h2>一条不可动摇的规则：模型永远不能指定身份</h2>
  * {@code userId} 由调用方（控制器，经 {@code SecurityUtil}）解析后传入，一路作为参数往下递，
  * <b>从不</b>来自请求体或模型输出。工具 schema 里也没有任何身份字段，
  * 因此模型连「表达一个身份」的入口都没有。
+ *
+ * <h2>模型看到哪一份历史，由这里决定（不是由调用方）</h2>
+ * 会话消息本来就落在库里（{@code assistant_conversation_messages}），所以服务端的记录才是真相，
+ * 调用方带来的历史只是**声明**：刷新后前端 items 为空、旧版本前端只带 8 条、有人改了前端 ——
+ * 服务端都无从察觉，只会看到一个比真实更短的对话，而模型照样基于它自信作答。
+ *
+ * <p>这条规则（有会话号且库里有记录 ⇒ 以库为准）此前装在控制器里。控制器一层的规则
+ * <b>没有类型与测试的保护</b>：第二个入口（语音端点、定时触发、内部调用）只要忘了先读库，
+ * 就会<b>静默</b>退回「调用方说了算」，而所有既有用例照样绿。收进这里之后，
+ * {@link #respond} 成了「跑一轮」的唯一入口，这条规则无处可跳 —— 调用方没有表达
+ * 「请用我给的这份」的方式，它在库里没有记录时才生效。
+ *
+ * <h2>裁剪与选源必须同处发生，顺序不可颠倒</h2>
+ * 先定下「哪一份历史」，再谈「留几条」（{@link AssistantRequestGuard}）。
+ * 颠倒过来就会报出一个错的数字：告诉用户「丢了 3 条」，说的却是那份<b>没被采用</b>的历史。
  *
  * <h2>循环只对只读动作开放（这是本轮改造的安全闸门）</h2>
  * <pre>
@@ -90,6 +107,7 @@ public class AssistantConversationService {
     private final AssistantPendingActionService pendingActions;
     private final AssistantAuditService audit;
     private final AssistantConversationLogService conversationLog;
+    private final AssistantRequestGuard guard;
     private final ToolRegistry registry;
     private final AssistantConfig config;
 
@@ -101,6 +119,7 @@ public class AssistantConversationService {
                                         AssistantPendingActionService pendingActions,
                                         AssistantAuditService audit,
                                         AssistantConversationLogService conversationLog,
+                                        AssistantRequestGuard guard,
                                         ToolRegistry registry,
                                         AssistantConfig config) {
         this.contextBuilder = contextBuilder;
@@ -111,16 +130,58 @@ public class AssistantConversationService {
         this.pendingActions = pendingActions;
         this.audit = audit;
         this.conversationLog = conversationLog;
+        this.guard = guard;
         this.registry = registry;
         this.config = config;
     }
 
+    /**
+     * 跑一轮。这是「一轮对话」的**唯一入口** —— 选源、裁剪、装配上下文、决策、执行、
+     * 审计、会话落地全在这里收口，调用方只交它手上有的东西（身份、会话号、调用方声称的历史、原话）。
+     *
+     * <p>{@code providedHistory} 不是权威输入：它只在一处被采用 —— 服务端对该会话没有任何记录时。
+     * 见 {@link #authoritativeHistory}。
+     */
     public AssistantTurnResult respond(UUID userId, UUID conversationId,
-                                       List<AssistantMessage> history, String text) {
+                                       List<AssistantMessage> providedHistory, String text) {
         if (userId == null) {
             // 与 InProcessToolAdapter 同一原则：取不到身份是「拒绝」，不是「降级成匿名」。
             throw new SecurityException("Not authenticated");
         }
+        AssistantRequestGuard.NormalisedRequest normalised =
+                guard.normalise(authoritativeHistory(userId, conversationId, providedHistory), text);
+        AssistantTurnResult result =
+                runTurn(userId, conversationId, normalised.history(), normalised.text());
+        // 裁剪是 guard 做的，但 guard 不认识响应体；把「丢了」这件事带上响应是这里的活 ——
+        // 只有这里同时握着「选中的那份历史」与「裁剪结果」，也才说得清那个数字算的是谁。
+        return result.withTrimmedHistory(normalised.droppedHistoryMessages());
+    }
+
+    /**
+     * 历史的来源：**调用方给了会话号且服务端有记录时，以服务端为准**，否则用调用方提供的那份。
+     *
+     * <p>为什么保留回退：三种情况下库里确实没有东西 —— 会话的第一轮、没有会话号的单轮提问、
+     * 以及未装配日志服务的环境（如 {@code @WebMvcTest}）。回退不是兼容妥协，
+     * 而是「没有更好来源时用次好的」。
+     *
+     * <p>{@code limit} 取 {@code max-history-turns}：读多了会被 guard 裁掉，是白读；
+     * 读少了则让「条数上限」这个配置失去意义 —— 两个数字必须同源。
+     */
+    private List<AssistantMessage> authoritativeHistory(UUID userId, UUID conversationId,
+                                                        List<AssistantMessage> providedHistory) {
+        if (conversationId != null) {
+            List<AssistantMessage> fromServer =
+                    conversationLog.recentForPrompt(userId, conversationId, config.maxHistoryTurns());
+            if (!fromServer.isEmpty()) {
+                return fromServer;
+            }
+        }
+        return providedHistory == null ? List.of() : providedHistory;
+    }
+
+    /** 已经定下历史与原话之后的那一轮编排。收在私有方法里，是为了让选源/裁剪只在外层发生一次。 */
+    private AssistantTurnResult runTurn(UUID userId, UUID conversationId,
+                                        List<AssistantMessage> history, String text) {
         AssistantContext context = contextBuilder.build(userId, config.candidateTodoLimit());
         List<Map<String, String>> messages = promptBuilder.buildMessages(context, history, text);
 

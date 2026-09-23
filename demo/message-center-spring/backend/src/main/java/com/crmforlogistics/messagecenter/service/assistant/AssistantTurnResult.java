@@ -60,10 +60,14 @@ public record AssistantTurnResult(Kind kind, String message, List<String> missin
     /**
      * 附上「历史被裁剪」这一事实。
      *
-     * <p>为什么是实例方法而不是构造参数：裁剪发生在 **HTTP 边界**
-     * （{@link AssistantRequestGuard} 整理入参时），而这里只负责把它带到响应体上。
-     * 编排层（{@link AssistantConversationService}）不该知道 HTTP 入参是怎么被整理的 ——
-     * 那是「一处职责一处落点」的既有分工，加参数会让这条边界模糊掉。
+     * <p>为什么是实例方法而不是构造参数：它的取值只有一处知道（{@link AssistantRequestGuard}
+     * 算出的 {@code droppedHistoryMessages}），做成构造参数会让每一个构造点都要考虑它 ——
+     * 而绝大多数构造点（{@code confirm} / {@code cancel} / 只读轮）根本没有「这一轮的语境」可言。
+     * 由唯一握着答案的那一处附加到结果上，这条边界才清楚。
+     *
+     * <p><b>调用点自 2026-09-23 起是 {@link AssistantConversationService}</b>（此前是控制器）：
+     * 只有编排层同时握着「选中的那份历史」与「裁剪结果」，也才说得清这个数字算的是哪一份。
+     * 控制器不再触碰历史 —— 它只把线上的形状归一成领域对象。
      */
     public AssistantTurnResult withTrimmedHistory(int droppedMessages) {
         if (droppedMessages <= 0) {

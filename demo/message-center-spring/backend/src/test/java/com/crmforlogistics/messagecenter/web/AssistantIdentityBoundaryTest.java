@@ -5,7 +5,6 @@ import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantPendingActionService;
-import com.crmforlogistics.messagecenter.service.assistant.AssistantRequestGuard;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantTurnResult;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.InProcessToolAdapter;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
@@ -48,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(AssistantController.class)
 @AutoConfigureMockMvc
-@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class, AssistantRequestGuard.class,
+@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class,
         AssistantEnabledTestConfiguration.class})
 class AssistantIdentityBoundaryTest {
 
