@@ -196,7 +196,7 @@ class ConversationAssistantToolsTest {
      * 而区分开就等于告诉另一个账号「这条 id 是存在的」。
      */
     @Test
-    void pinReportsAnOutOfScopeConversationAsAnInvalidArgumentWithoutLeakingWhy() {
+    void pinReportsAnOutOfScopeConversationWithoutLeakingWhy() {
         when(preferences.setPinned(any(), any(), any(), anyBoolean()))
                 .thenThrow(new IllegalArgumentException("WeCom group not found"));
 
@@ -204,8 +204,8 @@ class ConversationAssistantToolsTest {
                 Map.of("conversationRef", REF_ZHANG, "pinned", false));
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.code()).isEqualTo(ToolExecutionException.INVALID_ARGUMENT);
-        assertThat(result.message()).contains("不在你能操作的范围内").doesNotContain("not found");
+        assertThat(result.code()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
+        assertThat(result.message()).isEqualTo(ToolExecutionException.ACCESS_DENIED_MESSAGE).doesNotContain("not found");
     }
 
     // ---------- 声明 ----------

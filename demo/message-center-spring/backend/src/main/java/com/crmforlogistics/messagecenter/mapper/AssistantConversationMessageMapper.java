@@ -86,6 +86,31 @@ public interface AssistantConversationMessageMapper {
                                                                      @Param("limit") int limit);
 
     /**
+     * Bounded ascending keyset page after a summary cursor. Null cursor starts from the conversation beginning.
+     */
+    @Select("select id, conversation_id, user_id, role, kind, text, created_at "
+            + "from assistant_conversation_messages "
+            + WHERE_OWNED_BY_USER
+            + "and (#{afterCreatedAt}::timestamptz is null "
+            + "or created_at > #{afterCreatedAt} "
+            + "or (created_at = #{afterCreatedAt} and id > #{afterMessageId}::uuid)) "
+            + "order by created_at asc, id asc limit #{limit}")
+    List<AssistantConversationMessageEntity> listAfter(@Param("userId") UUID userId,
+                                                       @Param("conversationId") UUID conversationId,
+                                                       @Param("afterCreatedAt") java.time.Instant afterCreatedAt,
+                                                       @Param("afterMessageId") UUID afterMessageId,
+                                                       @Param("limit") int limit);
+
+    @Select("select count(*) from assistant_conversation_messages "
+            + WHERE_OWNED_BY_USER
+            + "and (created_at < #{beforeCreatedAt} or "
+            + "(created_at = #{beforeCreatedAt} and id < #{beforeMessageId}::uuid))")
+    int countBefore(@Param("userId") UUID userId,
+                    @Param("conversationId") UUID conversationId,
+                    @Param("beforeCreatedAt") java.time.Instant beforeCreatedAt,
+                    @Param("beforeMessageId") UUID beforeMessageId);
+
+    /**
      * 这个用户**最近说过话**的那个会话号，一行都没有时返回 {@code null}。
      *
      * <p>它是三种读法里唯一不限定会话的：问题不是「这个会话里有什么」，而是「我上次在哪个会话里」。

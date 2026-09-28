@@ -4,11 +4,13 @@ import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.dto.response.ConversationPreferenceResponse;
 import com.crmforlogistics.messagecenter.entity.AssistantPendingActionEntity;
 import com.crmforlogistics.messagecenter.mapper.AssistantPendingActionMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.TodoAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
+import com.crmforlogistics.messagecenter.service.channel.OutboundMessageService;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationPreferenceService;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
@@ -19,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -87,11 +90,12 @@ class AssistantReadLoopTest {
 
     @BeforeEach
     void setUp() {
-        when(contextBuilder.build(eq(AssistantFixtures.USER), anyInt())).thenReturn(AssistantFixtures.context());
+        when(contextBuilder.build()).thenReturn(AssistantFixtures.context());
         pendingActions = new AssistantPendingActionService(
                 pendingMapper, parser, registry, audit, CONFIG,
                 AssistantFixtures.objectMapper(),
-                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC),
+                mock(OutboundMessageService.class), mock(ContactMapper.class));
         service = new AssistantConversationService(
                 contextBuilder,
                 new AssistantPromptBuilder(registry, CONFIG, AssistantFixtures.objectMapper()),
@@ -115,7 +119,7 @@ class AssistantReadLoopTest {
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.EXECUTED);
         assertThat(result.message()).contains("已创建待办").contains("跟进张总报价");
         // 真的问了两次模型：第一轮检索、第二轮动手。
-        verify(modelClient, times(2)).complete(any());
+        verify(modelClient, times(2)).complete(any(), any(), any());
         verify(conversations).search(AssistantFixtures.USER, "张总");
         verify(todoMapper).insert(any());
     }
@@ -209,7 +213,7 @@ class AssistantReadLoopTest {
         assertThat(result.errorCode()).isEqualTo(AssistantException.REQUEST_INVALID);
         verifyNoInteractions(pendingMapper, preferences);
         // 不可重试：编造的引用不给第二次机会改写成别的工具。
-        verify(modelClient, times(1)).complete(any());
+        verify(modelClient, times(1)).complete(any(), any(), any());
     }
 
     // ---------- ④ 轮次用尽 ----------
@@ -225,7 +229,7 @@ class AssistantReadLoopTest {
         assertThat(result.errorCode()).isEqualTo(AssistantConversationService.READ_TURNS_EXHAUSTED);
         assertThat(result.message()).contains("没能").contains("2");
         // 上限 2：两轮检索都执行了，第三次请求不再问模型 —— 直接终止。
-        verify(modelClient, times(3)).complete(any());
+        verify(modelClient, times(3)).complete(any(), any(), any());
         verify(conversations, times(2)).search(any(), any());
     }
 
@@ -262,7 +266,8 @@ class AssistantReadLoopTest {
                 modelClient, parser, new AssistantActionPolicy(),
                 new AssistantPendingActionService(pendingMapper, parser, registry, audit,
                         AssistantFixtures.config(0), AssistantFixtures.objectMapper(),
-                        Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC)),
+                        Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC),
+                        mock(OutboundMessageService.class), mock(ContactMapper.class)),
                 audit, conversationLog, new AssistantRequestGuard(AssistantFixtures.config(0)),
                 registry, AssistantFixtures.config(0));
         modelReplies(searchCall("张总"));
@@ -294,7 +299,7 @@ class AssistantReadLoopTest {
         assertThat(result.errorCode()).isEqualTo("INTERNAL");
         assertThat(result.message()).contains("我没能查到需要的信息");
         assertThat(result.message()).doesNotContain("我查到了");
-        verify(modelClient, times(1)).complete(any());
+        verify(modelClient, times(1)).complete(any(), any(), any());
     }
 
     @Test
@@ -319,7 +324,7 @@ class AssistantReadLoopTest {
 
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ERROR);
         assertThat(result.errorCode()).isEqualTo(AssistantException.REQUEST_INVALID);
-        verify(modelClient, times(2)).complete(any());
+        verify(modelClient, times(2)).complete(any(), any(), any());
     }
 
     @Test
@@ -337,17 +342,168 @@ class AssistantReadLoopTest {
         verify(conversationLog, times(1)).appendAssistant(any(), any(), any(), any());
     }
 
+    // ---------- 旁路上报：什么时候说了什么 ----------
+
+    /**
+     * {@code thinking} 一轮只报一次，即使内部问了两次模型。
+     *
+     * <p>重试与只读轮都<b>不是</b>「新一轮开始了」。每轮都报，界面上「正在思考…」会闪一下 ——
+     * 用户看到的是卡顿，而这件事和「慢」毫无关系。
+     *
+     * <p>同时钉住另一半：只有<b>只读</b>轮报工具名。写轮（这里是 {@code todo.create}）不报 ——
+     * 它的结果由最终答复负责，中途再插一句状态只会让界面抖。
+     */
+    @Test
+    void thinkingIsReportedOnceAndOnlyReadRoundsAnnounceTheirTool() {
+        when(todoMapper.insert(any())).thenReturn(1);
+        modelReplies(searchCall("张总"), """
+                {"decision":"call","tool":"todo.create",
+                 "arguments":{"title":"跟进张总报价","date":"2026-09-23"}}
+                """);
+        RecordingSink sink = new RecordingSink();
+
+        turn("看看有没有张总的会话，有的话记一条明天跟进报价的待办", sink);
+
+        assertThat(sink.events).containsExactly("thinking", "reading:conversation.search");
+        verify(modelClient, times(2)).complete(any(), any(), any());
+    }
+
+    /**
+     * 片段是逐块推出去的，拼起来正好是最终答复。
+     *
+     * <p>断言的是那条真正的不变量：<b>把片段按顺序拼起来，每一个中间状态都必须是最终答复的
+     * 前缀</b>，最后正好拼成全文 —— 屏幕上已经出现的字不能被收回。
+     *
+     * <p>注意 {@link AssistantTurnSink#answerDelta} 给的是<b>增量</b>而不是累积文本
+     * （见其契约），所以这里必须自己往后拼；用「最后一块等于全文」去断言会把契约读反，
+     * 而且在按块喂的实现下还会碰巧通过。
+     */
+    @Test
+    void deltasAccumulateIntoTheFinalAnswerAndNeverRewriteWhatWasShown() {
+        String answer = "张总那边我看过了，明天下午三点那条报价还没确认。";
+        modelStreams("{\"decision\":\"reply\",\"reply\":\"" + answer + "\"}");
+        RecordingSink sink = new RecordingSink();
+
+        AssistantTurnResult result = turn("张总的报价确认了吗", sink);
+
+        assertThat(result.message()).isEqualTo(answer);
+        StringBuilder shown = new StringBuilder();
+        for (String fragment : deltasOf(sink)) {
+            shown.append(fragment);
+            assertThat(answer).as("屏幕上的内容必须一直是最终答复的前缀（事件序列：%s）", sink.events)
+                    .startsWith(shown.toString());
+        }
+        assertThat(shown.toString()).isEqualTo(answer);
+        assertThat(deltasOf(sink)).as("逐字推出来就应当是一字一块").hasSize(answer.length());
+    }
+
+    /**
+     * 重试之前必须 {@code reset}：已经显示出去的那半句要作废。
+     *
+     * <p>输出被截断时，{@code reply} 的值可能已经露出来一半，而提取器只认
+     * 「{@code decision=reply}」，<b>不看信封完不完整</b>。没有这条信号，用户会看到答案
+     * 自己改写自己 —— 那不是故障，而是「信封写坏了重问一次」的正常路径，但看起来像胡说八道。
+     *
+     * <p>这里把「reset 恰好在两次模型调用之间」也钉住：早一步会清掉还没显示的东西，
+     * 晚一步会留下前一次的残字。
+     */
+    @Test
+    void aRetryResetsWhatWasAlreadyShownBeforeTheSecondAttempt() {
+        // 第一次：信封被截断（reply 的值露了一半），解析器判「不是合法 JSON」→ 可重试。
+        modelStreams("{\"decision\":\"reply\",\"reply\":\"张总那边我看",
+                "{\"decision\":\"reply\",\"reply\":\"我不确定\"}");
+        RecordingSink sink = new RecordingSink();
+
+        AssistantTurnResult result = turn("张总的报价确认了吗", sink);
+
+        assertThat(result.message()).isEqualTo("我不确定");
+        assertThat(sink.events).contains("reset");
+        int resetAt = sink.events.indexOf("reset");
+        // reset 之前最后一块是被作废那半句的最后一个字；之后从第一个字重新开始。
+        assertThat(sink.events.get(resetAt - 1)).isEqualTo("delta:看");
+        assertThat(sink.events.get(resetAt + 1)).isEqualTo("delta:我");
+        // 真正要钉的是这个：reset 之后显示的全文里，前半句一个字都不能留下。
+        String shownAfterReset = String.join("", sink.events.subList(resetAt + 1, sink.events.size())
+                .stream()
+                .filter(event -> event.startsWith("delta:"))
+                .map(event -> event.substring("delta:".length()))
+                .toList());
+        assertThat(shownAfterReset).isEqualTo("我不确定");
+        verify(modelClient, times(2)).complete(any(), any(), any());
+    }
+
     // ---------- 夹具 ----------
 
     private AssistantTurnResult turn(String text) {
         return service.respond(AssistantFixtures.USER, AssistantFixtures.CONVERSATION, List.of(), text);
     }
 
+    /** 带旁路通知的那一轮。 */
+    private AssistantTurnResult turn(String text, AssistantTurnSink sink) {
+        return service.respond(AssistantFixtures.USER, AssistantFixtures.CONVERSATION, List.of(), text, sink);
+    }
+
+    /** 只取片段（去掉 thinking / reading / reset 那些非文本事件）。 */
+    private static List<String> deltasOf(RecordingSink sink) {
+        return sink.events.stream()
+                .filter(event -> event.startsWith("delta:"))
+                .map(event -> event.substring("delta:".length()))
+                .toList();
+    }
+
     private void modelReplies(String... contents) {
         org.mockito.stubbing.OngoingStubbing<AssistantModelClient.ModelReply> stub =
-                when(modelClient.complete(any()));
+                when(modelClient.complete(any(), any(), any()));
         for (String content : contents) {
             stub = stub.thenReturn(new AssistantModelClient.ModelReply(content, "deepseek-chat", 900));
+        }
+    }
+
+    /**
+     * 让某一轮像真实流式那样工作：按字符前缀逐次回调，再返回完整文本。
+     *
+     * <p>逐字符而不是按块，是为了让「前缀不变」这条不变量在每个位置都被验到 ——
+     * 按块喂只能验到几个采样点，而漏掉的那个位置往往正好是转义或代理对。
+     */
+    private void modelStreams(String... contents) {
+        org.mockito.stubbing.OngoingStubbing<AssistantModelClient.ModelReply> stub =
+                when(modelClient.complete(any(), any(), any()));
+        for (String content : contents) {
+            stub = stub.thenAnswer(invocation -> {
+                java.util.function.Consumer<String> onRawDelta = invocation.getArgument(2);
+                if (onRawDelta != null) {
+                    for (int i = 1; i <= content.length(); i++) {
+                        onRawDelta.accept(content.substring(0, i));
+                    }
+                }
+                return new AssistantModelClient.ModelReply(content, "deepseek-chat", 900);
+            });
+        }
+    }
+
+    /**
+     * 把编排层「什么时候说了什么」原样记下来。
+     *
+     * <p>这套上报是纯旁路：返回值不受它影响，所以任何「结果对不对」的断言都碰不到它 ——
+     * 只记事件序列这一个办法能验。
+     */
+    private static final class RecordingSink implements AssistantTurnSink {
+        private final List<String> events = new ArrayList<>();
+
+        @Override public void thinking() {
+            events.add("thinking");
+        }
+
+        @Override public void reading(String tool) {
+            events.add("reading:" + tool);
+        }
+
+        @Override public void answerDelta(String text) {
+            events.add("delta:" + text);
+        }
+
+        @Override public void reset() {
+            events.add("reset");
         }
     }
 

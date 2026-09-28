@@ -48,6 +48,7 @@ import type {
   WeComViewerSessionDetail,
   WeComViewerSessionResponse,
   WeComInstallationSummary,
+  WeComContactEvent,
   WeComExternalContactLink,
   WeComProviderData,
   WeComThreadResponse,
@@ -74,10 +75,17 @@ import type {
   AdminCamsRequest,
   AdminWhatsAppOverview,
   AdminScopedWhatsAppAccount,
+  AdminWhatsAppCallbackConfig,
+  AdminWhatsAppPhoneCallbackRequest,
+  AdminWhatsAppAccountCallbackRequest,
   AssistantConversationMessage,
   AssistantMessageRequest,
   AssistantTurnResult,
 } from './types';
+import {
+  streamAssistantMessage,
+  type AssistantStreamHandlers,
+} from './assistantStream';
 
 export async function login(data: LoginRequest): Promise<LoginResponse> {
   const res = await client.post<LoginResponse>('/auth/login', data);
@@ -311,6 +319,21 @@ const weComInstallationBase = (authCorpId: string) => `${weComP0Base}/${encoded(
 
 export async function fetchWeComInstallations(): Promise<WeComInstallationSummary[]> {
   const res = await client.get<WeComInstallationSummary[]>('/v1/wecom/installations');
+  return res.data;
+}
+
+/**
+ * 客户动态（客户关系变化流水）。一次请求就是一次数据库查询 —— 服务端不会为了补齐昵称去回查企微，
+ * 所以这里的行只有密文 ID，没有 displayName。
+ */
+export async function listWeComContactEvents(
+  authCorpId: string,
+  params: { since?: string; changeType?: string; limit?: number } = {},
+): Promise<WeComContactEvent[]> {
+  const res = await client.get<WeComContactEvent[]>(
+    `${weComInstallationBase(authCorpId)}/contact-events`,
+    { params },
+  );
   return res.data;
 }
 
@@ -701,6 +724,12 @@ export async function fetchChatAppBroadcasts(
 export async function fetchChatAppBroadcastTemplates(
   channelAccountId: string,
 ): Promise<TemplateResponse[]> {
+  return fetchChatAppSendableTemplates(channelAccountId);
+}
+
+export async function fetchChatAppSendableTemplates(
+  channelAccountId: string,
+): Promise<TemplateResponse[]> {
   const res = await client.get<TemplateResponse[]>(`${chatAppBroadcastBase}/sendable-templates`, {
     params: { channelAccountId },
   });
@@ -773,11 +802,6 @@ export async function downloadAttachment(id: string, fileName: string): Promise<
 
 export async function sendWeCom(data: { corpId: string; agentId: string; to: string; text: string }): Promise<void> {
   await client.post('/wecom/send', data);
-}
-
-export async function sendTodoReminder(data: { date: string; text: string }): Promise<{ messageId: string; status: string }> {
-  const res = await client.post<{ messageId: string; status: string }>('/wecom/send-todo-reminder', data);
-  return res.data;
 }
 
 export type TodoApiItem = { id: string; date: string; title: string; time?: string | null; note?: string | null; completed: boolean; createdAt: string };
@@ -940,6 +964,33 @@ export async function syncAdminCams(scopeId: string): Promise<AdminWhatsAppSyncR
 
 export async function fetchAdminScopedWhatsAppAccounts(scopeId: string): Promise<AdminScopedWhatsAppAccount[]> {
   return (await client.get<AdminScopedWhatsAppAccount[]>(`/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/accounts`)).data;
+}
+
+export async function fetchAdminWhatsAppCallbacks(scopeId: string): Promise<AdminWhatsAppCallbackConfig> {
+  return (await client.get<AdminWhatsAppCallbackConfig>(
+    `/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/callbacks`,
+  )).data;
+}
+
+export async function updateAdminWhatsAppPhoneCallback(
+  scopeId: string,
+  accountId: string,
+  request: AdminWhatsAppPhoneCallbackRequest,
+): Promise<AdminWhatsAppCallbackConfig> {
+  return (await client.put<AdminWhatsAppCallbackConfig>(
+    `/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/callbacks/phones/${encodeURIComponent(accountId)}`,
+    request,
+  )).data;
+}
+
+export async function updateAdminWhatsAppAccountCallback(
+  scopeId: string,
+  request: AdminWhatsAppAccountCallbackRequest,
+): Promise<AdminWhatsAppCallbackConfig> {
+  return (await client.put<AdminWhatsAppCallbackConfig>(
+    `/admin/whatsapp/cams/${encodeURIComponent(scopeId)}/callbacks/account`,
+    request,
+  )).data;
 }
 
 export async function assignAdminScopedWhatsAppAccount(scopeId: string, accountId: string, request: AdminWhatsAppAssignmentRequest): Promise<AdminWhatsAppAccountProjection> {
@@ -1480,12 +1531,21 @@ export async function fetchPublicTemplates(
 
 const assistantBase = '/assistant';
 
-/** 一轮对话：服务端解析 → 追问 / 直接执行 / 落待确认，前端只按返回的 `kind` 分支渲染。 */
+/**
+ * 一轮对话：服务端解析 → 追问 / 直接执行 / 落待确认，前端只按返回的 `kind` 分支渲染。
+ *
+ * <h2>这是唯一一条流式端点</h2>
+ * 它没有非流式的版本：服务端边跑边把进度写回来，`onDelta` 拿到的是一段**增量**
+ * （不是累计文本），真正的结论只认最后那一帧 `final` —— 也就是这个函数的返回值。
+ *
+ * <p>所以它**不走 axios**（axios 读不到增量）。传输细节在 `assistantStream.ts`，
+ * 这里保留这一层是为了让「助手这一组端点在哪儿」这个问题只有一个答案。
+ */
 export async function sendAssistantMessage(
   request: AssistantMessageRequest,
+  handlers?: AssistantStreamHandlers,
 ): Promise<AssistantTurnResult> {
-  const res = await client.post<AssistantTurnResult>(`${assistantBase}/messages`, request);
-  return res.data;
+  return streamAssistantMessage(request, handlers);
 }
 
 /**

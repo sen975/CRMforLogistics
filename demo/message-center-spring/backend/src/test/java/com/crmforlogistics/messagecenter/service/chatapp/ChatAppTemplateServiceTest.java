@@ -66,6 +66,23 @@ class ChatAppTemplateServiceTest {
     }
 
     @Test
+    void accountSelectorUsesPrivateTemplatesForCanonicalBusinessAppMode() {
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(ACCOUNT_ID);
+        account.setProviderScopeId(SCOPE_ID);
+        account.setOnboardingMode("EMPLOYEE_BUSINESS_APP");
+        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
+        when(templateMapper.findPrivateForSendable(ACCOUNT_ID))
+                .thenReturn(List.of(template("private_notice", "APPROVED", true)));
+
+        assertThat(service().listForAccount(ACCOUNT_ID))
+                .extracting(TemplateResponse::templateCode)
+                .containsExactly("private_notice");
+
+        verify(templateMapper).findPrivateForSendable(ACCOUNT_ID);
+    }
+
+    @Test
     void accountSelectorHidesTemplatesWhenTheAccountHasNoProviderScope() {
         ChannelAccountEntity account = new ChannelAccountEntity();
         account.setId(ACCOUNT_ID);

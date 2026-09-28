@@ -1,12 +1,15 @@
 import '@testing-library/jest-dom/vitest';
 import { App as AntApp } from 'antd';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AssistantPanel } from './AssistantPanel';
 import { AssistantLauncher } from './AssistantLauncher';
 import { subscribeAssistantEvents } from '../../assistant/assistantEvents';
 import type { AssistantEvent } from '../../assistant/assistantEvents';
+import { AssistantStreamFailure } from '../../api/assistantStream';
+import type { AssistantStreamHandlers } from '../../api/assistantStream';
+import type { AssistantTurnResult } from '../../api/types';
 
 const api = vi.hoisted(() => ({
   sendAssistantMessage: vi.fn(),
@@ -43,6 +46,9 @@ let unsubscribe: (() => void) | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 逐字那一轮的 mock 会**留住**回调与那个还没 resolve 的 promise，而
+  // `clearAllMocks` 只清调用记录、不清实现 —— 不额外重置的话，上一轮的实现会漏到下一轮。
+  api.sendAssistantMessage.mockReset();
   // 回放是面板挂载时的默认动作：不给默认值，每个用例都会走一遍 catch 分支。
   api.fetchAssistantConversation.mockResolvedValue([]);
   // 本地会话号读回空时会问服务端「我上次在哪个会话里」。默认答「还没有任何对话」——
@@ -497,6 +503,29 @@ it('clears the trim notice when starting a new conversation', async () => {
   expect(screen.queryByTestId('assistant-history-trim-note')).not.toBeInTheDocument();
 });
 
+it('keeps the compaction notice distinct from trim and until a new conversation', async () => {
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ANSWER',
+    message: '好的',
+    historyTrim: { droppedMessages: 2 },
+    historyCompaction: { summarizedMessages: 12 },
+  });
+  renderPanel();
+  await ask('继续之前的讨论');
+
+  expect(await screen.findByTestId('assistant-history-compaction-note')).toHaveTextContent('12');
+  expect(screen.getByTestId('assistant-history-trim-note')).toHaveTextContent('2');
+
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '继续' });
+  await ask('继续');
+  expect(screen.getByTestId('assistant-history-compaction-note')).toBeVisible();
+
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: /新\s*会\s*话/ }));
+  expect(screen.queryByTestId('assistant-history-compaction-note')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('assistant-history-trim-note')).not.toBeInTheDocument();
+});
+
 // ---------- 会话号的兜底：浏览器忘了，服务端还记得 ----------
 //
 // 记录一直在库里（`assistant_conversation_messages`），前端丢的从来只是那个号。
@@ -551,4 +580,171 @@ it('never overwrites a conversation the user started on purpose', async () => {
   expect(screen.getByText('可以直接用一句话交代事情，比如：')).toBeVisible();
   expect(screen.queryByText('很久以前的回答')).not.toBeInTheDocument();
   expect(api.fetchLatestAssistantConversation).toHaveBeenCalledTimes(1);
+});
+
+// ---------- 逐字回答：变的是一条记录，不是消息在变 ----------
+//
+// `sendAssistantMessage` 现在多收一组回调，在结论到达之前先报进度与片段。
+// 协议与传输细节在 `assistantStream.test.ts`，这里钉的只有**屏幕上的样子**。
+
+const ANSWERED: AssistantTurnResult = {
+  kind: 'ANSWER',
+  message: '张总那边我看过了，明天下午三点那条报价还没确认。',
+};
+
+/**
+ * 一轮**停住**的流：回调交给用例，结论什么时候到也由用例决定。
+ *
+ * 不这样就没法断言「还没结束的时候屏幕上是什么」，而那正是这一阶段要买到的东西 ——
+ * 只让 mock 立刻 resolve 的话，中间那些状态一个都看不见。
+ */
+function holdingTurn() {
+  let streamed: AssistantStreamHandlers = {};
+  let release: (result: AssistantTurnResult) => void = () => undefined;
+  api.sendAssistantMessage.mockImplementation(
+    async (_request: unknown, handlers: AssistantStreamHandlers) => {
+      streamed = handlers;
+      return new Promise<AssistantTurnResult>((resolve) => { release = resolve; });
+    },
+  );
+  return {
+    // setState 要发生在 act 里，否则 React 会警告「更新没有包在 act 中」。
+    push: async (change: (handlers: AssistantStreamHandlers) => void) => {
+      await act(async () => change(streamed));
+    },
+    finish: async (result: AssistantTurnResult) => {
+      await act(async () => release(result));
+    },
+  };
+}
+
+it('shows the answer growing before the turn is over', async () => {
+  const turn = holdingTurn();
+  renderPanel();
+
+  await ask('张总的报价确认了吗');
+
+  // 一开始就在动：占位记录承担的是「请求已经出去了」这个事实。
+  expect(await screen.findByText('正在想…')).toBeVisible();
+
+  await turn.push((handlers) => handlers.onStatus?.({
+    type: 'status',
+    state: 'reading',
+    tool: 'conversation.search',
+  }));
+  expect(screen.getByText('正在查资料…')).toBeVisible();
+  // 工具名是内部标识，不给用户看：他此刻要判断的只有「它还在动，那就等」。
+  expect(screen.queryByText(/conversation\.search/)).not.toBeInTheDocument();
+
+  await turn.push((handlers) => handlers.onDelta?.('张总那边'));
+  expect(screen.getByText('张总那边')).toBeVisible();
+  // 正文一到，进度就退场（它是替代品，不是并列的一行）。
+  expect(screen.queryByText('正在查资料…')).not.toBeInTheDocument();
+  // 结论还没到 ⇒ 一个结论标签都不许有：成功 / 失败 / 待确认此刻都还不知道。
+  expect(screen.queryByText('失败')).not.toBeInTheDocument();
+  expect(screen.queryByText('已执行')).not.toBeInTheDocument();
+
+  await turn.finish(ANSWERED);
+
+  expect(await screen.findByText(ANSWERED.message)).toBeVisible();
+  // 覆盖，不是追加：屏幕上不该同时留着那半截草稿。
+  expect(screen.queryByText('张总那边')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('assistant-streaming')).not.toBeInTheDocument();
+});
+
+it('drops what was already shown when the model starts over', async () => {
+  const turn = holdingTurn();
+  renderPanel();
+  await ask('张总的报价确认了吗');
+
+  await turn.push((handlers) => handlers.onDelta?.('张总那边我看'));
+  expect(screen.getByText('张总那边我看')).toBeVisible();
+
+  await turn.push((handlers) => handlers.onReset?.());
+  // 重来意味着前一段草稿不再是最终回答的前缀：留在屏幕上就是一句假话。
+  expect(screen.queryByText('张总那边我看')).not.toBeInTheDocument();
+  expect(screen.getByText('正在重新回答…')).toBeVisible();
+
+  await turn.push((handlers) => handlers.onDelta?.('我不确定'));
+  expect(screen.getByText('我不确定')).toBeVisible();
+
+  await turn.finish({ kind: 'ANSWER', message: '我不确定' });
+  expect(await screen.findByText('我不确定')).toBeVisible();
+});
+
+it('never leaves half an answer on screen when the stream breaks', async () => {
+  api.sendAssistantMessage.mockImplementation(
+    async (_request: unknown, handlers: AssistantStreamHandlers) => {
+      handlers.onDelta?.('张总那边我看');
+      throw new AssistantStreamFailure(
+        '助手的回答中途断了，这一轮的结果未知，再发一次通常就好了',
+        { reachedServer: false },
+      );
+    },
+  );
+  renderPanel();
+
+  await ask('张总的报价确认了吗');
+
+  expect(await screen.findByText('失败')).toBeVisible();
+  // 半句话必须消失：它会被当成整句话读，而这一轮的结果其实是未知的。
+  expect(screen.queryByText('张总那边我看')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('assistant-streaming')).not.toBeInTheDocument();
+  expect(screen.getByText(/结果未知/)).toBeVisible();
+  // 「这一轮做了什么」都不知道 ⇒ 值得重试。判据现在来自那个失败对象，不再来自 HTTP 状态码。
+  expect(screen.getByRole('button', { name: /重\s*试/ })).toBeVisible();
+});
+
+it('a provider failure that arrives inside the stream still offers a retry', async () => {
+  // 以前它是一条 HTTP 503，现在是一条 200 里的 `final{kind=ERROR}`。
+  // 「能不能重试」必须跟着这个变化走 —— 否则用户会失去唯一那个能自救的按钮。
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ERROR',
+    errorCode: 'ASSISTANT_UNAVAILABLE',
+    message: '模型供应商暂时不可达',
+  });
+  renderPanel();
+
+  await ask('张总的报价确认了吗');
+
+  expect(await screen.findByText('失败')).toBeVisible();
+  expect(screen.getByText('模型供应商暂时不可达')).toBeVisible();
+  // 顶部那条横幅是同一件事的另一处表达：不是你的话有问题，是对面暂时不行。
+  expect(screen.getByText('模型服务暂时不可用')).toBeVisible();
+  expect(screen.getByRole('button', { name: /重\s*试/ })).toBeVisible();
+  // 关键：这个形状里没有「做成了」的任何痕迹。
+  expect(screen.queryByText('已执行')).not.toBeInTheDocument();
+});
+
+it('does not offer a retry for a conclusion the server already made', async () => {
+  // 反过来的一面同样要钉住：服务端已经想清楚了（这条待办不在了），
+  // 再点一次还是同一句话 —— 给一个「重试」按钮只是在浪费用户的时间。
+  api.sendAssistantMessage.mockResolvedValue({
+    kind: 'ERROR',
+    errorCode: 'TODO_NOT_FOUND',
+    message: '这条待办已经不在了',
+  });
+  renderPanel();
+
+  await ask('把和张总确认报价标记完成');
+
+  expect(await screen.findByText('这条待办已经不在了')).toBeVisible();
+  expect(screen.queryByRole('button', { name: /重\s*试/ })).not.toBeInTheDocument();
+});
+
+it('keeps the conversation usable after a stream of deltas', async () => {
+  const turn = holdingTurn();
+  renderPanel();
+  await ask('张总的报价确认了吗');
+  await turn.push((handlers) => handlers.onDelta?.('张总那边'));
+  await turn.finish(ANSWERED);
+
+  // 逐字那一轮结束后，这一段对话与以前一模一样地能用：下一轮带上它。
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '好' });
+  await ask('那就明天再问');
+
+  const request = api.sendAssistantMessage.mock.calls[1][0] as {
+    history: { role: string; text: string }[];
+  };
+  expect(request.history).toContainEqual({ role: 'assistant', text: ANSWERED.message });
 });

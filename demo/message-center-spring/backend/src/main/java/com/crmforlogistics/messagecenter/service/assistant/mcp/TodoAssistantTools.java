@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant.mcp;
 
 import com.crmforlogistics.messagecenter.entity.TodoItemEntity;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantContext;
 import com.crmforlogistics.messagecenter.service.assistant.TodoCandidates;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemNotFoundException;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
@@ -10,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,11 +41,30 @@ public class TodoAssistantTools {
     public static final String TOOL_COMPLETE = "todo.complete";
     public static final String TOOL_DELETE = "todo.delete";
     public static final String TOOL_UPDATE = "todo.update";
+    public static final String TOOL_SEARCH = "todo.search";
 
     private final TodoItemService todoService;
 
     public TodoAssistantTools(TodoItemService todoService) {
         this.todoService = todoService;
+    }
+
+    @Bean
+    public ToolDefinition todoSearchTool() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("query", spec("string", "待办标题中的检索词；留空表示查看最近未完成待办", "maxLength", 60));
+
+        return new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name(TOOL_SEARCH)
+                        .title("检索待办")
+                        .description("在当前登录用户的未完成待办中按标题检索，返回有界的待办列表。"
+                                + "这是只读操作，不会改动数据；检索结果会替换候选待办清单，"
+                                + "之后可以直接引用其中的 todoId 去完成、修改或删除。")
+                        .inputSchema(objectSchema(properties, List.of()))
+                        .annotations(annotations(true, false, true))
+                        .build(),
+                this::search);
     }
 
     @Bean
@@ -129,6 +150,23 @@ public class TodoAssistantTools {
     }
 
     // ---------- 执行 ----------
+
+    private ToolResult search(UUID userId, Map<String, Object> arguments) {
+        List<TodoItemEntity> found = todoService.searchOpenForAssistant(userId, optionalText(arguments, "query"));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("count", found.size());
+        data.put("items", found.stream().map(TodoAssistantTools::itemData).toList());
+        if (found.isEmpty()) {
+            return ToolResult.ok("没有找到匹配的未完成待办", data);
+        }
+        List<String> names = new ArrayList<>();
+        for (TodoItemEntity item : found) {
+            names.add(describe(item));
+        }
+        return ToolResult.discovered("找到 " + found.size() + " 条未完成待办：" + String.join("、", names),
+                data, new TodoCandidates(TodoItemService.ASSISTANT_SEARCH_LIMIT,
+                        found.stream().map(TodoAssistantTools::candidate).toList()));
+    }
 
     private ToolResult create(UUID userId, Map<String, Object> arguments) {
         return guarded(() -> {
@@ -228,7 +266,8 @@ public class TodoAssistantTools {
         try {
             return action.get();
         } catch (TodoItemNotFoundException e) {
-            throw new ToolExecutionException(ToolExecutionException.TODO_NOT_FOUND, e.getMessage(), e);
+            throw new ToolExecutionException(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND,
+                    ToolExecutionException.ACCESS_DENIED_MESSAGE, e);
         } catch (DateTimeParseException e) {
             throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT,
                     "日期或时间的格式不对：" + e.getParsedString(), e);
@@ -250,6 +289,11 @@ public class TodoAssistantTools {
         data.put("time", item.getDueTime() == null ? null : item.getDueTime().toString());
         data.put("completed", completed);
         return data;
+    }
+
+    private static AssistantContext.CandidateTodo candidate(TodoItemEntity item) {
+        return new AssistantContext.CandidateTodo(item.getId().toString(), item.getDueDate().toString(),
+                item.getDueTime() == null ? null : item.getDueTime().toString(), item.getTitle());
     }
 
     private static String describe(TodoItemEntity item) {

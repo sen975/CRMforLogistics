@@ -4,6 +4,12 @@
 
 ## 当前设计
 
+- [助手授权读取边界设计](specs/2026-09-28-assistant-authorization-boundary-design.md)：定义助手严格继承当前用户既有权限、领域 owner 授权读取、最小字段投影、敏感字段隔离、统一错误合同和权限/架构门禁；含短期联系人候选跨请求窗口及重新授权边界。
+
+- [联系人 AI 记忆首次历史回填设计](specs/2026-09-23-contact-memory-bootstrap-design.md)：定义无有效画像联系人的固定历史快照、有界 keyset 回填、迟到消息 durable inbox 回执、NO_SIGNAL 审计与游标原子提交。
+
+- [WhatsApp CAMS 回调地址管理设计](specs/2026-09-20-whatsapp-cams-webhook-configuration-design.md)：定义管理员按 CAMS 电话配置入站消息/状态回执 URL、服务端调用 `UpdatePhoneWebhook`/`UpdateAccountWebhook`、回调验签和多账号路由。
+
 - [联系人 AI 标签、画像与增量记忆系统设计](specs/2026-09-10-contact-ai-memory-design.md)：定义原始事实、短期观察、长期事实、AI 标签与 200 字画像五层记忆、人工标签隔离、入站消息触发、午夜增量处理、LLM 结构化合同和证据审计。
 
 - [WhatsApp 管理员配置与销售账号分配设计](specs/2026-09-10-whatsapp-admin-managed-account-assignment-design.md)：当前 WhatsApp 绑定最高层真源；定义管理员在 CAMS 手工配置、CRM 只读同步、单账号分配/收回/转交、历史会话只读访问和发送 fencing。
@@ -19,8 +25,19 @@
 - [企业微信会话身份与资料设计](specs/2026-08-24-wecom-conversation-identity-design.md)：定义代开发安装实例、ChatData 源会话、参与者、成员资料、企业名称和访问边界。
 - [企业微信统一会话工作区设计](specs/2026-08-25-wecom-unified-conversation-workspace-design.md)：定义联系人直聊聚合、左侧独立群聊、群发送者与参与者、单 OpenDataFrame 串行更新和导航行为。涉及 UI、路由、会话列表或 frame 生命周期时，以该文档为当前真源。
 - [企业微信消息级官方摘要设计](specs/2026-08-31-wecom-message-summary-design.md)：定义每条企业微信消息异步调用 `conversation_daily_summary`、原始响应审计、失败分层和消息保留保护。
+- [助手对话上下文滚动摘要设计](specs/2026-09-23-assistant-conversation-context-compaction-design.md)：定义保留完整原始对话、持久化滚动摘要、覆盖游标、有界上下文预算、失败回退和并发更新 fencing。
 
 ## 当前实施
+
+- [助手授权读取边界实施计划](plans/2026-09-28-assistant-authorization-boundary.md)：落实当前用户权限继承、owner 重新授权、最小数据投影、隐私审计和助手工具 Mapper 架构门禁。
+
+- [助手授权读取边界验收记录](reviews/2026-09-28-assistant-authorization-boundary-verification.md)：记录 241 例权限专项、Spring 集成边界、审计脱敏和未闭合的外部/历史数据验收。
+
+- [助手对话上下文滚动摘要实施计划](plans/2026-09-23-assistant-conversation-context-compaction.md)：落实有界 Token 估算、持久化摘要游标、并发 fencing、失败回退和完整原文回放验收。
+
+- [联系人 AI 记忆首次历史回填实施计划](plans/2026-09-23-contact-memory-bootstrap.md)：按 Gate 0 与逐 Task 闸口实施无画像联系人的有界历史回填、迟到消息回执、失败重试和 API/UI 状态。
+
+- [WhatsApp CAMS 回调地址管理实施计划](plans/2026-09-20-whatsapp-cams-webhook-configuration.md)：落实 CAMS 回调配置 schema、SDK adapter、管理员 API、webhook 验签与多账号路由、管理员前端和真实 CAMS 验收。
 
 - [冻结基线收口到 0 实施计划](plans/2026-09-20-baseline-to-zero.md)：越界改造第 ⑤ 步（含只读影响面 + 实施记录）。剩 32 条只有两个病根 —— 两个 wecom 实体住在 `channel/wecom/` 被业务域引用（28 条）、`WhatsAppHistorySyncWorker` 跨板块驱动 chatapp 适配器（4 条）。前者搬到 `entity/`（项目已有 7 个 WeCom 实体先例，`type-aliases-package` 也早已只声明 `…entity`），后者搬到 `service/chatapp/`（② 已有判例）。**已完成（2026-09-20）**：门禁基线 **32 → 0**（删 32 / 增 0），随后**拆掉冻结机制** —— `FreezingArchRule` 换回普通硬规则，删除 `archunit_store/` 与 `archunit.properties`，并用故意注入的越界探针复验「普通规则同样能让构建变红」。
 - [阿里云 CAMS 供应商层独立实施计划](plans/2026-09-20-cams-vendor-layer.md)：越界改造第 ④ 步。把 CAMS 供应商原语（`ChatAppAccountCredentials` / `…Exception` / `…Resolver`）从 `channel/chatapp/` 提到 `infrastructure/cams/`，把 `ChatAppPublicTemplateGateway` 接口随消费方搬到 `service.whatsapp.template/`；门禁基线 40 → 32 条（删除 8 条、新增 0 条）。**已完成（2026-09-20）**，纯搬运零抽象。**未闭合**：6 处重复的 `AsyncClient` 装配与 whatsapp 侧第二套 CAMS 凭证模型未收敛（`WhatsAppHistorySyncWorker → ChatAppMessageSyncService` 的 4 条残留已由第 ⑤ 步归位解决）。
@@ -43,6 +60,12 @@
 - [企业微信消息级官方摘要实施计划](plans/2026-08-31-wecom-message-summary.md)：落实消息入库同事务入队、单条提交/轮询 worker、历史补偿、诊断查询和发布验收。
 
 ## 当前验收
+
+- [助手对话上下文滚动摘要验收记录](reviews/2026-09-24-assistant-conversation-context-compaction-verification.md)：摘要专项 73/73、V100 PostgreSQL/Flyway 1/1、助手面板 26/26、前端构建和 `AppIntegrationTest` 10/10 通过；后端全量剩余两个与该功能无关的既有失败。
+
+- [WeCom、邮件与电话转录 Review 修复验收](reviews/2026-09-22-wecom-email-call-review-remediation-verification.md)：记录回调体有界读取、邮件 UNKNOWN 提交核对与状态迁移、提醒/录音/转录可靠性修复及跨渠道验收证据；真实 provider 与生产资源行为仍需部署环境验证。
+
+- [WhatsApp CAMS 回调地址管理验收记录](reviews/2026-09-20-whatsapp-cams-webhook-configuration-verification.md)：记录数据库合同、CAMS SDK 写入适配器、管理员 API/审计、验签多账号路由、管理员前端、OpenAPI 与架构门禁；真实 CAMS 测试号码因需要部署环境授权和公网回调地址暂未执行。
 
 - [Testcontainers 容错统一与 Clock 注入收口验收记录](reviews/2026-09-20-testcontainers-and-clock-hardening-verification.md)：记录 P0 时间炸弹根治（注入 `Clock` + 测试固定时钟）、26 个容器测试类统一 `disabledWithoutDocker` 的取舍（假绿风险与「验收必须核对 `Skipped`」约定）、全量 1428 跑 0 失败 0 跳过，以及 `AppIntegrationTest` 10/10 作为 Spring 装配实证。
 - [联系人 AI 标签、画像与增量记忆系统验收记录](reviews/2026-09-11-contact-ai-memory-verification.md)：记录五层记忆端到端测试设计、后端生产编译、前端测试/构建，以及 Docker 和工作区既有 WhatsApp 测试错误造成的验收边界。

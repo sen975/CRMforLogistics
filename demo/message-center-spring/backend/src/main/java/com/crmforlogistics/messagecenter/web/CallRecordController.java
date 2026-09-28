@@ -18,6 +18,7 @@ import com.crmforlogistics.messagecenter.service.callrecord.CallAudioSessionServ
 import com.crmforlogistics.messagecenter.service.callrecord.CallRecordService;
 import com.crmforlogistics.messagecenter.service.callrecord.ContactTimelineService;
 import com.crmforlogistics.messagecenter.service.callrecord.MinioAudioStore;
+import com.crmforlogistics.messagecenter.service.callrecord.CallRecordException;
 import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -38,6 +39,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -146,10 +149,26 @@ public class CallRecordController {
                 entity.getAudioContentType(),
                 entity.getAudioDurationSeconds(),
                 entity.getAudioObjectKey());
-        try (InputStream input = audioStore.open(asset)) {
+        Range range = parseRange(request.getHeader(HttpHeaders.RANGE), asset.sizeBytes());
+        if (range.invalid()) {
+            response.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+            response.setHeader(HttpHeaders.CONTENT_RANGE, "bytes */" + asset.sizeBytes());
+            return;
+        }
+        boolean partial = range.start() >= 0;
+        long start = partial ? range.start() : 0;
+        long length = partial ? range.length() : asset.sizeBytes();
+        try (InputStream input = partial
+                ? audioStore.open(asset, start, length)
+                : audioStore.open(asset)) {
             response.setContentType(asset.contentType());
-            response.setContentLengthLong(asset.sizeBytes());
             response.setHeader(HttpHeaders.ACCEPT_RANGES, "bytes");
+            response.setContentLengthLong(length);
+            if (partial) {
+                response.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+                response.setHeader(HttpHeaders.CONTENT_RANGE,
+                        "bytes " + start + "-" + (start + length - 1) + "/" + asset.sizeBytes());
+            }
             try (OutputStream output = response.getOutputStream()) {
                 byte[] buffer = new byte[8192];
                 int read;
@@ -158,6 +177,42 @@ public class CallRecordController {
                 }
             }
         }
+    }
+
+    private static Range parseRange(String header, long size) {
+        if (header == null || header.isBlank()) return Range.full();
+        if (size <= 0 || !header.startsWith("bytes=") || header.indexOf(',') >= 0) {
+            return Range.invalidRange();
+        }
+        String value = header.substring("bytes=".length()).trim();
+        int dash = value.indexOf('-');
+        if (dash < 0 || dash != value.lastIndexOf('-')) return Range.invalidRange();
+        String startText = value.substring(0, dash).trim();
+        String endText = value.substring(dash + 1).trim();
+        try {
+            long start;
+            long end;
+            if (startText.isEmpty()) {
+                long suffix = Long.parseLong(endText);
+                if (suffix <= 0) return Range.invalidRange();
+                start = Math.max(0, size - suffix);
+                end = size - 1;
+            } else {
+                start = Long.parseLong(startText);
+                if (start < 0 || start >= size) return Range.invalidRange();
+                end = endText.isEmpty() ? size - 1 : Long.parseLong(endText);
+                if (end < start) return Range.invalidRange();
+                end = Math.min(end, size - 1);
+            }
+            return new Range(start, end - start + 1, false);
+        } catch (NumberFormatException | ArithmeticException ignored) {
+            return Range.invalidRange();
+        }
+    }
+
+    private record Range(long start, long length, boolean invalid) {
+        static Range full() { return new Range(-1, 0, false); }
+        static Range invalidRange() { return new Range(-1, 0, true); }
     }
 
     @PostMapping("/api/v1/call-records/{callRecordId}/retry")
@@ -207,10 +262,13 @@ public class CallRecordController {
             @RequestParam(value = "query", required = false) String query) {
         int safeLimit = Math.min(100, Math.max(1, limit <= 0 ? 20 : limit));
         UUID ownerId = SecurityUtil.currentUserId();
-        List<CallRecordEntity> all = callRecordMapper.searchPhoneRepositoryByOwner(ownerId, query);
-        List<CallRecordEntity> entities = all.size() > safeLimit
-                ? all.subList(0, safeLimit) : all;
-        int totalCount = entities.size();
+        Cursor decoded = decodeCursor(cursor);
+        List<CallRecordEntity> page = callRecordMapper.searchPhoneRepositoryByOwner(
+                ownerId, query, decoded == null ? null : decoded.occurredAt(),
+                decoded == null ? null : decoded.id(), safeLimit + 1);
+        boolean hasNext = page.size() > safeLimit;
+        List<CallRecordEntity> entities = hasNext ? page.subList(0, safeLimit) : page;
+        int totalCount = callRecordMapper.countPhoneRepositoryByOwner(ownerId, query);
         List<PhoneRecordResponse> items = new ArrayList<>();
         for (CallRecordEntity e : entities) {
             String contactDisplayName = "";
@@ -254,9 +312,38 @@ public class CallRecordController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("items", items);
         body.put("totalCount", totalCount);
-        body.put("nextCursor", null);
+        body.put("nextCursor", hasNext && !entities.isEmpty()
+                ? encodeCursor(entities.get(entities.size() - 1)) : null);
         return ResponseEntity.ok(body);
     }
+
+    private static String encodeCursor(CallRecordEntity entity) {
+        String value = entity.getOccurredAt().toString() + "|" + entity.getId();
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Cursor decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return null;
+        if (cursor.length() > 512) throw invalidCursor();
+        try {
+            String value = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            int separator = value.indexOf('|');
+            if (separator <= 0 || separator != value.lastIndexOf('|')) throw invalidCursor();
+            Instant occurredAt = Instant.parse(value.substring(0, separator));
+            UUID id = UUID.fromString(value.substring(separator + 1));
+            return new Cursor(occurredAt, id);
+        } catch (IllegalArgumentException error) {
+            throw invalidCursor();
+        }
+    }
+
+    private static CallRecordException invalidCursor() {
+        return new CallRecordException("CALL_RECORD_CURSOR_INVALID", 400,
+                "Phone repository cursor is invalid", false);
+    }
+
+    private record Cursor(Instant occurredAt, UUID id) {}
 
     private CallRecordResponse toResponse(CallRecordEntity e) {
         List<CallTranscriptRevisionEntity> revisions = revisionMapper.listByCallRecordId(e.getId());

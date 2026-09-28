@@ -491,7 +491,7 @@ class ChatAppBroadcastWorkerTest {
     }
 
     @Test
-    void ownershipFenceAndProviderSubmissionShareTheSameTransaction() {
+    void ownershipFenceSnapshotIsCapturedBeforeProviderSubmission() {
         UUID broadcastId = UUID.randomUUID();
         ChatAppBroadcastJobEntity job = job(broadcastId, "SUBMIT");
         ChatAppBroadcastEntity broadcast = broadcast(broadcastId, "QUEUED");
@@ -510,8 +510,11 @@ class ChatAppBroadcastWorkerTest {
         when(accountResolver.requireOwnedAccountForSend(
                 broadcast.getCreatedByUserId(), broadcast.getChannelAccountId(), 4L))
                 .thenReturn(account(broadcast.getChannelAccountId()));
+        when(accountResolver.snapshot(any(ChannelAccountEntity.class)))
+                .thenReturn(new com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSubmissionContext(
+                        broadcast.getChannelAccountId(), "60199999999", 4L, null));
         when(gateway.submit(any())).thenAnswer(invocation -> {
-            assertThat(transactions.isActive()).isTrue();
+            assertThat(transactions.isActive()).isFalse();
             return new SubmissionResult("group-1", "request-1", "OK");
         });
         when(jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), NOW)).thenReturn(1);

@@ -23,9 +23,15 @@ import java.util.Map;
  *       用它会让「管理员看得到联系人、却问不了这个联系人的情况」变成一个无法解释的按钮。</li>
  * </ul>
  *
- * <p>因此简报走 {@code ContactMemoryMapper.listStableContext} —— 它返回的正好是
- * 画像 + 事实 + 标签 + 话题四节摘要，<b>结构上就没有</b>原文与转写可泄漏。这是个更强的保证：
- * 不是「我们记得别取它」，而是「这条路取不到它」。
+ * <p>因此简报的两条取数路径都是<b>结构性安全</b>的，而不是靠「记得别取」：内容走
+ * {@code ContactMemoryMapper.listStableContext}（画像 + 事实 + 标签 + 话题四节摘要，
+ * 结构上就没有原文与转写可泄漏）；状态走 {@code ContactMemoryStateMapper.findByOwnerAndContact}
+ * （{@code contact_memory_states} 的处理状态与失败码 —— 那张表是<b>纯元数据</b>，
+ * 没有任何内容字段，也没有消息外键可 join）。
+ *
+ * <p>第二条路径是 2026-09-23 加的（{@code memoryState} / {@code memoryFailureCode}）。
+ * 加它是因为「他的标签为什么没更新」当时<b>根本答不了</b>：状态不可见时，
+ * 模型只能拿「标签看着有点旧」去猜原因，而它至少能猜错成五种。
  *
  * <h2>{@code memoryVisible=false} 是正常结果，不是错误</h2>
  * 画像/事实/标签都以联系人的 {@code created_by} 为归属人（见 {@code ContactMapper.findByIdAndOwner}
@@ -34,10 +40,13 @@ import java.util.Map;
  * 并由 {@link #memoryVisible} 明说这件事 —— 比报错好，比假装「他没有画像」也好。
  */
 public record ContactBrief(String contactRef, String name, String roleTitle, String remark,
+                           List<String> channelTypes, List<ContactCandidates.Channel> channels,
                            boolean memoryVisible,
+                           String memoryState,
+                           String memoryFailureCode,
                            String profile,
                            List<Fact> facts,
-                           List<String> aiLabels,
+                           List<AiLabel> aiLabels,
                            List<String> humanTags,
                            List<Topic> topics) {
 
@@ -50,15 +59,40 @@ public record ContactBrief(String contactRef, String name, String roleTitle, Str
     public record Fact(String category, String value) {
     }
 
+    /**
+     * 一条 AI 标签：显示名 + 分类 + 置信度。
+     *
+     * <p>为什么要带分类与置信度（原先只给名字）：这两个字段决定了标签该被<b>怎么用</b>。
+     * 只有名字时，「价格敏感」是一条孤立结论；有了分类（{@code DECISION_FACTOR} 等）
+     * 模型才知道它在销售语境里属于哪一类看法；有了置信度，「系统很确定他很在意价格」
+     * 与「系统只是觉得可能」才不会说成同一句话 —— 而这个差别正是用户拿标签做判断时要的。
+     *
+     * <p>{@code confidence} 可空：空表示这一版没有置信度，<b>不是</b>「零」——
+     * 零意味着「很确定它不是」，那是另一个结论。
+     */
+    public record AiLabel(String name, String category, Double confidence) {
+    }
+
     /** 一条话题摘要（{@code ai_topics}）：标题 + 小结，同样是摘要而非原文。 */
     public record Topic(String title, String summary) {
     }
 
     public ContactBrief {
+        channelTypes = channelTypes == null ? List.of() : List.copyOf(channelTypes);
+        channels = channels == null ? List.of() : List.copyOf(channels);
         facts = facts == null ? List.of() : List.copyOf(facts);
         aiLabels = aiLabels == null ? List.of() : List.copyOf(aiLabels);
         humanTags = humanTags == null ? List.of() : List.copyOf(humanTags);
         topics = topics == null ? List.of() : List.copyOf(topics);
+    }
+
+    /** Backward-compatible fixture constructor; production callers should provide channels. */
+    public ContactBrief(String contactRef, String name, String roleTitle, String remark,
+                        List<String> channelTypes, boolean memoryVisible, String memoryState,
+                        String memoryFailureCode, String profile, List<Fact> facts,
+                        List<AiLabel> aiLabels, List<String> humanTags, List<Topic> topics) {
+        this(contactRef, name, roleTitle, remark, channelTypes, List.of(), memoryVisible,
+                memoryState, memoryFailureCode, profile, facts, aiLabels, humanTags, topics);
     }
 
     /** 四节记忆是否有一条内容。基础信息（姓名/备注/角色）不计入。 */
@@ -80,9 +114,22 @@ public record ContactBrief(String contactRef, String name, String roleTitle, Str
         data.put("name", name);
         data.put("roleTitle", roleTitle);
         data.put("remark", remark);
+        data.put("channelTypes", channelTypes);
+        data.put("channels", channels.stream().map(channel -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("channelType", channel.channelType());
+            item.put("identityValue", channel.identityValue());
+            item.put("displayName", channel.displayName());
+            item.put("accountLabel", channel.accountLabel());
+            return item;
+        }).toList());
         // 明说画像可见性，而不是让模型从「四节都空」去猜 ——
         // 「这位联系人没有画像」与「画像对你看不见」对用户是两件完全不同的事。
         data.put("memoryVisible", memoryVisible);
+        // 记忆的处理状态与失败码：回答「他的标签为什么没更新」的唯一依据。
+        // 只在画像可见时有值 —— 别人名下那条流水线的状态，对当前用户既无用也不该给。
+        data.put("memoryState", memoryState);
+        data.put("memoryFailureCode", memoryFailureCode);
         data.put("profile", profile);
         data.put("facts", facts.stream()
                 .map(fact -> {
@@ -92,7 +139,15 @@ public record ContactBrief(String contactRef, String name, String roleTitle, Str
                     return item;
                 })
                 .toList());
-        data.put("aiLabels", aiLabels);
+        data.put("aiLabels", aiLabels.stream()
+                .map(label -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("name", label.name());
+                    item.put("category", label.category());
+                    item.put("confidence", label.confidence());
+                    return item;
+                })
+                .toList());
         data.put("humanTags", humanTags);
         data.put("topics", topics.stream()
                 .map(topic -> {

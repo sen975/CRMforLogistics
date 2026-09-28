@@ -10,6 +10,8 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
+import com.crmforlogistics.messagecenter.mapper.EmailSubmissionMapper;
+import com.crmforlogistics.messagecenter.entity.EmailSubmissionEntity;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
 import com.crmforlogistics.messagecenter.infrastructure.CredentialCipher;
 import jakarta.mail.Message;
@@ -54,22 +56,22 @@ public class EmailSendService {
     private final EmailAttachmentStore attachmentStore;
     private final AiTopicActivityRecorder topicActivityRecorder;
     private final CredentialCipher credentialCipher;
+    private final EmailSubmissionMapper submissionMapper;
+    private final SmtpSender smtpSender;
+    private final EmailSubmissionLeaseKeeper leaseKeeper;
+
+    @FunctionalInterface
+    interface SmtpSender {
+        void send(Session session, String host, int port, String username, String password,
+                  MimeMessage message) throws Exception;
+    }
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
                             ChannelAccountMapper channelAccountMapper,
                             ContactIdentityMapper contactIdentityMapper) {
-        this.config = config;
-        this.messageMapper = messageMapper;
-        this.conversationMapper = conversationMapper;
-        this.channelAccountMapper = channelAccountMapper;
-        this.contactIdentityMapper = contactIdentityMapper;
-        this.attachmentReader = new EmailAttachmentReader(
-                positiveIntOrDefault(config.emailAttachmentMaxCount(), 16),
-                positiveOrDefault(config.emailAttachmentMaxTotalBytes(), 20_971_520L));
-        this.attachmentStore = null;
-        this.topicActivityRecorder = null;
-        this.credentialCipher = null;
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                null, null, null, null, EmailSendService::sendSmtp, null);
     }
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
@@ -91,6 +93,19 @@ public class EmailSendService {
                 attachmentStore, topicActivityRecorder, null);
     }
 
+    public EmailSendService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder,
+                            CredentialCipher credentialCipher,
+                            EmailSubmissionMapper submissionMapper) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, credentialCipher, submissionMapper,
+                EmailSendService::sendSmtp, null);
+    }
+
     @Autowired
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
                             ConversationMapper conversationMapper,
@@ -98,7 +113,37 @@ public class EmailSendService {
                             ContactIdentityMapper contactIdentityMapper,
                             EmailAttachmentStore attachmentStore,
                             AiTopicActivityRecorder topicActivityRecorder,
-                            CredentialCipher credentialCipher) {
+                            CredentialCipher credentialCipher,
+                            EmailSubmissionMapper submissionMapper,
+                            EmailSubmissionLeaseKeeper leaseKeeper) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, credentialCipher, submissionMapper,
+                EmailSendService::sendSmtp, leaseKeeper);
+    }
+
+    EmailSendService(AppConfig config, MessageMapper messageMapper,
+                     ConversationMapper conversationMapper,
+                     ChannelAccountMapper channelAccountMapper,
+                     ContactIdentityMapper contactIdentityMapper,
+                     EmailAttachmentStore attachmentStore,
+                     AiTopicActivityRecorder topicActivityRecorder,
+                     CredentialCipher credentialCipher,
+                     EmailSubmissionMapper submissionMapper,
+                     SmtpSender smtpSender) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, credentialCipher, submissionMapper, smtpSender, null);
+    }
+
+    EmailSendService(AppConfig config, MessageMapper messageMapper,
+                     ConversationMapper conversationMapper,
+                     ChannelAccountMapper channelAccountMapper,
+                     ContactIdentityMapper contactIdentityMapper,
+                     EmailAttachmentStore attachmentStore,
+                     AiTopicActivityRecorder topicActivityRecorder,
+                     CredentialCipher credentialCipher,
+                     EmailSubmissionMapper submissionMapper,
+                     SmtpSender smtpSender,
+                     EmailSubmissionLeaseKeeper leaseKeeper) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -110,9 +155,36 @@ public class EmailSendService {
         this.attachmentStore = attachmentStore;
         this.topicActivityRecorder = topicActivityRecorder;
         this.credentialCipher = credentialCipher;
+        this.submissionMapper = submissionMapper;
+        this.smtpSender = smtpSender;
+        this.leaseKeeper = leaseKeeper;
+    }
+
+    public EmailSendService(AppConfig config, MessageMapper messageMapper,
+                            ConversationMapper conversationMapper,
+                            ChannelAccountMapper channelAccountMapper,
+                            ContactIdentityMapper contactIdentityMapper,
+                            EmailAttachmentStore attachmentStore,
+                            AiTopicActivityRecorder topicActivityRecorder,
+                            CredentialCipher credentialCipher) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, credentialCipher, null);
     }
 
     public record SendResult(String messageId, String from, String to, String subject, String status) {}
+    public record SubmissionOutcome(UUID id, String providerMessageId, String recipient,
+                                    String subject, String status, Instant updatedAt) {}
+
+    public List<SubmissionOutcome> listUnknownSubmissions(UUID ownerId, int limit) {
+        if (ownerId == null) throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
+        if (submissionMapper == null) return List.of();
+        int boundedLimit = Math.max(1, Math.min(limit, 100));
+        submissionMapper.markStaleSubmissionsUnknown(ownerId, 100);
+        return submissionMapper.listUnknownByOwner(ownerId, boundedLimit).stream()
+                .map(row -> new SubmissionOutcome(row.getId(), row.getProviderMessageId(),
+                        row.getRecipient(), row.getSubject(), row.getStatus(), row.getUpdatedAt()))
+                .toList();
+    }
 
     public SendResult send(String to, String subject, String body) throws Exception {
         return sendInternal(null, null, Map.of(), to, subject, body, List.of());
@@ -173,22 +245,104 @@ public class EmailSendService {
         }
         message.saveChanges();
         message.setHeader("Message-ID", messageIdHeader(settings.from(), endpoint.serverName()));
+        EmailSubmissionEntity submission = beginSubmission(ownerId, account, cleanTo, subject);
+        EmailSubmissionLeaseKeeper.Registration leaseRegistration = submission == null || leaseKeeper == null
+                ? () -> { }
+                : leaseKeeper.track(submission.getId(), submission.getLeaseToken());
 
+        try (leaseRegistration) {
+            try {
+                smtpSender.send(session, endpoint.connectHost(), settings.port(),
+                        settings.user(), settings.password(), message);
+            } catch (Exception e) {
+                markSubmissionUnknown(submission, message.getMessageID(), "SMTP submission result is unknown");
+                throw new EmailException("EMAIL_SEND_OUTCOME_UNKNOWN",
+                        "SMTP submission result is unknown; do not retry until delivery is checked", e);
+            }
+
+            if (!updateSubmission(submission, message.getMessageID(), "SMTP_SENT", null)) {
+                markSubmissionUnknown(submission, message.getMessageID(), "SMTP succeeded but submission state could not be recorded");
+                return unknownResult(message.getMessageID());
+            }
+
+            String messageId = message.getMessageID() == null ? "" : message.getMessageID();
+            UUID dbId = account == null
+                    ? persistOutbound(cleanTo, subject, body, messageId)
+                    : persistOutbound(ownerId, account.getId(), cleanTo, subject, body, messageId);
+            if (dbId == null) {
+                markSubmissionUnknown(submission, messageId, "SMTP succeeded but local message persistence failed");
+                return unknownResult(messageId);
+            }
+            try {
+                if (attachmentStore != null && !attachments.isEmpty()) {
+                    attachmentStore.store(dbId, attachments, true);
+                }
+            } catch (Exception e) {
+                markSubmissionUnknown(submission, messageId, "SMTP succeeded but local attachment persistence failed");
+                return unknownResult(messageId);
+            }
+            if (!updateSubmission(submission, messageId, "SENT", null)) {
+                markSubmissionUnknown(submission, messageId, "SMTP succeeded but final submission state could not be recorded");
+                return unknownResult(messageId);
+            }
+            return new SendResult(dbId.toString(), settings.from(), cleanTo, subject, "sent");
+        }
+    }
+
+    private boolean updateSubmission(EmailSubmissionEntity submission, String providerMessageId,
+                                     String status, String lastError) {
+        if (submission == null) return true;
+        submission.setProviderMessageId(providerMessageId);
+        submission.setStatus(status);
+        submission.setLastError(lastError);
+        try {
+            return submissionMapper.update(submission) == 1;
+        } catch (Exception e) {
+            log.error("event=email_submission_state_persist_failed submissionId={} targetStatus={}",
+                    submission.getId(), status, e);
+            return false;
+        }
+    }
+
+    private void markSubmissionUnknown(EmailSubmissionEntity submission, String messageId, String reason) {
+        if (!updateSubmission(submission, messageId, "UNKNOWN", reason)) {
+            log.error("event=email_submission_unknown_state_unpersisted submissionId={}",
+                    submission == null ? null : submission.getId());
+        }
+    }
+
+    private SendResult unknownResult(String messageId) {
+        log.error("event=email_send_outcome_unknown messageId={}", messageId);
+        throw new EmailException("EMAIL_SEND_OUTCOME_UNKNOWN",
+                "SMTP accepted the message but local delivery state is incomplete; check delivery before retrying");
+    }
+
+    private static void sendSmtp(Session session, String host, int port, String username,
+                                 String password, MimeMessage message) throws Exception {
         try (Transport transport = session.getTransport("smtp")) {
-            transport.connect(endpoint.connectHost(), settings.port(),
-                    settings.user(), settings.password());
+            transport.connect(host, port, username, password);
             transport.sendMessage(message, message.getAllRecipients());
         }
+    }
 
-        String messageId = message.getMessageID() == null ? "" : message.getMessageID();
-        UUID dbId = account == null
-                ? persistOutbound(cleanTo, subject, body, messageId)
-                : persistOutbound(ownerId, account.getId(), cleanTo, subject, body, messageId);
-        if (dbId != null && attachmentStore != null && !attachments.isEmpty()) {
-            attachmentStore.store(dbId, attachments, true);
+    private EmailSubmissionEntity beginSubmission(UUID ownerId, ChannelAccountEntity account,
+                                                  String to, String subject) {
+        if (submissionMapper == null) return null;
+        EmailSubmissionEntity row = new EmailSubmissionEntity();
+        row.setOwnerUserId(ownerId);
+        row.setId(UUID.randomUUID()); row.setChannelAccountId(account == null ? null : account.getId());
+        row.setLeaseToken(UUID.randomUUID());
+        row.setRecipient(to); row.setSubject(subject == null ? "" : subject); row.setStatus("PENDING");
+        try {
+            if (submissionMapper.insert(row) != 1) {
+                throw new IllegalStateException("Email submission insert did not affect one row");
+            }
+            return row;
         }
-        return new SendResult(dbId != null ? dbId.toString() : messageId,
-                settings.from(), cleanTo, subject, "sent");
+        catch (Exception e) {
+            throw new EmailException("EMAIL_SUBMISSION_PERSIST_FAILED",
+                    "Unable to create email submission", e);
+        }
     }
 
     UUID persistOutbound(String to, String subject, String body, String messageId) {

@@ -9,6 +9,7 @@ import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
 import com.crmforlogistics.messagecenter.mapper.OutboxJobMapper;
 import com.crmforlogistics.messagecenter.service.event.EventHub;
+import com.crmforlogistics.messagecenter.service.scheduling.AdaptivePollingScheduler;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
@@ -39,6 +40,7 @@ public class MessageSendApplicationService {
     private final TemplateMessageTextResolver templateTextResolver;
     private final AiTopicActivityRecorder topicActivityRecorder;
     private final ChatAppAccountResolver accountResolver;
+    private final AdaptivePollingScheduler pollingScheduler;
 
     public MessageSendApplicationService(MessageMapper messageMapper,
                                          OutboxJobMapper outboxJobMapper,
@@ -48,7 +50,7 @@ public class MessageSendApplicationService {
                                          ConversationAccessService conversationAccessService,
                                          TemplateMessageTextResolver templateTextResolver) {
         this(messageMapper, outboxJobMapper, statusEventMapper, objectMapper, eventHub,
-                conversationAccessService, templateTextResolver, null, null);
+                conversationAccessService, templateTextResolver, null, null, null);
     }
 
     public MessageSendApplicationService(MessageMapper messageMapper,
@@ -60,7 +62,7 @@ public class MessageSendApplicationService {
                                          TemplateMessageTextResolver templateTextResolver,
                                          AiTopicActivityRecorder topicActivityRecorder) {
         this(messageMapper, outboxJobMapper, statusEventMapper, objectMapper, eventHub,
-                conversationAccessService, templateTextResolver, topicActivityRecorder, null);
+                conversationAccessService, templateTextResolver, topicActivityRecorder, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -72,7 +74,8 @@ public class MessageSendApplicationService {
                                          ConversationAccessService conversationAccessService,
                                          TemplateMessageTextResolver templateTextResolver,
                                          AiTopicActivityRecorder topicActivityRecorder,
-                                         ChatAppAccountResolver accountResolver) {
+                                         ChatAppAccountResolver accountResolver,
+                                         AdaptivePollingScheduler pollingScheduler) {
         this.messageMapper = Objects.requireNonNull(messageMapper);
         this.outboxJobMapper = Objects.requireNonNull(outboxJobMapper);
         this.statusEventMapper = Objects.requireNonNull(statusEventMapper);
@@ -82,6 +85,7 @@ public class MessageSendApplicationService {
         this.templateTextResolver = Objects.requireNonNull(templateTextResolver);
         this.topicActivityRecorder = topicActivityRecorder;
         this.accountResolver = accountResolver;
+        this.pollingScheduler = pollingScheduler;
     }
 
     @Transactional
@@ -97,13 +101,6 @@ public class MessageSendApplicationService {
             accountVersion = account.getVersion() == null ? 0L : account.getVersion();
         }
         var duplicate = messageMapper.findByClientRequestId(
-                command.channelAccountId(), clientRequestId);
-        if (duplicate.isPresent()) {
-            MessageEntity existing = duplicate.get();
-            return new MessageAccepted(existing.getId(), existing.getCurrentStatus(), true);
-        }
-
-        duplicate = messageMapper.findByClientRequestId(
                 command.channelAccountId(), clientRequestId);
         if (duplicate.isPresent()) {
             MessageEntity existing = duplicate.get();
@@ -216,11 +213,24 @@ public class MessageSendApplicationService {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    eventHub.publish("message-new", "{}");
+                    publishMessageNew();
                 }
             });
         } else {
-            eventHub.publish("message-new", "{}");
+            publishMessageNew();
+        }
+    }
+
+    /**
+     * 推送给 SSE 订阅者，并唤醒出站轮询。
+     *
+     * <p>唤醒必须放在事务提交之后：出站任务在另一个线程上消费，提交前唤醒会读到尚未可见的行。
+     * 有了这一步，退避拉长也不会放大发送延迟 —— 新消息落库即刻触发一次 outbox 轮询。
+     */
+    private void publishMessageNew() {
+        eventHub.publish("message-new", "{}");
+        if (pollingScheduler != null) {
+            pollingScheduler.wake(MessageOutboxScheduler.TASK_NAME);
         }
     }
 

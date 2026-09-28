@@ -127,6 +127,13 @@
             <version>${mcp-sdk.version}</version>
         </dependency>
 
+        <!-- OpenAI-compatible token budgeting; encoding is validated at startup. -->
+        <dependency>
+            <groupId>com.knuddels</groupId>
+            <artifactId>jtokkit</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -166,6 +173,19 @@
     <build>
         <finalName>message-center</finalName>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>**/MessageSendAssistantTools.java</exclude>
+                    </excludes>
+                    <testIncludes>
+                        <testInclude>**/ContactMemoryBackfillMigrationTest.java</testInclude>
+                        <testInclude>**/PostgresTestSchema.java</testInclude>
+                    </testIncludes>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

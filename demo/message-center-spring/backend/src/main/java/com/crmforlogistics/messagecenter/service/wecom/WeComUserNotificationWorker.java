@@ -58,19 +58,23 @@ public class WeComUserNotificationWorker {
         return recovered.size();
     }
 
-    public void runAvailable(String workerId, int batchSize) {
+    public int runAvailable(String workerId, int batchSize) {
         Instant now = clock.instant();
+        int processed = 0;
         for (WeComUserNotificationEntity row : notificationMapper.listDue(now, batchSize)) {
             try {
                 if (notificationMapper.claim(row.getId()) != 1) {
                     continue;
                 }
                 dispatch(row);
+                processed++;
             } catch (RuntimeException e) {
                 // One bad row must not stop the rest of the batch; recoverStuck requeues it later.
                 LOG.warn("event=wecom.notification_row_failed notificationId={}", row.getId(), e);
+                processed++;
             }
         }
+        return processed;
     }
 
     private void dispatch(WeComUserNotificationEntity row) {

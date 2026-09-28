@@ -27,12 +27,14 @@ class AssistantAuditServiceTest {
             new AssistantAuditService(mapper, AssistantFixtures.objectMapper());
 
     @Test
-    void everyFieldIsPersistedAsGiven() {
+    void auditStoresMetadataWithoutRawUtteranceOrArgumentValues() {
         UUID conversation = UUID.randomUUID();
-        Map<String, Object> arguments = Map.of("todoId", AssistantFixtures.TODO_QUOTE, "completed", true);
+        Map<String, Object> arguments = Map.of("to", "private@example.test", "body", "sensitive message body",
+                "completed", true);
 
-        service.record(new AssistantAuditService.Entry(AssistantFixtures.USER, conversation, "帮我标记完成那条",
-                "call", "todo.complete", arguments, "CONFIRM", "PENDING", null, "deepseek-chat", 812));
+        String utterance = "给 13800138000 发消息，token=secret-value";
+        service.record(new AssistantAuditService.Entry(AssistantFixtures.USER, conversation, utterance,
+                "call", "message.send_email", arguments, "CONFIRM", "PENDING", null, "deepseek-chat", 812));
 
         ArgumentCaptor<AssistantActionAuditEntity> entity =
                 ArgumentCaptor.forClass(AssistantActionAuditEntity.class);
@@ -40,11 +42,13 @@ class AssistantAuditServiceTest {
         AssistantActionAuditEntity saved = entity.getValue();
         assertThat(saved.getUserId()).isEqualTo(AssistantFixtures.USER);
         assertThat(saved.getConversationId()).isEqualTo(conversation);
-        assertThat(saved.getUtterance()).isEqualTo("帮我标记完成那条");
+        assertThat(saved.getUtterance()).contains("sha256:", "chars:" + utterance.length())
+                .doesNotContain("13800138000", "secret-value");
         assertThat(saved.getDecision()).isEqualTo("call");
-        assertThat(saved.getToolName()).isEqualTo("todo.complete");
-        assertThat(saved.getArgumentsJson()).contains("completed");
-        assertThat(saved.getArgumentsDigest()).hasSize(64);
+        assertThat(saved.getToolName()).isEqualTo("message.send_email");
+        assertThat(saved.getArgumentsJson()).contains("completed", "body", "to")
+                .doesNotContain("private@example.test", "sensitive message body");
+        assertThat(saved.getArgumentsDigest()).isEqualTo(service.digest(arguments));
         assertThat(saved.getPolicy()).isEqualTo("CONFIRM");
         assertThat(saved.getOutcome()).isEqualTo("PENDING");
         assertThat(saved.getModel()).isEqualTo("deepseek-chat");
@@ -65,14 +69,14 @@ class AssistantAuditServiceTest {
     }
 
     @Test
-    void theUtteranceIsTruncatedToTheColumnWidth() {
+    void longUtteranceHasBoundedMetadataButHashesTheWholeInput() {
         service.record(new AssistantAuditService.Entry(AssistantFixtures.USER, null, "x".repeat(3000),
                 "reply", null, null, null, "ANSWERED", null, "m", 1));
 
         ArgumentCaptor<AssistantActionAuditEntity> entity =
                 ArgumentCaptor.forClass(AssistantActionAuditEntity.class);
         verify(mapper).insert(entity.capture());
-        assertThat(entity.getValue().getUtterance()).hasSize(2000);
+        assertThat(entity.getValue().getUtterance()).contains("chars:3000", "sha256:").hasSizeLessThan(2000);
     }
 
     /** 摘要必须与 map 的插入顺序无关，否则「同一个动作」会得到两个不同的 digest。 */
@@ -99,6 +103,19 @@ class AssistantAuditServiceTest {
     void noArgumentsMeansNoDigest() {
         assertThat(service.digest(null)).isNull();
         assertThat(service.digest(Map.of())).isNull();
+    }
+
+    @Test
+    void argumentStructureOmitsNestedAndCollectionValues() {
+        service.record(new AssistantAuditService.Entry(AssistantFixtures.USER, null, null,
+                "call", "tool", Map.of("nested", Map.of("password", "hidden-secret"),
+                        "recipients", List.of("private@example.test")), "AUTO", "EXECUTED", null, "m", 1));
+
+        ArgumentCaptor<AssistantActionAuditEntity> entity =
+                ArgumentCaptor.forClass(AssistantActionAuditEntity.class);
+        verify(mapper).insert(entity.capture());
+        assertThat(entity.getValue().getArgumentsJson()).contains("nested", "recipients")
+                .doesNotContain("password", "hidden-secret", "private@example.test");
     }
 
     /**

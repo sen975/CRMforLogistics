@@ -31,6 +31,9 @@ public class ChannelAccountEntity {
     private String encryptedConfig;
     private UUID providerScopeId;
     private Instant lastSyncedAt;
+    private String templateSyncStatus;
+    private Instant templateLastSyncedAt;
+    private String templateLastErrorCode;
     private Instant createdAt;
     private Instant updatedAt;
     private Instant deletedAt;
@@ -156,6 +159,18 @@ public class ChannelAccountEntity {
     public void setLastSyncedAt(Instant lastSyncedAt) {
         this.lastSyncedAt = lastSyncedAt;
     }
+
+    public String getTemplateSyncStatus() { return templateSyncStatus; }
+
+    public void setTemplateSyncStatus(String templateSyncStatus) { this.templateSyncStatus = templateSyncStatus; }
+
+    public Instant getTemplateLastSyncedAt() { return templateLastSyncedAt; }
+
+    public void setTemplateLastSyncedAt(Instant templateLastSyncedAt) { this.templateLastSyncedAt = templateLastSyncedAt; }
+
+    public String getTemplateLastErrorCode() { return templateLastErrorCode; }
+
+    public void setTemplateLastErrorCode(String templateLastErrorCode) { this.templateLastErrorCode = templateLastErrorCode; }
 
     public Instant getCreatedAt() {
         return createdAt;

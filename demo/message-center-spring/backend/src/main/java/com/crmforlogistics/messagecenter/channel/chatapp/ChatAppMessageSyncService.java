@@ -7,8 +7,11 @@ import com.aliyun.sdk.service.cams20200606.AsyncClient;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
+import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.SyncCursorMapper;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppPollingFailureInboxService;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppHistoryReconciliationResult;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessagePeerReconciliationService;
 import com.crmforlogistics.messagecenter.service.chatapp.PeerReconciliationModels.PeerReconciliationCommand;
@@ -29,6 +32,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
@@ -39,39 +45,88 @@ public class ChatAppMessageSyncService {
     private static final Logger LOG = LoggerFactory.getLogger(ChatAppMessageSyncService.class);
     private static final int MAX_PAGES = 50;
     private static final int PAGE_SIZE = 100;
+    private static final Duration DEFAULT_API_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration INITIAL_SYNC_WINDOW = Duration.ofDays(30);
+    private static final Duration SYNC_OVERLAP = Duration.ofMinutes(2);
+    private static final Duration ROUND_BUDGET = Duration.ofSeconds(90);
 
     private final ChannelAccountMapper channelAccountMapper;
     private final ChatAppPollingProjector pollingProjector;
     private final ChatAppMessagePeerReconciliationService peerReconciliationService;
     private final ChatAppAccountCredentialsResolver credentialsResolver;
     private final Supplier<AsyncClient> clientSupplier;
+    private final Duration apiTimeout;
+    private final SyncCursorMapper syncCursorMapper;
+    private final ChatAppPollingFailureInboxService failureInbox;
     private final Set<UUID> runningHistoryAccounts = ConcurrentHashMap.newKeySet();
 
     @Autowired
     public ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
                                      ChatAppPollingProjector pollingProjector,
                                      ChatAppMessagePeerReconciliationService peerReconciliationService,
-                                     ChatAppAccountCredentialsResolver credentialsResolver) {
-        this(channelAccountMapper, pollingProjector, peerReconciliationService,
-                credentialsResolver, null);
+                                     ChatAppAccountCredentialsResolver credentialsResolver,
+                                     AppConfig config,
+                                     SyncCursorMapper syncCursorMapper,
+                                     ChatAppPollingFailureInboxService failureInbox) {
+        this(channelAccountMapper, pollingProjector, peerReconciliationService, credentialsResolver,
+                null, Duration.ofSeconds(Math.max(1, config.chatappApiTimeoutSeconds())), syncCursorMapper, failureInbox);
+    }
+
+    ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
+                              ChatAppPollingProjector pollingProjector,
+                              ChatAppMessagePeerReconciliationService peerReconciliationService,
+                              ChatAppAccountCredentialsResolver credentialsResolver) {
+        this(channelAccountMapper, pollingProjector, peerReconciliationService, credentialsResolver,
+                null, DEFAULT_API_TIMEOUT, null);
     }
 
     ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
                               ChatAppPollingProjector pollingProjector,
                               ChatAppMessagePeerReconciliationService peerReconciliationService,
                               ChatAppAccountCredentialsResolver credentialsResolver,
-                              Supplier<AsyncClient> clientSupplier) {
+                              Supplier<AsyncClient> clientSupplier,
+                              Duration apiTimeout) {
+        this(channelAccountMapper, pollingProjector, peerReconciliationService, credentialsResolver,
+                clientSupplier, apiTimeout, null);
+    }
+
+    ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
+                              ChatAppPollingProjector pollingProjector,
+                              ChatAppMessagePeerReconciliationService peerReconciliationService,
+                              ChatAppAccountCredentialsResolver credentialsResolver,
+                              Supplier<AsyncClient> clientSupplier,
+                              Duration apiTimeout,
+                              SyncCursorMapper syncCursorMapper) {
+        this(channelAccountMapper, pollingProjector, peerReconciliationService, credentialsResolver,
+                clientSupplier, apiTimeout, syncCursorMapper, null);
+    }
+
+    ChatAppMessageSyncService(ChannelAccountMapper channelAccountMapper,
+                              ChatAppPollingProjector pollingProjector,
+                              ChatAppMessagePeerReconciliationService peerReconciliationService,
+                              ChatAppAccountCredentialsResolver credentialsResolver,
+                              Supplier<AsyncClient> clientSupplier,
+                              Duration apiTimeout,
+                              SyncCursorMapper syncCursorMapper,
+                              ChatAppPollingFailureInboxService failureInbox) {
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
         this.pollingProjector = Objects.requireNonNull(pollingProjector);
         this.peerReconciliationService = Objects.requireNonNull(peerReconciliationService);
         this.credentialsResolver = Objects.requireNonNull(credentialsResolver);
         this.clientSupplier = clientSupplier;
+        this.apiTimeout = Objects.requireNonNull(apiTimeout);
+        this.syncCursorMapper = syncCursorMapper;
+        this.failureInbox = failureInbox;
     }
 
     public SyncResultRecord runOnce() {
         long started = System.nanoTime();
-        SyncResultRecord total = new SyncResultRecord(0, 0, 0, 0, 0, 0, 0);
+        SyncResultRecord total = new SyncResultRecord(0, 0, 0, 0, 0, 0, 0, false);
         for (ChannelAccountEntity account : channelAccountMapper.selectActiveChatAppAccountsForSync()) {
+            if (Duration.ofNanos(System.nanoTime() - started).compareTo(ROUND_BUDGET) >= 0) {
+                LOG.warn("ChatApp message polling round budget reached; remaining accounts deferred");
+                break;
+            }
             total = total.plus(syncAccount(account));
         }
         return total.withDurationMs(elapsedMs(started));
@@ -92,6 +147,9 @@ public class ChatAppMessageSyncService {
         }
         List<ChannelAccountEntity> accounts =
                 channelAccountMapper.findByOwnerAndChannelType(ownerId, "chatapp");
+        if (accounts.isEmpty()) {
+            accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "whatsapp");
+        }
         if (accounts.size() != 1) {
             throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
         }
@@ -141,11 +199,22 @@ public class ChatAppMessageSyncService {
         int skipped = 0;
         int contactsProjected = 0;
         int contactProjectionSkipped = 0;
+        boolean incomplete = false;
         Map<String, Integer> skipReasons = new LinkedHashMap<>();
         long endTime = System.currentTimeMillis();
-        long startTime = endTime - TimeUnit.DAYS.toMillis(30);
+        Instant cursorTimestamp = syncCursorMapper == null ? null
+                : syncCursorMapper.selectCursor(account.getId(), "CHATAPP_MESSAGES", "default")
+                .map(com.crmforlogistics.messagecenter.channel.chatapp.ChannelSyncCursorEntity::getCursorTimestamp)
+                .orElse(null);
+        long startTime = cursorTimestamp == null
+                ? endTime - INITIAL_SYNC_WINDOW.toMillis()
+                : Math.min(endTime - 1,
+                cursorTimestamp.toEpochMilli() - SYNC_OVERLAP.toMillis());
+        int pageIndex = 0;
+        String stage = "CLIENT_CREATE";
         try (AsyncClient client = createClient(credentials)) {
-            for (int pageIndex = 1; pageIndex <= MAX_PAGES; pageIndex++) {
+            for (pageIndex = 1; pageIndex <= MAX_PAGES; pageIndex++) {
+                stage = "REQUEST_BUILD";
                 ListChatappMessageRequest request = ListChatappMessageRequest.builder()
                         .custSpaceId(credentials.custSpaceId())
                         .channelType("whatsapp")
@@ -157,13 +226,17 @@ public class ChatAppMessageSyncService {
                                 .size((long) PAGE_SIZE)
                                 .build())
                         .build();
-                ListChatappMessageResponse response = client.listChatappMessage(request).get();
+                stage = "LIST_CHATAPP_MESSAGE_WAIT";
+                ListChatappMessageResponse response = client
+                        .listChatappMessage(request)
+                        .get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
                 ListChatappMessageResponseBody body = response.getBody();
                 if (body == null || body.getData() == null || body.getData().isEmpty()) break;
 
                 List<ListChatappMessageResponseBody.Data> rows = body.getData();
                 pages++;
                 fetched += rows.size();
+                boolean pageDurable = true;
                 for (ListChatappMessageResponseBody.Data row : rows) {
                     try {
                         ChatAppPollingProjector.ProjectionResult result =
@@ -181,21 +254,68 @@ public class ChatAppMessageSyncService {
                         skipped++;
                         contactProjectionSkipped++;
                         addSkipReason(skipReasons, projectionFailureCode(error));
+                        if (failureInbox != null) {
+                            failureInbox.record(account.getId(), row, projectionFailureCode(error));
+                        } else {
+                            pageDurable = false;
+                        }
                     }
                 }
+                if (pageDurable) {
+                    persistWatermark(account.getId(), rows);
+                } else {
+                    LOG.warn("ChatApp polling watermark held because projection failure was not durably recorded: accountId={} page={}",
+                            account.getId(), pageIndex);
+                }
                 if (rows.size() < PAGE_SIZE) break;
+                if (pageIndex == MAX_PAGES) incomplete = true;
             }
         } catch (Exception error) {
-            String code = pollingFailureCode(error);
-            LOG.error("ChatApp message polling failed: code={}", code);
+            PollingFailureDiagnostic diagnostic = diagnosePollingFailure(error);
+            LOG.error("ChatApp message polling failed: accountId={} code={} stage={} page={} "
+                            + "exceptionType={} source={} rootCauseType={} rootCauseMessage={}",
+                    account.getId(), diagnostic.code(), stage, pageIndex,
+                    diagnostic.exceptionType(), diagnostic.source(), diagnostic.rootCauseType(),
+                    diagnostic.rootCauseMessage());
+            String code = diagnostic.code();
             throw new IllegalStateException(code, error);
         }
         long durationMs = elapsedMs(started);
         LOG.info("ChatApp message polling: pages={} fetched={} saved={} skipped={} contactsProjected={} contactProjectionSkipped={} skipReasons={} durationMs={}",
                 pages, fetched, saved, skipped, contactsProjected, contactProjectionSkipped,
                 skipReasons, durationMs);
+        if (incomplete) {
+            LOG.warn("ChatApp message polling reached page budget: accountId={} maxPages={}",
+                    account.getId(), MAX_PAGES);
+        }
         return new SyncResultRecord(pages, fetched, saved, skipped, durationMs,
-                contactsProjected, contactProjectionSkipped);
+                contactsProjected, contactProjectionSkipped, incomplete);
+    }
+
+    private void persistWatermark(UUID accountId, List<ListChatappMessageResponseBody.Data> rows) {
+        if (syncCursorMapper == null || rows == null || rows.isEmpty()) return;
+        ListChatappMessageResponseBody.Data latest = rows.stream()
+                .filter(row -> parseSendTime(row.getSendTime()) != null)
+                .max(java.util.Comparator
+                        .comparing((ListChatappMessageResponseBody.Data row) -> parseSendTime(row.getSendTime()))
+                        .thenComparing(row -> firstNonBlank(row.getMessageId(), row.getUniqueMessageId())))
+                .orElse(null);
+        if (latest == null) return;
+        Instant timestamp = parseSendTime(latest.getSendTime());
+        String messageId = firstNonBlank(latest.getMessageId(), latest.getUniqueMessageId());
+        String cursorValue = timestamp.toEpochMilli() + "|" + messageId;
+        syncCursorMapper.upsertCursor(accountId, "CHATAPP_MESSAGES", "default", cursorValue, timestamp);
+    }
+
+    private static Instant parseSendTime(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            long value = Long.parseLong(raw.trim());
+            return value > 100_000_000_000L ? Instant.ofEpochMilli(value) : Instant.ofEpochSecond(value);
+        } catch (NumberFormatException ignored) {
+            try { return Instant.parse(raw.trim()); }
+            catch (Exception ignoredAgain) { return null; }
+        }
     }
 
     private ChatAppHistoryReconciliationResult reconcileHistory(
@@ -211,11 +331,17 @@ public class ChatAppMessageSyncService {
         int failed = 0;
         int identitiesCreated = 0;
         List<ChatAppHistoryReconciliationResult.Failure> failures = new ArrayList<>();
+        int pageIndex = 0;
+        String stage = "CLIENT_CREATE";
         try (AsyncClient client = createClient(credentials)) {
-            for (int pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
+            for (pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
+                stage = "REQUEST_BUILD";
                 ListChatappMessageRequest request = historyRequest(
                         credentials, startTime, endTime, pageIndex);
-                ListChatappMessageResponse response = client.listChatappMessage(request).get();
+                stage = "LIST_CHATAPP_MESSAGE_WAIT";
+                ListChatappMessageResponse response = client
+                        .listChatappMessage(request)
+                        .get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
                 ListChatappMessageResponseBody body = response.getBody();
                 if (body == null || body.getData() == null || body.getData().isEmpty()) break;
                 List<ListChatappMessageResponseBody.Data> rows = body.getData();
@@ -249,9 +375,13 @@ public class ChatAppMessageSyncService {
                 if (rows.size() < PAGE_SIZE) break;
             }
         } catch (Exception error) {
-            String code = pollingFailureCode(error);
-            LOG.error("ChatApp history reconciliation failed: accountId={} code={}",
-                    account.getId(), code);
+            PollingFailureDiagnostic diagnostic = diagnosePollingFailure(error);
+            LOG.error("ChatApp history reconciliation failed: accountId={} code={} stage={} page={} "
+                            + "exceptionType={} source={} rootCauseType={} rootCauseMessage={}",
+                    account.getId(), diagnostic.code(), stage, pageIndex,
+                    diagnostic.exceptionType(), diagnostic.source(), diagnostic.rootCauseType(),
+                    diagnostic.rootCauseMessage());
+            String code = diagnostic.code();
             throw new IllegalStateException(code, error);
         }
         return new ChatAppHistoryReconciliationResult(
@@ -302,7 +432,9 @@ public class ChatAppMessageSyncService {
                 .region(credentials.region())
                 .credentialsProvider(createCredentialsProvider(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(credentials.endpoint()))
+                        .setEndpointOverride(credentials.endpoint())
+                        .setConnectTimeout(apiTimeout)
+                        .setResponseTimeout(apiTimeout))
                 .build();
     }
 
@@ -329,7 +461,51 @@ public class ChatAppMessageSyncService {
         counts.merge(code, 1, Integer::sum);
     }
 
+    static PollingFailureDiagnostic diagnosePollingFailure(Exception error) {
+        Throwable root = rootCause(error);
+        String source;
+        if (containsCause(error, TimeoutException.class)) {
+            source = "CLIENT_FUTURE_WAIT";
+        } else if (root.getClass().getName().contains("HttpTimeoutException")
+                || root.getMessage() != null && root.getMessage().toLowerCase().contains("timeout")) {
+            source = "SDK_HTTP_TIMEOUT";
+        } else if (error instanceof CompletionException || error instanceof ExecutionException) {
+            source = "SDK_COMPLETION";
+        } else {
+            source = "UNKNOWN";
+        }
+        return new PollingFailureDiagnostic(
+                pollingFailureCode(error), source, error.getClass().getName(),
+                root.getClass().getName(), diagnosticMessage(root.getMessage()));
+    }
+
+    private static boolean containsCause(Throwable error, Class<? extends Throwable> type) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (type.isInstance(current)) return true;
+        }
+        return false;
+    }
+
+    private static Throwable rootCause(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private static String diagnosticMessage(String message) {
+        if (message == null || message.isBlank()) return "";
+        String sanitized = message.replaceAll(
+                "(?i)(accesskeyid|accesskeysecret|authorization|signature|securitytoken|token|secret|password)\\s*[:=]\\s*[^\\s,;]+",
+                "$1=<redacted>");
+        return sanitized.length() > 512 ? sanitized.substring(0, 512) : sanitized;
+    }
+
     private static String pollingFailureCode(Exception error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof TimeoutException) return "CHATAPP_API_TIMEOUT";
+        }
         String message = error.getMessage();
         if (message != null && message.matches("CHATAPP_[A-Z0-9_]+")) return message;
         return "CHATAPP_MESSAGE_HISTORY_SYNC_FAILED";
@@ -342,10 +518,20 @@ public class ChatAppMessageSyncService {
         return "";
     }
 
+    record PollingFailureDiagnostic(String code, String source, String exceptionType,
+                                    String rootCauseType, String rootCauseMessage) { }
+
     public record SyncResultRecord(int pages, int fetched, int saved, int skipped, long durationMs,
-                                   int contactsProjected, int contactProjectionSkipped) {
+                                   int contactsProjected, int contactProjectionSkipped,
+                                   boolean incomplete) {
         public SyncResultRecord(int pages, int fetched, int saved, int skipped, long durationMs) {
-            this(pages, fetched, saved, skipped, durationMs, 0, 0);
+            this(pages, fetched, saved, skipped, durationMs, 0, 0, false);
+        }
+
+        public SyncResultRecord(int pages, int fetched, int saved, int skipped, long durationMs,
+                                int contactsProjected, int contactProjectionSkipped) {
+            this(pages, fetched, saved, skipped, durationMs,
+                    contactsProjected, contactProjectionSkipped, false);
         }
 
         private SyncResultRecord plus(SyncResultRecord other) {
@@ -356,12 +542,13 @@ public class ChatAppMessageSyncService {
                     skipped + other.skipped,
                     durationMs + other.durationMs,
                     contactsProjected + other.contactsProjected,
-                    contactProjectionSkipped + other.contactProjectionSkipped);
+                    contactProjectionSkipped + other.contactProjectionSkipped,
+                    incomplete || other.incomplete);
         }
 
         private SyncResultRecord withDurationMs(long totalDurationMs) {
             return new SyncResultRecord(pages, fetched, saved, skipped, totalDurationMs,
-                    contactsProjected, contactProjectionSkipped);
+                    contactsProjected, contactProjectionSkipped, incomplete);
         }
     }
 }

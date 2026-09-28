@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.service.event.EventHub;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.conversation.ConversationAccessService;
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicActivityRecorder;
+import com.crmforlogistics.messagecenter.service.scheduling.AdaptivePollingScheduler;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -47,6 +48,7 @@ class MessageSendApplicationServiceTest {
     @Mock ConversationAccessService conversationAccessService;
     @Mock AiTopicActivityRecorder topicActivityRecorder;
     @Mock ChatAppAccountResolver accountResolver;
+    @Mock AdaptivePollingScheduler pollingScheduler;
 
     @Test
     void persistedOutboundMessageRecordsTopicActivity() {
@@ -203,7 +205,7 @@ class MessageSendApplicationServiceTest {
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
                 new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()),
-                topicActivityRecorder, accountResolver);
+                topicActivityRecorder, accountResolver, pollingScheduler);
 
         service.accept(new MessageSendApplicationService.SendMessageCommand(
                 accountId, conversationId, "text", "request-version",
@@ -231,7 +233,7 @@ class MessageSendApplicationServiceTest {
                 messageMapper, outboxJobMapper, statusEventMapper, new ObjectMapper(), eventHub,
                 conversationAccessService,
                 new TemplateMessageTextResolver(templateMapper, accountMapper, new ObjectMapper()),
-                topicActivityRecorder, accountResolver);
+                topicActivityRecorder, accountResolver, pollingScheduler);
 
         assertThatThrownBy(() -> service.accept(new MessageSendApplicationService.SendMessageCommand(
                 accountId, conversationId, "text", "request-reassigned",

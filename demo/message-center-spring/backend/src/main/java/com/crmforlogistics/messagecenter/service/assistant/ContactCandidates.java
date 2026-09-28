@@ -26,9 +26,9 @@ import java.util.UUID;
  * （详见 {@code ContactCandidateProvider.toItem} 的说明）。角色属于「某人的背景」，
  * 由 {@code contact.brief} 经全字段查询给出。
  *
- * <p>刻意<b>不</b>放联系方式（邮箱、手机号、渠道身份值）：模型不需要知道怎么联系一个人，
- * 将来真要发邮件时，那个工具应当拿 {@code contactRef} 由服务端解析地址 ——
- * 让地址进提示词只是多一次出边界，换不到任何能力。
+ * <p>候选只放经联系人 owner 授权的<b>有界渠道消歧投影</b>：渠道类型、身份值、显示名和账号标签。
+ * 它们用于区分同名联系人或同一联系人绑定的不同渠道，不能作为发送凭证；发送工具仍只接受
+ * {@code contactRef}，由服务端按当前用户重新解析目标。内部 scope、规范化值、数据库 ID 和凭证永远不进入候选。
  */
 public record ContactCandidates(int limit, List<Item> items) implements CandidateSet {
 
@@ -69,7 +69,19 @@ public record ContactCandidates(int limit, List<Item> items) implements Candidat
      * <p>{@code name} 保证非空：显示名为空时退回备注，两者都空时退回 ref。
      * 退回而不是编一个 —— 难看是可接受的，编出来的名字会被用户当事实去核对。
      */
-    public record Item(String id, String name, String remark) {
+    public record Item(String id, String name, String remark, List<Channel> channels) {
+        public Item(String id, String name, String remark) {
+            this(id, name, remark, List.of());
+        }
+
+        public Item {
+            channels = channels == null ? List.of() : List.copyOf(channels);
+        }
+    }
+
+    /** Authorized channel identity shown to the model for contact disambiguation. */
+    public record Channel(String channelType, String identityValue,
+                          String displayName, String accountLabel) {
     }
 
     /** 联系人 id → 候选 id。与会话候选共用同一条拼装路径。 */

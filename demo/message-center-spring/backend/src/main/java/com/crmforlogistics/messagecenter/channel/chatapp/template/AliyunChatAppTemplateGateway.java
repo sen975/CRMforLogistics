@@ -235,7 +235,7 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
             if (data == null) return Optional.empty();
             return Optional.of(new TemplateSnapshot(data.getTemplateCode(), data.getName(), data.getLanguage(),
                     data.getCategory(), reviewStatus(data.getAuditStatus()), data.getAuditStatus(), data.getReason(),
-                    Boolean.TRUE.equals(data.getAllowSend()), detailComponents(data.getComponents()),
+                    templateAllowsSend(data.getAuditStatus(), data.getCategory(), data.getAllowSend()), detailComponents(data.getComponents()),
                     expandExamples(data.getExample()), data.getMessageSendTtlSeconds(), null, null));
         } catch (WhatsAppTemplateException e) {
             throw e;
@@ -340,6 +340,14 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
         Map<String, List<String>> expanded = new LinkedHashMap<>();
         examples.forEach((key, value) -> expanded.put(key, value == null ? List.of() : List.of(value)));
         return expanded;
+    }
+
+    private static boolean templateAllowsSend(String auditStatus, String category, Boolean allowSend) {
+        if (!"pass".equalsIgnoreCase(auditStatus)) {
+            return false;
+        }
+        // CAMS documents AllowSend as meaningful only for Marketing templates.
+        return !"MARKETING".equalsIgnoreCase(category) || Boolean.TRUE.equals(allowSend);
     }
 
     private static List<TemplateComponent> detailComponents(List<GetChatappTemplateDetailResponseBody.Components> components) {

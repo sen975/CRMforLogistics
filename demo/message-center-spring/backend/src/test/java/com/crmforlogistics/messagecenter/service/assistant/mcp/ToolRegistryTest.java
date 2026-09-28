@@ -188,9 +188,38 @@ class ToolRegistryTest {
                 .hasMessageContaining("additionalProperties");
     }
 
+    /**
+     * 「一组引用」忘记绑定候选，也必须起不来 —— 这是把复数后缀加进命名约定的<b>全部意义</b>。
+     *
+     * <p>改之前 {@code isReferenceShaped} 只看 {@code *Id} / {@code *Ref}，于是
+     * {@code topicRefs} 这类参数<b>连这道自检都不触发</b>，而它恰恰是最需要绑定的形状：
+     * 解析器对数组值是逐元素比对候选的，声明一旦漏掉，那层防护就一点都不存在
+     * （单值那路至少还有 {@code *Id} 这条命名约定兜着）。
+     */
     @Test
-    void rejectsDuplicateToolNames() {
-        List<ToolDefinition> duplicated = List.of(
+    void rejectsUnboundPluralReferenceField() {
+        ToolDefinition unbound = new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name("contact.topics_merge")
+                        .title("未绑定的合并声明")
+                        .description("topicRefs 以 Refs 结尾，却没有声明候选集")
+                        .inputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("topicRefs", Map.of("type", "array",
+                                        "items", Map.of("type", "string"))),
+                                "required", List.of("topicRefs"),
+                                "additionalProperties", false))
+                        .build(),
+                (userId, arguments) -> ToolResult.ok("never", Map.of()));
+
+        assertThatThrownBy(() -> new ToolRegistry(List.of(unbound), new ToolInputValidator(), new ObjectMapper()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("topicRefs")
+                .hasMessageContaining(ToolInputValidator.CANDIDATE_SET);
+    }
+
+    @Test
+    void rejectsDuplicateToolNames() {        List<ToolDefinition> duplicated = List.of(
                 tools.todoCreateTool(), tools.todoCreateTool());
 
         assertThatThrownBy(() -> new ToolRegistry(duplicated, new ToolInputValidator(), new ObjectMapper()))
@@ -223,6 +252,106 @@ class ToolRegistryTest {
         assertThatThrownBy(() -> new ToolRegistry(List.of(broken), new ToolInputValidator(), new ObjectMapper()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("date");
+    }
+
+    /**
+     * 声明了校验器不认识的关键字，必须起不来 —— 这是这份白名单的<b>全部意义</b>。
+     *
+     * <p>没有这道门禁时，{@code pattern} 这种写法既不报错也不生效：写它的人以为约束在、
+     * 读代码的人以为约束在，而模型可以随便越界。这类缺失在运行期和普通单测里都看不出来
+     * （工具照常工作），所以宁可起不来。同 {@code rejectsUnboundPluralReferenceField} 的理由。
+     */
+    @Test
+    void rejectsPropertyKeywordThatTheValidatorWouldSilentlyIgnore() {
+        ToolDefinition withPattern = new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name("todo.withPattern")
+                        .title("写了却不生效的约束")
+                        .description("pattern 不在校验器的支持清单里")
+                        .inputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("title", Map.of("type", "string", "pattern", "\\S+")),
+                                "required", List.of("title"),
+                                "additionalProperties", false))
+                        .build(),
+                (userId, arguments) -> ToolResult.ok("never", Map.of()));
+
+        assertThatThrownBy(() -> new ToolRegistry(List.of(withPattern), new ToolInputValidator(), new ObjectMapper()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pattern")
+                .hasMessageContaining("不支持的关键字");
+    }
+
+    /**
+     * {@code format} 的<b>取值</b>也要在启动期拦：key 认得、值不认得时，约束同样等于不存在。
+     *
+     * <p>只做 key 白名单会漏掉这一半 —— {@code format} 被放行了，于是 {@code format: "email"}
+     * 看起来完全合法，而它和「写了个 {@code pattern}」是同一个错误。
+     */
+    @Test
+    void rejectsFormatValueTheValidatorDoesNotImplement() {
+        ToolDefinition withEmailFormat = new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name("contact.withEmailFormat")
+                        .title("不支持的 format 取值")
+                        .description("校验器只实现了 date / time")
+                        .inputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("email", Map.of("type", "string", "format", "email")),
+                                "required", List.of("email"),
+                                "additionalProperties", false))
+                        .build(),
+                (userId, arguments) -> ToolResult.ok("never", Map.of()));
+
+        assertThatThrownBy(() -> new ToolRegistry(List.of(withEmailFormat), new ToolInputValidator(), new ObjectMapper()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("format")
+                .hasMessageContaining("email");
+    }
+
+    /**
+     * 数组元素 schema 内要单独再查一次：{@code items} 支持的关键字集合比字段级更小。
+     *
+     * <p>漏掉这次检查的形状很具体 —— {@code pattern} 写在 {@code items} 里，
+     * 外层字段的 key 集合看起来完全正常，于是元素级那条假保证一路通过启动。
+     */
+    @Test
+    void rejectsUnsupportedKeywordInsideArrayItems() {
+        ToolDefinition badItems = new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name("contact.withBadTags")
+                        .title("元素级声明写错")
+                        .description("items 里用了元素级不支持的 pattern")
+                        .inputSchema(Map.of(
+                                "type", "object",
+                                "properties", Map.of("tags", Map.of(
+                                        "type", "array",
+                                        "minItems", 1,
+                                        "items", Map.of("type", "string", "pattern", "\\S+"))),
+                                "required", List.of("tags"),
+                                "additionalProperties", false))
+                        .build(),
+                (userId, arguments) -> ToolResult.ok("never", Map.of()));
+
+        assertThatThrownBy(() -> new ToolRegistry(List.of(badItems), new ToolInputValidator(), new ObjectMapper()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("properties.tags.items")
+                .hasMessageContaining("pattern");
+    }
+
+    /**
+     * 真实的 todo 声明必须过得了这道新门禁 —— 它们正是触发这次改动的样本：
+     * {@code date} / {@code time} 从第一天起就写着 {@code format}，而校验器当时不认这个关键字。
+     *
+     * <p>这条断言防的是「门禁上线把既有工具一起拦死」。放行 {@code format} 的前提是校验器
+     * 真的实现了它（{@code ToolInputValidatorTest} 里有对应的 date/time 用例），
+     * 而不是把白名单放宽成「什么都放」—— 后者会让这道门禁变成纯装饰。
+     */
+    @Test
+    void theRealTodoDeclarationsPassTheKeywordGate() {
+        // registry 字段本身就是这四个工具构成的注册表：构造没抛异常 = 门禁放行了它们。
+        assertThat(registry.find(TodoAssistantTools.TOOL_CREATE)).isPresent();
+        assertThat(registry.find(TodoAssistantTools.TOOL_UPDATE)).isPresent();
     }
 
     @SuppressWarnings("unchecked")

@@ -28,6 +28,7 @@ public class ContactMemoryTriggerEventEntity {
     private String lastFailureMessage;
     private Instant createdAt;
     private Instant appliedAt;
+    private Instant memoryAppliedAt;
 
     public UUID getId() { return id; }
     public void setId(UUID value) { id = value; }
@@ -65,4 +66,6 @@ public class ContactMemoryTriggerEventEntity {
     public void setCreatedAt(Instant value) { createdAt = value; }
     public Instant getAppliedAt() { return appliedAt; }
     public void setAppliedAt(Instant value) { appliedAt = value; }
+    public Instant getMemoryAppliedAt() { return memoryAppliedAt; }
+    public void setMemoryAppliedAt(Instant value) { memoryAppliedAt = value; }
 }

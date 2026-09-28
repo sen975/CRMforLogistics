@@ -13,9 +13,12 @@
 
 **没有发现 P1 缺陷。** 5 条值得记的发现里，最有价值的一条是**我自己上一轮引入的**：把「历史以库为准」这条规则放进了 controller，而不是编排层（§3.1）。它目前只有一个调用点，所以不是活 bug，但它是一处**将来会静默退化的接缝**。
 
-> **修复进度（2026-09-23）**：§3.1（P2-1）**已修**，见该节末尾的「已修」块。
-> §3.2 / §3.3 与两条 P3 仍未动 —— 它们是「现在正确、将来静默退化」或「该记下来」的性质，
-> 不构成阻塞。本文其余部分保持评审当时的原样（**行号是修复前的快照**），
+> **修复进度（2026-09-23）**：§3.1（P2-1）**已修**；同日又修掉了三条 ——
+> §3.2（关键字白名单门禁 + **真的实现** `format`）、§3.3（截断收口 + 给模型看的截断补标记）、
+> §3.5（`maxReadTurns` 的非单调性写进配置注释）。各自见该节末尾的「已修」块。
+> **仍未动**：§3.4（供应商失败在库里没有痕迹）、§3.6（提示词没有总量口径）、§3.7（小事三则）——
+> 都是「该记下来」的性质，不构成阻塞。
+> 本文其余部分保持评审当时的原样（**行号是修复前的快照**），
 > 便于把「当时的判断」与「之后的改动」分开读。
 
 **三条结构性优点值得保留并对抗将来的「优化」冲动**（§4）：候选集抽象、策略双清单 + 启动自检、确认路径与提问路径分离。这三条都有「删掉它不会有任何测试变红、但会静默失去一道防线」的性质，因此它们的价值必须写在文档里。
@@ -45,8 +48,13 @@
 | 15 | 轮次上限用尽时诚实终止 | `exhausted()` 直接返回，**不再问模型**（195-205），审计记 `READ/REJECTED` | `whenTheReadBudgetRunsOutTheTurnEndsHonestlyInsteadOfAskingAgain`、`zeroReadTurnsDisablesTheReadTrackEntirely` |
 | 16 | 提示词硬规则是受测件 | 10 条硬规则 + 分隔符声明都在 `buildSystemPrompt`（116-129）；说明段用占位词 `名字`，与具名锚点 `<<<CANDIDATES:todo` 天然不撞 | `AssistantPromptBuilderTest` 16 例 |
 | 17 | 时区必须显式取 | `ZonedDateTime.now(clock.withZone(zone))`，zone 取自 `app.todo-reminder-zone`（与提醒链路同源，刻意不新增配置） | `AssistantContextBuilderTest` 6 例 |
+| 19 | **不可撤回的外向动作必须确认，且收件人不经模型参数** | 两个发送工具都不进任何白名单 ⇒ `AssistantActionPolicy` 一律 CONFIRM；schema 里**没有** `to`/`recipient` 字段，地址由 `OutboundMessageService.resolve(userId, contactId, channelType)` 从联系人档案解析（owner 谓词在 SQL 里） | `MessageSendAssistantToolsTest` 13 例 —— 其中最关键的**不是**「地址取对了」而是**参数 key 集合**（`containsExactlyInAnyOrder("contactRef","subject","body")`）：有人顺手加个 `to` 会立刻红。**必须确认**这件事直接问 `AssistantActionPolicy` 要答案，不采信注解 |
 | 18 | 合规口径 b（只出结构化事实与摘要） | 全包 grep `inboundMessages / callTranscripts / transcripts / last_text` **零代码命中**（只在类注释里作为「为什么不这么做」的依据出现）；联系人走 `listStableContext`，会话投影显式排除 `last_text` | `ContactBriefProviderTest` 11 例（含最坏情况不触发截断） |
 
+| 20 | 联系人记忆的「重算」是**增量**语义，且判据只有一份 | 手动入口的判据写在 SQL 里、与自动路径**同源**（`ContactMemoryStateMapper.markDirtyForRecompute` ↔ `markStaleDirty`，同为 `last_inbound_at > split_part(last_success_cursor,'|',1)`），只限定单个联系人、额外放行 `FAILED` | `ContactMemoryStateMapperSqlTest.theManualPathSharesTheSameJudgeAsTheAutomaticPath`（两份 SQL 对钉，改一侧即红）+ `ContactMemoryRecomputeServiceTest` 8 例 |
+| 21 | 「有没有东西可算」**不由调用方给的时间决定** | `markDirtyForRecompute(owner, contact, now)` 的签名里**没有** `lastInboundAt`：SQL 自己取 `max(m.received_at)`。参数存在一天，就会有人传 `now`，而 `now` 会踩 `complete()` 的 `last_inbound_at > processedAt ⇒ DIRTY` 死循环（每轮白烧 LLM、画像反复改写，**日志与状态看起来全正常**） | `doesNotContain("#{inboundAt}")` + **对照组**（`markDirty` 确实含 `#{inboundAt}`）+ 真库断言 `lastInboundAt == 消息表的 received_at` |
+| 22 | **工具清单 outranks 历史里的自我否认**（提示词硬规则 11） | 模型会照抄自己旧轮次的「我做不到」而不看工具清单（2026-09-23 同进程 A/B 实证：空历史答「可以」，带否认历史答「做不到」）。硬规则 11 写明「工具清单是当前能力的唯一事实来源……不要照抄历史的否认」 | `AssistantPromptBuilderTest.theToolListOutranksTheModelsOwnPastDenials` 存在性断言 + 探针 70 格全安全（新规则未破坏对抗面）+ 修复后 A/B 对照：否认历史组也能答出「能触发重算」 |
+| 23 | **写工具确认卡片的「改前」必须是库里的真值**；「选哪个工具」的纠偏写在工具描述里 | `update_profile` 卡片的改前曾一律「当前未知」，用户点确认时看不到自己即将覆盖掉的昵称（2026-09-23 事故：模型把「改备注」错调成 `contact.update_profile`）。现在 `profileChanges` 经 `ContactMapper.findByIdAndOwner`（与重算入口同一归属判据）取显示名/职务真值，查不到才留 null；纠偏文案写在两个工具的 description 里（模型只看得到声明） | `AssistantPendingActionServiceTest.aProfileCardShowsTheDisplayNameTheServerWillOverwrite` + `aProfileCardLeavesTheBeforeUnknownWhenTheContactIsNotYoursOrIsMissing` + `ContactWriteAssistantToolsTest.theProfileToolDescriptionRedirectsRemarkRequestsToTheRemarkTool` |
 **两条只在注释上成立（见 §3.2、§3.3）**：#18 的「只读工具返回值不得越出口径 b」在 `AssistantActionPolicy:89-90` 自认是人工 checklist；#7 的「不认识的关键字要报错」只覆盖了 `type` 的取值。
 
 ---
@@ -123,6 +131,28 @@ web 切片里那份只服务于它的 `AssistantMessageLimitTestConfiguration` �
 
 **建议**：在 `ToolRegistry.selfCheck` 里对每个 property 的 key 集合做白名单（`type / description / maxLength / enum / x-candidateSet`），出现其他 key 即启动失败。这与该类既有的哲学（「宁可起不来」）完全一致，且能挡住**将来**有人写了 `pattern` 却以为它在生效。
 
+**已修（2026-09-23）**：
+
+1. 白名单落地为 `ToolInputValidator.SUPPORTED_PROPERTY_KEYS` / `SUPPORTED_ITEM_KEYS`（代码权威，
+   实现方与消费方同一处定义）+ `rejectUnsupportedKeys(...)`；由 `ToolRegistry.selfCheck` 对
+   每个字段、以及 `items` 内的元素 schema 逐个比对，出现清单外的 key 即启动失败。
+2. **上面「当前零触发」这句是错的。** `todo.create` 的 `date` / `time` 从第一天起就写着
+   `format`，而本类当时不认这个关键字 —— 那两条声明的实际效果是**零**。真正拦住
+   「2026-13-45」与「明天下午」的是服务层的 `LocalDate.parse` / `LocalTime.parse`，
+   外加工具侧把 `DateTimeParseException` 收成 `INVALID_ARGUMENT` 的兜底（`TodoAssistantTools.guarded`）。
+   ⇒ 所以这次不是「加个门禁就完事」，而是**把 `format(date|time)` 真的实现了**：
+      `checkFormat` 与服务层用同一个解析器、同样先 `trim`，判据**等价而非更严**
+      （校验层若比服务层更严，就成了在校验层偷偷改业务规则）。
+   同时给 `format` 的**取值**也加了启动期检查 —— `format: "email"` 与「写了个 `pattern`」
+   是同一个错误，只做 key 白名单会漏掉这一半。
+3. 白名单刻意**保守**：它也会拒掉 `title` / `examples` 这类**纯注释**关键字（无约束语义，
+   写了不生效也不产生假保证）。代价是想写 `title` 的人要改一行；收益是不会漏掉任何一个
+   约束类关键字。两个方向的代价不对称 —— 漏掉约束类是**静默**的，误拒注释类是**响亮**的。
+4. 守卫：`ToolRegistryTest` +4 例（写了 `pattern` 起不来 / `format: "email"` 起不来 /
+   `items` 内写 `pattern` 起不来 / 真实 todo 声明能过门禁，防「门禁上线把既有工具一起拦死」）；
+   `ToolInputValidatorTest` +4 例（date 与 time 的正反边界、`trim` 判据、没声明 `format`
+   就不该凭空产生约束）。启动自检实测：**19 个真实工具全部通过门禁**。
+
 ### 3.3 P2（一致性）· 「截断必须说出来」这条立场只落实了一半
 
 项目在 observation 那处做得对：`AssistantPromptBuilder.renderResultPayload`（`AssistantPromptBuilder.java:263-267`）截断后补了「…（结果过长已截断，如需更精确的结果请缩小检索范围）」，理由写在 `OBSERVATION_MAX_CHARS` 的注释里（67-69）。
@@ -142,6 +172,28 @@ web 切片里那份只服务于它的 `AssistantMessageLimitTestConfiguration` �
 **另外**：五处都用 `String.substring`，在多字节（emoji / 代理对）上会切出半个字符。低危，但既然要改就该一起收口成一个 `Texts.truncate(value, max)` / `truncateForModel(value, max)`。
 
 **建议**：① `ContactBriefProvider` 加截断标记（`…（已截断）`）；② 五处实现收口成一处工具类。日志/审计/卡片保持裸截断（那是给我们自己看的，标记只添噪音）。
+
+**已修（2026-09-23）**：
+
+1. 新建 `Texts`（`service/assistant/`）：`truncate(value, max)` 裸截断（**代理对安全** ——
+   切点落在高代理项上时退一位，宁可少一个字也不产生半个字符）与
+   `truncateForModel(value, max[, marker])`（追加标记，**标记计入上限**：上限是给模型的预算，
+   不该因为多了句说明就突破）。7 处实现全部收口到它 —— `service/assistant/**` 下带切点的
+   `substring(0, N)` 现在只剩 `Texts` 内部那一处（其余 `substring` 都是 ref 前缀解析）。
+2. **实测是 7 处而不是 5 处**：评审漏了 `ContactCandidateProvider`（候选清单里的备注，60 字）
+   与 `AssistantPromptBuilder` 的显式拼接分支。前者也是给模型看的，但它的用途是**指认对象**
+   （「这是谁」），所以按下面的判据走裸截断。
+3. 加不加标记的判据定成一句话：**模型会不会把它当作一条完整的事实用来回答用户**。
+   据此 —— `ContactBriefProvider` 的画像正文 / 备注 / 事实值 / 话题小结 → **带标记**；
+   显示名 / 职务 / 标签名 / 话题标题 / 事实类别 → 裸截断（它们只用来指认，加标记既不改变
+   判断又让清单变难读）。候选清单备注、确认卡片、回放、审计 → 裸截断（给人看的）。
+4. 一个必须一起改的副作用：`ContactBriefProviderTest.aWorstCaseBriefStillFitsInASingleObservation`
+   原先拿「不含『已截断』」当「整条 observation 没被截断」的**代理判据**；字段自己开始带这个
+   标记之后，该判据会恒假。处理方式是**改判据而不是改文案** —— 换成 `AssistantPromptBuilder`
+   独有的「结果过长」。这条也顺带说明：用一句文案当代理判据，在文案被复用后会静默变成空断言。
+5. 守卫：新建 `TextsTest` 8 例（null 语义 / 未超长原样返回 / 标记计入上限 /
+   上限连标记都放不下时降级为裸截断 / 代理对不切半 / 自定义标记）；
+   `ContactBriefProviderTest` +2 例（画像截断带标记且长度仍等于上限、标识类字段不带标记）。
 
 ### 3.4 P3 · 模型供应商失败在库里**没有任何痕迹**
 
@@ -163,6 +215,18 @@ web 切片里那份只服务于它的 `AssistantMessageLimitTestConfiguration` �
 **所以**：这个配置在 `1` 处有一个反向区间 —— 不是「少一轮」而是「只读能力事实上不可用」。§8 已经写了「回滚用 0」，但 `AssistantConfig.maxReadTurns` 的注释（37-43）没有，`AssistantConfigTest` 也没有锁住这一点。
 
 **建议（分两步）**：现在只需在配置注释里补一句「1 与 0 都不可用于『部分回滚』，回滚请用 0」；干净的做法是**提示词不渲染具体数字**（改成「最多若干次」），让上限只由服务端闸门表达 —— 那样 1 与 3 的差别就只体现在闸门上。后者要重跑 0.3 探针，成本不小，建议与下一次「必须动提示词」的改动合并做。
+
+**已修第一步（2026-09-23）**：
+
+- `AssistantConfig.maxReadTurns` 的 javadoc 补了「**这个旋钮不单调，别拿它做部分回滚**」，
+  连同理由（配 `1` 时模型干脆不检索、直接答「清单里没有」—— 那不是「少查一轮」而是只读能力
+  事实上不可用）与正确做法（回滚用 `0`）。
+- 构造函数里那段「0 是允许的，而且是回滚开关」补了第二句：**1 也允许**，且下界不能顺手提到
+  `2` —— 那会让一个真实跑过探针的档位静默消失。
+- 守卫加在 `AssistantConfigTest`：+2 例（`0` 与 `1` 都必须能配出来、范围外的值构造期抛），
+  并给默认值补了 `maxReadTurns == 3` 的断言 —— **原先这个默认值在测试里完全没有断言**。
+- **第二步（提示词不渲染具体数字）仍未做**，理由不变：要重跑 0.3 探针，应与下一次
+  「必须动提示词」的改动合并。
 
 ### 3.6 P3 · 提示词体积是「各段上限之和」，没有任何一处表达总量
 
@@ -265,3 +329,138 @@ web 切片里那份只服务于它的 `AssistantMessageLimitTestConfiguration` �
 - **未做真实模型调用**：§1 的 16 条里，「模型在自然问法下会不会选对工具」这一类属于模型行为，只有 0.3/B5 探针的实测记录（`deepseek-chat`，顺语义 + 对抗 + 只读轮共 70 次调用，0 危险 0 可疑），本次未复跑。
 - **未走查浏览器**：前端部分（`useAssistant.ts` 三程取号、`historyError` 可见化）在上一轮（`ef2a799c`）有 25 例单测 + `tsc` 把关，但没有真实浏览器走查记录；`trimmedHistory` 刷新即消失这一已知局限仍然在。
 - **§3 的严重度是我一个人的判断**，没有第二个人复核。P2 三条都是「现在不错、下次会错」的性质 —— 若你不同意其中某条该修，理由应当写进本文档，而不是让它消失。
+
+---
+
+## 7 · 补充（2026-09-23 晚）· C5/C6 落地后
+
+本文档写于 C5/C6（`message.send_email` / `message.send_chatapp`）**之前**。那批工具落地后，
+新增了一条不变量（§1 的 #19）和一条不属于「代码正确性」的教训，记在这里。
+
+### 7.1 `send_email` / `send_chatapp` —— 助手第一次造成不可撤回的后果
+
+规格与验收证据见 `specs/2026-09-23-ai-tool-backlog.md` §8。对本文档有两处增量：
+
+- **§1 新增 #19**：不可撤回的外向动作必须确认；**收件地址不做成参数**。
+  这条比「确认卡片显示全文」更硬 —— 前者是流程约束，后者是**结构性约束**：
+  「编造一个收件人」不再是「需要被检出的错误」，而是**无法被表达的行为**。
+- **§5 的用例数已作废**（那节的数字是当时的快照，不只因为本批）。
+  本批实测：助手域相关 10 个测试类定向回归 **155 例 / 0 失败**；全量 **1868 例 / 0 failure / 1 error / 2 skipped**
+  （唯一 error 是 `UserChannelOwnerBackfillSchemaContractTest` 的副本假象）；
+  定向启动 ⇒ `已注册 21 个助手工具`、`助手策略自检通过：只读 7 个、免确认 1 个`。
+
+### 7.2 一条本文档原本覆盖不到的失败模式：**层次放错**
+
+§2 那节核查的是「与既有教训的一致性」，§1 那节守的是「承诺 ↔ 守卫」。
+C5/C6 撞上的是**第三种**：逻辑全对、测试全绿、**但住错了包**。
+
+第一版把「解析收件人 + 转发到渠道」写在 `service.message`，`ArchitectureBoundaryTest` 当场报 **14 条越界**
+（构造器带 `EmailSendService`、返回 `EmailSendService.SendResult`、读 `EmailException.code()`）。
+处置是**搬进 `service.channel`** 并把渠道类型的回执映射掉，**没有加白名单**。
+
+> 教训一句话：**「清单上的 🟢」只说明能力在，不说明它落在对的那一层。**
+> 门禁拦下新代码时，第一反应应该是「它该住在哪一层」，而不是「它算不算例外」。
+
+§6 的诚实声明对本批依然成立并且更强：**没有跑过真实模型调用**，所以「模型会不会在用户说
+『帮我写封回信』时就直接调用发送工具」这件事**没有被验证过** —— 目前只有工具描述里的
+`WHEN_TO_CALL` 与确认卡片两道软硬防线。这是本批最大的未验证面。
+
+---
+
+## 8 · 补充（2026-09-23 晚二）· A6/A7 落地后：`contact.refresh_memory`
+
+规格与验收见 `specs/2026-09-23-ai-tool-backlog.md` §9。对本文档的增量是两条不变量与一处公开冲突面。
+
+### 8.1 §1 新增 #20 —— 「催一下」必须是增量语义
+
+`contact.refresh_memory` 的诚实语义是「把还没折进画像的入站消息尽快处理掉」，
+**不是**「把历史重算一遍」。后者会把同一条消息当**新证据**重复累积（置信度虚高、画像被反复改写）——
+而在代码上它表现为「反正画像变好了」，没有任何断言会失败。所以这个取舍落成了文档，
+而不是靠后来人从方法名里猜。
+
+同族的一半是**判据只能有一份**：手动路径与自动路径共用那条 SQL 判断。
+`theManualPathSharesTheSameJudgeAsTheAutomaticPath` 把两份 SQL 对钉，**改一侧就红** ——
+它是刻意的绊线（§9.5 说明了它在另一任务里会先红，那正是它的用途）。
+
+### 8.2 §1 新增 #21 —— 防线是「参数不存在」，不是「记得别传」
+
+这条与 §7.1 的「收件地址不是参数」是同一个手法，这次护的是一个**静默死循环**：
+`now` 一旦能进 `last_inbound_at`，`complete()` 的
+`last_inbound_at > processedAt ⇒ 状态回到 DIRTY` 就会在每轮跑完后立刻把状态改脏 ——
+每轮白烧一次 LLM、画像反复改写，**而日志、状态、指标全都正常**。
+把参数从签名里删掉，这个错误就**写不出来**；再加一对照组（`markDirty` 确实含 `#{inboundAt}`）
+挡住「顺手把新方法简化成调用 markDirty」。
+
+> 一句话：**能删掉的参数，比能写对的注释可靠。**
+
+### 8.3 一处公开的冲突面（留给 bootstrap 任务）
+
+同日另一任务 `plans/2026-09-23-contact-memory-bootstrap.md` 要改游标语义（连续 keyset page +
+消息级 `memory_applied_at` 回执）并新增 `history_backfill_cursor`。两处交叉：
+
+1. #20 那条判据会被改写 ⇒ 绊线用例先红（设计意图）；
+2. 该计划 Task 5 要加前端「重试」入口 —— 与本批的 `contact.refresh_memory` 是**同一条判据的两个入口**，
+   不要各写一份。
+
+另：该任务的 Gate 0 红灯 `lateInboundMessageBehindSuccessCursorIsStillSentToTheModel`
+**在本文档全量回归里出现，不是本批的回退**（计划原文写明「修复后必须」转绿 ⇒ 现在就该是红的）。
+复核方式与结论见 backlog §9.5。
+
+### 8.4 §5 / §6 的数字更新
+
+- 全量 **1898 例 / 1 failure / 1 error / 2 skipped**（上轮 1868 ⇒ +30，其中本批 +28）。
+  1 error 仍是 `UserChannelOwnerBackfillSchemaContractTest` 的**副本假象**；
+  **1 failure 是另一任务的既有红灯**（见 8.3）。
+- 助手工具数 **21 → 22**；`READ_ONLY_ALLOWLIST` 仍 **7 项**、`AUTO_EXECUTE_ALLOWLIST` 仍 **1 项**。
+  本批只加了 CONFIRM 档 —— 这恰好反向验证了「三档是分开的」：加一个写工具**不会**因为「反正它很安全」
+  而被塞进只读清单（启动自检 + 策略清单两道都在）。
+- 定向启动 ⇒ `已注册 22 个助手工具：… contact.refresh_memory …`、
+  `助手策略自检通过：只读 7 个、免确认 1 个`、`Started App in 3.147 seconds`。
+- §6 的诚实声明继续成立：**仍未跑过真实模型调用**。「模型会不会在用户问『他的标签怎么这么旧』时
+  就自己调重算工具」这件事没有被验证过。
+
+
+## 9 · 补充（2026-09-23 晚三）· 两起真实事故的修复
+
+这两起都不是「想象中的风险」，是当天实机上真实发生、有审计记录的缺陷。
+
+### 9.1 事故一：模型照抄自己旧轮次的否认（历史锚定）
+
+**现象**：用户问「根据邮件内容生成画像和标签」，16:55（新代码已启动、22 个工具在注册表里）
+模型答「我没有这个能力」。取证链：`jcmd VM.class_hierarchy` 确认 `ContactMemoryAssistantTools`
+及其 lambda 已加载 → 新会话探针一口气列出 22 个工具 → **A/B 对照**：同进程同问题，
+空历史答「可以的……触发一次重算」，历史里塞进它 16:12（旧构建时期）的否认就答「做不到」。
+
+**根因**：服务端历史以库为准，旧构建时期的否认回答留在同一会话里，模型**照抄自己**
+而非看系统提示词里的工具清单。这不是装配问题，是提示词缺一条仲裁规则。
+
+**修复**：硬规则 11（不变量 #22）。提示词是安全关键件，按规程走完：
+`AssistantPromptBuilderTest` 断言 + `assistant-prompt-regression.py` 吃**生产提示词**真跑
+（70 次调用 / 危险 0 / 可疑 0）+ 修复后 A/B：否认历史组不再停在否认，能答出
+「做不到直接读邮件写画像，**能触发系统的画像重算**」—— 这恰好是诚实且正确的答案。
+
+**运维教训**：换代升级工具后旧会话不会自动变聪明，**开新会话即恢复**。
+
+### 9.2 事故二：「改备注」被模型调成了 `contact.update_profile`（覆盖昵称）
+
+**现象**（审计流水）：17:06 模型两次调 `update_profile` 把 `displayName` 从渠道同步来的昵称
+覆盖成备注文本；17:08 又两次改回。数据自愈了，缺陷还在：用户说「改备注」时模型选错工具，
+而旧卡片的「改前」一栏是「当前未知」—— **用户点确认时根本看不到自己即将覆盖掉什么**。
+
+**修复（三层各归其位）**：
+
+1. **工具描述**（模型唯一看得到的层）：`update_profile` 明写「显示名通常承载渠道同步来的昵称，
+   改备注用 `contact.update_remark`」；`update_remark` 明写「不会改动显示名」。钉在
+   `theProfileToolDescriptionRedirectsRemarkRequestsToTheRemarkTool`。
+2. **确认卡片**：`profileChanges` 改前值改从 `ContactMapper.findByIdAndOwner` 查库取真值
+   （归属判据与重算入口一致），查不到才留 null —— 「未知好过错值」的原则不变，但
+   「有更好的证据源时必须用」（不变量 #23）。
+3. **数据**：无需人工修 —— 17:08 的两次调用已把昵称改回（`calm1026`），审计可查。
+
+### 9.3 本批验证数字
+
+- 定向 10 类 **148 例 / 0 失败**（含提示词断言、卡片全生命周期、读写工具、策略、注册表）。
+- 探针 `assistant-prompt-regression.py` 吃修复后的生产提示词：**70 次调用 / 危险 0 / 可疑 0**。
+- 定向启动 8110 ⇒ `已注册 22 个助手工具`、`助手策略自检通过：只读 7 个、免确认 1 个`；
+  A/B 对照通过后释放端口，探针账号及关联行清零。
+- 全量回归数字见 §8.4 更新规则（新批 +4 例）。

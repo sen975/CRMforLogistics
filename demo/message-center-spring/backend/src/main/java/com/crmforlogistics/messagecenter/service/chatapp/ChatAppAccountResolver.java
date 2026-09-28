@@ -1,6 +1,8 @@
 package com.crmforlogistics.messagecenter.service.chatapp;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSubmissionContext;
+import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsResolver;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import org.springframework.stereotype.Service;
 
@@ -11,9 +13,28 @@ import java.util.UUID;
 @Service
 public class ChatAppAccountResolver {
     private final ChannelAccountMapper channelAccountMapper;
+    private final ChatAppAccountCredentialsResolver credentialsResolver;
 
     public ChatAppAccountResolver(ChannelAccountMapper channelAccountMapper) {
+        this(channelAccountMapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ChatAppAccountResolver(ChannelAccountMapper channelAccountMapper,
+                                  ChatAppAccountCredentialsResolver credentialsResolver) {
         this.channelAccountMapper = Objects.requireNonNull(channelAccountMapper);
+        this.credentialsResolver = credentialsResolver;
+    }
+
+    /** Converts a validated account row into a detached provider submission snapshot. */
+    public ChatAppSubmissionContext snapshot(ChannelAccountEntity account) {
+        validateActiveAccount(account);
+        if (credentialsResolver == null) {
+            return new ChatAppSubmissionContext(account.getId(), account.getAccountIdentifier(),
+                    account.getVersion(), null);
+        }
+        return new ChatAppSubmissionContext(account.getId(), account.getAccountIdentifier(),
+                account.getVersion(), credentialsResolver.resolve(account));
     }
 
     public ChannelAccountEntity requireCurrentAccount(UUID channelAccountId) {

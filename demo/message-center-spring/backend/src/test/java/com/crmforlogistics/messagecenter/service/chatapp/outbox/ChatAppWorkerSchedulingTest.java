@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookProjector;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookRetryWorker;
+import com.crmforlogistics.messagecenter.service.scheduling.AdaptivePollingScheduler;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationScheduler;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ class ChatAppWorkerSchedulingTest {
             .withBean(ChannelEventMapper.class, () -> mock(ChannelEventMapper.class))
             .withBean(ChannelAccountMapper.class, () -> mock(ChannelAccountMapper.class))
             .withBean(ChatAppWebhookProjector.class, () -> mock(ChatAppWebhookProjector.class))
+            .withBean(AdaptivePollingScheduler.class, () -> mock(AdaptivePollingScheduler.class))
             .withBean(WhatsAppTemplateReconciliationService.class,
                     () -> mock(WhatsAppTemplateReconciliationService.class))
             .withUserConfiguration(MessageOutboxScheduler.class, ChatAppWebhookRetryWorker.class,

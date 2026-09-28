@@ -3,6 +3,7 @@ package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOutboundGateway;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageStatusEventMapper;
@@ -213,14 +214,22 @@ class MessageOutboxWorkerTest {
     }
 
     @Test
-    void ownershipFenceAndProviderSubmissionShareTheSameTransaction() throws Exception {
+    void ownershipFenceSnapshotIsCapturedBeforeProviderSubmission() throws Exception {
         Fixture fixture = fixture(0, 3);
         fixture.message.setCreatedByUserId(UUID.randomUUID());
         fixture.message.setChannelAccountVersion(4L);
         TrackingTransactionOperations transactions = new TrackingTransactionOperations();
         when(messageMapper.selectById(fixture.message.getId())).thenReturn(fixture.message);
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(fixture.message.getChannelAccountId());
+        account.setChannelType("chatapp");
+        account.setAuthStatus("active");
+        account.setAccountIdentifier("60122222222");
+        when(accountResolver.requireOwnedAccountForSend(
+                fixture.message.getCreatedByUserId(), fixture.message.getChannelAccountId(), 4L))
+                .thenReturn(account);
         when(gateway.submit(any())).thenAnswer(invocation -> {
-            assertThat(transactions.isActive()).isTrue();
+            assertThat(transactions.isActive()).isFalse();
             return new ChatAppOutboundGateway.Submission("wamid-1");
         });
         when(outboxJobMapper.completeIfOwned(any(), any(), any(), any())).thenReturn(1);
@@ -232,6 +241,7 @@ class MessageOutboxWorkerTest {
 
         verify(accountResolver).requireOwnedAccountForSend(
                 fixture.message.getCreatedByUserId(), fixture.message.getChannelAccountId(), 4L);
+        assertThat(transactions.isActive()).isFalse();
     }
 
     @Test

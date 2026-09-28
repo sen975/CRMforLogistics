@@ -64,7 +64,7 @@ public class WhatsAppAccountLifecycleService {
         if (!isVisibleWhatsAppAccount(account)) {
             throw failure("WHATSAPP_ACCOUNT_NOT_FOUND", HttpStatus.NOT_FOUND);
         }
-        if (!"BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (!WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             throw failure("WHATSAPP_HISTORY_SYNC_NOT_ALLOWED", HttpStatus.CONFLICT);
         }
         Instant end = Instant.now();
@@ -83,7 +83,7 @@ public class WhatsAppAccountLifecycleService {
 
     private static AccountProjection project(ChannelAccountEntity account) {
         String mode = account.getOnboardingMode();
-        String domain = "BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(mode)
+        String domain = WhatsAppAccountMode.isBusinessApp(mode)
                 ? "PRIVATE_BUSINESS_APP" : "ENTERPRISE_SHARED";
         String recoverableError = "active".equalsIgnoreCase(account.getAuthStatus())
                 ? null : "WHATSAPP_ACCOUNT_AUTH_UNAVAILABLE";

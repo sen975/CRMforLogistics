@@ -15,6 +15,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryQueryService;
 import org.apache.ibatis.annotations.Select;
@@ -123,6 +124,82 @@ class ContactServiceAuthorizationTest {
         assertThatThrownBy(() -> service.getById(userId, contactId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Contact not found");
+    }
+
+    @Test
+    void authorizedChannelTypesUseOnlyScopedIdentitiesWithoutExposingAddresses() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityEntity email = identity(contactId);
+        email.setChannelType("email");
+        email.setIdentityValue("secret@example.invalid");
+        ContactIdentityEntity duplicate = identity(contactId);
+        duplicate.setChannelType("email");
+        ContactIdentityEntity chatapp = identity(contactId);
+        ContactIdentityMapper identityMapper = mock(ContactIdentityMapper.class);
+        when(identityMapper.findByContactIdAndOwner(contactId, userId))
+                .thenReturn(List.of(email, duplicate, chatapp));
+        when(identityMapper.findByContactId(contactId)).thenReturn(List.of(identity(contactId)));
+        ContactService service = new ContactService(mock(ContactMapper.class), identityMapper,
+                mock(ConversationMapper.class), mock(MessageMapper.class),
+                mock(ChatAppAccountResolver.class));
+
+        assertThat(service.listAuthorizedChannelTypes(userId, contactId))
+                .containsExactly("chatapp", "email");
+        verify(identityMapper).findByContactIdAndOwner(contactId, userId);
+        verify(identityMapper, never()).findByContactId(contactId);
+    }
+
+    @Test
+    void authorizedChannelProfilesExposeBoundedIdentityValuesWithoutInternalScopeOrCredentials() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityEntity email = identity(contactId);
+        email.setChannelType("email");
+        email.setIdentityScope("private-scope-id");
+        email.setIdentityValue("buyer@example.invalid");
+        email.setNormalizedValue("buyer@example.invalid");
+        email.setDisplayName("采购邮箱");
+        ContactIdentityEntity chatapp = identity(contactId);
+        chatapp.setChannelType("chatapp");
+        chatapp.setIdentityScope("00000000-0000-0000-0000-000000000042");
+        chatapp.setIdentityValue("15550001111");
+        chatapp.setDisplayName("王经理");
+        ContactIdentityMapper identityMapper = mock(ContactIdentityMapper.class);
+        ChannelAccountMapper accountMapper = mock(ChannelAccountMapper.class);
+        when(identityMapper.findByContactIdAndOwner(contactId, userId)).thenReturn(List.of(email, chatapp));
+        ChannelAccountEntity account = new ChannelAccountEntity();
+        account.setId(UUID.fromString("00000000-0000-0000-0000-000000000042"));
+        account.setName("海外 ChatApp");
+        when(accountMapper.findByIdAndOwner(UUID.fromString("00000000-0000-0000-0000-000000000042"), userId))
+                .thenReturn(account);
+        ContactService service = new ContactService(mock(ContactMapper.class), identityMapper,
+                mock(ConversationMapper.class), mock(MessageMapper.class), mock(ChatAppAccountResolver.class),
+                accountMapper);
+
+        assertThat(service.listAuthorizedChannelProfiles(userId, contactId))
+                .extracting(ContactService.AuthorizedChannelProfile::channelType)
+                .containsExactly("email", "chatapp");
+        assertThat(service.listAuthorizedChannelProfiles(userId, contactId))
+                .containsExactly(
+                        new ContactService.AuthorizedChannelProfile("email", "buyer@example.invalid", "采购邮箱", null),
+                        new ContactService.AuthorizedChannelProfile("chatapp", "15550001111", "王经理", "海外 ChatApp"));
+        verify(identityMapper, org.mockito.Mockito.times(2)).findByContactIdAndOwner(contactId, userId);
+        verify(identityMapper, never()).findByContactId(contactId);
+    }
+
+    @Test
+    void authorizedChannelTypesAreEmptyWithoutVisibleIdentities() {
+        UUID userId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        ContactIdentityMapper identityMapper = mock(ContactIdentityMapper.class);
+        when(identityMapper.findByContactIdAndOwner(contactId, userId)).thenReturn(List.of());
+        ContactService service = new ContactService(mock(ContactMapper.class), identityMapper,
+                mock(ConversationMapper.class), mock(MessageMapper.class),
+                mock(ChatAppAccountResolver.class));
+
+        assertThat(service.listAuthorizedChannelTypes(userId, contactId)).isEmpty();
+        verify(identityMapper, never()).findByContactId(contactId);
     }
 
     @Test

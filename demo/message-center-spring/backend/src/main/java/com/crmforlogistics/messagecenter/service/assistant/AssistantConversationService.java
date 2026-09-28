@@ -2,12 +2,14 @@ package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnAssistantEnabled;
+import com.crmforlogistics.messagecenter.entity.AssistantConversationMessageEntity;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.Map;
@@ -110,7 +112,10 @@ public class AssistantConversationService {
     private final AssistantRequestGuard guard;
     private final ToolRegistry registry;
     private final AssistantConfig config;
+    private final AssistantConversationContextService conversationContext;
+    private final AssistantContactCandidateWindowStore contactWindows;
 
+    @Autowired
     public AssistantConversationService(AssistantContextBuilder contextBuilder,
                                         AssistantPromptBuilder promptBuilder,
                                         AssistantModelClient modelClient,
@@ -121,7 +126,9 @@ public class AssistantConversationService {
                                         AssistantConversationLogService conversationLog,
                                         AssistantRequestGuard guard,
                                         ToolRegistry registry,
-                                        AssistantConfig config) {
+                                        AssistantConfig config,
+                                        AssistantConversationContextService conversationContext,
+                                        AssistantContactCandidateWindowStore contactWindows) {
         this.contextBuilder = contextBuilder;
         this.promptBuilder = promptBuilder;
         this.modelClient = modelClient;
@@ -133,6 +140,47 @@ public class AssistantConversationService {
         this.guard = guard;
         this.registry = registry;
         this.config = config;
+        this.conversationContext = conversationContext;
+        this.contactWindows = contactWindows;
+    }
+
+    /** Constructor for context-compaction tests without a persistent contact window. */
+    public AssistantConversationService(AssistantContextBuilder contextBuilder,
+                                        AssistantPromptBuilder promptBuilder,
+                                        AssistantModelClient modelClient,
+                                        AssistantDecisionParser parser,
+                                        AssistantActionPolicy policy,
+                                        AssistantPendingActionService pendingActions,
+                                        AssistantAuditService audit,
+                                        AssistantConversationLogService conversationLog,
+                                        AssistantRequestGuard guard,
+                                        ToolRegistry registry,
+                                        AssistantConfig config,
+                                        AssistantConversationContextService conversationContext) {
+        this(contextBuilder, promptBuilder, modelClient, parser, policy, pendingActions, audit,
+                conversationLog, guard, registry, config, conversationContext, null);
+    }
+
+    /** Constructor retained for isolated orchestration tests that exercise the pre-compaction path. */
+    public AssistantConversationService(AssistantContextBuilder contextBuilder,
+                                        AssistantPromptBuilder promptBuilder,
+                                        AssistantModelClient modelClient,
+                                        AssistantDecisionParser parser,
+                                        AssistantActionPolicy policy,
+                                        AssistantPendingActionService pendingActions,
+                                        AssistantAuditService audit,
+                                        AssistantConversationLogService conversationLog,
+                                        AssistantRequestGuard guard,
+                                        ToolRegistry registry,
+                                        AssistantConfig config) {
+        this(contextBuilder, promptBuilder, modelClient, parser, policy, pendingActions, audit,
+                conversationLog, guard, registry, config, null, null);
+    }
+
+    /** 不带旁路通知的一轮。内部调用与既有测试用它，行为与引入 {@link AssistantTurnSink} 之前一致。 */
+    public AssistantTurnResult respond(UUID userId, UUID conversationId,
+                                       List<AssistantMessage> providedHistory, String text) {
+        return respond(userId, conversationId, providedHistory, text, AssistantTurnSink.NONE);
     }
 
     /**
@@ -141,73 +189,112 @@ public class AssistantConversationService {
      *
      * <p>{@code providedHistory} 不是权威输入：它只在一处被采用 —— 服务端对该会话没有任何记录时。
      * 见 {@link #authoritativeHistory}。
+     *
+     * <p>{@code sink} 只上报过程（见 {@link AssistantTurnSink}），**不改变结果**：返回值仍是唯一
+     * 权威的那一份，展示层必须用它覆盖片段。
      */
     public AssistantTurnResult respond(UUID userId, UUID conversationId,
-                                       List<AssistantMessage> providedHistory, String text) {
+                                       List<AssistantMessage> providedHistory, String text,
+                                       AssistantTurnSink sink) {
         if (userId == null) {
             // 与 InProcessToolAdapter 同一原则：取不到身份是「拒绝」，不是「降级成匿名」。
             throw new SecurityException("Not authenticated");
         }
-        AssistantRequestGuard.NormalisedRequest normalised =
-                guard.normalise(authoritativeHistory(userId, conversationId, providedHistory), text);
-        AssistantTurnResult result =
-                runTurn(userId, conversationId, normalised.history(), normalised.text());
+        List<AssistantConversationMessageEntity> persistedRows = conversationContext == null || conversationId == null
+                ? List.of() : conversationLog.recentRowsForPrompt(userId, conversationId, config.maxHistoryTurns());
+        List<AssistantMessage> sourceHistory = conversationContext == null
+                ? authoritativeHistory(userId, conversationId, providedHistory)
+                : persistedRows.isEmpty()
+                ? providedHistory == null ? List.of() : providedHistory
+                : persistedRows.stream().map(row -> new AssistantMessage(
+                        AssistantMessage.Role.fromWire(row.getRole()), row.getText())).toList();
+        AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(sourceHistory, text);
+        List<AssistantConversationMessageEntity> effectiveRows = persistedRows.isEmpty() || normalised.history().isEmpty()
+                ? List.of()
+                : persistedRows.subList(Math.max(0, persistedRows.size() - normalised.history().size()), persistedRows.size());
+        TurnExecution execution = runTurn(userId, conversationId, effectiveRows,
+                normalised.history(), normalised.text(), sink);
         // 裁剪是 guard 做的，但 guard 不认识响应体；把「丢了」这件事带上响应是这里的活 ——
         // 只有这里同时握着「选中的那份历史」与「裁剪结果」，也才说得清那个数字算的是谁。
-        return result.withTrimmedHistory(normalised.droppedHistoryMessages());
+        AssistantTurnResult decorated = execution.result().withTrimmedHistory(normalised.droppedHistoryMessages());
+        if (execution.context() != null) {
+            decorated = decorated.withTrimmedHistory(execution.context().droppedMessages())
+                    .withHistoryCompaction(execution.context().summarizedMessages());
+        }
+        return decorated;
     }
 
-    /**
-     * 历史的来源：**调用方给了会话号且服务端有记录时，以服务端为准**，否则用调用方提供的那份。
-     *
-     * <p>为什么保留回退：三种情况下库里确实没有东西 —— 会话的第一轮、没有会话号的单轮提问、
-     * 以及未装配日志服务的环境（如 {@code @WebMvcTest}）。回退不是兼容妥协，
-     * 而是「没有更好来源时用次好的」。
-     *
-     * <p>{@code limit} 取 {@code max-history-turns}：读多了会被 guard 裁掉，是白读；
-     * 读少了则让「条数上限」这个配置失去意义 —— 两个数字必须同源。
-     */
     private List<AssistantMessage> authoritativeHistory(UUID userId, UUID conversationId,
                                                         List<AssistantMessage> providedHistory) {
         if (conversationId != null) {
             List<AssistantMessage> fromServer =
                     conversationLog.recentForPrompt(userId, conversationId, config.maxHistoryTurns());
-            if (!fromServer.isEmpty()) {
-                return fromServer;
-            }
+            if (!fromServer.isEmpty()) return fromServer;
         }
         return providedHistory == null ? List.of() : providedHistory;
     }
 
     /** 已经定下历史与原话之后的那一轮编排。收在私有方法里，是为了让选源/裁剪只在外层发生一次。 */
-    private AssistantTurnResult runTurn(UUID userId, UUID conversationId,
-                                        List<AssistantMessage> history, String text) {
-        AssistantContext context = contextBuilder.build(userId, config.candidateTodoLimit());
-        List<Map<String, String>> messages = promptBuilder.buildMessages(context, history, text);
+    private TurnExecution runTurn(UUID userId, UUID conversationId,
+                                        List<AssistantConversationMessageEntity> persistedRows,
+                                        List<AssistantMessage> history, String text,
+                                        AssistantTurnSink sink) {
+        AssistantContext context = contextBuilder.build();
+        if (contactWindows != null) {
+            ContactCandidates restored = contactWindows.restore(userId, conversationId);
+            if (restored != null) context = context.withCandidateSet(restored);
+        }
+        AssistantConversationContextService.PreparedContext prepared;
+        try {
+            prepared = conversationContext == null
+                    ? new AssistantConversationContextService.PreparedContext(null, history, 0, 0)
+                    : conversationContext.prepare(userId, conversationId, persistedRows, history, text, context);
+        } catch (AssistantConversationContextService.ContextBudgetExceeded exceeded) {
+            return new TurnExecution(finish(userId, conversationId, text, AssistantTurnResult.error(
+                    "ASSISTANT_CONTEXT_BUDGET_EXCEEDED", "当前上下文超过模型预算，请缩短本轮请求或开启新会话")), null);
+        }
+        List<Map<String, String>> messages = promptBuilder.buildMessages(
+                context, prepared.summary(), prepared.recentHistory(), text);
+        // 一轮至多一次。放在循环外是因为重试与只读轮都不是「新一轮开始了」，重复上报只会让界面闪。
+        sink.thinking();
 
         // readTurns 只数「真的执行了」的只读轮；round 数「向模型问了第几次」，两者分开是因为
         // 重试与拒绝都不消耗只读额度，却确实多问了一次模型。
         int readTurns = 0;
         int round = 0;
         while (true) {
+            if (conversationContext != null && !conversationContext.withinBudget(messages)) {
+                return new TurnExecution(finish(userId, conversationId, text, AssistantTurnResult.error(
+                        "ASSISTANT_CONTEXT_BUDGET_EXCEEDED", "本轮检索结果超过模型上下文预算，请缩小问题后重试")), prepared);
+            }
             long roundStartedNanos = System.nanoTime();
-            AssistantModelClient.ModelReply reply = modelClient.complete(messages);
+            // 一次模型调用配一个提取器：它记着扫描游标，跨轮复用会把上一轮的位置带到下一轮。
+            AssistantReplyDeltaExtractor firstPass = new AssistantReplyDeltaExtractor();
+            AssistantModelClient.ModelReply reply = modelClient.complete(messages, null,
+                    raw -> emit(sink, firstPass, raw));
             AssistantDecisionParser.Outcome outcome = parser.parse(reply.content(), context);
 
             if (round == 0
                     && outcome instanceof AssistantDecisionParser.Rejected rejected
                     && rejected.retryable()) {
                 // 唯一一次重试：回灌校验错误。仍失败就到此为止，不再尝试第二次。
+                //
+                // 重试前必须 reset：输出被截断时信封没有闭合，解析器判「输出不是一个 JSON 对象」，
+                // 可提取器只认 decision=reply、不看信封完不完整 —— 那时片段可能已经推出去了。
+                // 不 reset，用户会看到答案自己改写自己。换新提取器同理：游标属于上一份输出。
+                sink.reset();
                 messages = promptBuilder.withCorrection(messages, rejected.reason());
-                reply = modelClient.complete(messages);
+                AssistantReplyDeltaExtractor retryPass = new AssistantReplyDeltaExtractor();
+                reply = modelClient.complete(messages, null,
+                        raw -> emit(sink, retryPass, raw));
                 outcome = parser.parse(reply.content(), context);
             }
             int latencyMs = elapsedMillis(roundStartedNanos);
 
             if (!(outcome instanceof AssistantDecisionParser.Call call)) {
                 // ask / reply / rejected：都是终态，按原有逻辑处理并结束。
-                return finish(userId, conversationId, text,
-                        dispatchTerminal(userId, conversationId, text, reply, outcome, latencyMs, round));
+                return new TurnExecution(finish(userId, conversationId, text,
+                        dispatchTerminal(userId, conversationId, text, reply, outcome, latencyMs, round)), prepared);
             }
 
             ToolDefinition definition = registry.find(call.tool()).orElseThrow();
@@ -215,9 +302,10 @@ public class AssistantConversationService {
 
             if (decision == AssistantActionPolicy.Decision.READ) {
                 if (readTurns >= config.maxReadTurns()) {
-                    return finish(userId, conversationId, text, exhausted(userId, conversationId, text,
-                            call, reply, latencyMs, round));
+                    return new TurnExecution(finish(userId, conversationId, text, exhausted(userId, conversationId, text,
+                            call, reply, latencyMs, round)), prepared);
                 }
+                sink.reading(call.tool());
                 ToolResult toolResult = registry.invoke(call.tool(), userId, call.arguments());
                 // 只读轮也写审计：一行一个 turn，这样「模型看过哪些东西才做出这个决定」在库里能复原。
                 // outcome 沿用 EXECUTED / FAILED —— 只读与写由 policy 列区分，不必再扩 outcome 词表。
@@ -227,13 +315,16 @@ public class AssistantConversationService {
                 if (toolResult.isError()) {
                     log.info("assistant read round failed: tool={} code={}", call.tool(), toolResult.code());
                     // 失败即终止，不回灌 —— 理由见类注释「只读工具的失败为什么不回灌给模型」。
-                    return finish(userId, conversationId, text, AssistantTurnResult.error(
-                            toolResult.code(), "我没能查到需要的信息：" + toolResult.message()));
+                    return new TurnExecution(finish(userId, conversationId, text, AssistantTurnResult.error(
+                            toolResult.code(), "我没能查到需要的信息：" + toolResult.message())), prepared);
                 }
                 log.info("assistant read round ok: tool={}", call.tool());
                 if (toolResult.candidates() != null) {
                     // 只读结果替换候选集：这是「只读检索突破候选集边界」的落点，下一轮才引用得到。
                     context = context.withCandidateSet(toolResult.candidates());
+                    if (contactWindows != null && toolResult.candidates() instanceof ContactCandidates found) {
+                        contactWindows.remember(userId, conversationId, found);
+                    }
                 }
                 messages = promptBuilder.withReadResult(messages, reply.content(), call.tool(), toolResult);
                 readTurns++;
@@ -242,10 +333,13 @@ public class AssistantConversationService {
             }
 
             // 写动作（AUTO / CONFIRM）：执行或落待确认，然后本轮结束 —— 循环不得再转。
-            return finish(userId, conversationId, text, dispatchWrite(userId, conversationId, text, call,
-                    definition, decision, context, reply, latencyMs, round));
+            return new TurnExecution(finish(userId, conversationId, text, dispatchWrite(userId, conversationId, text, call,
+                    definition, decision, context, reply, latencyMs, round)), prepared);
         }
     }
+
+    private record TurnExecution(AssistantTurnResult result,
+                                 AssistantConversationContextService.PreparedContext context) {}
 
     /**
      * 只读额度用尽。<b>不再问模型</b>，直接给一个诚实的「未完成」终态。
@@ -326,6 +420,14 @@ public class AssistantConversationService {
         conversationLog.appendUser(userId, conversationId, text);
         conversationLog.appendAssistant(userId, conversationId, result.kind(), result.message());
         return result;
+    }
+
+    /** 把一块原始输出翻译成「可以给用户看的新片段」推出去。空片段不推 —— 展示层不必处理空事件。 */
+    private static void emit(AssistantTurnSink sink, AssistantReplyDeltaExtractor extractor, String rawOutput) {
+        String revealed = extractor.accept(rawOutput);
+        if (!revealed.isEmpty()) {
+            sink.answerDelta(revealed);
+        }
     }
 
     private static int elapsedMillis(long startedNanos) {

@@ -6,6 +6,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.message.TemplateMessageTextResolver;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.TemplateDisplayName;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateScopeGate;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -51,7 +52,7 @@ public class ChatAppTemplateService {
         if (account == null || account.getProviderScopeId() == null) {
             return List.of();
         }
-        List<TemplateEntity> templates = "BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())
+        List<TemplateEntity> templates = WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())
                 ? templateMapper.findPrivateForSendable(accountId)
                 : templateMapper.findSharedSendableForScope(account.getProviderScopeId());
         return templates.stream()

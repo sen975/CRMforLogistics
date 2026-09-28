@@ -8,7 +8,10 @@ import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageResponseBody
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -61,5 +64,49 @@ class ChatAppSendServiceTest {
         assertThrows(IllegalStateException.class,
                 () -> service.sendMedia(credentials, "from", "to", "image", new byte[]{1},
                         "a.png", "image/png", null, null));
+    }
+
+    @Test
+    void textSendStopsWaitingWhenProviderFutureHangs() {
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.sendChatappMessage(any())).thenReturn(new CompletableFuture<>());
+        ChatAppSendService service = new ChatAppSendService(
+                mock(ChatAppOssMediaUploader.class), () -> client, Duration.ofMillis(50));
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> service.sendText(
+                credentials(), "from", "to", "hello", "request-1")))
+                .isInstanceOf(TimeoutException.class);
+    }
+
+    @Test
+    void mediaAuthorizationStopsWaitingWhenProviderFutureHangs() {
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.getChatappUploadAuthorization(any())).thenReturn(new CompletableFuture<>());
+        ChatAppSendService service = new ChatAppSendService(
+                mock(ChatAppOssMediaUploader.class), () -> client, Duration.ofMillis(50));
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> service.sendMedia(
+                credentials(), "from", "to", "image", new byte[]{1},
+                "a.png", "image/png", null, "request-1")))
+                .isInstanceOf(TimeoutException.class);
+    }
+
+    @Test
+    void textSendReturnsNormallyBeforeTimeout() throws Exception {
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.sendChatappMessage(any())).thenReturn(CompletableFuture.completedFuture(
+                SendChatappMessageResponse.create().toBuilder()
+                        .body(SendChatappMessageResponseBody.builder().messageId("wamid-1").build())
+                        .build()));
+        ChatAppSendService service = new ChatAppSendService(
+                mock(ChatAppOssMediaUploader.class), () -> client, Duration.ofSeconds(1));
+
+        assertThat(service.sendText(credentials(), "from", "to", "hello", "request-1").messageId())
+                .isEqualTo("wamid-1");
+    }
+
+    private static ChatAppAccountCredentials credentials() {
+        return new ChatAppAccountCredentials("access-key", "access-secret", "space", "from",
+                "ap-southeast-1", "cams.ap-southeast-1.aliyuncs.com");
     }
 }

@@ -1,8 +1,10 @@
 package com.crmforlogistics.messagecenter.service.chatapp.outbox;
 
 import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppOutboundGateway;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSubmissionContext;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentialsException;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.MessageStatusEventEntity;
 import com.crmforlogistics.messagecenter.entity.OutboxJobEntity;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
@@ -123,15 +125,12 @@ public class MessageOutboxWorker {
         int attempt = value(job.getAttemptCount()) + 1;
         job.setAttemptCount(attempt);
         try {
+            ChatAppSubmissionContext submissionContext = resolveSubmissionContext(job, message);
             ChatAppOutboundGateway.Command command = new ChatAppOutboundGateway.Command(
                     message.getChannelAccountId(), message.getId(),
-                    message.getClientRequestId(), message.getMessageKind(), content(message));
-            ChatAppOutboundGateway.Submission submission;
-            if (requiresOwnershipFence(job, message)) {
-                submission = submitWithOwnershipFence(message, command);
-            } else {
-                submission = gateway.submit(command);
-            }
+                    message.getClientRequestId(), message.getMessageKind(), content(message),
+                    submissionContext);
+            ChatAppOutboundGateway.Submission submission = gateway.submit(command);
             transactions.executeWithoutResult(status -> {
                 Instant now = Instant.now();
                 int completed = outboxJobMapper.completeIfOwned(
@@ -201,27 +200,25 @@ public class MessageOutboxWorker {
                 && message.getChannelAccountVersion() != null;
     }
 
-    private ChatAppOutboundGateway.Submission submitWithOwnershipFence(
-            MessageEntity message, ChatAppOutboundGateway.Command command) throws Exception {
-        try {
-            return transactions.execute(status -> {
-                accountResolver.requireOwnedAccountForSend(
-                        message.getCreatedByUserId(),
-                        message.getChannelAccountId(),
-                        message.getChannelAccountVersion());
-                try {
-                    return gateway.submit(command);
-                } catch (Exception error) {
-                    throw new GatewaySubmissionException(error);
-                }
-            });
-        } catch (GatewaySubmissionException error) {
-            Exception cause = error.cause();
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            throw cause;
+    private ChatAppSubmissionContext resolveSubmissionContext(OutboxJobEntity job, MessageEntity message) {
+        if (accountResolver == null) {
+            return null;
         }
+        return transactions.execute(status -> {
+            ChannelAccountEntity account;
+            if (requiresOwnershipFence(job, message)) {
+                account = accountResolver.requireOwnedAccountForSend(
+                        message.getCreatedByUserId(), message.getChannelAccountId(),
+                        message.getChannelAccountVersion());
+            } else {
+                account = accountResolver.requireCurrentAccount(message.getChannelAccountId());
+            }
+            ChatAppSubmissionContext snapshot = accountResolver.snapshot(account);
+            return snapshot == null
+                    ? new ChatAppSubmissionContext(account.getId(), account.getAccountIdentifier(),
+                    account.getVersion(), null)
+                    : snapshot;
+        });
     }
 
     private void publishMessageChanged() {
@@ -315,13 +312,4 @@ public class MessageOutboxWorker {
         }
     }
 
-    private static final class GatewaySubmissionException extends RuntimeException {
-        private GatewaySubmissionException(Exception cause) {
-            super(cause);
-        }
-
-        private Exception cause() {
-            return (Exception) getCause();
-        }
-    }
 }

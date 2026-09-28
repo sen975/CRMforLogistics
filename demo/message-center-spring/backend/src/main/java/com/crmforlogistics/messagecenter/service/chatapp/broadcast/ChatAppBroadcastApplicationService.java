@@ -13,6 +13,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.BroadcastStatus;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.BroadcastDetail;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.BroadcastPage;
@@ -113,7 +114,7 @@ public class ChatAppBroadcastApplicationService {
         }
 
         var account = requireAccountAccess(command.channelAccountId(), actorUserId);
-        TemplateEntity template = ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())
+        TemplateEntity template = (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())
                 ? templateMapper.findPrivateForSend(command.channelAccountId(), command.templateCode(), command.languageCode())
                 : java.util.Optional.ofNullable(account.getProviderScopeId())
                 .flatMap(scopeId -> templateMapper.findSharedForSend(

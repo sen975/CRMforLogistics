@@ -36,12 +36,24 @@ class WeComP0ControllerSecurityTest {
     @MockitoBean WeComProfileBackfillService profileBackfill;
     @MockitoBean WeComUserBindingService bindings;
     @MockitoBean WeComContactLinkService contactLinks;
+    @MockitoBean com.crmforlogistics.messagecenter.service.wecom.WeComContactEventService contactEvents;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 
     @Test
     void anonymousCannotAccessWeComP0() throws Exception {
         mvc.perform(get("/api/v1/wecom/installations")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void anonymousWeComAppCallbackIsNotBlockedByLoginSecurity() throws Exception {
+        mvc.perform(get("/api/v1/wecom/app-callback")
+                        .param("msg_signature", "signature")
+                        .param("timestamp", "1")
+                        .param("nonce", "nonce")
+                        .param("echostr", "echo"))
+                .andExpect(result -> org.junit.jupiter.api.Assertions.assertNotEquals(
+                        401, result.getResponse().getStatus()));
     }
 
     @Test

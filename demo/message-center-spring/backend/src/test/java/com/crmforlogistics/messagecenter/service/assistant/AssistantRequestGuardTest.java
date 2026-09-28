@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AssistantRequestGuardTest {
 
     private final AssistantRequestGuard guard = new AssistantRequestGuard(
-            new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 3, 30, 70, 600, 3));
+            new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 3, 30, 600, 3));
 
     @Test
     void blankTextIsRejected() {
@@ -53,7 +53,7 @@ class AssistantRequestGuardTest {
     @Test
     void historyIsAlsoBoundedByCharacters() {
         AssistantRequestGuard narrow = new AssistantRequestGuard(
-                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 70, 600, 3));
+                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 600, 3));
 
         List<AssistantMessage> kept = narrow.normalise(List.of(
                 AssistantMessage.user("12345678"),
@@ -133,7 +133,7 @@ class AssistantRequestGuardTest {
     @Test
     void aHistoryDroppedByTheCharacterBudgetIsAlsoCounted() {
         AssistantRequestGuard narrow = new AssistantRequestGuard(
-                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 70, 600, 3));
+                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 600, 3));
 
         AssistantRequestGuard.NormalisedRequest normalised = narrow.normalise(List.of(
                 AssistantMessage.user("12345678"),

@@ -50,6 +50,11 @@ demo/outputs/
 **/*.class
 **/.verify/edge-profile-*/
 
+# 视频任务的渲染产物与便携包：单是 out/ 就有 115MB（5 个 mp4），便携包 101MB。
+# 都能从 src/ 重新渲染，入库只会让 .git 永久膨胀，故刻意排除。
+video-pitch/out/
+video-pitch-portable*.tar.gz
+
 # Local agent memory and session state
 .workbuddy/
 

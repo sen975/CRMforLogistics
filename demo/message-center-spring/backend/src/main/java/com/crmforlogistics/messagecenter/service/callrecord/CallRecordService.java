@@ -12,6 +12,8 @@ import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookServi
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.time.Clock;
@@ -24,6 +26,7 @@ import java.util.UUID;
 
 @Service
 public class CallRecordService {
+    private static final Logger log = LoggerFactory.getLogger(CallRecordService.class);
     private static final int MAX_CONTACT_ID_LENGTH = 512;
     private static final int MAX_REQUEST_ID_LENGTH = 255;
     private static final int MAX_ACTOR_LENGTH = 128;
@@ -178,14 +181,12 @@ public class CallRecordService {
             try {
                 audioStore.delete(asset);
             } catch (Exception compensationFailure) {
-                compensationFailure.addSuppressed(saveFailure);
-                throw new CallRecordException(
-                        "CALL_RECORD_STORE_CORRUPT", 500,
-                        "Failed to save call record and compensation also failed", false,
-                        compensationFailure);
+                saveFailure.addSuppressed(compensationFailure);
+                log.error("event=call_record_audio_cleanup_failed recordId={} objectKey={}",
+                        id, asset.objectKey(), compensationFailure);
             }
             throw new CallRecordException(
-                    "CALL_RECORD_STORE_CORRUPT", 500,
+                    "CALL_RECORD_PERSIST_FAILED", 500,
                     "Failed to save call record", false, saveFailure);
         }
     }
@@ -224,8 +225,24 @@ public class CallRecordService {
         return retried;
     }
 
+    @Transactional
     public CallRecordEntity retry(UUID ownerId, UUID id, String actor, String clientRequestId) {
         CallRecordEntity current = detail(ownerId, id);
+        requireActor(actor);
+        requireText(clientRequestId, MAX_REQUEST_ID_LENGTH,
+                "CALL_RECORD_INPUT_INVALID", "clientRequestId is invalid");
+        var existingRequest = mapper.findRetryRequest(ownerId, id, clientRequestId);
+        if (existingRequest != null && existingRequest.isPresent()) {
+            return current;
+        }
+        if (mapper.countPending() >= queueCapacity) {
+            throw new CallRecordException(
+                    "TRANSCRIPTION_QUEUE_FULL", 429,
+                    "Transcription queue is full", true);
+        }
+        if (mapper.insertRetryRequest(ownerId, id, clientRequestId) == 0) {
+            return detail(ownerId, id);
+        }
         return retryCurrent(current, actor, clientRequestId);
     }
 

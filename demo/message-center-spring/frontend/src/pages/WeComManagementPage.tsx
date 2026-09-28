@@ -5,6 +5,7 @@ import { WechatOutlined } from '@ant-design/icons';
 import { fetchWeComInstallations } from '../api/endpoints';
 import { useAuth } from '../hooks/useAuth';
 import WeComAppChatPanel from '../components/wecom/WeComAppChatPanel';
+import WeComContactEventPanel from '../components/wecom/WeComContactEventPanel';
 import WeComExternalContactPanel from '../components/wecom/WeComExternalContactPanel';
 import WeComCustomerGroupPanel from '../components/wecom/WeComCustomerGroupPanel';
 import WeComDirectoryPanel from '../components/wecom/WeComDirectoryPanel';
@@ -58,6 +59,9 @@ export default function WeComManagementPage() {
         items={[
           { key: 'app-chat', label: '应用群聊', children: <WeComAppChatPanel authCorpId={selected!.authCorpId} /> },
           { key: 'external-contacts', label: '客户联系', children: <WeComExternalContactPanel authCorpId={selected!.authCorpId} /> },
+          // 「客户动态」是流水（客户关系变化），与「客户联系」的快照语义并列，因此单列一个 Tab
+          // 而不是往现有面板里加列 —— 免得动到那个面板既有行为。
+          { key: 'contact-events', label: '客户动态', children: <WeComContactEventPanel authCorpId={selected!.authCorpId} /> },
           { key: 'customer-groups', label: '客户群', children: <WeComCustomerGroupPanel authCorpId={selected!.authCorpId} /> },
           { key: 'directory', label: '通讯录', children: <WeComDirectoryPanel authCorpId={selected!.authCorpId} /> },
         ]}

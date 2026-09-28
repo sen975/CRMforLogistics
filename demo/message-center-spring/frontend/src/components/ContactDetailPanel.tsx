@@ -12,7 +12,6 @@ import AiTopicTimeline from './AiTopicTimeline';
 import AiTopicManualReviewPanel from './AiTopicManualReviewPanel';
 import { useTopicTimeline } from '../hooks/useTopicTimeline';
 import { decodeHtmlEntities } from '../utils/htmlEntities';
-import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Text, Title } = Typography;
 
@@ -149,7 +148,9 @@ export default function ContactDetailPanel() {
     <div style={tabContentStyle}>
       <Title level={5} style={{ margin: '0 0 16px' }}>联系人信息</Title>
       <Descriptions column={1} size="small" bordered>
-        <Descriptions.Item label="名称">{contactDisplayName(contact)}</Descriptions.Item>
+        {/* 名称 = 渠道同步来的真名，故意不兜底备注：详情里「名称」「备注」是两行独立字段，
+            若用 contactDisplayName()（列表语义、备注优先）两行会显示同一段文字。 */}
+        <Descriptions.Item label="名称">{contact.displayName || '-'}</Descriptions.Item>
         <Descriptions.Item label="备注">
           {editingRemark ? (
             <Space style={{ width: '100%' }}>

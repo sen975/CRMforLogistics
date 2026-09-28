@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.wecom;
 
+import com.crmforlogistics.messagecenter.channel.wecom.WeComAppEventCodec;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComCallbackCodec;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComChatDataPublicKeyGateway;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComController;
@@ -7,6 +8,7 @@ import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComSendService;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -18,8 +20,11 @@ class WeComStartupGateEntryTest {
     void rejectsCallbackBeforeMigrationCompletes() {
         WeComCallbackCodec codec = mock(WeComCallbackCodec.class);
         WeComAuthorizationService authorizationService = mock(WeComAuthorizationService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<WeComAppEventCodec> appEventCodec = mock(ObjectProvider.class);
         WeComController controller = new WeComController(codec, authorizationService,
-                mock(WeComSendService.class), new WeComStartupGate());
+                mock(WeComSendService.class), new WeComStartupGate(), appEventCodec,
+                mock(WeComContactEventService.class));
 
         var response = controller.callback("signature", "timestamp", "nonce", "body");
 

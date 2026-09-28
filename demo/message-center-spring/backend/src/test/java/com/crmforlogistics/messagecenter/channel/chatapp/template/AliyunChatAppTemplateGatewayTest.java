@@ -260,6 +260,58 @@ class AliyunChatAppTemplateGatewayTest {
     }
 
     @Test
+    void detailTreatsApprovedUtilityTemplateAsSendableWhenProviderOmitsMarketingOnlyAllowSend() {
+        var data = GetChatappTemplateDetailResponseBody.Data.builder().templateCode("tpl-utility")
+                .name("delivery_notice").language("en_US").category("UTILITY").auditStatus("pass")
+                .components(List.of(GetChatappTemplateDetailResponseBody.Components.builder()
+                        .type("BODY").text("Your order was shipped").build()))
+                .build();
+        when(client.getChatappTemplateDetail(any())).thenReturn(CompletableFuture.completedFuture(
+                GetChatappTemplateDetailResponse.create().toBuilder().body(GetChatappTemplateDetailResponseBody.builder()
+                        .code("OK").data(data).build()).build()));
+
+        var detail = gateway.detail(SOURCE, "tpl-utility", "en_US");
+
+        assertThat(detail).isPresent();
+        assertThat(detail.orElseThrow().allowSend()).isTrue();
+    }
+
+    @Test
+    void detailKeepsExplicitlyPausedMarketingTemplateDisabled() {
+        var data = GetChatappTemplateDetailResponseBody.Data.builder().templateCode("tpl-marketing")
+                .name("promotion").language("en_US").category("MARKETING").auditStatus("pass")
+                .allowSend(false)
+                .components(List.of(GetChatappTemplateDetailResponseBody.Components.builder()
+                        .type("BODY").text("Promotion").build()))
+                .build();
+        when(client.getChatappTemplateDetail(any())).thenReturn(CompletableFuture.completedFuture(
+                GetChatappTemplateDetailResponse.create().toBuilder().body(GetChatappTemplateDetailResponseBody.builder()
+                        .code("OK").data(data).build()).build()));
+
+        var detail = gateway.detail(SOURCE, "tpl-marketing", "en_US");
+
+        assertThat(detail).isPresent();
+        assertThat(detail.orElseThrow().allowSend()).isFalse();
+    }
+
+    @Test
+    void detailDoesNotEnablePendingUtilityTemplate() {
+        var data = GetChatappTemplateDetailResponseBody.Data.builder().templateCode("tpl-pending")
+                .name("pending_notice").language("en_US").category("UTILITY").auditStatus("auditing")
+                .components(List.of(GetChatappTemplateDetailResponseBody.Components.builder()
+                        .type("BODY").text("Pending").build()))
+                .build();
+        when(client.getChatappTemplateDetail(any())).thenReturn(CompletableFuture.completedFuture(
+                GetChatappTemplateDetailResponse.create().toBuilder().body(GetChatappTemplateDetailResponseBody.builder()
+                        .code("OK").data(data).build()).build()));
+
+        var detail = gateway.detail(SOURCE, "tpl-pending", "en_US");
+
+        assertThat(detail).isPresent();
+        assertThat(detail.orElseThrow().allowSend()).isFalse();
+    }
+
+    @Test
     void uploadRequestsCamsAuthorizationBeforeDelegatingOssPut() throws Exception {
         var authorization = GetChatappUploadAuthorizationResponseBody.Data.builder().bucketName("cams-media")
                 .dir("templates").endPoint("oss.example.com").accessKeyId("id").accessKeySecret("secret").build();

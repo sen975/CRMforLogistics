@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Form, Input, Select, Button, Tabs, App, Upload, Spin } from 'antd';
+import { Alert, Form, Input, Select, Button, Tabs, App, Upload, Spin } from 'antd';
 import { SendOutlined, UploadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -7,7 +7,7 @@ import {
   sendChatApp,
   sendWeCom,
   sendChatAppMedia,
-  fetchTemplates,
+  fetchChatAppSendableTemplates,
   fetchChannelCapabilities,
 } from '../api/endpoints';
 import type { ContactIdentityResponse, ContactResponse } from '../api/types';
@@ -127,23 +127,15 @@ export default function SendForm({
   const [templateCode, setTemplateCode] = useState<string | undefined>(undefined);
   const [templateDraftValues, setTemplateDraftValues] = useState<Record<string, string>>({});
   const [templateForm] = Form.useForm();
+  const previousTemplateAccountId = useRef<string | undefined>(undefined);
   const [mediaMode, setMediaMode] = useState<string>('image');
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const { message } = App.useApp();
-  const { data: templates } = useQuery({
-    queryKey: ['templates'],
-    queryFn: fetchTemplates,
-  });
   const { data: channelCapabilities, isPending: channelCapabilitiesPending } = useQuery({
     queryKey: ['channelCapabilities'],
     queryFn: fetchChannelCapabilities,
   });
-
-  const selectedTemplate = useMemo(
-    () => templates?.find((t) => t.templateCode === templateCode),
-    [templates, templateCode],
-  );
 
   const activeChatAppCapabilities = useMemo(
     () => (channelCapabilities ?? []).filter((channel) => (
@@ -205,6 +197,29 @@ export default function SendForm({
     selectedChatAppAccountId,
   ]);
   const effectiveChatAppAccountId = selectedChannelAccountId ?? selectedChatAppAccountId;
+  useEffect(() => {
+    if (previousTemplateAccountId.current === effectiveChatAppAccountId) {
+      return;
+    }
+    previousTemplateAccountId.current = effectiveChatAppAccountId;
+    setTemplateCode(undefined);
+    setTemplateDraftValues({});
+    templateForm.resetFields();
+  }, [effectiveChatAppAccountId, templateForm]);
+  const {
+    data: templates,
+    isError: templatesError,
+    isPending: templatesPending,
+    refetch: refetchTemplates,
+  } = useQuery({
+    queryKey: ['chatapp-sendable-templates', effectiveChatAppAccountId],
+    queryFn: () => fetchChatAppSendableTemplates(effectiveChatAppAccountId!),
+    enabled: Boolean(effectiveChatAppAccountId),
+  });
+  const selectedTemplate = useMemo(
+    () => templates?.find((t) => t.templateCode === templateCode),
+    [templates, templateCode],
+  );
   const chatAppIdentities = useMemo(
     () => (contact?.identities ?? []).filter((identity) => (
       identity.channelType === 'chatapp'
@@ -533,9 +548,21 @@ export default function SendForm({
                     >
                       {chatAppAccountField}
                       {chatAppRecipientField()}
+                      {templatesError && (
+                        <Alert
+                          type="error"
+                          showIcon
+                          message="模板加载失败"
+                          description="请重试或检查当前 ChatApp 账号的模板同步状态"
+                          action={<Button size="small" onClick={() => void refetchTemplates()}>重试</Button>}
+                          style={{ marginBottom: 16 }}
+                        />
+                      )}
                       <Form.Item name="templateCode" label="模板" rules={[{ required: true }]}>
                         <Select
                           placeholder="选择模板"
+                          loading={templatesPending}
+                          disabled={templatesError}
                           options={templates?.map((t) => ({
                             label: `${t.displayName} (${t.languageCode})`,
                             value: t.templateCode,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Empty, Flex, Input, Space, Tag, Typography, theme } from 'antd';
-import { ExclamationCircleOutlined, SendOutlined } from '@ant-design/icons';
+import { ExclamationCircleOutlined, LoadingOutlined, SendOutlined } from '@ant-design/icons';
 import type { AssistantProposalChange } from '../../api/types';
 import { AssistantCodes, useAssistant, type AssistantChatItem } from './useAssistant';
 
@@ -33,13 +33,18 @@ const EXAMPLES = [
  * 而这两种情况的下一步动作正相反。现在前者走顶部的「AI 助手未开启」（并禁用输入框），
  * 其余失败给一条独立提示：**上面这段对话不完整**。它不写进对话 —— 它不属于任何一轮对话。
  *
+ * <p><b>第六件：回答是长出来的，不是一次性出现的。</b> 这一轮的记录先以空正文出现，
+ * 片段到达就往它身上长，最后的结论整条覆盖它（见 `useAssistant` 的「先占位、后覆盖」）。
+ * 面板在这里的职责只有一个：**还在推的时候不许显示任何结论标签** ——
+ * 成功 / 失败 / 待确认此刻都还不知道，先贴一个标签出去就是在替服务端下结论。
+ *
  * <h2>打开时回放历史</h2>
  * 对话正文已经落库（`assistant_conversation_messages`），面板第一次打开时按当前会话号拉回一次，
  * 于是刷新页面不再等于失忆。回放只还原**消息与它的终点**，不还原确认卡片（见 `itemOfHistory`）。
  */
 export function AssistantPanel() {
   const {
-    items, busy, pending, unavailable, trimmedHistory, historyError,
+    items, busy, pending, unavailable, trimmedHistory, compactedHistory, historyError,
     send, confirm, cancel, retry, loadHistory, startNewConversation,
   } = useAssistant();
   const [draft, setDraft] = useState('');
@@ -52,13 +57,17 @@ export function AssistantPanel() {
     void loadHistory();
   }, [loadHistory]);
 
+  // 逐字那一轮的长度。把它放进下面那个 effect 的依赖里，视口才会跟着正文一起长 ——
+  // 只在「多了一条消息」时滚的话，长回答会边写边从屏幕上退出去，用户得自己追。
+  const streamingLength = items.find((item) => item.streaming)?.text.length ?? 0;
+
   // 新一轮消息进来后把视口带到最新一条：对话是「往下长」的，不跟着走就得手动滚。
   useEffect(() => {
     const element = bottomRef.current;
     if (element && typeof element.scrollIntoView === 'function') {
       element.scrollIntoView({ block: 'end' });
     }
-  }, [items.length, busy]);
+  }, [items.length, busy, streamingLength]);
 
   // 开关没打开时输入框直接禁用：让用户能打字再告诉他「功能没开」，是在浪费他的时间。
   const disabled = unavailable?.code === AssistantCodes.DISABLED;
@@ -162,6 +171,11 @@ export function AssistantPanel() {
             较早的 {trimmedHistory} 条对话我已经记不住了；需要时请再提一次。
           </Text>
         )}
+        {compactedHistory !== null && (
+          <Text type="secondary" style={{ fontSize: 12 }} data-testid="assistant-history-compaction-note">
+            较早的 {compactedHistory} 条对话已整理成摘要，细节可能不完整；完整原文仍可回看。
+          </Text>
+        )}
         {pending && (
           <Text type="warning">
             有一条操作等着你确认，确认前不会执行。
@@ -215,6 +229,24 @@ function ChatRow({ item, isLast, busy, actionable, onConfirm, onCancel, onRetry 
     return (
       <Flex justify="flex-end">
         <Bubble background={token.colorPrimaryBg}>{item.text}</Bubble>
+      </Flex>
+    );
+  }
+
+  if (item.streaming) {
+    return (
+      <Flex vertical gap={6} align="flex-start">
+        {/*
+          正文到达之前显示进度：只读那一轮可以静默几十秒，那段时间屏幕上必须有东西在动。
+          图标只是装饰（`aria-hidden`）—— 「在动」这件事由文字说，读屏用户不该只听到一个加载图标。
+        */}
+        <Bubble
+          background={token.colorFillQuaternary}
+          testId="assistant-streaming"
+        >
+          {item.text || <Text type="secondary">{item.progress}</Text>}
+          <LoadingOutlined aria-hidden style={{ marginLeft: 6, fontSize: 12 }} />
+        </Bubble>
       </Flex>
     );
   }
@@ -305,13 +337,17 @@ function Bubble({
   children,
   background,
   color,
+  testId,
 }: {
   children: React.ReactNode;
   background: string;
   color?: string;
+  /** 只为了把「还在推」这一种气泡定位出来（不传时不渲染属性）。 */
+  testId?: string;
 }) {
   return (
     <div
+      data-testid={testId}
       style={{
         maxWidth: '85%',
         padding: '8px 12px',

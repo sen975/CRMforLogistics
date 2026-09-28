@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * 助手配置：默认关闭、边界在构造期就抛。
  *
- * <p>构造期校验不是洁癖：{@code maxHistoryTurns} / {@code candidateTodoLimit} 这类值
+ * <p>构造期校验不是洁癖：{@code maxHistoryTurns} 这类值
  * 直接决定每轮的提示词体积与调用成本，配错一个量级不会报错，只会让 token 数悄悄涨十倍。
  */
 class AssistantConfigTest {
@@ -40,8 +40,9 @@ class AssistantConfigTest {
             assertThat(config.maxMessageChars()).isEqualTo(2000);
             assertThat(config.maxHistoryTurns()).isEqualTo(8);
             assertThat(config.maxHistoryChars()).isEqualTo(8000);
-            assertThat(config.candidateTodoLimit()).isEqualTo(70);
             assertThat(config.pendingTtlSeconds()).isEqualTo(600);
+            assertThat(config.maxReadTurns()).as("默认 3：够一次检索加一次追问，又不至于让单轮成本失控")
+                    .isEqualTo(3);
         });
     }
 
@@ -56,7 +57,6 @@ class AssistantConfigTest {
                         "assistant.max-message-chars=500",
                         "assistant.max-history-turns=4",
                         "assistant.max-history-chars=2000",
-                        "assistant.candidate-todo-limit=20",
                         "assistant.pending-ttl-seconds=300")
                 .run(application -> {
                     AssistantConfig config = application.getBean(AssistantConfig.class);
@@ -65,50 +65,63 @@ class AssistantConfigTest {
                     assertThat(config.baseUrl()).isEqualTo("https://api.deepseek.com");
                     assertThat(config.model()).isEqualTo("deepseek-chat");
                     assertThat(config.timeoutSeconds()).isEqualTo(15);
-                    assertThat(config.candidateTodoLimit()).isEqualTo(20);
                     assertThat(config.pendingTtlSeconds()).isEqualTo(300);
                 });
     }
 
     @Test
     void outOfRangeValuesFailAtConstructionNotAtRuntime() {
-        assertThatThrownBy(() -> config(0, 2000, 8, 8000, 70, 600))
+        assertThatThrownBy(() -> config(0, 2000, 8, 8000, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("timeoutSeconds");
-        assertThatThrownBy(() -> config(30, 0, 8, 8000, 70, 600))
+        assertThatThrownBy(() -> config(30, 0, 8, 8000, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxMessageChars");
-        assertThatThrownBy(() -> config(30, 20_001, 8, 8000, 70, 600))
+        assertThatThrownBy(() -> config(30, 20_001, 8, 8000, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxMessageChars");
-        assertThatThrownBy(() -> config(30, 2000, 51, 8000, 70, 600))
+        assertThatThrownBy(() -> config(30, 2000, 51, 8000, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxHistoryTurns");
-        assertThatThrownBy(() -> config(30, 2000, 8, 100_001, 70, 600))
+        assertThatThrownBy(() -> config(30, 2000, 8, 100_001, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxHistoryChars");
-        assertThatThrownBy(() -> config(30, 2000, 8, 8000, 0, 600))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("candidateTodoLimit");
-        assertThatThrownBy(() -> config(30, 2000, 8, 8000, 600, 600))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("candidateTodoLimit");
-        assertThatThrownBy(() -> config(30, 2000, 8, 8000, 70, 86401))
+        assertThatThrownBy(() -> config(30, 2000, 8, 8000, 86401))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("pendingTtlSeconds");
-    }
-
-    /**
-     * 候选窗口的上限必须与服务层的硬上限对齐：允许配得更大只会得到一个被静默压回去的假配置，
-     * 而「我明明配了 500」这种误解只有在排查「为什么匹配不到那条待办」时才会被发现。
-     */
-    @Test
-    void candidateLimitCeilingMatchesTheServiceLayerHardLimit() {
-        assertThat(AssistantConfig.CANDIDATE_LIMIT_CEILING)
-                .isEqualTo(com.crmforlogistics.messagecenter.service.todo.TodoItemService.ASSISTANT_CANDIDATE_MAX_LIMIT);
     }
 
     @Test
     void zeroHistoryTurnsIsAllowed() {
         // 不带历史的一次性提问是合法用法，不该被配置校验挡下。
-        assertThat(config(30, 2000, 0, 8000, 70, 600).maxHistoryTurns()).isZero();
+        assertThat(config(30, 2000, 0, 8000, 600).maxHistoryTurns()).isZero();
+    }
+
+    /**
+     * 只读轨的两个特殊档位：{@code 0} 是回滚开关，{@code 1} 合法但不可用于「部分回滚」。
+     *
+     * <p>这条测试锁的不是行为（配 1 会让模型不检索，那是走查实测的模型行为，单测测不到），
+     * 而是<b>下界的宽度</b>：两个值都必须能配出来。理由是这条例外的代价不对称 ——
+     * 把下界提到 2 不会有人报错，只会让一个真实跑过探针的档位静默消失，
+     * 而下一次需要它的人会先怀疑是不是自己配错了。
+     */
+    @Test
+    void bothZeroAndOneAreAcceptedEvenThoughOnlyZeroIsTheRollbackSwitch() {
+        assertThat(configWithReadTurns(0).maxReadTurns()).as("0 是回滚开关：整条只读轨关掉").isZero();
+        assertThat(configWithReadTurns(1).maxReadTurns()).as("1 合法，只是不可用于部分回滚").isEqualTo(1);
+        assertThat(configWithReadTurns(AssistantConfig.MAX_READ_TURNS).maxReadTurns())
+                .isEqualTo(AssistantConfig.MAX_READ_TURNS);
+    }
+
+    @Test
+    void readTurnsOutsideTheSupportedRangeFailAtConstruction() {
+        assertThatThrownBy(() -> configWithReadTurns(-1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxReadTurns");
+        assertThatThrownBy(() -> configWithReadTurns(AssistantConfig.MAX_READ_TURNS + 1))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxReadTurns");
     }
 
     private static AssistantConfig config(int timeoutSeconds, int maxMessageChars, int maxHistoryTurns,
-                                         int maxHistoryChars, int candidateTodoLimit, int pendingTtlSeconds) {
+                                         int maxHistoryChars, int pendingTtlSeconds) {
         return new AssistantConfig(false, "", "", "gpt-4o-mini", timeoutSeconds, maxMessageChars,
-                maxHistoryTurns, maxHistoryChars, candidateTodoLimit, pendingTtlSeconds, 3);
+                maxHistoryTurns, maxHistoryChars, pendingTtlSeconds, 3);
+    }
+
+    private static AssistantConfig configWithReadTurns(int maxReadTurns) {
+        return new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 2000, 8, 8000, 600, maxReadTurns);
     }
 }

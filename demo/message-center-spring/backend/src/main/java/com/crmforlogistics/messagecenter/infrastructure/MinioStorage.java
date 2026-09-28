@@ -51,6 +51,14 @@ public class MinioStorage {
         return client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build());
     }
 
+    public InputStream getRange(String objectKey, long offset, long length) throws Exception {
+        if (offset < 0 || length <= 0) {
+            throw new IllegalArgumentException("Object range must be positive");
+        }
+        return client.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey)
+                .offset(offset).length(length).build());
+    }
+
     public void remove(String objectKey) throws Exception {
         client.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build());
     }

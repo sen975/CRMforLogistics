@@ -14,7 +14,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *
  * <h2>越界在构造期就抛</h2>
  * 照 {@code AiTopicConfig} 的写法逐项校验。理由不是洁癖：这些值全都参与**提示词体积**与
- * **单轮成本**的计算（历史多少轮、候选多少条），配错一个量级不会报错，只会让每次调用的
+ * **单轮成本**的计算（历史多少轮），配错一个量级不会报错，只会让每次调用的
  * token 数悄悄涨十倍。
  *
  * <h2>默认关闭</h2>
@@ -28,23 +28,30 @@ public record AssistantConfig(
         @DefaultValue("") String baseUrl,
         @DefaultValue("") String apiKey,
         @DefaultValue("gpt-4o-mini") String model,
+        /**
+         * 单次模型调用的超时。语义是<b>整个响应读取过程的总时长</b>，不是「等首字节的时间」——
+         * {@code JdkClientHttpRequest} 没有用 JDK 的 {@code HttpRequest.timeout}，而是从请求发出起
+         * 计时、到点直接关掉响应流，所以传输层改成流式也规避不了它。
+         * 依据见 {@code AssistantModelClient} 类注释里的两条实测。
+         */
         @DefaultValue("30") int timeoutSeconds,
         @DefaultValue("2000") int maxMessageChars,
         @DefaultValue("8") int maxHistoryTurns,
         @DefaultValue("8000") int maxHistoryChars,
-        @DefaultValue("70") int candidateTodoLimit,
         @DefaultValue("600") int pendingTtlSeconds,
         /**
          * 一次请求内允许执行的<b>只读工具次数</b>上限（默认 3；0 表示关掉只读轨，退化为单轮）。
+         *
+         * <p><b>这个旋钮不单调，别拿它做「部分回滚」。</b>走查实测（决策环文档 §6.2 场景 6/7）：
+         * 配成 {@code 1} 时模型干脆<b>不检索</b>，直接答「清单里没有」—— 那不是「少查一轮」，
+         * 而是只读能力事实上不可用。要回滚请用 {@code 0}（整条只读轨关掉，退化为单轮决策），
+         * 别用 1 试水：它既没关掉只读轨，又让只读轨看起来存在却永远不出结果。
          *
          * <p>放在记录末尾是刻意的：这个 record 的构造器是位置参数，插在中间会让既有调用
          * 按位置错配（比如把 {@code pendingTtlSeconds} 当成轮数），而那种错误不会有任何编译或运行时提示。
          */
         @DefaultValue("3") int maxReadTurns
 ) {
-
-    /** 与 {@code TodoItemService.ASSISTANT_CANDIDATE_MAX_LIMIT} 同值：候选窗口硬上限。 */
-    public static final int CANDIDATE_LIMIT_CEILING = 100;
 
     /**
      * 只读轮数的硬上限。
@@ -70,15 +77,13 @@ public record AssistantConfig(
         if (maxHistoryChars < 0 || maxHistoryChars > 100_000) {
             throw new IllegalArgumentException("assistant maxHistoryChars must be 0..100000");
         }
-        // 上限与服务层的候选窗口硬上限对齐：允许配得更大只会得到一个被静默压回去的假配置。
-        if (candidateTodoLimit <= 0 || candidateTodoLimit > CANDIDATE_LIMIT_CEILING) {
-            throw new IllegalArgumentException(
-                    "assistant candidateTodoLimit must be 1.." + CANDIDATE_LIMIT_CEILING);
-        }
         if (pendingTtlSeconds < 30 || pendingTtlSeconds > 86_400) {
             throw new IllegalArgumentException("assistant pendingTtlSeconds must be 30..86400");
         }
         // 0 是允许的，而且是回滚开关：只读轨关掉即退化为单轮决策（L0）。
+        // 1 也允许：它虽然不可用于「部分回滚」（见 maxReadTurns 的非单调说明），但确实是
+        // 一个真实用过的档位（走查探针跑过 1/3），所以下界不能顺手提到 2 —— 那会让一个
+        // 已测过的档位直接配不出来。
         // 负数则会让「还能不能再查一轮」这个问题失去意义，所以不接受。
         if (maxReadTurns < 0 || maxReadTurns > MAX_READ_TURNS) {
             throw new IllegalArgumentException("assistant maxReadTurns must be 0.." + MAX_READ_TURNS);

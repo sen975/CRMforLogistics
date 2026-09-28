@@ -83,7 +83,7 @@ public class AssistantConversationLogService {
             entity.setUserId(userId);
             entity.setRole(role);
             entity.setKind(kind);
-            entity.setText(truncate(text, TEXT_MAX));
+            entity.setText(Texts.truncate(text, TEXT_MAX));
             mapper.insert(entity);
         } catch (RuntimeException e) {
             log.error("event=assistant.conversation_log_write_failed userId={} conversationId={} role={} kind={}",
@@ -135,6 +135,18 @@ public class AssistantConversationLogService {
         return List.copyOf(recent);
     }
 
+    /** Recent persisted rows with stable cursor metadata for context compaction. */
+    public List<AssistantConversationMessageEntity> recentRowsForPrompt(UUID userId, UUID conversationId, int limit) {
+        if (userId == null || conversationId == null) {
+            return List.of();
+        }
+        int bounded = Math.max(1, Math.min(limit, MAX_REPLAY));
+        List<AssistantConversationMessageEntity> rows = new ArrayList<>(
+                mapper.listRecentByConversation(userId, conversationId, bounded));
+        Collections.reverse(rows);
+        return List.copyOf(rows);
+    }
+
     /**
      * 用户最近说过话的那个会话号，一个都没有时返回 {@code null}。
      *
@@ -170,10 +182,5 @@ public class AssistantConversationLogService {
      * 服务端待确认动作的**当前状态**，靠历史恢复它等于诱导用户点一个大概率已失效的按钮。
      */
     public record Message(String role, String kind, String text, Instant createdAt) {
-    }
-
-    private static String truncate(String value, int max) {
-        if (value == null) return null;
-        return value.length() <= max ? value : value.substring(0, max);
     }
 }

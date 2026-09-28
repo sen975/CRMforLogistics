@@ -1,9 +1,13 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
+import com.crmforlogistics.messagecenter.service.assistant.mcp.AiTopicAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactTimelineAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.MessageAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.TodoAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.WeComAssistantTools;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,22 +90,46 @@ public class AssistantActionPolicy {
      *       两边对不上就是有人搞错了，而错误的方向可能是「写动作被当成只读」。</li>
      *   <li><b>不得同时出现在 {@link #AUTO_EXECUTE_ALLOWLIST}</b>：两个集合的语义不同
      *       （一个免确认但终止本轮，一个免确认且继续循环），重叠一定是想错了。</li>
-     *   <li><b>返回值不得越出合规口径</b>（2026-09-22 选项 b：只允许结构化事实与摘要）。
-     *       这条无法由代码判定，写在注释里当 checklist —— 它是这四个条件里唯一需要人负责的。</li>
+     *   <li><b>返回值不得越出当前口径</b>。这条无法由代码判定，写在注释里当 checklist ——
+     *       它是四个条件里唯一需要人负责的。
+     *
+     *       <p><b>口径已在 2026-09-23 变更，写清楚免得后来人照旧注释去拦合规的事</b>：
+     *       原口径（2026-09-22 选项 b）是「只允许结构化事实与摘要进模型，<b>原文与转写一律不出边界</b>」。
+     *       现口径是<b>「允许原文进上下文」</b> —— 由用户在 {@code message.read}（C4）就绪前拍板。
+     *       于是判据从「有没有原文」变成<b>「这份原文是不是用户点名要的那一份」</b>：
+     *       一次回 20 条的时间线仍然要剥掉正文（那段正文不是用户要看的，还会挤掉真正的内容），
+     *       而 {@code message.read} 一次只取一条、且是用户指名的那一条，所以它带原文是对的。
+     *       「只读 = 不含原文」这条旧推论<b>不再成立</b>，别再用它否决新工具。</li>
      * </ol>
      *
      * <p>「可以循环」为什么是安全的关键：只读动作没有副作用，多轮也只会让回答更准；
      * 而写动作在一次请求里仍然至多一个，且必须过确认（约束 4）。这条分界让
      * 「先查再改」成为可能，同时不给「多写」开任何口子。
      *
-     * <p>当前四个：会话检索、联系人检索、联系人简报，以及它们的共同前提 ——
-     * 只读检索必须能<b>突破候选窗口</b>（检索结果替换候选集），否则「先查再改」在窗口之外无路可走。
-     * 这三条都只读库里的结构化字段与摘要，不含消息原文与通话转写（口径 b）。
+     * <p>当前七条：会话检索、联系人检索、联系人简报、联系人往来时间线、联系人 AI 话题、
+     * 单条消息原文、企微群聊天摘要。前五条只读库里的结构化字段与摘要；
+     * 后两条的差别值得单独说明 ——
+     *
+     * <ul>
+     *   <li>{@code message.read} 是<b>第一个故意回原文</b>的（见上面口径变更那一段）；</li>
+     *   <li>{@code wecom.summary_read} 回的是<b>摘要</b>（企微侧已经算好的），
+     *       所以它本身不越界；它进这个清单的真正原因是它底下补了一条按 owner 过滤的读路径
+     *       （原先那条全链路没有 {@code where user_id}），可见性由此与「只看自己的」对齐。</li>
+     * </ul>
+     *
+     * <p><b>为什么"只读"这一档反而要逐个交代</b>：进这个集合 = 免确认<b>且可以在一次请求内循环多轮</b>。
+     * 只读动作多轮只让回答更准，所以门槛不是"有没有副作用"（都没有），
+     * 而是第 3 条 —— 返回内容有没有越出口径。{@code contact.timeline} 就是靠这条才被拦下来改造的：
+     * 它底下的 {@code ContactTimelineService} 会返回消息正文，而一次 20 条不是"用户要的那份"。
      */
     public static final Set<String> READ_ONLY_ALLOWLIST = Set.of(
             ConversationAssistantTools.TOOL_SEARCH,
             ContactAssistantTools.TOOL_SEARCH,
-            ContactAssistantTools.TOOL_BRIEF);
+            ContactAssistantTools.TOOL_BRIEF,
+            ContactTimelineAssistantTools.TOOL_TIMELINE,
+            AiTopicAssistantTools.TOOL_TOPICS_READ,
+            MessageAssistantTools.TOOL_READ,
+            WeComAssistantTools.TOOL_SUMMARY_READ);
 
     public enum Decision {
         /** 只读动作：免确认执行，结果回灌后继续下一轮。 */

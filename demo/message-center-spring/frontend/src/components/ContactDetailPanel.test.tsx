@@ -340,4 +340,73 @@ describe('ContactDetailPanel identity display', () => {
     expect(screen.getByText('人工VIP')).toBeInTheDocument();
     expect(fetchContactMemory).toHaveBeenCalledWith('contact-1', { limit: 100, cursor: 'cursor-1' });
   });
+
+  it('shows the channel name and the CRM remark as two separate fields', async () => {
+    fetchContact.mockResolvedValueOnce({
+      id: 'contact-1',
+      displayName: 'calm1026',
+      remark: '张百凡',
+      channelTypes: ['wecom'],
+      lastMessageAt: null,
+      lastText: '',
+      messageCount: 0,
+      unreadCount: 0,
+      tags: [],
+      identities: [],
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider><AntApp><MemoryRouter initialEntries={['/thread/contact-1']}><Routes>
+          <Route path="/thread/:contactId" element={<ContactDetailPanel />} />
+        </Routes></MemoryRouter></AntApp></ConfigProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
+
+    const nameRow = (await screen.findByText('名称')).closest('tr');
+    const remarkRow = screen.getByText('备注').closest('tr');
+    // 「名称」是渠道真名，备注不顶替它（列表里用备注认人；详情里两个都要给）
+    expect(nameRow?.textContent).toContain('calm1026');
+    expect(nameRow?.textContent).not.toContain('张百凡');
+    expect(remarkRow?.textContent).toContain('张百凡');
+    // 旧实现两行显示同一段文字——这正是「名称被备注覆盖」的症状
+    expect(nameRow?.textContent).not.toEqual(remarkRow?.textContent);
+  });
+
+  it('keeps the name cell empty instead of borrowing the remark when the channel has no name', async () => {
+    fetchContact.mockResolvedValueOnce({
+      id: 'contact-1',
+      displayName: '',
+      remark: '张百凡',
+      channelTypes: [],
+      lastMessageAt: null,
+      lastText: '',
+      messageCount: 0,
+      unreadCount: 0,
+      tags: [],
+      identities: [],
+    });
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConfigProvider><AntApp><MemoryRouter initialEntries={['/thread/contact-1']}><Routes>
+          <Route path="/thread/:contactId" element={<ContactDetailPanel />} />
+        </Routes></MemoryRouter></AntApp></ConfigProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
+
+    const nameRow = (await screen.findByText('名称')).closest('tr');
+    const remarkRow = screen.getByText('备注').closest('tr');
+    expect(nameRow?.textContent).toContain('-');
+    expect(nameRow?.textContent).not.toContain('张百凡');
+    expect(remarkRow?.textContent).toContain('张百凡');
+  });
 });

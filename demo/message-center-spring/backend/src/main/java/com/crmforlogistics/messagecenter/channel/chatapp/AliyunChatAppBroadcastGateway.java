@@ -58,7 +58,12 @@ public class AliyunChatAppBroadcastGateway implements ChatAppBroadcastGateway {
     @Override
     public SubmissionResult submit(BroadcastSubmission command) {
         try {
-            ChatAppAccountCredentials credentials = credentials(command.channelAccountId());
+            ChatAppSubmissionContext snapshot = command.submissionContext();
+            ChatAppAccountCredentials credentials = snapshot == null
+                    ? credentials(command.channelAccountId()) : snapshot.credentials();
+            if (credentials == null) {
+                throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+            }
             SendChatappMassMessageRequest request = buildSubmitRequest(command, credentials.custSpaceId());
             try (AsyncClient client = createClient(credentials)) {
             var response = client.sendChatappMassMessage(request)

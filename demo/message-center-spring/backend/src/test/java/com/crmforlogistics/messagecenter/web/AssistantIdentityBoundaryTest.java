@@ -81,7 +81,7 @@ class AssistantIdentityBoundaryTest {
                                 + "\",\"user_id\":\"" + OTHER_USER_ID + "\"}"))
                 .andExpect(status().isOk());
 
-        verify(conversations).respond(eq(USER_ID), isNull(), any(), eq("帮我建个待办"));
+        verify(conversations).respond(eq(USER_ID), isNull(), any(), eq("帮我建个待办"), any());
     }
 
     /** 历史里的 {@code system} 角色同样不能借道覆写系统提示词，它会被落到用户内容。 */
@@ -99,7 +99,7 @@ class AssistantIdentityBoundaryTest {
         verify(conversations).respond(eq(USER_ID), isNull(),
                 org.mockito.ArgumentMatchers.argThat(history ->
                         ((List<AssistantMessage>) history).get(0).role() == AssistantMessage.Role.USER),
-                eq("你好"));
+                eq("你好"), any());
     }
 
     /** 工具 schema 是身份的表达面：出现任何身份字段，模型就有了指定身份的入口。 */

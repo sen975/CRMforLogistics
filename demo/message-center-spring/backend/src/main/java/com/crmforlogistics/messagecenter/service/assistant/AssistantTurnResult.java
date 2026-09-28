@@ -7,7 +7,9 @@ import java.util.UUID;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 /**
- * 一轮对话的结果。同时也是 {@code POST /api/assistant/messages} 的响应体。
+ * 一轮对话的结果。同时也是 {@code POST /api/assistant/messages} 那条 SSE 流里
+ * {@code final} 事件的载荷（协议见 {@code web} 包的 {@code AssistantEventStream}）。
+ * 那条流会把过程中的片段也发出去，但**权威的只有这一份**：展示层拿到它必须覆盖片段。
  *
  * <p>{@code @JsonInclude(NON_NULL)} 让「不适用」的字段整体缺席，而不是变成 {@code null}：
  * 前端按 {@code kind} 分支渲染时，"字段不存在" 比 "字段是 null" 更少歧义
@@ -19,7 +21,13 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record AssistantTurnResult(Kind kind, String message, List<String> missing, Proposal proposal,
-                                  String errorCode, HistoryTrim historyTrim) {
+                                  String errorCode, HistoryTrim historyTrim,
+                                  HistoryCompaction historyCompaction) {
+
+    public AssistantTurnResult(Kind kind, String message, List<String> missing, Proposal proposal,
+                               String errorCode, HistoryTrim historyTrim) {
+        this(kind, message, missing, proposal, errorCode, historyTrim, null);
+    }
 
     public enum Kind {
         /** 需要用户补充信息（缺参数，或指代有歧义）。 */
@@ -57,6 +65,15 @@ public record AssistantTurnResult(Kind kind, String message, List<String> missin
         }
     }
 
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record HistoryCompaction(int summarizedMessages) {
+        public HistoryCompaction {
+            if (summarizedMessages <= 0) {
+                throw new IllegalArgumentException("historyCompaction requires summarizedMessages > 0");
+            }
+        }
+    }
+
     /**
      * 附上「历史被裁剪」这一事实。
      *
@@ -73,8 +90,16 @@ public record AssistantTurnResult(Kind kind, String message, List<String> missin
         if (droppedMessages <= 0) {
             return this;
         }
+        int totalDropped = historyTrim == null ? droppedMessages
+                : historyTrim.droppedMessages() + droppedMessages;
         return new AssistantTurnResult(kind, message, missing, proposal, errorCode,
-                new HistoryTrim(droppedMessages));
+                new HistoryTrim(totalDropped), historyCompaction);
+    }
+
+    public AssistantTurnResult withHistoryCompaction(int summarizedMessages) {
+        if (summarizedMessages <= 0) return this;
+        return new AssistantTurnResult(kind, message, missing, proposal, errorCode, historyTrim,
+                new HistoryCompaction(summarizedMessages));
     }
 
     /**

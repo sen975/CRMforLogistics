@@ -95,14 +95,19 @@ public class ChatAppController {
     public ResponseEntity<?> syncTemplates() {
         ChatAppTemplateSyncService.SyncResultRecord result =
                 templateSyncService.runOwnedAccount(SecurityUtil.currentUserId());
+        if (result.syncFailed() || !result.complete()) {
+            return ResponseEntity.status(result.retryable()
+                    ? org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE
+                    : org.springframework.http.HttpStatus.BAD_GATEWAY).body(result);
+        }
         return ResponseEntity.ok(result);
     }
 
     @PostMapping("/webhook")
     public ResponseEntity<?> webhook(@RequestBody String rawBody) {
-        ChatAppSendService.SendResult result = sendService.processWebhook(rawBody);
-        eventHub.publish("message-new", "{}");
-        return ResponseEntity.ok(result);
+        return ResponseEntity.status(org.springframework.http.HttpStatus.GONE)
+                .body(Map.of("code", "CHATAPP_WEBHOOK_DEPRECATED",
+                        "message", "Use /api/v1/webhooks/chatapp"));
     }
 
     private static String clientRequestId(String value) {

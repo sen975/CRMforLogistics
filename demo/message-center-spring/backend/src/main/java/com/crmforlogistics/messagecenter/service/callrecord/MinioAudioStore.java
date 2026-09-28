@@ -177,6 +177,21 @@ public class MinioAudioStore {
         }
     }
 
+    public InputStream open(AudioAsset asset, long offset, long length) throws CallRecordException {
+        if (offset < 0 || length <= 0 || asset == null || offset > asset.sizeBytes()
+                || length > asset.sizeBytes() - offset) {
+            throw new CallRecordException("CALL_AUDIO_RANGE_INVALID", 416,
+                    "Audio range is invalid", false);
+        }
+        try {
+            return minioStorage.getRange(asset.objectKey(), offset, length);
+        } catch (Exception e) {
+            throw new CallRecordException(
+                    "CALL_AUDIO_NOT_FOUND", 404,
+                    "Call audio does not exist", false, e);
+        }
+    }
+
     public void discard(StagedAudio staged) {
         if (staged != null && isStagedPath(staged.path())) {
             deleteQuietly(staged.path());
@@ -184,11 +199,25 @@ public class MinioAudioStore {
     }
 
     public void delete(AudioAsset asset) throws CallRecordException {
-        resolveAssetPath(asset, false);
+        Path local = resolveAssetPath(asset, false);
+        Exception failure = null;
         try {
-            Files.deleteIfExists(resolveAssetPath(asset, false));
+            Files.deleteIfExists(local);
         } catch (IOException exception) {
-            throw ioFailure("Unable to delete call audio", exception);
+            failure = exception;
+        }
+        try {
+            if (asset.objectKey() == null || asset.objectKey().isBlank()) {
+                throw new IllegalArgumentException("Audio object key is required");
+            }
+            minioStorage.remove(asset.objectKey());
+        } catch (Exception exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
+        }
+        if (failure != null) {
+            throw new CallRecordException("CALL_AUDIO_CLEANUP_FAILED", 500,
+                    "Unable to delete call audio", true, failure);
         }
     }
 

@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.architecture;
 
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
@@ -120,5 +121,42 @@ class ArchitectureBoundaryTest {
                 .importPackages("com.crmforlogistics.messagecenter");
 
         BUSINESS_DOMAINS_MUST_NOT_DEPEND_ON_CHANNEL_IMPLEMENTATIONS.check(classes);
+    }
+
+    @Test
+    void webAndDtoLayersMustNotDependOnCamsSdk() {
+        JavaClasses classes = productionClasses();
+        noClasses()
+                .that().resideInAnyPackage(
+                        "com.crmforlogistics.messagecenter.web..",
+                        "com.crmforlogistics.messagecenter.dto..")
+                .should().dependOnClassesThat().resideInAPackage("com.aliyun..")
+                .check(classes);
+    }
+
+    @Test
+    void callbackControllerMustNotResolveProviderCredentials() {
+        JavaClasses classes = productionClasses();
+        noClasses()
+                .that().haveSimpleName("WhatsAppCallbackConfigController")
+                .should().dependOnClassesThat().resideInAPackage(
+                        "com.crmforlogistics.messagecenter.infrastructure.cams..")
+                .check(classes);
+    }
+
+    @Test
+    void webhookProjectorMustNotChooseChannelAccounts() {
+        JavaClasses classes = productionClasses();
+        noClasses()
+                .that().haveSimpleName("ChatAppWebhookProjector")
+                .should().callMethod(ChannelAccountMapper.class,
+                        "findActiveChatAppByNormalizedIdentifier", String.class)
+                .check(classes);
+    }
+
+    private static JavaClasses productionClasses() {
+        return new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("com.crmforlogistics.messagecenter");
     }
 }

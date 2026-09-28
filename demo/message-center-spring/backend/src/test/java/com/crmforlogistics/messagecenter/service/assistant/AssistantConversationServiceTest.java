@@ -4,9 +4,11 @@ import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.entity.AssistantPendingActionEntity;
 import com.crmforlogistics.messagecenter.entity.TodoItemEntity;
 import com.crmforlogistics.messagecenter.mapper.AssistantPendingActionMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
+import com.crmforlogistics.messagecenter.service.channel.OutboundMessageService;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,11 +66,12 @@ class AssistantConversationServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(contextBuilder.build(eq(AssistantFixtures.USER), anyInt())).thenReturn(AssistantFixtures.context());
+        when(contextBuilder.build()).thenReturn(AssistantFixtures.context());
         AssistantPendingActionService pending = new AssistantPendingActionService(
                 pendingMapper, parser, registry, audit, CONFIG,
                 AssistantFixtures.objectMapper(),
-                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC),
+                mock(OutboundMessageService.class), mock(ContactMapper.class));
         service = new AssistantConversationService(
                 contextBuilder,
                 new AssistantPromptBuilder(registry, CONFIG, AssistantFixtures.objectMapper()),
@@ -200,7 +203,7 @@ class AssistantConversationServiceTest {
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ERROR);
         verifyNoInteractions(todoMapper, pendingMapper);
         // 不可重试：进入 call 分支后的失败不给第二次机会，避免被拒的诉求被改写成合法工具。
-        verify(modelClient, times(1)).complete(any());
+        verify(modelClient, times(1)).complete(any(), any(), any());
     }
 
     @Test
@@ -210,7 +213,7 @@ class AssistantConversationServiceTest {
         AssistantTurnResult result = turn("随便说点什么");
 
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ANSWER);
-        verify(modelClient, times(2)).complete(any());
+        verify(modelClient, times(2)).complete(any(), any(), any());
     }
 
     @Test
@@ -220,7 +223,7 @@ class AssistantConversationServiceTest {
         AssistantTurnResult result = turn("帮我建个待办");
 
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ERROR);
-        verify(modelClient, times(2)).complete(any());
+        verify(modelClient, times(2)).complete(any(), any(), any());
         verifyNoInteractions(todoMapper, pendingMapper);
     }
 
@@ -246,7 +249,7 @@ class AssistantConversationServiceTest {
 
     @Test
     void providerFailuresPropagateInsteadOfBeingRenderedAsAMisunderstanding() {
-        when(modelClient.complete(any())).thenThrow(
+        when(modelClient.complete(any(), any(), any())).thenThrow(
                 new AssistantException(AssistantException.PROVIDER_UNAVAILABLE, "AI 服务暂时不可用，请稍后再试"));
 
         assertThatThrownBy(() -> turn("帮我建个待办"))
@@ -349,7 +352,7 @@ class AssistantConversationServiceTest {
 
     private void modelReplies(String... contents) {
         org.mockito.stubbing.OngoingStubbing<AssistantModelClient.ModelReply> stub =
-                when(modelClient.complete(any()));
+                when(modelClient.complete(any(), any(), any()));
         for (String content : contents) {
             stub = stub.thenReturn(new AssistantModelClient.ModelReply(content, "deepseek-chat", 900));
         }

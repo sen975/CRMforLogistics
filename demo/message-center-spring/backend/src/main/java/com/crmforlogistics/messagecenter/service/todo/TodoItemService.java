@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -15,6 +16,8 @@ public class TodoItemService {
     public static final int ASSISTANT_CANDIDATE_DEFAULT_LIMIT = 70;
     /** 调用方无论传多大的 limit 都不会超过这个值。 */
     public static final int ASSISTANT_CANDIDATE_MAX_LIMIT = 100;
+    /** 只读检索返回的候选上限，避免一次搜索重新制造大上下文。 */
+    public static final int ASSISTANT_SEARCH_LIMIT = 20;
 
     private final TodoItemMapper mapper;
     public TodoItemService(TodoItemMapper mapper) { this.mapper = mapper; }
@@ -47,6 +50,16 @@ public class TodoItemService {
         int effective = limit <= 0 ? ASSISTANT_CANDIDATE_DEFAULT_LIMIT
                 : Math.min(limit, ASSISTANT_CANDIDATE_MAX_LIMIT);
         return mapper.listOpenForAssistant(userId, effective);
+    }
+
+    /**
+     * 按需检索当前用户未完成待办。归属、标题过滤和结果上限由 Mapper 查询一次性落实。
+     */
+    public List<TodoItemEntity> searchOpenForAssistant(UUID userId, String query) {
+        String needle = query == null ? "" : query.strip().toLowerCase(Locale.ROOT);
+        if (userId == null) throw new IllegalArgumentException("缺少用户");
+        if (needle.isEmpty()) return listOpenForAssistant(userId, ASSISTANT_SEARCH_LIMIT);
+        return mapper.searchOpenForAssistant(userId, needle, ASSISTANT_SEARCH_LIMIT);
     }
 
     /**

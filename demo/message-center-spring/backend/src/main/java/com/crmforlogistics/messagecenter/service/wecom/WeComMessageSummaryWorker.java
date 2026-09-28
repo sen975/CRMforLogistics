@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -105,11 +104,6 @@ public class WeComMessageSummaryWorker {
         this.maxBackoffSeconds = requireRange(maxBackoffSeconds, 1, 3600, "maxBackoffSeconds");
         this.pollIntervalSeconds = requireRange(pollIntervalSeconds, 1, 60, "pollIntervalSeconds");
         this.topicActivityBridge = topicActivityBridge;
-    }
-
-    @Scheduled(fixedDelayString = "${app.wecom-message-summary-poll-interval-seconds:1}000", initialDelay = 1000)
-    public void scheduledRun() {
-        runOnce(Instant.now());
     }
 
     public int runOnce(Instant now) {

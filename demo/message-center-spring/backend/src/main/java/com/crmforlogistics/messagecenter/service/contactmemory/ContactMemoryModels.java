@@ -17,6 +17,21 @@ public final class ContactMemoryModels {
     private ContactMemoryModels() {
     }
 
+    /**
+     * 归一「记忆处理状态」。
+     *
+     * <p>没有状态行、或者状态字段是空白，都表示这条流水线<b>从没被标脏过</b> ——
+     * 对读的人等价于 {@code CLEAN}，而<b>不是</b>「状态未知」。
+     *
+     * <p>为什么归一必须只有一份：页面（{@code ContactMemoryQueryService}）与助手简报
+     * （{@code ContactBriefProvider}）都在读这个值。两处各判一次「空白当什么」，
+     * 早晚会变成一边说「干净」、另一边说「不知道」—— 而用户看到的差别是
+     * 「不用管」与「是不是坏了」。
+     */
+    public static String memoryState(String status) {
+        return status == null || status.isBlank() ? "CLEAN" : status;
+    }
+
     public enum Category {
         IDENTITY,
         PRODUCT_INTEREST,

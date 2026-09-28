@@ -6,12 +6,9 @@ import java.util.List;
  * 待办候选集：{@code CandidateSet} 的第一个实例，也是既有行为的保持者。
  *
  * <p>抽出来的唯一目的是让「第二组候选」不需要改编排层。它自己的语义一个字都没变：
- * 上限来自 {@code assistant.candidate-todo-limit}、条目形状就是 {@link AssistantContext.CandidateTodo}、
- * 渲染出来仍是那个 JSON 数组（提示词里那一节的字节内容与阶段 0.3 验过的一致）。
+ * 上限由 {@code todo.search} 的有界 SQL 查询保证，条目形状是 {@link AssistantContext.CandidateTodo}。
  *
- * <p>条数上限刻意<b>只声明不截断</b>：截断发生在 provider（{@code TodoItemService.listOpenForAssistant}
- * 的 SQL limit）。在这里再截一次会得到一个「看起来限流了、实际限在别处」的假防线，
- * 而真出问题时你会先改这里。
+ * <p>条数上限刻意<b>只声明不截断</b>：限制发生在 {@code todo.search} 使用的 SQL limit。
  */
 public record TodoCandidates(int limit, List<AssistantContext.CandidateTodo> items) implements CandidateSet {
 

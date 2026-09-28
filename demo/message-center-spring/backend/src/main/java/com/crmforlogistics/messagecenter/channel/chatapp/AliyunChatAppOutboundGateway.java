@@ -38,9 +38,19 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
     @Override
     public Submission submit(Command command) throws Exception {
         try {
-            ChannelAccountEntity account = requireActiveAccount(command.channelAccountId());
-            ChatAppAccountCredentials credentials = credentialsResolver.resolve(account);
-            String from = account.getAccountIdentifier().trim();
+            if (isMediaKind(command.kind())
+                    && !attachmentMapper.existsReadyForMessage(command.messageId(),
+                    required(command.content(), "objectKey"))) {
+                throw new IllegalArgumentException("CHATAPP_MEDIA_ATTACHMENT_NOT_READY");
+            }
+            ChatAppSubmissionContext snapshot = command.submissionContext();
+            ChannelAccountEntity account = snapshot == null ? requireActiveAccount(command.channelAccountId()) : null;
+            ChatAppAccountCredentials credentials = snapshot == null
+                    ? credentialsResolver.resolve(account) : snapshot.credentials();
+            if (credentials == null) {
+                throw new ChatAppAccountCredentialsException("CHATAPP_ACCOUNT_CREDENTIALS_MISSING");
+            }
+            String from = snapshot == null ? account.getAccountIdentifier().trim() : snapshot.accountIdentifier();
             ChatAppSendService.SendResult result = switch (command.kind()) {
                 case "text" -> sendService.sendText(
                         credentials, from,
@@ -124,6 +134,10 @@ public class AliyunChatAppOutboundGateway implements ChatAppOutboundGateway {
 
     private static String stringValue(Object value) {
         return value == null ? "" : value.toString();
+    }
+
+    private static boolean isMediaKind(String kind) {
+        return "image".equals(kind) || "video".equals(kind) || "document".equals(kind);
     }
 
     private static Map<String, String> stringMap(Object value) {

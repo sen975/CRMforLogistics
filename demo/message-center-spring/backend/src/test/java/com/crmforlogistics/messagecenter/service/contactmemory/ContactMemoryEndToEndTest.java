@@ -21,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -98,6 +99,9 @@ class ContactMemoryEndToEndTest {
 
     @Autowired
     private ContactMemoryQueryService query;
+
+    @Autowired
+    private ContactMemoryRecomputeService recompute;
 
     @MockitoBean
     private ContactMemoryLlmGateway gateway;
@@ -269,6 +273,88 @@ class ContactMemoryEndToEndTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from contact_memory_attempts where contact_id = ? and owner_user_id = ?",
                 Integer.class, fixture.contactId(), fixture.ownerId())).isEqualTo(1);
+    }
+
+    @Test
+    void lateInboundMessageBehindSuccessCursorIsStillSentToTheModel() {
+        TestFixture fixture = fixture();
+        MessageEntity latestProcessed = insertInboundMessage(
+                fixture, FIRST_MESSAGE_AT, "已处理的入站消息。");
+
+        ContactMemoryStateEntity state = new ContactMemoryStateEntity();
+        state.setId(UUID.randomUUID());
+        state.setContactId(fixture.contactId());
+        state.setOwnerUserId(fixture.ownerId());
+        state.setStatus("CLEAN");
+        state.setLastInboundAt(latestProcessed.getReceivedAt());
+        state.setLastSuccessCursor(receivedCursor(latestProcessed));
+        state.setRetryCount(0);
+        assertThat(states.insert(state)).isEqualTo(1);
+
+        MessageEntity late = insertInboundMessage(
+                fixture, SECOND_MESSAGE_AT, "迟到入库但应参与画像的旧消息。");
+        Instant lateReceivedAt = latestProcessed.getReceivedAt().minusSeconds(60);
+        jdbc.update("update messages set received_at = ? where id = ?",
+                Timestamp.from(lateReceivedAt), late.getId());
+        late.setReceivedAt(lateReceivedAt);
+        trigger.markInboundPersisted(fixture.contactId(), late.getId(), late.getIngestSequence(),
+                late.getOccurredAt(), lateReceivedAt);
+
+        Instant processingNow = Instant.now();
+        assertThat(trigger.replayDue(processingNow, 10)).isEqualTo(1);
+        when(gateway.generate(any())).thenAnswer(invocation ->
+                new ContactMemoryModels.LlmOutput(
+                        List.of(), null, List.of(), List.of(), "test-model", "{}"));
+
+        worker.runOnce(processingNow);
+
+        ArgumentCaptor<ContactMemoryModels.Context> context =
+                ArgumentCaptor.forClass(ContactMemoryModels.Context.class);
+        verify(gateway).generate(context.capture());
+        assertThat(context.getValue().inboundMessages())
+                .extracting(MessageEntity::getId)
+                .containsExactly(late.getId());
+    }
+
+    /**
+     * 手动重算（{@code contact.refresh_memory} 底下那一步）在真库上的行为。
+     *
+     * <p>为什么这条要在真库上验：判据全在 SQL 里（与自动路径 {@code markStaleDirty} 同一条），
+     * 而它写错时的症状是<b>静默死循环</b>而不是断言失败 —— 把 {@code now} 写进
+     * {@code last_inbound_at}，{@code complete()} 就会在每轮跑完后立刻把状态改回 {@code DIRTY}。
+     * 所以这里验三件事：写进去的是消息表的真时间、没有新内容时真的 0 行、别人名下连读都不读。
+     */
+    @Test
+    void manualRecomputeMarksDirtyOnlyWhileSomethingIsStillWaitingToBeProcessed() {
+        TestFixture fixture = fixture();
+        MessageEntity only = insertInboundMessage(fixture, FIRST_MESSAGE_AT, "客户关注海运。");
+
+        // 1) 从未处理过 + 有一条入站消息 ⇒ 标脏，且 last_inbound_at 必须是那条消息的真实入库时间
+        assertThat(recompute.requestRecompute(fixture.ownerId(), fixture.contactId()))
+                .contains(ContactMemoryRecomputeService.Outcome.SUBMITTED);
+        ContactMemoryStateEntity submitted = state(fixture);
+        assertThat(submitted.getStatus()).isEqualTo("DIRTY");
+        assertThat(submitted.getLastInboundAt())
+                .as("必须是 messages.received_at，不能是「现在」——写成现在会让每一轮跑完立刻又变脏")
+                .isEqualTo(only.getReceivedAt());
+
+        // 2) 已经在队列里 ⇒ 不重复提交（也就不会把用户以为「上一次没提交成功」）
+        assertThat(recompute.requestRecompute(fixture.ownerId(), fixture.contactId()))
+                .contains(ContactMemoryRecomputeService.Outcome.ALREADY_PENDING);
+
+        // 3) 游标追上最后一条入站消息 ⇒ 没有新内容：一个字节都不写，状态与时间都保持原样
+        jdbc.update("update contact_memory_states set status = 'CLEAN', last_success_cursor = ? "
+                        + "where contact_id = ? and owner_user_id = ?",
+                receivedCursor(only), fixture.contactId(), fixture.ownerId());
+        assertThat(recompute.requestRecompute(fixture.ownerId(), fixture.contactId()))
+                .as("说成「已提交」会让用户等一个永远不会发生的变化")
+                .contains(ContactMemoryRecomputeService.Outcome.NOTHING_NEW);
+        ContactMemoryStateEntity untouched = state(fixture);
+        assertThat(untouched.getStatus()).isEqualTo("CLEAN");
+        assertThat(untouched.getLastInboundAt()).isEqualTo(only.getReceivedAt());
+
+        // 4) 记忆不归他 ⇒ 空（连状态表都不去读）
+        assertThat(recompute.requestRecompute(fixture.otherOwnerId(), fixture.contactId())).isEmpty();
     }
 
     private ContactMemoryModels.Context contextFor(TestFixture fixture, Instant cutoff) {

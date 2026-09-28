@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant.mcp;
 
 import com.crmforlogistics.messagecenter.entity.TodoItemEntity;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantContext;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,11 +44,26 @@ class TodoAssistantToolsTest {
     private final TodoItemMapper mapper = mock(TodoItemMapper.class);
     private final TodoAssistantTools tools = new TodoAssistantTools(new TodoItemService(mapper));
     private final ToolRegistry registry = new ToolRegistry(
-            List.of(tools.todoCreateTool(), tools.todoCompleteTool(),
+            List.of(tools.todoSearchTool(), tools.todoCreateTool(), tools.todoCompleteTool(),
                     tools.todoDeleteTool(), tools.todoUpdateTool()),
             new ToolInputValidator(), new ObjectMapper());
 
     // ---------- todo.create ----------
+
+    @Test
+    void searchReturnsOnlyMatchingOpenTodosAsCandidates() {
+        when(mapper.searchOpenForAssistant(USER, "报价", TodoItemService.ASSISTANT_SEARCH_LIMIT))
+                .thenReturn(List.of(todo(TODO_ID, USER, "和张总确认报价",
+                        LocalDate.of(2026, 9, 22), LocalTime.of(15, 0), false)));
+
+        ToolResult result = call(TodoAssistantTools.TOOL_SEARCH, Map.of("query", "报价"));
+
+        assertThat(result.isError()).isFalse();
+        assertThat(result.candidates()).isNotNull();
+        assertThat(result.candidates().items()).hasSize(1);
+        AssistantContext.CandidateTodo candidate = (AssistantContext.CandidateTodo) result.candidates().items().get(0);
+        assertThat(candidate.title()).isEqualTo("和张总确认报价");
+    }
 
     @Test
     void createNormalisesAndReturnsTheNewTodo() {
@@ -156,8 +172,9 @@ class TodoAssistantToolsTest {
                 "todoId", TODO_ID.toString(), "completed", true));
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.code()).isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
-        assertThat(result.message()).as("不区分「不存在」与「不是你的」，避免变成探测信道").isEqualTo("待办不存在");
+        assertThat(result.code()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
+        assertThat(result.message()).as("不区分「不存在」与「不是你的」，避免变成探测信道")
+                .isEqualTo(ToolExecutionException.ACCESS_DENIED_MESSAGE);
         verify(mapper, never()).setCompleted(any(), any(), anyBoolean());
     }
 
@@ -191,7 +208,7 @@ class TodoAssistantToolsTest {
 
         ToolResult result = call(TodoAssistantTools.TOOL_DELETE, Map.of("todoId", TODO_ID.toString()));
 
-        assertThat(result.code()).isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+        assertThat(result.code()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
         verify(mapper, never()).delete(any(), any());
     }
 
@@ -250,7 +267,7 @@ class TodoAssistantToolsTest {
         ToolResult result = call(TodoAssistantTools.TOOL_UPDATE, arguments);
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.code()).isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+        assertThat(result.code()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
         assertThat(result.data()).isEmpty();
     }
 
@@ -278,10 +295,10 @@ class TodoAssistantToolsTest {
         when(mapper.findById(eq(TODO_ID), eq(USER))).thenReturn(null);
 
         assertThat(call(TodoAssistantTools.TOOL_DELETE, Map.of("todoId", TODO_ID.toString())).code())
-                .isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+                .isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
         assertThat(call(TodoAssistantTools.TOOL_COMPLETE,
                 Map.of("todoId", TODO_ID.toString(), "completed", true)).code())
-                .isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+                .isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
     }
 
     private ToolResult call(String name, Map<String, Object> arguments) {

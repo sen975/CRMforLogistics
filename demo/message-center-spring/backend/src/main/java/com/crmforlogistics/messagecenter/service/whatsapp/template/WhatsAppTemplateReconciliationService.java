@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
@@ -105,7 +106,7 @@ public class WhatsAppTemplateReconciliationService {
     public SyncResult syncPrivateAccount(UUID accountId) {
         UUID id = Objects.requireNonNull(accountId);
         ChannelAccountEntity account = accountMapper.selectById(id);
-        if (account == null || !"BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())
+        if (account == null || !WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())
                 || account.getProviderScopeId() == null) {
             throw new WhatsAppTemplateException("WHATSAPP_TEMPLATE_DOMAIN_MISMATCH",
                     org.springframework.http.HttpStatus.CONFLICT,
@@ -139,7 +140,8 @@ public class WhatsAppTemplateReconciliationService {
         try {
             provider = loadProviderSnapshot(source);
         } catch (RuntimeException error) {
-            return new SyncResult(0, 0, 0, false);
+            return SyncResult.failed(0, 0, 0, errorCode(error), retryable(error),
+                    previousSuccessfulAt(accountId));
         }
 
         Map<TemplateKey, TemplateEntity> existing = existingTemplates(providerScopeId, accountId, privateDomain);
@@ -152,14 +154,18 @@ public class WhatsAppTemplateReconciliationService {
                         summary.language(), gateway.detail(source, summary.templateCode(), summary.language()));
                 if (detail.isPresent()) {
                     persistSnapshot(detail.orElseThrow(), current, providerScopeId, accountId, now, privateDomain);
-                } else {
+                } else if (current != null) {
                     persistSummary(summary, current, providerScopeId, accountId, now, privateDomain);
                 }
-                changed++;
+                if (detail.isPresent() || current != null) changed++;
             } catch (RuntimeException error) {
                 // The list state is authoritative for review status, but not for components.
-                persistSummary(summary, current, providerScopeId, accountId, now, privateDomain);
-                changed++;
+                // A detail failure must never turn an already sendable template into a disabled one.
+                // For a new identity, wait for a complete detail before creating a sendable row.
+                if (current != null) {
+                    persistSummary(summary, current, providerScopeId, accountId, now, privateDomain);
+                    changed++;
+                }
             }
             existing.remove(key);
         }
@@ -172,7 +178,8 @@ public class WhatsAppTemplateReconciliationService {
                 changed++;
             }
         }
-        return new SyncResult(provider.pages(), provider.items().size(), changed, provider.complete());
+        return new SyncResult(provider.pages(), provider.items().size(), changed, provider.complete(),
+                false, null, false, provider.complete() ? now : previousSuccessfulAt(accountId));
     }
 
     private static SyncResult await(CompletableFuture<SyncResult> inFlight) {
@@ -474,7 +481,7 @@ public class WhatsAppTemplateReconciliationService {
 
     private boolean isPrivateAccount(UUID accountId) {
         ChannelAccountEntity account = accountMapper.selectById(accountId);
-        return account != null && "BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode());
+        return account != null && WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode());
     }
 
     private UUID scopeForOperation(TemplateOperationEntity operation) {
@@ -600,7 +607,35 @@ public class WhatsAppTemplateReconciliationService {
         return clock.instant();
     }
 
-    public record SyncResult(int pages, int fetched, int changed, boolean complete) {
+    private Instant previousSuccessfulAt(UUID accountId) {
+        ChannelAccountEntity account = accountMapper.selectById(accountId);
+        return account == null ? null : account.getTemplateLastSyncedAt();
+    }
+
+    private static String errorCode(RuntimeException error) {
+        String message = error.getMessage();
+        if (message != null && message.matches("CHATAPP_[A-Z0-9_]+")) {
+            return message;
+        }
+        return "CHATAPP_TEMPLATE_SYNC_PROVIDER_FAILED";
+    }
+
+    private static boolean retryable(RuntimeException error) {
+        return !(error instanceof WhatsAppTemplateException exception) || exception.retryable();
+    }
+
+    public record SyncResult(int pages, int fetched, int changed, boolean complete,
+                             boolean syncFailed, String errorCode, boolean retryable,
+                             Instant lastSuccessfulAt) {
+        public SyncResult(int pages, int fetched, int changed, boolean complete) {
+            this(pages, fetched, changed, complete, false, null, false, null);
+        }
+
+        public static SyncResult failed(int pages, int fetched, int changed, String errorCode,
+                                        boolean retryable, Instant lastSuccessfulAt) {
+            return new SyncResult(pages, fetched, changed, false, true, errorCode,
+                    retryable, lastSuccessfulAt);
+        }
     }
 
     private record TemplateKey(String templateCode, String language) {

@@ -14,6 +14,31 @@ import static org.mockito.Mockito.when;
 
 class ChatAppWebhookVerifierTest {
     @Test
+    void acceptsUnsignedCamsRequestWhenProviderDoesNotSendSignatureHeaders() {
+        AppConfig config = mock(AppConfig.class);
+        when(config.chatappWebhookSecret()).thenReturn("");
+        when(config.chatappWebhookMaxSkewSeconds()).thenReturn(300);
+        ChatAppWebhookVerifier verifier = new ChatAppWebhookVerifier(config,
+                Clock.fixed(Instant.ofEpochSecond(1_800_000_000L), ZoneOffset.UTC));
+
+        assertThatCode(() -> verifier.verify(null, null, "[{\"MessageId\":\"cams-1\"}]"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsPartiallySignedRequestWhenOnlyOneProviderHeaderIsPresent() {
+        AppConfig config = mock(AppConfig.class);
+        when(config.chatappWebhookSecret()).thenReturn("");
+        when(config.chatappWebhookMaxSkewSeconds()).thenReturn(300);
+        ChatAppWebhookVerifier verifier = new ChatAppWebhookVerifier(config,
+                Clock.fixed(Instant.ofEpochSecond(1_800_000_000L), ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> verifier.verify("signature", null, "{}"))
+                .isInstanceOf(ChatAppWebhookAuthenticationException.class)
+                .hasMessage("CHATAPP_WEBHOOK_SIGNATURE_HEADERS_INCOMPLETE");
+    }
+
+    @Test
     void acceptsValidSignatureWithinTimeWindowAndRejectsInvalidSignature() {
         AppConfig config = mock(AppConfig.class);
         when(config.chatappWebhookSecret()).thenReturn("secret");

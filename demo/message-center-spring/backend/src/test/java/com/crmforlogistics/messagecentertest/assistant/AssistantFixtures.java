@@ -82,13 +82,13 @@ public final class AssistantFixtures {
 
     public static AssistantConfig config(int maxReadTurns) {
         return new AssistantConfig(true, "https://api.deepseek.com", "secret", "deepseek-chat",
-                30, 2000, 8, 8000, 70, 600, maxReadTurns);
+                30, 2000, 8, 8000, 600, maxReadTurns);
     }
 
     public static ToolRegistry registry(TodoItemService service) {
         TodoAssistantTools tools = new TodoAssistantTools(service);
         return new ToolRegistry(
-                List.of(tools.todoCreateTool(), tools.todoCompleteTool(),
+                List.of(tools.todoSearchTool(), tools.todoCreateTool(), tools.todoCompleteTool(),
                         tools.todoDeleteTool(), tools.todoUpdateTool()),
                 new ToolInputValidator(), objectMapper());
     }
@@ -105,7 +105,7 @@ public final class AssistantFixtures {
         ConversationAssistantTools conversations =
                 new ConversationAssistantTools(provider, mock(ConversationPreferenceService.class));
         return new ToolRegistry(
-                List.of(todos.todoCreateTool(), todos.todoCompleteTool(),
+                List.of(todos.todoSearchTool(), todos.todoCreateTool(), todos.todoCompleteTool(),
                         todos.todoDeleteTool(), todos.todoUpdateTool(),
                         conversations.conversationSearchTool(), conversations.conversationPinTool()),
                 new ToolInputValidator(), objectMapper());
@@ -135,7 +135,7 @@ public final class AssistantFixtures {
                 new ConversationAssistantTools(conversations, mock(ConversationPreferenceService.class));
         ContactAssistantTools contactTools = new ContactAssistantTools(contacts, briefs);
         return new ToolRegistry(
-                List.of(todos.todoCreateTool(), todos.todoCompleteTool(),
+                List.of(todos.todoSearchTool(), todos.todoCreateTool(), todos.todoCompleteTool(),
                         todos.todoDeleteTool(), todos.todoUpdateTool(),
                         conversationTools.conversationSearchTool(), conversationTools.conversationPinTool(),
                         contactTools.contactSearchTool(), contactTools.contactBriefTool()),

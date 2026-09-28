@@ -228,8 +228,23 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
     int updateEncryptedConfigOwned(@Param("ownerId") UUID ownerId, @Param("id") UUID id,
                                    @Param("config") String config);
 
-    @Update("UPDATE channel_accounts SET sync_status = #{status}, last_synced_at = #{lastSyncedAt}, updated_at = now() WHERE id = #{id}::uuid")
+    @Update("UPDATE channel_accounts SET sync_status = #{status}, "
+            + "last_synced_at = COALESCE(#{lastSyncedAt}, last_synced_at), updated_at = now() "
+            + "WHERE id = #{id}::uuid")
     int updateSyncStatus(@Param("id") UUID id, @Param("status") String status, @Param("lastSyncedAt") java.time.Instant lastSyncedAt);
+
+    @Update("UPDATE channel_accounts SET template_sync_status = 'SYNCING', " +
+            "template_last_error_code = NULL, updated_at = now() WHERE id = #{id}::uuid")
+    int markTemplateSyncStarted(@Param("id") UUID id);
+
+    @Update("UPDATE channel_accounts SET template_sync_status = 'SUCCEEDED', " +
+            "template_last_synced_at = #{syncedAt}, template_last_error_code = NULL, updated_at = now() " +
+            "WHERE id = #{id}::uuid")
+    int markTemplateSyncSucceeded(@Param("id") UUID id, @Param("syncedAt") java.time.Instant syncedAt);
+
+    @Update("UPDATE channel_accounts SET template_sync_status = 'FAILED', " +
+            "template_last_error_code = #{errorCode}, updated_at = now() WHERE id = #{id}::uuid")
+    int markTemplateSyncFailed(@Param("id") UUID id, @Param("errorCode") String errorCode);
 
     @Update("UPDATE channel_accounts SET sync_status = #{status}, last_synced_at = #{lastSyncedAt}, " +
             "updated_at = now() WHERE id = #{id}::uuid AND owner_user_id = #{ownerId}::uuid " +
@@ -244,6 +259,37 @@ public interface ChannelAccountMapper extends BaseMapper<ChannelAccountEntity> {
                 .isNull(ChannelAccountEntity::getDeletedAt)
                 .last("limit 2"));
     }
+
+    @Select("select id, owner_user_id, channel_type, name, remark, account_identifier, " +
+            "account_identifier_normalized, auth_status, sync_status, onboarding_mode, " +
+            "phone_verification_status, provider_phone_status, encrypted_config, provider_scope_id, " +
+            "last_synced_at, created_at, updated_at, deleted_at, version " +
+            "from channel_accounts " +
+            "where channel_type in ('chatapp', 'whatsapp') " +
+            "and auth_status = 'active' and deleted_at is null " +
+            "and account_identifier_normalized = #{identifier} " +
+            "and (select count(*) from channel_accounts duplicate " +
+            "where duplicate.channel_type in ('chatapp', 'whatsapp') " +
+            "and duplicate.auth_status = 'active' and duplicate.deleted_at is null " +
+            "and duplicate.account_identifier_normalized = #{identifier}) = 1 " +
+            "limit 1")
+    ChannelAccountEntity findActiveChatAppByNormalizedIdentifier(@Param("identifier") String identifier);
+
+    @Select("select ca.id, ca.owner_user_id, ca.channel_type, ca.name, ca.remark, ca.account_identifier, " +
+            "ca.account_identifier_normalized, ca.auth_status, ca.sync_status, ca.onboarding_mode, " +
+            "ca.phone_verification_status, ca.provider_phone_status, ca.encrypted_config, ca.provider_scope_id, " +
+            "ca.last_synced_at, ca.created_at, ca.updated_at, ca.deleted_at, ca.version " +
+            "from channel_accounts ca " +
+            "join whatsapp_provider_scopes scope on scope.id = ca.provider_scope_id " +
+            "where ca.channel_type in ('chatapp', 'whatsapp') " +
+            "and ca.auth_status = 'active' and ca.deleted_at is null " +
+            "and ca.account_identifier_normalized = #{identifier} " +
+            "and scope.provider = 'ALIYUN_CAMS' " +
+            "and scope.external_scope_id = #{custSpaceId} " +
+            "limit 1")
+    ChannelAccountEntity findActiveChatAppByScopeAndNormalizedIdentifier(
+            @Param("custSpaceId") String custSpaceId,
+            @Param("identifier") String identifier);
 
     default List<ChannelAccountEntity> selectActiveChatAppAccountsForSync() {
         return selectList(new LambdaQueryWrapper<ChannelAccountEntity>()

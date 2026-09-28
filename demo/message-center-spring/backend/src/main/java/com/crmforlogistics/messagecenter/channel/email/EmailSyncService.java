@@ -138,19 +138,16 @@ public class EmailSyncService {
 
     public record SyncResult(String channel, int fetched, int saved, int skipped, String message) {}
 
-    @Transactional
     public SyncResult receiveLatest() throws Exception {
         EmailSyncSettings settings = resolveSettings();
         return receiveLatest(resolveEmailAccount(), null, settings);
     }
 
-    @Transactional
     public SyncResult receiveLatest(UUID accountId, UUID ownerId) throws Exception {
         ChannelAccountEntity account = requireOwnedEmailAccount(accountId, ownerId);
         return receiveLatest(account, ownerId, EmailSyncSettings.from(config, account, credentialCipher, log));
     }
 
-    @Transactional
     public SyncResult receiveLatest(UUID ownerId) throws Exception {
         List<ChannelAccountEntity> accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "email");
         if (accounts.size() != 1) {

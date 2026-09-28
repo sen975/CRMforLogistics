@@ -24,6 +24,9 @@ const api = vi.hoisted(() => ({
   transferAdminScopedWhatsAppAccount: vi.fn(),
   reclaimAdminScopedWhatsAppAccount: vi.fn(),
   fetchAdminScopedAssignmentHistory: vi.fn(),
+  fetchAdminWhatsAppCallbacks: vi.fn(),
+  updateAdminWhatsAppPhoneCallback: vi.fn(),
+  updateAdminWhatsAppAccountCallback: vi.fn(),
   fetchAdminUsers: vi.fn(),
   fetchWhatsAppAccounts: vi.fn(),
   fetchAccountProfile: vi.fn(),
@@ -155,6 +158,12 @@ beforeEach(() => {
   api.fetchAdminUsers.mockResolvedValue({ items: [salesUser, adminUser], total: 2, page: 0, size: 100 });
   api.fetchWhatsAppAccounts.mockResolvedValue([]);
   api.fetchAdminScopedAssignmentHistory.mockResolvedValue([]);
+  api.fetchAdminWhatsAppCallbacks.mockResolvedValue({
+    scopeId: 'cams-1',
+    phoneConfigs: [],
+    accountConfig: null,
+    ingressPath: '/api/v1/webhooks/chatapp',
+  });
 });
 
 it('管理员访问 /admin/platforms 看到平台接入管理', async () => {
@@ -396,6 +405,8 @@ it('账号页自动选中第一个可用 CAMS 并按该空间查询账号', asyn
 
   await waitFor(() => expect(api.fetchAdminScopedWhatsAppAccounts).toHaveBeenCalledWith('cams-1'));
   expect(await screen.findByText('号码一')).toBeVisible();
+  expect(await screen.findByRole('region', { name: 'CAMS 回调地址' })).toBeVisible();
+  expect(api.fetchAdminWhatsAppCallbacks).toHaveBeenCalledWith('cams-1');
 });
 
 it('切换 CAMS 后按新空间重新查询账号', async () => {

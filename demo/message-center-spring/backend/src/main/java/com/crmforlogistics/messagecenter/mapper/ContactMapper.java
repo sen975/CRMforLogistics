@@ -134,14 +134,17 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
     Optional<UUID> findCreatedBy(@Param("id") UUID id);
 
     /**
-     * List contacts visible to a user with permission scoping:
-     * user-owned contacts OR contacts with team-assigned conversations
-     * OR contacts with access grants, excluding soft-deleted and merged contacts.
-     * Cursor pagination by sort_at desc, id desc.
+     * Visibility + filter body shared by {@link #listForUser} and {@link #countForUser}.
+     *
+     * <p>Deliberately the single source of truth: a total that disagrees with the page it
+     * counts is worse than no total at all. Both statements wrap this exact fragment, so
+     * editing the filter here changes both, and
+     * {@code ContactMapperChatAppFilterIntegrationTest} pins the two together.
+     *
+     * <p>Excludes the cursor predicate ({@code beforeLastMessageAt} / {@code beforeId}):
+     * a cursor narrows which page you are on, it does not change how many rows match.
      */
-    @Select("<script>" +
-        "select visible.id, visible.display_name, visible.remark, visible.sort_at " +
-        "from (" +
+    String VISIBLE_CONTACTS_SELECT =
         "  select c.id, c.display_name, c.remark, " +
         "    coalesce((select max(m.occurred_at) " +
         "      from contact_identities ci " +
@@ -185,14 +188,26 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
         "      and filtered_ci.channel_type = #{channelType} " +
         "      and filtered_ci.identity_scope = #{channelAccountId}::text " +
         "      and filtered_ci.deleted_at is null) " +
-        "  </if>" +
-        ") visible " +
+        "  </if>";
+
+    /**
+     * List contacts visible to a user with permission scoping:
+     * user-owned contacts OR contacts with team-assigned conversations
+     * OR contacts with access grants, excluding soft-deleted and merged contacts.
+     *
+     * <p>Cursor narrows the window ({@code sort_at}, {@code id} descending); {@code page}
+     * then skips {@code (current - 1) * size} rows inside that window. {@code page.current}
+     * is honoured here -- ignoring it made {@code ?page=2} silently return page 1.
+     */
+    @Select("<script>" +
+        "select visible.id, visible.display_name, visible.remark, visible.sort_at " +
+        "from (" + VISIBLE_CONTACTS_SELECT + ") visible " +
         "where 1 = 1 " +
         "<if test=\"beforeLastMessageAt != null and beforeId != null\">" +
         "  and (visible.sort_at &lt; #{beforeLastMessageAt} or (visible.sort_at = #{beforeLastMessageAt} and visible.id &lt; #{beforeId}::uuid)) " +
         "</if>" +
         "order by visible.sort_at desc, visible.id desc " +
-        "limit #{page.size}" +
+        "limit #{page.size} offset #{page.size} * (#{page.current} - 1)" +
         "</script>")
     IPage<ContactEntity> listForUser(IPage<ContactEntity> page,
                                      @Param("userId") UUID userId,
@@ -203,6 +218,21 @@ public interface ContactMapper extends BaseMapper<ContactEntity> {
                                      @Param("isAdmin") boolean isAdmin,
                                      @Param("channelType") String channelType,
                                      @Param("channelAccountId") UUID channelAccountId);
+
+    /**
+     * Number of contacts visible to a user under the same filter as {@link #listForUser}.
+     *
+     * <p>Shares {@link #VISIBLE_CONTACTS_SELECT} so the total can never disagree with the
+     * page it describes. The cursor is intentionally absent: the total answers "how many
+     * match the filter", not "how many remain after the cursor".
+     */
+    @Select("<script>select count(*) from (" + VISIBLE_CONTACTS_SELECT + ") visible</script>")
+    long countForUser(@Param("userId") UUID userId,
+                      @Param("search") String search,
+                      @Param("tagSearch") boolean tagSearch,
+                      @Param("isAdmin") boolean isAdmin,
+                      @Param("channelType") String channelType,
+                      @Param("channelAccountId") UUID channelAccountId);
 
     @Select("<script>" +
         "select id, display_name, role_title, remark, status, merged_to_id, created_by, created_at, updated_at, deleted_at, version " +

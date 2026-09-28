@@ -30,6 +30,6 @@ public class AssistantEnabledTestConfiguration {
     @Bean
     AssistantConfig assistantEnabledConfig() {
         return new AssistantConfig(true, "https://api.deepseek.com", "secret", "deepseek-chat",
-                30, 2000, 8, 8000, 70, 600, 3);
+                30, 2000, 8, 8000, 600, 3);
     }
 }

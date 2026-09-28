@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="企业微信（示意）">
+  <!--
+    注意：这是「企业微信」的**示意标识**，不是官方 logo 的复刻。
+    simple-icons 中已无 wechatwork / wecom 条目（实测 404），故自绘。
+    构图取「IM 双气泡」这一通用符号，配色取企业微信品牌蓝。
+    对外投放前请替换为官方素材（须遵守腾讯品牌规范）。
+  -->
+  <rect x="2" y="8" width="30" height="22" rx="7" fill="#2E7CF6"/>
+  <path d="M12 30 L9 37 L18 30 Z" fill="#2E7CF6"/>
+  <rect x="20" y="18" width="26" height="19" rx="6" fill="#57A9FF"/>
+  <path d="M38 37 L41 43 L32 37 Z" fill="#57A9FF"/>
+  <circle cx="12" cy="19" r="2.4" fill="#FFFFFF"/>
+  <circle cx="21" cy="19" r="2.4" fill="#FFFFFF"/>
+  <circle cx="29" cy="27.5" r="2.0" fill="#FFFFFF"/>
+  <circle cx="37" cy="27.5" r="2.0" fill="#FFFFFF"/>
+</svg>

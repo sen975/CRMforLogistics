@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastJobEntity;
 import com.crmforlogistics.messagecenter.entity.ChatAppBroadcastRecipientEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSubmissionContext;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastJobMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastMapper;
 import com.crmforlogistics.messagecenter.mapper.ChatAppBroadcastRecipientMapper;
@@ -152,17 +153,22 @@ public class ChatAppBroadcastWorker {
             broadcastMapper.updateStatus(broadcast.getId(), BroadcastStatus.SUBMITTING.name(), now);
         });
         try {
-            ChatAppBroadcastGateway.SubmissionResult result = transactions.execute(status -> {
+            ChatAppSubmissionContext submissionContext = transactions.execute(status -> {
                 ChannelAccountEntity account = requireSubmissionAccount(broadcast);
-                BroadcastSubmission command = new BroadcastSubmission(
-                        broadcast.getChannelAccountId(), account.getAccountIdentifier(),
-                        broadcast.getTemplateCode(), broadcast.getTemplateName(), broadcast.getLanguageCode(),
-                        broadcast.getId().toString(), recipients.stream()
-                        .map(recipient -> new SubmissionRecipient(
-                                recipient.getRecipientNumberSnapshot(), params(recipient.getTemplateParamsJsonb())))
-                        .toList());
-                return gateway.submit(command);
+                ChatAppSubmissionContext snapshot = accountResolver.snapshot(account);
+                return snapshot == null
+                        ? new ChatAppSubmissionContext(account.getId(), account.getAccountIdentifier(),
+                        account.getVersion(), null)
+                        : snapshot;
             });
+            BroadcastSubmission command = new BroadcastSubmission(
+                    broadcast.getChannelAccountId(), submissionContext.accountIdentifier(),
+                    broadcast.getTemplateCode(), broadcast.getTemplateName(), broadcast.getLanguageCode(),
+                    broadcast.getId().toString(), recipients.stream()
+                    .map(recipient -> new SubmissionRecipient(
+                            recipient.getRecipientNumberSnapshot(), params(recipient.getTemplateParamsJsonb())))
+                    .toList(), submissionContext);
+            ChatAppBroadcastGateway.SubmissionResult result = gateway.submit(command);
             transactions.executeWithoutResult(status -> {
                 if (jobMapper.completeIfLeased(job.getId(), job.getLeaseId(), now) != 1) {
                     throw leaseLost();

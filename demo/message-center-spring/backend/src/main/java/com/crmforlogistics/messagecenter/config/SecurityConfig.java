@@ -57,9 +57,10 @@ public class SecurityConfig {
                 .requestMatchers(
                         "/api/wecom/callback",
                         "/api/v1/wecom/authorization/callback",
+                        "/api/v1/wecom/app-callback",
                         "/hook_path")
                     .permitAll()
-                .requestMatchers("/api/v1/webhooks/chatapp").permitAll()
+                .requestMatchers("/api/v1/webhooks/chatapp", "/api/chatapp/webhook").permitAll()
                 .requestMatchers("/api/v1/call-records/*/audio").permitAll()
                 .requestMatchers("/api/v1/wecom/conversation-view/**", "/api/v1/wecom/js-sdk-config").authenticated()
                 .requestMatchers(

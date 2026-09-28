@@ -42,6 +42,7 @@ class WeComCallbackCompatibilityTest {
     @MockitoBean WeComStartupGate startupGate;
     @MockitoBean AuthSessionService authSessionService;
     @MockitoBean org.springframework.security.core.userdetails.UserDetailsService userDetailsService;
+    @MockitoBean com.crmforlogistics.messagecenter.service.wecom.WeComContactEventService contactEventService;
 
     @Test
     void supportsCanonicalLegacyAndHookCallbackVerificationPaths() throws Exception {

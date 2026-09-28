@@ -8,23 +8,18 @@ import com.crmforlogistics.messagecenter.mapper.ChannelEventMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 @Service
 public class ChatAppWebhookInboxService {
     private static final int MAX_BODY_BYTES = 1024 * 1024;
-    private static final Logger LOG = LoggerFactory.getLogger(ChatAppWebhookInboxService.class);
-
     private final ChatAppWebhookVerifier verifier;
     private final ChannelAccountMapper channelAccountMapper;
     private final ChannelEventMapper channelEventMapper;
@@ -48,18 +43,18 @@ public class ChatAppWebhookInboxService {
         if (bodyBytes.length == 0 || bodyBytes.length > MAX_BODY_BYTES) {
             throw new IllegalArgumentException("CHATAPP_WEBHOOK_BODY_SIZE_INVALID");
         }
-        LOG.info("ChatApp webhook raw body: {}", rawBody);
-        // 临时跳过验签（本地验证昵称落库），验证后恢复
-        // verifier.verify(signature, timestamp, rawBody);
+        verifier.verify(signature, timestamp, rawBody);
         try {
             JsonNode root = objectMapper.readTree(rawBody);
-            ChannelAccountEntity account = fixedAccount(root);
+            boolean unsignedProviderRequest = isBlank(signature) && isBlank(timestamp);
+            ChannelAccountEntity account = resolveAccount(root, unsignedProviderRequest);
             Instant now = Instant.now();
             ChannelEventEntity event = new ChannelEventEntity();
             event.setId(UUID.randomUUID());
             event.setChannelAccountId(account.getId());
             String providerEventId = ChatAppWebhookProjector.field(
-                    root, "EventId", "eventId", "event_id", "NoticeId", "noticeId");
+                    root, "EventId", "eventId", "event_id", "NoticeId", "noticeId",
+                    "MessageId", "messageId", "message_id");
             event.setProviderEventId(providerEventId.isBlank() ? null : providerEventId);
             String status = ChatAppWebhookProjector.field(root, "Status", "status");
             event.setEventType(status.isBlank() ? "chatapp_message" : "chatapp_status");
@@ -90,23 +85,25 @@ public class ChatAppWebhookInboxService {
         }
     }
 
-    private ChannelAccountEntity fixedAccount(JsonNode root) {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectActiveChatAppAccounts();
-        if (accounts.size() != 1) {
-            throw new IllegalStateException("CHATAPP_FIXED_ACCOUNT_NOT_CONFIGURED");
-        }
-        ChannelAccountEntity account = accounts.get(0);
-        String configuredNumber = ContactPointUtil.normalizePhone(account.getAccountIdentifier());
+    private ChannelAccountEntity resolveAccount(JsonNode root, boolean unsignedProviderRequest) {
         boolean statusCallback = !ChatAppWebhookProjector.field(root, "Status", "status").isBlank();
-        String primaryNumber = ContactPointUtil.normalizePhone(ChatAppWebhookProjector.field(
+        String businessNumber = ContactPointUtil.normalizePhone(ChatAppWebhookProjector.field(
                 root, statusCallback
                         ? new String[] {"From", "from", "businessNumber", "businessPhoneNumber"}
                         : new String[] {"To", "to", "businessNumber", "businessPhoneNumber"}));
-        String alternateNumber = ContactPointUtil.normalizePhone(ChatAppWebhookProjector.field(
-                root, statusCallback ? new String[] {"To", "to"} : new String[] {"From", "from"}));
-        if (!primaryNumber.isBlank() && !primaryNumber.equals(configuredNumber)
-                && !alternateNumber.equals(configuredNumber)) {
-            throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_ACCOUNT_MISMATCH");
+        if (businessNumber.isBlank()) {
+            throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_ACCOUNT_UNRESOLVED");
+        }
+        String custSpaceId = ChatAppWebhookProjector.field(root,
+                "CustSpaceId", "custSpaceId", "cust_space_id");
+        if (unsignedProviderRequest && custSpaceId.isBlank()) {
+            throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_ACCOUNT_UNRESOLVED");
+        }
+        ChannelAccountEntity account = custSpaceId.isBlank()
+                ? channelAccountMapper.findActiveChatAppByNormalizedIdentifier(businessNumber)
+                : channelAccountMapper.findActiveChatAppByScopeAndNormalizedIdentifier(custSpaceId, businessNumber);
+        if (account == null) {
+            throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_ACCOUNT_UNRESOLVED");
         }
         return account;
     }
@@ -122,7 +119,8 @@ public class ChatAppWebhookInboxService {
     private String projectionPayload(JsonNode root) throws Exception {
         ObjectNode payload = objectMapper.createObjectNode();
         putIfPresent(payload, "EventId", ChatAppWebhookProjector.field(
-                root, "EventId", "eventId", "event_id", "NoticeId", "noticeId"));
+                root, "EventId", "eventId", "event_id", "NoticeId", "noticeId",
+                "MessageId", "messageId", "message_id"));
         putIfPresent(payload, "MessageId", ChatAppWebhookProjector.field(
                 root, "MessageId", "messageId", "message_id", "wamid", "TaskId"));
         putIfPresent(payload, "Status", ChatAppWebhookProjector.field(
@@ -146,6 +144,10 @@ public class ChatAppWebhookInboxService {
         if (value != null && !value.isBlank()) {
             payload.put(field, value);
         }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     public record WebhookReceipt(UUID eventId, boolean duplicate, String status) {}

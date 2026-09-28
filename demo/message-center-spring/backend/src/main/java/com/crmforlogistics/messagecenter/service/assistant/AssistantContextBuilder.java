@@ -1,8 +1,6 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.config.AppConfig;
-import com.crmforlogistics.messagecenter.entity.TodoItemEntity;
-import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -32,55 +30,29 @@ import java.util.Locale;
  * 这两个值一旦分叉，就会出现「助手建了明天的待办、提醒今天发出来」这种无法解释的现象。
  * 多一个配置项就多一次分叉的机会，所以这里刻意不新增。
  *
- * <p>候选清单走 {@link TodoItemService#listOpenForAssistant}，不直接访问 Mapper ——
- * 越权防线（{@code where user_id}）与硬上限都收口在 service 层。
+ * <p>候选清单不由本类加载；各只读工具通过自己的 provider/service 查询，并把有界候选交回编排层。
  */
 @Component
 public class AssistantContextBuilder {
 
-    private final TodoItemService todoService;
-    private final ConversationCandidateProvider conversationCandidates;
-    private final ContactCandidateProvider contactCandidates;
     private final AppConfig appConfig;
     private final Clock clock;
 
-    public AssistantContextBuilder(TodoItemService todoService,
-                                   ConversationCandidateProvider conversationCandidates,
-                                   ContactCandidateProvider contactCandidates,
-                                   AppConfig appConfig,
+    public AssistantContextBuilder(AppConfig appConfig,
                                    Clock clock) {
-        this.todoService = todoService;
-        this.conversationCandidates = conversationCandidates;
-        this.contactCandidates = contactCandidates;
         this.appConfig = appConfig;
         this.clock = clock;
     }
 
     /**
-     * 组装会话事实。
-     *
-     * <p>多组候选的装配就是这里：<b>每一组各自由自己的 provider 提供、各自有界</b>，
-     * 编排层只拿到一个 {@code List<CandidateSet>}。加一个域等于在这里多加一项，
-     * 提示词与解析器都不用动（它们按集合名工作）。
-     *
-     * <p>待办那一组的条数上限来自配置（{@code assistant.candidate-todo-limit}），
-     * 会话与联系人两组的上限写在自己的声明里 —— 三者的「合理条数」不是一个量级，
-     * 用一个配置项统一调只会得到一个对谁都不合适的值。
+     * 组装第一轮会话事实。候选不在这里预加载；只读工具命中后通过 {@code ToolResult.discovered}
+     * 回灌到 {@link AssistantContext#withCandidateSet}，这样无关请求不会支付候选清单的上下文成本。
      */
-    public AssistantContext build(java.util.UUID userId, int candidateLimit) {
+    public AssistantContext build() {
         ZoneId zone = ZoneId.of(appConfig.todoReminderZone());
         LocalDate today = ZonedDateTime.now(clock.withZone(zone)).toLocalDate();
 
-        List<AssistantContext.CandidateTodo> candidates = todoService
-                .listOpenForAssistant(userId, candidateLimit)
-                .stream()
-                .map(AssistantContextBuilder::toCandidate)
-                .toList();
-
-        return new AssistantContext(zone.getId(), today, weekdayOf(today),
-                List.of(new TodoCandidates(candidateLimit, candidates),
-                        conversationCandidates.recent(userId),
-                        contactCandidates.recent(userId)));
+        return new AssistantContext(zone.getId(), today, weekdayOf(today), List.of());
     }
 
     /**
@@ -89,13 +61,5 @@ public class AssistantContextBuilder {
      */
     static String weekdayOf(LocalDate date) {
         return date.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.CHINA);
-    }
-
-    private static AssistantContext.CandidateTodo toCandidate(TodoItemEntity item) {
-        return new AssistantContext.CandidateTodo(
-                item.getId().toString(),
-                item.getDueDate().toString(),
-                item.getDueTime() == null ? null : item.getDueTime().toString(),
-                item.getTitle());
     }
 }

@@ -80,4 +80,38 @@ class AppConfigTest {
                 });
     }
 
+    @Test
+    void weComContactEventsAreOffAndUnconfiguredByDefault() {
+        context.run(application -> {
+            AppConfig config = application.getBean(AppConfig.class);
+
+            assertThat(config.wecomAppToken()).isEmpty();
+            assertThat(config.wecomAppEncodingAesKey()).isEmpty();
+            assertThat(config.wecomContactEventEnabled())
+                    .as("默认关闭：未确认应用级凭据前不应该开始接收客户联系事件")
+                    .isFalse();
+        });
+    }
+
+    @Test
+    void bindsExplicitWeComAppCallbackSettings() {
+        context.withPropertyValues(
+                        "app.wecom-app-token=app-token-value",
+                        "app.wecom-app-encoding-aes-key=app-aes-key-value",
+                        "app.wecom-contact-event-enabled=true")
+                .run(application -> {
+                    AppConfig config = application.getBean(AppConfig.class);
+
+                    assertThat(config.wecomAppToken()).isEqualTo("app-token-value");
+                    assertThat(config.wecomAppEncodingAesKey()).isEqualTo("app-aes-key-value");
+                    assertThat(config.wecomContactEventEnabled()).isTrue();
+                });
+    }
+
+    @Test
+    void rejectsChatAppApiTimeoutOutsideSupportedRange() {
+        context.withPropertyValues("app.chatapp-api-timeout-seconds=121")
+                .run(application -> assertThat(application).hasFailed());
+    }
+
 }

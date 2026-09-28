@@ -19,5 +19,12 @@ public record CallRecordConfig(
         @DefaultValue("20") int maxRevisions,
         @DefaultValue("300") int audioSessionTtlSeconds,
         @DefaultValue("8") int audioSessionMaxPerActor,
-        @DefaultValue("256") int audioSessionMaxActive
-) {}
+        @DefaultValue("256") int audioSessionMaxActive,
+        @DefaultValue("105906176") long multipartMaxRequestBytes
+) {
+    public CallRecordConfig {
+        if (maxAudioBytes <= 0 || multipartMaxRequestBytes < maxAudioBytes) {
+            throw new IllegalArgumentException("call-record multipart request limit must cover max audio bytes");
+        }
+    }
+}

@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.whatsapp.template;
 
 import com.crmforlogistics.messagecenter.entity.AuditLogEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateMediaAssetEntity;
 import com.crmforlogistics.messagecenter.entity.TemplateOperationEntity;
@@ -372,7 +373,7 @@ public class WhatsAppTemplateApplicationService {
             throw business("WHATSAPP_ACCOUNT_NOT_FOUND", HttpStatus.NOT_FOUND,
                     "WhatsApp 账号不存在或不属于当前用户");
         }
-        if (!"BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (!WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             throw business("WHATSAPP_TEMPLATE_DOMAIN_MISMATCH", HttpStatus.CONFLICT,
                     "当前 WhatsApp 账号不是 Business App 私有模板账号");
         }
@@ -380,7 +381,7 @@ public class WhatsAppTemplateApplicationService {
     }
 
     private static void requireEnterpriseApiAccount(ChannelAccountEntity account) {
-        if ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             throw business("WHATSAPP_TEMPLATE_DOMAIN_MISMATCH", HttpStatus.CONFLICT,
                     "Business App 账号只能使用自己的私有模板");
         }

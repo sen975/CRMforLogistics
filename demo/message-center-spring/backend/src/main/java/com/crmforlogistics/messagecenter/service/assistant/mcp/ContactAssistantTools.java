@@ -96,7 +96,9 @@ public class ContactAssistantTools {
                                 + "适合「会前准备」「这人最近在关心什么」「判断成交意愿」这类问题。"
                                 + "这是只读操作；contactRef 只能来自候选联系人清单，清单里找不到对应联系人时不要调用，"
                                 + "改为向用户说明没找到。返回里 memoryVisible=false 表示画像与标签由他人录入、"
-                                + "当前用户看不到，此时如实说明而不是当作「他没有画像」。")
+                                + "当前用户看不到，此时如实说明而不是当作「他没有画像」。"
+                                + "memoryState 与 memoryFailureCode 是系统内部状态，用来解释「他的标签为什么"
+                                + "没更新」；回话时把它们说成人话，不要原样念出这些代码。")
                         .inputSchema(objectSchema(properties, List.of("contactRef")))
                         .annotations(readOnly())
                         .build(),
@@ -173,8 +175,8 @@ public class ContactAssistantTools {
         try {
             return action.get();
         } catch (IllegalArgumentException e) {
-            throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT,
-                    "这条联系人不在你能查看的范围内", e);
+            throw new ToolExecutionException(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND,
+                    ToolExecutionException.ACCESS_DENIED_MESSAGE, e);
         }
     }
 
@@ -185,6 +187,14 @@ public class ContactAssistantTools {
         data.put("contactRef", item.id());
         data.put("name", item.name());
         data.put("remark", item.remark());
+        data.put("channels", item.channels().stream().map(channel -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("channelType", channel.channelType());
+            value.put("identityValue", channel.identityValue());
+            value.put("displayName", channel.displayName());
+            value.put("accountLabel", channel.accountLabel());
+            return value;
+        }).toList());
         return data;
     }
 
@@ -205,7 +215,9 @@ public class ContactAssistantTools {
             return text.append("：画像与标签由他人录入，对你不可见；基础信息已列出").toString();
         }
         if (!brief.hasMemory()) {
-            return text.append("：暂无画像、事实、标签与话题").toString();
+            // 状态在这条路上同样要说：一个 FAILED 的联系人正是「一条都没有」的常见原因，
+            // 只回「暂无画像」会让用户以为系统里本来就没人可提炼。
+            return text.append("：暂无画像、事实、标签与话题").append(appendMemoryState(brief)).toString();
         }
         text.append("：");
         List<String> sections = new ArrayList<>();
@@ -224,7 +236,33 @@ public class ContactAssistantTools {
         if (!brief.topics().isEmpty()) {
             sections.add(brief.topics().size() + " 条近期话题");
         }
-        return text.append(String.join("、", sections)).toString();
+        return text.append(String.join("、", sections)).append(appendMemoryState(brief)).toString();
+    }
+
+    /**
+     * 记忆处理状态的一句话补充。
+     *
+     * <p>为什么它必须进这一句，而不是只躺在 {@code data} 里：模型是拿这一句当骨架回话的，
+     * 而上面那句「3 条事实、2 个 AI 标签」读起来是<b>一切正常</b>——「有一批新内容还在排队」
+     * 与「上一次重算失败了」恰恰是「看着正常、其实没更新」的原因；漏掉它，模型就只能编一个理由。
+     *
+     * <p>{@code CLEAN} 不加：它是最常见的状态，加进去只会变成噪声
+     * （同 {@code AiTopicAssistantTools.appendStatus} 只补「生成中 / 失败」两种）。
+     *
+     * <p>失败<b>码</b>刻意不出现在这句里 —— 那是内部标识（{@code INVALID_OUTPUT} 之类），
+     * 只进 {@code data} 供模型判断原因。面向用户的回话不许吐内部标识。
+     */
+    private static String appendMemoryState(ContactBrief brief) {
+        String state = brief.memoryState();
+        if (state == null) {
+            return "";
+        }
+        return switch (state) {
+            case "DIRTY", "RETRY_WAIT" -> "。另外，他还有一批往来内容排在重算队列里";
+            case "PROCESSING" -> "。另外，他的画像与标签正在重新生成中";
+            case "FAILED" -> "。另外，上一次重算失败了，可以让他重算一次";
+            default -> "";
+        };
     }
 
     // ---------- 声明构造 ----------

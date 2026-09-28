@@ -11,17 +11,20 @@ import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageRequest;
 import com.aliyun.sdk.service.cams20200606.models.SendChatappMessageResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.crmforlogistics.messagecenter.config.AppConfig;
 import darabonba.core.client.ClientOverrideConfiguration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import com.crmforlogistics.messagecenter.infrastructure.cams.ChatAppAccountCredentials;
 
@@ -31,18 +34,33 @@ public class ChatAppSendService {
     private static final Logger log = LoggerFactory.getLogger(ChatAppSendService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String CHANNEL_TYPE = "whatsapp";
+    private static final Duration DEFAULT_API_TIMEOUT = Duration.ofSeconds(30);
 
     private final ChatAppOssMediaUploader ossMediaUploader;
     private final Supplier<AsyncClient> clientFactory;
+    private final Duration apiTimeout;
+
+    public ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader) {
+        this(ossMediaUploader, null, DEFAULT_API_TIMEOUT);
+    }
 
     @Autowired
-    public ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader) {
-        this(ossMediaUploader, null);
+    public ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader, AppConfig config) {
+        this(ossMediaUploader, null, Duration.ofSeconds(config.chatappApiTimeoutSeconds()));
     }
 
     ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader, Supplier<AsyncClient> clientFactory) {
+        this(ossMediaUploader, clientFactory, DEFAULT_API_TIMEOUT);
+    }
+
+    ChatAppSendService(ChatAppOssMediaUploader ossMediaUploader, Supplier<AsyncClient> clientFactory,
+                       Duration apiTimeout) {
         this.ossMediaUploader = Objects.requireNonNull(ossMediaUploader);
         this.clientFactory = clientFactory;
+        this.apiTimeout = Objects.requireNonNull(apiTimeout);
+        if (apiTimeout.isZero() || apiTimeout.isNegative()) {
+            throw new IllegalArgumentException("CHATAPP_API_TIMEOUT_INVALID");
+        }
     }
 
     public SendResult sendText(ChatAppAccountCredentials credentials, String from, String to,
@@ -58,7 +76,8 @@ public class ChatAppSendService {
         putIfNotBlank(clientRequestId, builder::taskId);
 
         try (AsyncClient client = createClient(credentials)) {
-            SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
+            SendChatappMessageResponse response = client.sendChatappMessage(builder.build())
+                    .get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
             String messageId = responseMessageId(response);
             return new SendResult(messageId, cleanFrom, cleanTo, cleanText, "Submitted");
         }
@@ -86,7 +105,8 @@ public class ChatAppSendService {
         putIfNotBlank(clientRequestId, builder::taskId);
 
         try (AsyncClient client = createClient(credentials)) {
-            SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
+            SendChatappMessageResponse response = client.sendChatappMessage(builder.build())
+                    .get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
             String messageId = responseMessageId(response);
             String text = templateRenderPreview(code, templateName, safeParams);
             return new SendResult(messageId, cleanFrom, cleanTo, text, "Submitted");
@@ -110,7 +130,7 @@ public class ChatAppSendService {
                     GetChatappUploadAuthorizationRequest.builder()
                             .custSpaceId(required(credentials.custSpaceId(), "custSpaceId"))
                             .build()
-            ).get();
+            ).get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
             GetChatappUploadAuthorizationResponseBody.Data auth =
                     authResponse.getBody() == null ? null : authResponse.getBody().getData();
             if (auth == null) {
@@ -127,7 +147,8 @@ public class ChatAppSendService {
                     .content(content);
             putIfNotBlank(clientRequestId, builder::taskId);
 
-            SendChatappMessageResponse response = client.sendChatappMessage(builder.build()).get();
+            SendChatappMessageResponse response = client.sendChatappMessage(builder.build())
+                    .get(apiTimeout.toMillis(), TimeUnit.MILLISECONDS);
             String messageId = responseMessageId(response);
             String text = mediaDisplayText(normalizedType, caption, fileName);
             return new SendResult(messageId, cleanFrom, cleanTo, text, "Submitted");
@@ -187,7 +208,9 @@ public class ChatAppSendService {
                 .region(credentials.region())
                 .credentialsProvider(createCredentialsProvider(credentials))
                 .overrideConfiguration(ClientOverrideConfiguration.create()
-                        .setEndpointOverride(credentials.endpoint()))
+                        .setEndpointOverride(credentials.endpoint())
+                        .setConnectTimeout(apiTimeout)
+                        .setResponseTimeout(apiTimeout))
                 .build();
     }
 
@@ -298,5 +321,5 @@ public class ChatAppSendService {
         if (value != null && !value.isBlank()) setter.accept(value);
     }
 
-    public record SendResult(String messageId, String from, String to, String text, String status) {}
+public record SendResult(String messageId, String from, String to, String text, String status) {}
 }

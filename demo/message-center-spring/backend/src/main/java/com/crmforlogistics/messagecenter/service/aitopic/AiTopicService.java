@@ -175,6 +175,25 @@ public class AiTopicService implements AiTopicSplitReconciler, AiTopicContactMer
         return topicMapper.listReviewPendingForContact(contactId).stream().map(this::project).toList();
     }
 
+    /**
+     * 单条话题的读取。
+     *
+     * <h2>它存在的理由是一条具体的静默损失</h2>
+     * {@code AiTopicMapper.updateEmployee} 的 SQL 是
+     * {@code set title=#{title}, confirmed_summary=#{confirmedSummary}} —— <b>无条件赋值</b>。
+     * 也就是说「只改标题」这个动作如果带上 {@code confirmedSummary=null}，会把这个人已经
+     * 人工确认过的摘要<b>一起清掉</b>，而调用方、用户、日志三边都不会有任何提示。
+     *
+     * <p>页面侧的调用方之所以没踩到，是因为它手上本来就有那一行（用户在看它）。
+     * 助手工具不同：模型只报了「把标题改成 X」，其余字段得有人在动手前读一次才知道。
+     *
+     * <p>归属校验<b>复用</b> {@link #requireTopic}，不另写一份：那条查询同时覆盖
+     * 「联系人的话题归我」与「企微群话题我有权访问」两种情况，照抄一遍必然先分叉再走偏。
+     */
+    public TopicProjection getTopic(UUID userId, UUID topicId) {
+        return project(requireTopic(userId, topicId));
+    }
+
     @Transactional
     public TopicProjection keepPending(UUID userId, UUID topicId) {
         AiTopicEntity topic = requireTopic(userId, topicId);

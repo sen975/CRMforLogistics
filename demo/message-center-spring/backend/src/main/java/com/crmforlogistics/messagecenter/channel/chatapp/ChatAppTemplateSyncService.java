@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.channel.chatapp;
 
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateReconciliationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProviderScopeService;
@@ -42,7 +43,7 @@ public class ChatAppTemplateSyncService {
         int changed = 0;
         Map<UUID, List<ChannelAccountEntity>> accountsByScope = new LinkedHashMap<>();
         for (ChannelAccountEntity account : channelAccountMapper.selectActiveChatAppAccountsForSync()) {
-            if ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+            if (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
                 SyncResultRecord privateResult = runAccount(account.getId());
                 pages += privateResult.pages();
                 fetched += privateResult.fetched();
@@ -77,10 +78,10 @@ public class ChatAppTemplateSyncService {
                 || !"active".equalsIgnoreCase(account.getAuthStatus())) {
             throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
         }
-        if ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             WhatsAppTemplateReconciliationService.SyncResult result =
                     reconciliationService.syncPrivateAccount(channelAccountId);
-            return new SyncResultRecord(result.pages(), result.fetched(), result.changed(), 0);
+            return resultRecord(result, 0);
         }
         return syncScope(scopeId(account), channelAccountId).result();
     }
@@ -101,10 +102,10 @@ public class ChatAppTemplateSyncService {
         if (account.getDeletedAt() != null || !"active".equalsIgnoreCase(account.getAuthStatus())) {
             throw new IllegalArgumentException("CHATAPP_CHANNEL_ACCOUNT_NOT_FOUND");
         }
-        if ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             WhatsAppTemplateReconciliationService.SyncResult result =
                     reconciliationService.syncPrivateAccount(account.getId());
-            return new SyncResultRecord(result.pages(), result.fetched(), result.changed(), 0);
+            return resultRecord(result, 0);
         }
         return syncScope(scopeId(account), account.getId()).result();
     }
@@ -114,7 +115,14 @@ public class ChatAppTemplateSyncService {
         WhatsAppTemplateReconciliationService.SyncResult result =
                 reconciliationService.syncScope(providerScopeId, channelAccountId);
         return new SyncAttempt(new SyncResultRecord(result.pages(), result.fetched(), result.changed(),
-                elapsedMs(started)), result.complete());
+                elapsedMs(started), result.complete(), result.syncFailed(), result.errorCode(), result.retryable(),
+                result.lastSuccessfulAt()), result.complete());
+    }
+
+    private static SyncResultRecord resultRecord(WhatsAppTemplateReconciliationService.SyncResult result,
+                                                  long durationMs) {
+        return new SyncResultRecord(result.pages(), result.fetched(), result.changed(), durationMs,
+                result.complete(), result.syncFailed(), result.errorCode(), result.retryable(), result.lastSuccessfulAt());
     }
 
     private UUID scopeId(ChannelAccountEntity account) {
@@ -131,7 +139,13 @@ public class ChatAppTemplateSyncService {
         return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
-    public record SyncResultRecord(int pages, int fetched, int changed, long durationMs) {
+    public record SyncResultRecord(int pages, int fetched, int changed, long durationMs,
+                                   boolean complete,
+                                   boolean syncFailed, String errorCode, boolean retryable,
+                                   java.time.Instant lastSuccessfulAt) {
+        public SyncResultRecord(int pages, int fetched, int changed, long durationMs) {
+            this(pages, fetched, changed, durationMs, true, false, null, false, null);
+        }
     }
 
     private record SyncAttempt(SyncResultRecord result, boolean complete) { }

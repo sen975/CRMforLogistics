@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.chatapp.broadcast;
 
+import com.crmforlogistics.messagecenter.service.scheduling.AdaptivePollingScheduler;
 import org.junit.jupiter.api.Test;
 
 import static org.mockito.ArgumentMatchers.argThat;
@@ -12,9 +13,10 @@ class ChatAppBroadcastSchedulerTest {
     @Test
     void recoversUnknownSubmissionsBeforeClaimingBoundedWork() {
         ChatAppBroadcastWorker worker = mock(ChatAppBroadcastWorker.class);
-        ChatAppBroadcastScheduler scheduler = new ChatAppBroadcastScheduler(worker);
+        AdaptivePollingScheduler scheduler = mock(AdaptivePollingScheduler.class);
+        ChatAppBroadcastScheduler task = new ChatAppBroadcastScheduler(worker, scheduler, 1000L);
 
-        scheduler.run();
+        task.pollOnce();
 
         var ordered = inOrder(worker);
         ordered.verify(worker).recoverExpiredSubmissions();

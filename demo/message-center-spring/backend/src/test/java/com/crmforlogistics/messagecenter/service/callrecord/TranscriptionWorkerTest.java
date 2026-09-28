@@ -119,7 +119,7 @@ class TranscriptionWorkerTest {
         CallRecordConfig config = new CallRecordConfig(
                 "data/call-records", 104_857_600L, 7_200,
                 10_737_418_240L, 10_000, 64, 1, 2_100, 3,
-                10_485_760L, 20_000, 20, 300, 8, 256);
+                10_485_760L, 20_000, 20, 300, 8, 256, 105_906_176L);
         return new TranscriptionWorker(
                 mapper, audioStore, transcriber, config,
                 Clock.fixed(NOW, ZoneOffset.UTC), topicActivityRecorder);

@@ -23,7 +23,7 @@ class CallRecordMapperSqlTest {
     @Test
     void contactAccessQueriesUseCreatedByInsteadOfLegacyContactOwner() throws Exception {
         for (String methodName : new String[]{"findByIdAndOwner", "listByOwnerAndContact",
-                "listByOwnerAndAnchors", "searchPhoneRepositoryByOwner"}) {
+                "listByOwnerAndAnchors"}) {
             Method method = java.util.Arrays.stream(CallRecordMapper.class.getMethods())
                     .filter(candidate -> candidate.getName().equals(methodName))
                     .findFirst().orElseThrow();
@@ -53,5 +53,23 @@ class CallRecordMapperSqlTest {
         String sql = method.getAnnotation(Update.class).value()[0];
         assertThat(sql).doesNotContain("SET owner_user_id");
         assertThat(sql).contains("contact_id = #{contactId}::uuid");
+    }
+
+    @Test
+    void recoveryOnlyResetsProcessingRowsWithExpiredLeases() throws Exception {
+        Method method = CallRecordMapper.class.getMethod("recoverProcessing", java.time.Instant.class);
+        String sql = String.join(" ", method.getAnnotation(Update.class).value());
+        assertThat(sql).contains("transcription_lease_expires_at IS NOT NULL");
+        assertThat(sql).contains("transcription_lease_expires_at < #{now}");
+    }
+
+    @Test
+    void phoneRepositoryQueryUsesOwnerScopedKeysetAndLimit() throws Exception {
+        Method method = CallRecordMapper.class.getMethod("searchPhoneRepositoryByOwner",
+                java.util.UUID.class, String.class, java.time.Instant.class,
+                java.util.UUID.class, int.class);
+        String sql = String.join(" ", method.getAnnotation(Select.class).value());
+        assertThat(sql).contains("(cr.occurred_at, cr.id)");
+        assertThat(sql).contains("LIMIT #{limit}");
     }
 }

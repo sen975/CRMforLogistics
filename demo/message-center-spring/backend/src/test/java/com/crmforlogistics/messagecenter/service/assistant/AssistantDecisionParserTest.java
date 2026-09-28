@@ -1,14 +1,20 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicService;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.AiTopicAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.MessageAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
+import com.crmforlogistics.messagecenter.service.message.MessageQueryService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * 解析器的严格性：<b>模型输出只是建议</b>（设计文档 §7.5）。
@@ -33,6 +39,18 @@ class AssistantDecisionParserTest {
             new AssistantDecisionParser(registry, new ToolInputValidator(), AssistantFixtures.objectMapper());
 
     private final AssistantContext context = AssistantFixtures.context();
+
+    /**
+     * 「一组引用」需要一个声明了它的工具，而通用夹具里没有（它只装待办）。
+     * 单独建一个只含 {@code contact.topics_merge} 的注册表，是为了让被测行为只有一个来源：
+     * 数组型引用的逐元素比对，而不是"别的工具顺带也在"。
+     */
+    private final ToolRegistry mergeRegistry = new ToolRegistry(
+            List.of(new AiTopicAssistantTools(mock(AiTopicService.class)).contactTopicsMergeTool()),
+            new ToolInputValidator(), AssistantFixtures.objectMapper());
+
+    private final AssistantDecisionParser mergeParser =
+            new AssistantDecisionParser(mergeRegistry, new ToolInputValidator(), AssistantFixtures.objectMapper());
 
     // ---------- decision=ask：唯一分支依据 ----------
 
@@ -350,6 +368,118 @@ class AssistantDecisionParserTest {
         badDate.put("todoId", AssistantFixtures.TODO_QUOTE);
         badDate.put("date", "2026-10-32");
         assertRejectedWithoutRetry(parser.validateConfirmedCall("todo.update", badDate));
+    }
+
+    // ---------- 一组引用：数组型引用参数 ----------
+
+    /**
+     * 数组型引用必须<b>逐元素</b>比对候选。
+     *
+     * <p>这条守的是一个曾经真实存在的洞：绑定比对原来是
+     * {@code if (!(value instanceof String reference)) continue} —— 数组值被整段跳过。
+     * 它不会让任何东西报错：声明里有绑定、启动自检不拦、给声明写的测试照样绿，
+     * 唯一的后果是「模型编造的 id 进不来」这道拦截<b>整条不存在</b>。
+     * 所以这里的断言不是「能跑通」，而是「混进一个编造的 id 就必须整组被拒」。
+     */
+    @Test
+    void aFabricatedReferenceInsideAnArrayIsRejected() {
+        assertRejectedWithoutRetry(mergeParser.parse("""
+                {"decision":"call","tool":"contact.topics_merge",
+                 "arguments":{"topicRefs":["TOPIC:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                                           "TOPIC:99999999-9999-4999-8999-999999999999"]}}
+                """, contextWithTopics()));
+    }
+
+    @Test
+    void anArrayOfReferencesThatAllHitTheCandidatesIsAccepted() {
+        AssistantDecisionParser.Outcome outcome = mergeParser.parse("""
+                {"decision":"call","tool":"contact.topics_merge",
+                 "arguments":{"topicRefs":["TOPIC:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                                           "TOPIC:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]}}
+                """, contextWithTopics());
+
+        assertThat(outcome).isInstanceOfSatisfying(AssistantDecisionParser.Call.class,
+                call -> assertThat(call.tool()).isEqualTo("contact.topics_merge"));
+    }
+
+    /**
+     * 对照：同一个工具、同一份参数，候选组缺席时必须拒。
+     *
+     * <p>新加一条分支最容易犯的错是「顺手把它也放过去」——
+     * 单值那路的 fail-closed 不能因为多了一个数组分支就松动。
+     */
+    @Test
+    void anArrayReferenceWithoutTheCandidateSetIsStillRejected() {
+        assertRejectedWithoutRetry(mergeParser.parse("""
+                {"decision":"call","tool":"contact.topics_merge",
+                 "arguments":{"topicRefs":["TOPIC:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                                           "TOPIC:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]}}
+                """, AssistantFixtures.context()));
+    }
+
+    /**
+     * 带 topic 候选窗口的上下文。
+     *
+     * <p>topic 候选没有预置窗口（见 {@code TopicCandidates} 的类注释），所以只能像
+     * {@code contact.topics_read} 那样现造一个 —— 这本身就是「先查再改」的形状。
+     */
+    private static AssistantContext contextWithTopics() {
+        return new AssistantContext("Asia/Shanghai", AssistantFixtures.TODAY, "星期一",
+                List.of(AssistantFixtures.conversationCandidates(), AssistantFixtures.contactCandidates(),
+                        new TopicCandidates(TopicCandidates.LIMIT, List.of(
+                                new TopicCandidates.Item("TOPIC:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "运价谈判", 3L),
+                                new TopicCandidates.Item("TOPIC:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "运价与账期", 1L)))));
+    }
+
+    // ---------- 消息域：候选窗口只能来自上一轮的结果（C4） ----------
+
+    /**
+     * 引用窗口里的那一条 → 通过。
+     *
+     * <p>这条与 {@code aMessageReadBeforeAnyTimelineIsRejected…} 是一对：单看这一条
+     * 说明不了任何事（任何比对写错的方式都会让它通过），必须靠那一条一起成立才有意义。
+     */
+    @Test
+    void aMessageReferenceFromTheLastRoundIsAccepted() {
+        AssistantDecisionParser.Outcome outcome = messageParser().parse("""
+                {"decision":"call","tool":"message.read",
+                 "arguments":{"messageRef":"MESSAGE:99999999-9999-4999-8999-999999999999"}}
+                """, contextWithMessages());
+
+        assertThat(outcome).isInstanceOfSatisfying(AssistantDecisionParser.Call.class,
+                call -> assertThat(call.tool()).isEqualTo("message.read"));
+    }
+
+    /**
+     * 没读过时间线就引用消息 → 必须拒。
+     *
+     * <p>{@code MessageCandidates} <b>没有预置窗口</b>（消息是十万级，预先算"最近 N 条"既贵又没意义），
+     * 它只能由 {@code contact.timeline} 的结果产生。所以这一格是"C4 只读却仍要进候选"的落点：
+     * 只读工具通常靠"检索突破窗口"，而 {@code message.read} 的入参是一个<b>不可检索</b>的 id ——
+     * 候选比对在这里是唯一一道程序化防线，它必须真的跑。
+     */
+    @Test
+    void aMessageReadBeforeAnyTimelineIsRejectedBecauseTheWindowDoesNotExistYet() {
+        assertRejectedWithoutRetry(messageParser().parse("""
+                {"decision":"call","tool":"message.read",
+                 "arguments":{"messageRef":"MESSAGE:99999999-9999-4999-8999-999999999999"}}
+                """, AssistantFixtures.context()));
+    }
+
+    private static AssistantDecisionParser messageParser() {
+        ToolRegistry registry = new ToolRegistry(
+                List.of(new MessageAssistantTools(mock(MessageQueryService.class)).messageReadTool()),
+                new ToolInputValidator(), AssistantFixtures.objectMapper());
+        return new AssistantDecisionParser(registry, new ToolInputValidator(), AssistantFixtures.objectMapper());
+    }
+
+    /** 带上 message 候选窗口的上下文：模拟 {@code contact.timeline} 刚刚跑过一轮。 */
+    private static AssistantContext contextWithMessages() {
+        return new AssistantContext("Asia/Shanghai", AssistantFixtures.TODAY, "星期一",
+                List.of(AssistantFixtures.conversationCandidates(), AssistantFixtures.contactCandidates(),
+                        new MessageCandidates(MessageCandidates.LIMIT, List.of(
+                                new MessageCandidates.Item("MESSAGE:99999999-9999-4999-8999-999999999999",
+                                        "inbound", "delivered", "2026-09-20T10:00:00Z")))));
     }
 
     // ---------- 断言工具 ----------

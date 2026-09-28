@@ -12,10 +12,35 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 
 class ContactTimelineServiceTest {
+    @Test
+    void noAuthorizedIdentityStopsBeforeReadingMessagesOrCalls() {
+        UUID ownerId = UUID.randomUUID();
+        UUID contactId = UUID.randomUUID();
+        CallRecordMapper calls = mock(CallRecordMapper.class);
+        MessageMapper messages = mock(MessageMapper.class);
+        ContactIdentityMapper identities = mock(ContactIdentityMapper.class);
+        when(identities.findByContactIdAndOwner(contactId, ownerId)).thenReturn(List.of());
+
+        CallRecordException failure = assertThrows(CallRecordException.class,
+                () -> new ContactTimelineService(calls, messages, identities)
+                        .timeline(ownerId, contactId, null, 20));
+
+        assertEquals("CONTACT_NOT_FOUND", failure.code());
+        verify(identities).findByContactIdAndOwner(contactId, ownerId);
+        verify(messages, never()).listByContactAndOwner(any(), any(), anyInt());
+        verify(calls, never()).listByOwnerAndContact(any(), any());
+        verify(calls, never()).listByOwnerAndAnchors(any(), any());
+    }
+
     @Test
     void includesOwnerScopedCallRecordsMatchedByPhoneAnchorWhenContactIdWasNotBackfilled() {
         UUID ownerId = UUID.randomUUID();

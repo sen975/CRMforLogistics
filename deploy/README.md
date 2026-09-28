@@ -138,10 +138,29 @@ location / {
 }
 ```
 
-Spring API 全部转发到 8107，SSE 需要单独关闭缓冲：
+Spring API 全部转发到 8107。**两条 SSE 端点必须单独拿出来配**（`location =` 是精确匹配，
+优先于 `^~ /api/`，与书写顺序无关）：只关缓冲不够，读超时也要放开 ——
+默认的 `proxy_read_timeout` 是 60s，而这两条流都会出现几十秒「一个字节都不写」的间隔。
 
 ```nginx
 location = /api/events {
+    proxy_pass http://127.0.0.1:8107;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1h;
+}
+
+# 助手对话（SSE）：一轮里服务端可能几十秒不写一个字节（只读工具执行期间），
+# 而默认的 proxy_read_timeout 是 60s —— 会被 nginx 掐成 504，用户看到「重试」而原因不在前端。
+# 缓冲也必须关掉（后端已带 X-Accel-Buffering: no，这里是双保险）：不关缓冲，
+# 整条流会被攒到结束才吐出来，「逐字」当场失效，而后端日志一切正常。
+location = /api/assistant/messages {
     proxy_pass http://127.0.0.1:8107;
     proxy_http_version 1.1;
     proxy_set_header Connection "";

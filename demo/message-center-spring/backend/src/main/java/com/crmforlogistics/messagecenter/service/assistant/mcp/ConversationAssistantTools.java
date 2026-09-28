@@ -184,8 +184,8 @@ public class ConversationAssistantTools {
         try {
             return action.get();
         } catch (IllegalArgumentException e) {
-            throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT,
-                    "这条会话不在你能操作的范围内", e);
+            throw new ToolExecutionException(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND,
+                    ToolExecutionException.ACCESS_DENIED_MESSAGE, e);
         }
     }
 

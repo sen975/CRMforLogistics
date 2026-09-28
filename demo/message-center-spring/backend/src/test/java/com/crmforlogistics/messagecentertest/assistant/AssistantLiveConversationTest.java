@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -239,8 +240,10 @@ class AssistantLiveConversationTest {
                     assertThat(row.get("policy")).isEqualTo("CANCELLED");
                     assertThat(row.get("outcome")).isEqualTo("CANCELLED");
                 });
-        assertThat(audit).as("原话必须留着 —— 自然语言匹配的争议只能靠它复盘")
-                .anySatisfy(row -> assertThat(String.valueOf(row.get("utterance"))).contains("标记完成"));
+        assertThat(audit).as("只留长度和摘要，不把用户原话写入审计表")
+                .anySatisfy(row -> assertThat(String.valueOf(row.get("utterance")))
+                        .contains("chars:", "sha256:")
+                        .doesNotContain("标记完成"));
         // 模型名只该出现在**模型轮次**上（有原话的那几行）。确认 / 取消那两行是
         // AssistantPendingActionService 写的服务端流水 —— 那一轮没有调模型，本来就没有模型名可记，
         // 硬填一个「当前配置的模型名」反而是编造。
@@ -287,6 +290,17 @@ class AssistantLiveConversationTest {
         return body;
     }
 
+    /**
+     * 发一个请求，拿回<b>这一轮的结论</b>。
+     *
+     * <p>助手端点自 2026-09-24 起以 SSE 作答，所以要先把流拆开、取那一帧 {@code final} ——
+     * 它的载荷就是以前那份 JSON 响应体。顺带断言「有且仅有一帧 final」：这条不变量是前端
+     * 区分「连接断了」与「这一轮失败了」的唯一依据，而这条测试是全项目唯一真的走完
+     * 真实模型 + 真实数据库的那条，别处验不到它的线上形态。
+     *
+     * <p>确认 / 取消两个端点仍是普通 JSON，所以按响应自己的 Content-Type 分流，
+     * 而不是按路径猜。
+     */
     private JsonNode post(String path, Object body) throws Exception {
         MockHttpServletRequestBuilder request = MockMvcRequestBuilders.post(path).with(user(USER.toString()));
         if (body != null) {
@@ -297,6 +311,21 @@ class AssistantLiveConversationTest {
         var response = mvc.perform(request).andReturn().getResponse();
         String text = response.getContentAsString(StandardCharsets.UTF_8);
         assertThat(response.getStatus()).as("%s -> HTTP %d, body=%s", path, response.getStatus(), text).isEqualTo(200);
-        return objectMapper.readTree(text);
+        if (!String.valueOf(response.getContentType()).startsWith(MediaType.TEXT_EVENT_STREAM_VALUE)) {
+            return objectMapper.readTree(text);
+        }
+        List<JsonNode> finals = new ArrayList<>();
+        for (String block : text.split("\n\n")) {
+            for (String line : block.split("\n")) {
+                if (line.startsWith("data: ")) {
+                    JsonNode frame = objectMapper.readTree(line.substring("data: ".length()));
+                    if ("final".equals(frame.path("type").asText())) {
+                        finals.add(frame);
+                    }
+                }
+            }
+        }
+        assertThat(finals).as("%s 应有且仅有一帧 final，body=%s", path, text).hasSize(1);
+        return finals.get(0);
     }
 }

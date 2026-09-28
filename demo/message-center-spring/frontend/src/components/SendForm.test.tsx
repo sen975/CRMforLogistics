@@ -12,7 +12,8 @@ const api = vi.hoisted(() => ({
   sendChatApp: vi.fn(),
   sendWeCom: vi.fn(),
   sendChatAppMedia: vi.fn(),
-  fetchTemplates: vi.fn(),
+  fetchChatAppBroadcastTemplates: vi.fn(),
+  fetchChatAppSendableTemplates: vi.fn(),
   fetchChannelCapabilities: vi.fn(),
   createCallRecord: vi.fn(),
   bindPhoneContact: vi.fn(),
@@ -90,7 +91,8 @@ function ControlledSendForm({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.fetchTemplates.mockResolvedValue([]);
+  api.fetchChatAppBroadcastTemplates.mockResolvedValue([]);
+  api.fetchChatAppSendableTemplates.mockResolvedValue([]);
   api.fetchChannelCapabilities.mockResolvedValue([{
     channelType: 'chatapp',
     channelAccountId: 'phone',
@@ -102,6 +104,35 @@ beforeEach(() => {
 });
 
 describe('SendForm ChatApp recipient binding', () => {
+  it('loads sendable templates for the fixed ChatApp account', async () => {
+    api.fetchChatAppSendableTemplates.mockResolvedValue([{
+      templateCode: 'account-template',
+      templateName: 'account_template',
+      displayName: '账号模板',
+      languageCode: 'zh_CN',
+      body: '账号专属模板',
+      placeholders: [],
+    }]);
+
+    renderForm(contact([{
+      id: 'chatapp-1',
+      channelType: 'chatapp',
+      identityScope: 'account-a',
+      identityValue: '16465894168',
+      displayName: '主账号',
+    }]), 'account-a');
+
+    await waitFor(() => {
+      expect(api.fetchChatAppSendableTemplates).toHaveBeenCalledWith('account-a');
+    });
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: 'ChatApp' }));
+    await user.click(screen.getByRole('tab', { name: '模板' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '模板' }));
+    expect(await screen.findByText('账号模板 (zh_CN)', { exact: true })).toBeInTheDocument();
+  });
+
   it('uses the address-book-selected identity instead of the first email identity', async () => {
     renderForm(contact([
       { id: 'email-first', channelType: 'email', identityScope: 'account-a', identityValue: 'first@example.com', displayName: '第一邮箱' },
@@ -157,7 +188,7 @@ describe('SendForm ChatApp recipient binding', () => {
 
   it('shows the template display name while sending its official template name', async () => {
     const user = userEvent.setup();
-    api.fetchTemplates.mockResolvedValue([{
+    api.fetchChatAppSendableTemplates.mockResolvedValue([{
       templateCode: 'delivery-notice',
       templateName: 'delivery_notice',
       displayName: '发货提醒（delivery_notice）',
@@ -192,7 +223,7 @@ describe('SendForm ChatApp recipient binding', () => {
 
   it('previews the selected template body and replaces entered parameters live', async () => {
     const user = userEvent.setup();
-    api.fetchTemplates.mockResolvedValue([{
+    api.fetchChatAppSendableTemplates.mockResolvedValue([{
       templateCode: 'delivery-notice',
       templateName: 'delivery_notice',
       displayName: '发货提醒',

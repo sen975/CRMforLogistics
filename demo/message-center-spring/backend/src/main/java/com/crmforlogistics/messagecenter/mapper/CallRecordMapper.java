@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.crmforlogistics.messagecenter.entity.CallRecordEntity;
+import com.crmforlogistics.messagecenter.entity.CallRecordRetryRequestEntity;
 import org.apache.ibatis.annotations.*;
 
 import java.time.Instant;
@@ -114,7 +115,9 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             + "transcription_lease_id = NULL, transcription_lease_worker_id = NULL, "
             + "transcription_lease_expires_at = NULL, "
             + "transcription_next_attempt_at = #{now}, version = version + 1, updated_at = now() "
-            + "WHERE transcription_state = 'processing'")
+            + "WHERE transcription_state = 'processing' "
+            + "AND transcription_lease_expires_at IS NOT NULL "
+            + "AND transcription_lease_expires_at < #{now}")
     int recoverProcessing(@Param("now") Instant now);
 
     @Select("<script>"
@@ -133,9 +136,34 @@ public interface CallRecordMapper extends BaseMapper<CallRecordEntity> {
             "<if test='query != null and query != \"\"'>" +
             "AND (cr.phone_point_id LIKE CONCAT('%', #{query}, '%') " +
             "OR cr.note ILIKE CONCAT('%', #{query}, '%'))" +
-            "</if> ORDER BY cr.occurred_at DESC, cr.id DESC</script>")
+            "</if> "
+            + "<if test='cursorOccurredAt != null'> AND (cr.occurred_at, cr.id) &lt; (#{cursorOccurredAt}, #{cursorId}::uuid)</if> "
+            + "ORDER BY cr.occurred_at DESC, cr.id DESC LIMIT #{limit}</script>")
     List<CallRecordEntity> searchPhoneRepositoryByOwner(@Param("ownerId") UUID ownerId,
-                                                         @Param("query") String query);
+                                                         @Param("query") String query,
+                                                         @Param("cursorOccurredAt") Instant cursorOccurredAt,
+                                                         @Param("cursorId") UUID cursorId,
+                                                         @Param("limit") int limit);
+
+    default List<CallRecordEntity> searchPhoneRepositoryByOwner(UUID ownerId, String query) {
+        return searchPhoneRepositoryByOwner(ownerId, query, null, null, 101);
+    }
+
+    @Select("<script>SELECT count(*) FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id "
+            + "WHERE (c.created_by = #{ownerId}::uuid OR (cr.contact_id IS NULL AND cr.created_by = #{ownerId}::text)) "
+            + "<if test='query != null and query != \"\"'>AND (cr.phone_point_id LIKE CONCAT('%', #{query}, '%') OR cr.note ILIKE CONCAT('%', #{query}, '%'))</if></script>")
+    int countPhoneRepositoryByOwner(@Param("ownerId") UUID ownerId, @Param("query") String query);
+
+    @Select("SELECT owner_id, call_record_id, client_request_id, created_at FROM call_record_retry_requests "
+            + "WHERE owner_id = #{ownerId}::uuid AND call_record_id = #{callRecordId}::uuid AND client_request_id = #{clientRequestId}")
+    java.util.Optional<CallRecordRetryRequestEntity> findRetryRequest(@Param("ownerId") UUID ownerId,
+                                                                       @Param("callRecordId") UUID callRecordId,
+                                                                       @Param("clientRequestId") String clientRequestId);
+
+    @Insert("INSERT INTO call_record_retry_requests(owner_id, call_record_id, client_request_id) "
+            + "VALUES (#{ownerId}::uuid, #{callRecordId}::uuid, #{clientRequestId}) ON CONFLICT DO NOTHING")
+    int insertRetryRequest(@Param("ownerId") UUID ownerId, @Param("callRecordId") UUID callRecordId,
+                           @Param("clientRequestId") String clientRequestId);
 
     @Select("SELECT cr.* FROM call_records cr LEFT JOIN contacts c ON c.id = cr.contact_id WHERE cr.phone_point_id IS NOT NULL "
             + "AND cr.phone_point_id LIKE 'phone:%' AND (cr.contact_id IS NULL "

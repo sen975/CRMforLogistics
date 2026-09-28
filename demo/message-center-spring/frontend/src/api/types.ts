@@ -462,6 +462,24 @@ export interface WeComInstallationSummary {
   authorizedAt: string | null;
 }
 
+/**
+ * One 客户关系变化 from the durable event stream (not a live snapshot). There is deliberately
+ * no display name: the list endpoint must not fan out into per-row provider calls, so the UI
+ * shows the raw external user id and labels missing names as 未获取昵称 instead of inventing one.
+ */
+export interface WeComContactEvent {
+  id: string;
+  changeType: string;
+  externalUserId: string | null;
+  wecomUserId: string | null;
+  state: string | null;
+  failReason: string | null;
+  /** `DELETE_BY_TRANSFER` marks a relation ended by automated inheritance, not by a member. */
+  providerSource: string | null;
+  /** Event time from the provider; not the local ingest time. */
+  providerCreatedAt: string;
+}
+
 export type WeComProviderData = Record<string, unknown>;
 
 /**
@@ -670,6 +688,55 @@ export interface AdminCamsRequest {
 
 export interface AdminScopedWhatsAppAccount extends AdminWhatsAppAccountProjection {
   lastSyncedAt?: string | null;
+}
+
+export type WhatsAppCallbackFlag = 'Y' | 'N';
+
+export interface AdminWhatsAppPhoneCallbackConfig {
+  channelAccountId: string;
+  maskedPhone: string;
+  desiredUpCallbackUrl: string | null;
+  desiredStatusCallbackUrl: string | null;
+  httpFlag: WhatsAppCallbackFlag;
+  queueFlag: WhatsAppCallbackFlag;
+  providerState: string;
+  lastApplyStatus: string;
+  lastErrorCode: string | null;
+  lastAppliedAt: string | null;
+  version: number;
+}
+
+export interface AdminWhatsAppAccountCallbackConfig {
+  desiredStatusCallbackUrl: string | null;
+  httpFlag: WhatsAppCallbackFlag;
+  queueFlag: WhatsAppCallbackFlag;
+  providerState: string;
+  lastApplyStatus: string;
+  lastErrorCode: string | null;
+  lastAppliedAt: string | null;
+  version: number;
+}
+
+export interface AdminWhatsAppCallbackConfig {
+  scopeId: string;
+  phoneConfigs: AdminWhatsAppPhoneCallbackConfig[];
+  accountConfig: AdminWhatsAppAccountCallbackConfig | null;
+  ingressPath: string;
+}
+
+export interface AdminWhatsAppPhoneCallbackRequest {
+  upCallbackUrl: string;
+  statusCallbackUrl: string;
+  httpFlag: WhatsAppCallbackFlag;
+  queueFlag: WhatsAppCallbackFlag;
+  expectedVersion: number;
+}
+
+export interface AdminWhatsAppAccountCallbackRequest {
+  statusCallbackUrl: string;
+  httpFlag: WhatsAppCallbackFlag;
+  queueFlag: WhatsAppCallbackFlag;
+  expectedVersion: number;
 }
 
 export interface AdminWhatsAppAssignmentRequest {
@@ -1271,7 +1338,11 @@ export interface AssistantProposal {
 }
 
 /**
- * `POST /api/assistant/messages` 的响应体。
+ * 一轮对话的**结论**。
+ *
+ * 它现在不是某个端点的响应体，而是那条 SSE 流里最后一帧 `final` 的载荷（见
+ * {@link AssistantFinalFrame}）。这一层区别是重要的：流里先到的那些片段只是**草稿**，
+ * 权威的只有这一份 —— 展示层拿到它必须覆盖掉已经显示出来的片段。
  *
  * 服务端用 `@JsonInclude(NON_NULL)`，因此「不适用」的字段是**整体缺席**而不是 `null`，
  * 所以这里全部是可选的。渲染时必须按 `kind` 分支，而不是看某个字段在不在。
@@ -1293,11 +1364,17 @@ export interface AssistantTurnResult {
    * 而不是「后端忘了填」。另注意：确认 / 取消接口的响应本来就不带它。
    */
   historyTrim?: AssistantHistoryTrim;
+  /** Persisted messages represented by an untrusted rolling summary included in this request. */
+  historyCompaction?: AssistantHistoryCompaction;
 }
 
 /** 语境被裁剪的规模。`droppedMessages` 服务端保证为正。 */
 export interface AssistantHistoryTrim {
   droppedMessages: number;
+}
+
+export interface AssistantHistoryCompaction {
+  summarizedMessages: number;
 }
 
 /**
@@ -1311,8 +1388,6 @@ export interface AssistantLatestConversation {
   conversationId: string | null;
 }
 
-}
-
 export interface AssistantMessageRequest {
   /**
    * 会话号。由**前端生成并持久化**，用于把同一段对话的消息与审计串起来。
@@ -1324,6 +1399,49 @@ export interface AssistantMessageRequest {
   history?: AssistantHistoryTurn[];
   text: string;
 }
+
+/**
+ * `POST /api/assistant/messages` 是一串 SSE 帧，这里的两组类型就是那套协议（服务端
+ * `AssistantEventStream`）。帧体一律是 JSON、靠 `type` 区分 —— 刻意**不用 SSE 自己的
+ * `event:` 字段**：这条流是 POST（`EventSource` 只支持 GET），前端本来就得手工解析，
+ * 再加一个平行的区分维度只会多一处能悄悄对不上的地方。
+ */
+
+/** 进度状态。`reading` 表示它正在读数据（只读那一轮可以静默几十秒）。 */
+export type AssistantStreamState = 'thinking' | 'reading';
+
+export type AssistantStatusFrame = {
+  type: 'status';
+  state: AssistantStreamState;
+  /**
+   * `state=reading` 时它在查哪个工具。
+   *
+   * 给排障用，**不给用户看**：那是内部标识，面板渲染进度时不显示它。
+   */
+  tool?: string;
+};
+
+/**
+ * 一段**增量**文本，不是累计值 —— 调用方自己往上加。
+ *
+ * 这条约定反着理解过一次（当成累计值去覆盖），症状是屏幕上只剩最后一个字；
+ * 服务端的 `AssistantTurnSink.answerDelta` 也是同一个口径。
+ */
+export type AssistantDeltaFrame = { type: 'delta'; text: string };
+
+/**
+ * 丢弃已经显示出来的片段：模型这一轮**重来了一次**（例如上一轮的输出没被解析成动作），
+ * 屏幕上那段草稿不再是最终回答的前缀，必须清掉。
+ */
+export type AssistantResetFrame = { type: 'reset' };
+
+/** 这一轮的结论。服务端保证有且只有一帧，且它一定在最后。 */
+export type AssistantFinalFrame = { type: 'final'; result: AssistantTurnResult };
+
+/** 流里那些「还不到结论」的帧。 */
+export type AssistantProgressFrame = AssistantStatusFrame | AssistantDeltaFrame | AssistantResetFrame;
+
+export type AssistantStreamFrame = AssistantProgressFrame | AssistantFinalFrame;
 
 /**
  * `GET /api/assistant/conversations/{id}/messages` 的一条历史消息。

@@ -13,23 +13,47 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class OpenSslImapClient {
+    private static final int MAX_LITERAL_BYTES = 25 * 1024 * 1024;
+    private static final int MAX_LINE_BYTES = 64 * 1024;
+    private static final int MAX_COMMAND_BYTES = 256 * 1024;
+    private static final long MAX_TOTAL_BYTES = 100L * 1024 * 1024;
     private static final Pattern EXISTS = Pattern.compile("\\*\\s+(\\d+)\\s+EXISTS", Pattern.CASE_INSENSITIVE);
     private static final Pattern LITERAL_SIZE = Pattern.compile("\\{(\\d+)}\\s*$");
     private static final String CIPHER = "AES256-GCM-SHA384";
 
     private final EmailSyncSettings settings;
+    private final Duration processDeadline;
 
     OpenSslImapClient(EmailSyncSettings settings) {
+        this(settings, Duration.ofSeconds(90));
+    }
+
+    OpenSslImapClient(EmailSyncSettings settings, Duration processDeadline) {
         this.settings = settings;
+        this.processDeadline = processDeadline;
     }
 
     List<MimeMessage> fetchLatest(String folderName, int limit) throws Exception {
         if (folderName == null || folderName.isBlank()) return List.of();
         Process process = startOpenSsl();
+        ScheduledExecutorService timeoutExecutor = Executors.newSingleThreadScheduledExecutor();
+        AtomicBoolean timedOut = new AtomicBoolean();
+        ScheduledFuture<?> timeout = timeoutExecutor.schedule(
+                () -> {
+                    if (process.isAlive()) {
+                        timedOut.set(true);
+                        process.destroyForcibly();
+                    }
+                }, Math.max(1, processDeadline.toMillis()), TimeUnit.MILLISECONDS);
         try {
             InputStream input = process.getInputStream();
             BufferedOutputStream output = new BufferedOutputStream(process.getOutputStream());
@@ -55,7 +79,14 @@ final class OpenSslImapClient {
                         new java.io.ByteArrayInputStream(rawMessage)));
             }
             return messages;
+        } catch (Exception exception) {
+            if (timedOut.get()) {
+                throw new EmailException("EMAIL_IMAP_TIMEOUT", "IMAP process exceeded its total time limit", exception);
+            }
+            throw exception;
         } finally {
+            timeout.cancel(false);
+            timeoutExecutor.shutdownNow();
             process.destroy();
             process.waitFor(5, TimeUnit.SECONDS);
             if (process.isAlive()) process.destroyForcibly();
@@ -75,12 +106,19 @@ final class OpenSslImapClient {
 
     static List<byte[]> extractLiterals(InputStream input, String tag) throws IOException {
         List<byte[]> messages = new ArrayList<>();
+        long total = 0;
         String line;
         while ((line = readLine(input)) != null) {
             Matcher matcher = LITERAL_SIZE.matcher(line);
             if (matcher.find()) {
-                int size = Integer.parseInt(matcher.group(1));
+                long declared = Long.parseLong(matcher.group(1));
+                if (declared > MAX_LITERAL_BYTES || declared > Integer.MAX_VALUE
+                        || total > MAX_TOTAL_BYTES - declared) {
+                    throw new IOException("IMAP literal exceeds configured size limit");
+                }
+                int size = (int) declared;
                 messages.add(readExact(input, size));
+                total += size;
                 readLine(input);
                 continue;
             }
@@ -97,6 +135,9 @@ final class OpenSslImapClient {
         while ((line = readLine(input)) != null) {
             if (!response.isEmpty()) response.append(' ');
             response.append(line);
+            if (response.length() > MAX_COMMAND_BYTES) {
+                throw new IOException("IMAP command response exceeds configured size limit");
+            }
             if (line.startsWith(tag + " ")) break;
         }
         return response.toString();
@@ -118,6 +159,9 @@ final class OpenSslImapClient {
                 return new String(bytes, 0, Math.max(0, bytes.length - 1), StandardCharsets.US_ASCII);
             }
             buffer.write(current);
+            if (buffer.size() > MAX_LINE_BYTES) {
+                throw new IOException("IMAP line exceeds configured size limit");
+            }
             previous = current;
         }
         if (buffer.size() == 0) return null;

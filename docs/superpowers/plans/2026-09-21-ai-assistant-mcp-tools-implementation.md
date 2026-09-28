@@ -329,7 +329,6 @@ assistant:
   max-message-chars: ${ASSISTANT_MAX_MESSAGE_CHARS:2000}
   max-history-turns: ${ASSISTANT_MAX_HISTORY_TURNS:8}
   max-history-chars: ${ASSISTANT_MAX_HISTORY_CHARS:8000}
-  candidate-todo-limit: ${ASSISTANT_CANDIDATE_TODO_LIMIT:70}
   pending-ttl-seconds: ${ASSISTANT_PENDING_TTL_SECONDS:600}
 ```
 
@@ -340,7 +339,7 @@ assistant:
 
 `service/assistant/`：
 
-- `AssistantContextBuilder` —— 拼「今天（含时区与星期）」+ 候选待办清单（有界）；
+- `AssistantContextBuilder` —— 首轮只拼「今天（含时区与星期）」；待办、联系人与会话候选由相应只读搜索工具按需检索、有界回灌；
 - `AssistantPromptBuilder` —— 从 `ToolRegistry` 渲染工具清单 + 输出契约（设计文档 §7.3）；
 - `AssistantModelClient` —— OpenAI 兼容 `/v1/chat/completions`，`temperature=0.1`（沿用既有口径）；
 - `AssistantDecisionParser` —— 严格解析与校验（设计文档 §7.5，六条全做）；

@@ -29,6 +29,16 @@ public class ChatAppWebhookVerifier {
     }
 
     public void verify(String signature, String timestamp, String rawBody) {
+        boolean hasSignature = signature != null && !signature.isBlank();
+        boolean hasTimestamp = timestamp != null && !timestamp.isBlank();
+        if (!hasSignature && !hasTimestamp) {
+            // CAMS webhook deliveries observed in production do not include an HMAC header.
+            // Account/scope matching remains enforced by ChatAppWebhookInboxService.
+            return;
+        }
+        if (hasSignature != hasTimestamp) {
+            throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_SIGNATURE_HEADERS_INCOMPLETE");
+        }
         String secret = config.chatappWebhookSecret();
         if (secret == null || secret.isBlank()) {
             throw new ChatAppWebhookAuthenticationException("CHATAPP_WEBHOOK_SECRET_NOT_CONFIGURED");

@@ -27,20 +27,17 @@ import java.util.UUID;
  *
  * <p>这条选择的代价必须写清楚：<b>极端情况下会出现「动作生效了但没有审计行」</b>。
  * 这不是可以忽略的角落 —— 验收标准第 3 条要求「能回答 AI 做了什么」。
- * 因此这里的失败日志用 ERROR 级别并带上全部关键字段，以便从日志侧补回。
+ * 因此这里的失败日志用 ERROR 级别并带上非敏感操作元数据，以便从日志侧定位。
  *
- * <h2>为什么只记 hash 不够，只记原文也不够</h2>
- * 原文用于复盘「模型到底给了什么参数」；{@code arguments_digest} 是**规范化 JSON**
- * （键排序）的 sha256，用于在不解析 JSON 的前提下判断「两次是不是同一个动作」。
- * 只留 hash 会让排障瞎眼，只留原文则每次比对都要反序列化。
+ * <p>原话只存长度和摘要，参数只存顶层键名与值类型；规范化参数摘要用于动作对账，
+ * 但低熵值的摘要并不提供匿名化保证。历史审计记录仍需单独治理。
  */
 @Component
 public class AssistantAuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AssistantAuditService.class);
 
-    /** 与 {@code assistant_action_audit.utterance} 的列宽一致。 */
-    private static final int UTTERANCE_MAX = 2000;
+    private static final int AUDIT_KEYS_MAX = 32;
 
     private final AssistantActionAuditMapper mapper;
     private final ObjectMapper objectMapper;
@@ -55,10 +52,11 @@ public class AssistantAuditService {
             AssistantActionAuditEntity entity = new AssistantActionAuditEntity();
             entity.setUserId(entry.userId());
             entity.setConversationId(entry.conversationId());
-            entity.setUtterance(truncate(entry.utterance(), UTTERANCE_MAX));
+            entity.setUtterance(entry.utterance() == null ? null
+                    : "chars:" + entry.utterance().length() + ";sha256:" + sha256Hex(entry.utterance()));
             entity.setDecision(entry.decision());
             entity.setToolName(entry.toolName());
-            entity.setArgumentsJson(writeJson(entry.arguments()));
+            entity.setArgumentsJson(writeJson(argumentShape(entry.arguments())));
             entity.setArgumentsDigest(digest(entry.arguments()));
             entity.setPolicy(entry.policy());
             entity.setOutcome(entry.outcome());
@@ -68,11 +66,10 @@ public class AssistantAuditService {
             entity.setTurnIndex(entry.turnIndex());
             mapper.insert(entity);
         } catch (RuntimeException e) {
-            log.error("event=assistant.audit_write_failed userId={} conversationId={} decision={} tool={} "
-                            + "policy={} outcome={} errorCode={} model={} latencyMs={} turnIndex={}",
-                    entry.userId(), entry.conversationId(), entry.decision(), entry.toolName(),
-                    entry.policy(), entry.outcome(), entry.errorCode(), entry.model(), entry.latencyMs(),
-                    entry.turnIndex(), e);
+            log.error("event=assistant.audit_write_failed userId={} conversationId={} decision={} "
+                            + "policy={} outcome={} errorCode={} exceptionType={}",
+                    entry.userId(), entry.conversationId(), entry.decision(), entry.policy(),
+                    entry.outcome(), entry.errorCode(), e.getClass().getName());
         }
     }
 
@@ -135,6 +132,21 @@ public class AssistantAuditService {
         }
     }
 
+    private static Map<String, Object> argumentShape(Map<String, Object> arguments) {
+        if (arguments == null || arguments.isEmpty()) return null;
+        Map<String, Object> shape = new TreeMap<>();
+        for (Map.Entry<String, Object> entry : arguments.entrySet()) {
+            if (shape.size() >= AUDIT_KEYS_MAX) break;
+            String key = entry.getKey();
+            if (key == null || !key.matches("[A-Za-z][A-Za-z0-9_]{0,63}")) continue;
+            Object value = entry.getValue();
+            shape.put(key, value == null ? "null" : value instanceof Map ? "object"
+                    : value instanceof List ? "array" : value instanceof String ? "string"
+                    : value instanceof Number ? "number" : value instanceof Boolean ? "boolean" : "omitted");
+        }
+        return shape;
+    }
+
     /** 规范化 JSON 的 sha256。键递归排序，保证「同一组参数」永远得到同一个摘要。 */
     String digest(Map<String, Object> arguments) {
         if (arguments == null || arguments.isEmpty()) {
@@ -175,10 +187,5 @@ public class AssistantAuditService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }
-    }
-
-    private static String truncate(String value, int max) {
-        if (value == null) return null;
-        return value.length() <= max ? value : value.substring(0, max);
     }
 }

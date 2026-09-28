@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createTodo,
   getTodosForDate,
-  loadReminderRecords,
   loadTodos,
   removeTodo,
-  saveReminderRecord,
   toggleTodo,
 } from './todoStore';
 
@@ -29,13 +27,5 @@ describe('todoStore', () => {
   it('recovers from malformed persisted data', () => {
     window.localStorage.setItem('message-center:todo-calendar:v1', '{bad');
     expect(loadTodos()).toEqual([]);
-  });
-
-  it('keeps only the latest ten reminder records', () => {
-    for (let index = 0; index < 12; index += 1) {
-      saveReminderRecord({ id: String(index), date: '2026-09-16', taskCount: index, sentAt: new Date().toISOString(), status: 'sent' });
-    }
-    expect(loadReminderRecords()).toHaveLength(10);
-    expect(loadReminderRecords()[0]?.taskCount).toBe(11);
   });
 });

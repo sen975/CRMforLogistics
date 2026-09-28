@@ -150,6 +150,19 @@ public class ToolRegistry {
         return value == null ? fallback : value;
     }
 
+    /**
+     * 把 schema 的 {@code Map<?, ?>} 视图收成 {@code Map<String, Object>}。
+     *
+     * <p>这个不检查的强转是安全的：输入的 schema 全部由各工具类的 helper 构造
+     * （{@code LinkedHashMap<String, Object>}），没有反序列化路径能塞进别的 key 类型。
+     * 先把值拆出来断言类型、再转，是为了让编译期签名与 {@code ToolInputValidator} 对齐
+     * （那边的方法收 {@code Map<String, Object>}）。
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> stringKeyed(Map<?, ?> schema) {
+        return (Map<String, Object>) schema;
+    }
+
     private void selfCheck(ToolDefinition definition) {
         String name = definition.name();
         McpSchema.Tool tool = definition.tool();
@@ -176,6 +189,34 @@ public class ToolRegistry {
                 throw new IllegalStateException("工具 " + name + " 的 required 里有未声明的字段：" + required);
             }
         }
+
+        // 逐个字段校验「声明里有没有本校验器不认识的关键字」。
+        //
+        // 这条检查防的是「声明了却不生效」：{@code ToolInputValidator} 只处理它认得的 key，
+        // 其余一律忽略，所以 {@code pattern} / {@code minLength} / 拼错的 {@code maxlength}
+        // 既不报错也不生效 —— 而写它的人以为约束在。已有一个真实例子：{@code todo.create} 的
+        // {@code date} / {@code time} 从第一天起就写着 {@code format}，而校验器当时不认这个
+        // 关键字，那两条声明从来没有生效过（详见 {@code ToolInputValidator.SUPPORTED_PROPERTY_KEYS}）。
+        //
+        // 与「引用参数忘记绑定候选集」同类：运行期看不出来，测试里也看不出来（工具照常工作），
+        // 所以宁可起不来。items 内（元素 schema）单独再查一次 —— 它的关键字集合比字段级更小。
+        for (Object property : properties.keySet()) {
+            String field = String.valueOf(property);
+            Object rawPropertySchema = properties.get(property);
+            if (!(rawPropertySchema instanceof Map<?, ?> propertySchema)) {
+                // 结构错误也在这里拦：下层 validate 会把它报成 INTERNAL（用户可见的 500），
+                // 但这是声明写错，本该在启动期就暴露。
+                throw new IllegalStateException("工具 " + name + " 的参数 " + field + " 的 schema 必须是对象");
+            }
+            Map<String, Object> declared = stringKeyed(propertySchema);
+            ToolInputValidator.rejectUnsupportedKeys(name, "properties." + field,
+                    declared, ToolInputValidator.SUPPORTED_PROPERTY_KEYS);
+            if (declared.get("items") instanceof Map<?, ?> itemSchema) {
+                ToolInputValidator.rejectUnsupportedKeys(name, "properties." + field + ".items",
+                        stringKeyed(itemSchema), ToolInputValidator.SUPPORTED_ITEM_KEYS);
+            }
+        }
+
         Object atLeastOneOf = schema.get(ToolInputValidator.REQUIRES_AT_LEAST_ONE_OF);
         if (atLeastOneOf instanceof List<?> candidates) {
             for (Object candidate : candidates) {
@@ -195,7 +236,12 @@ public class ToolRegistry {
         // 那时剩下的唯一防线是 SQL 里的 where user_id，而它只挡越权、不挡编造。
         // 这类缺失在测试里也看不出来（工具照常工作），所以宁可起不来。
         //
-        // 命名约定是 `*Id` / `*Ref`：约定本身是这道检查能成立的前提，因此写进错误信息里。
+        // 命名约定是 `*Id` / `*Ref`（含复数 `*Ids` / `*Refs`）：约定本身是这道检查能成立的前提，
+        // 因此写进错误信息里。
+        //
+        // 复数形式必须一起认，不能只认单数：`topicRefs` 这类「一组引用」的参数以 Refs 结尾，
+        // 只认单数时它连这道自检都不触发 —— 而它恰恰是最需要绑定的形状（见 AssistantDecisionParser
+        // 的逐元素比对）。少认一个后缀，就等于给最危险的那类参数开了一个静默通道。
         Map<String, String> bindings = definition.referenceBindings();
         List<String> exemptions = definition.unboundIdExemptions();
         for (Object property : properties.keySet()) {
@@ -204,7 +250,7 @@ public class ToolRegistry {
                 continue;
             }
             throw new IllegalStateException("工具 " + name + " 的参数 " + field
-                    + " 形如引用类参数（以 Id 或 Ref 结尾），但既没有在字段上声明 "
+                    + " 形如引用类参数（以 Id / Ids / Ref / Refs 结尾），但既没有在字段上声明 "
                     + ToolInputValidator.CANDIDATE_SET + "（候选集名），也没有在 schema 里用 "
                     + ToolInputValidator.UNBOUND_IDS + " 声明它不来自候选。"
                     + "漏声明会让「模型编造 id」的比对静默失效");
@@ -217,8 +263,14 @@ public class ToolRegistry {
         }
     }
 
-    /** 引用类参数的命名约定。改这里等于改约定，必须同时改所有工具声明。 */
+    /**
+     * 引用类参数的命名约定。改这里等于改约定，必须同时改所有工具声明。
+     *
+     * <p>含<b>复数</b>形式：`*Refs` / `*Ids` 表示「一组引用」，解析器会逐元素与候选比对
+     * （见 {@code AssistantDecisionParser.referencesOf}）。只认单数会让这类参数静默逃过自检。
+     */
     static boolean isReferenceShaped(String field) {
-        return field.endsWith("Id") || field.endsWith("Ref");
+        return field.endsWith("Id") || field.endsWith("Ref")
+                || field.endsWith("Ids") || field.endsWith("Refs");
     }
 }

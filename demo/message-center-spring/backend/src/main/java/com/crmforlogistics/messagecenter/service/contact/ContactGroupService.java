@@ -313,7 +313,7 @@ public class ContactGroupService {
         ContactEntity contact = userId == null ? contactMapper.selectById(contactId)
                 : contactMapper.findByIdAndOwner(contactId, userId).orElse(null);
         if (contact == null) {
-            throw new IllegalArgumentException("Contact not found: " + contactId);
+            throw new ContactAccessException();
         }
         return contact;
     }

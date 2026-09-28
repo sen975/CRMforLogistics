@@ -14,6 +14,9 @@ public class ContactMemoryStateEntity {
     private UUID contactId;
     private UUID ownerUserId;
     private String status;
+    private String historyBackfillStatus;
+    private String historyBackfillCursor;
+    private String historyBackfillTargetCursor;
     private Instant lastInboundAt;
     private String lastSuccessCursor;
     private UUID currentProfileVersionId;
@@ -36,6 +39,12 @@ public class ContactMemoryStateEntity {
     public void setOwnerUserId(UUID value) { ownerUserId = value; }
     public String getStatus() { return status; }
     public void setStatus(String value) { status = value; }
+    public String getHistoryBackfillStatus() { return historyBackfillStatus; }
+    public void setHistoryBackfillStatus(String value) { historyBackfillStatus = value; }
+    public String getHistoryBackfillCursor() { return historyBackfillCursor; }
+    public void setHistoryBackfillCursor(String value) { historyBackfillCursor = value; }
+    public String getHistoryBackfillTargetCursor() { return historyBackfillTargetCursor; }
+    public void setHistoryBackfillTargetCursor(String value) { historyBackfillTargetCursor = value; }
     public Instant getLastInboundAt() { return lastInboundAt; }
     public void setLastInboundAt(Instant value) { lastInboundAt = value; }
     public String getLastSuccessCursor() { return lastSuccessCursor; }

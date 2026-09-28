@@ -6,10 +6,13 @@ import {
   fetchLatestAssistantConversation,
   sendAssistantMessage,
 } from '../../api/endpoints';
+import { AssistantStreamFailure } from '../../api/assistantStream';
+import type { AssistantStreamHandlers } from '../../api/assistantStream';
 import type {
   AssistantConversationMessage,
   AssistantHistoryTurn,
   AssistantProposal,
+  AssistantStreamState,
   AssistantTurnKind,
   AssistantTurnResult,
 } from '../../api/types';
@@ -33,6 +36,15 @@ export type AssistantChatItem = {
   errorCode?: string;
   /** 这条失败是否值得让用户按「重试」。参数非法 / 授权已失效都不值得。 */
   retryable?: boolean;
+  /**
+   * 这一轮**还在推**。
+   *
+   * 它为 `true` 时 `kind` 还没定 —— 也就是说此刻**不许**把这条渲染成任何一种结论
+   * （成功 / 失败 / 待确认都还不知道）。面板据此显示进度与光标，而不是一个空气泡。
+   */
+  streaming?: boolean;
+  /** 流里报的进度（「正在查资料…」）。只在还没有正文时显示。 */
+  progress?: string;
 };
 
 /** 功能不可用。`DISABLED`（没开开关）与 `UNAVAILABLE`（模型服务挂了）的处置完全不同。 */
@@ -84,6 +96,18 @@ const TURN_KINDS: readonly AssistantTurnKind[] = [
   'ANSWER',
   'ERROR',
 ];
+
+/**
+ * 进度说人话。
+ *
+ * 刻意**不显示工具名**：那是内部标识（`conversation.search` 之类），而面板是给人看的。
+ * 用户此刻要判断的只有一件事 —— 它还在动，那就等。服务端仍然把工具名放在帧里，
+ * 那是给排障用的（`curl` 打这条流就能看见它在查什么）。
+ */
+const PROGRESS_TEXT: Record<AssistantStreamState, string> = {
+  thinking: '正在想…',
+  reading: '正在查资料…',
+};
 
 let sequence = 0;
 const nextId = () => `assistant-item-${++sequence}`;
@@ -155,6 +179,20 @@ function isTurnKind(value: unknown): value is AssistantTurnKind {
   return typeof value === 'string' && (TURN_KINDS as readonly string[]).includes(value);
 }
 
+/**
+ * 这一轮结果值不值得让用户按「重试」。
+ *
+ * 判据是**「再来一次会不会不一样」**：模型供应商不可达是环境问题，重发很可能就通了；
+ * 而「参数不合法」「引用的待办已经不在了」这类结论服务端已经想清楚了，再点一次还是同一句话。
+ *
+ * <p>这条判据以前长在 HTTP 状态码上（模型挂了会回 503）。改成流式之后，同一件事藏在
+ * `final` 帧里、HTTP 状态是 200 —— 于是它必须回到**结果本身**来判。这其实更结实：
+ * 「哪一类失败值得重试」本来就与它是怎么传到前端来的无关。
+ */
+function isRetryableResult(result: AssistantTurnResult): boolean {
+  return result.kind === 'ERROR' && result.errorCode === AssistantCodes.PROVIDER_UNAVAILABLE;
+}
+
 /** 把一轮结果变成一条聊天记录。 */
 function itemOf(result: AssistantTurnResult): AssistantChatItem {
   return {
@@ -164,8 +202,7 @@ function itemOf(result: AssistantTurnResult): AssistantChatItem {
     kind: result.kind,
     proposal: result.proposal,
     errorCode: result.errorCode,
-    // 服务端已经在 200 里给出了结论（如「引用的待办已经不在了」）：再点一次还是同样的结论。
-    retryable: false,
+    retryable: isRetryableResult(result),
   };
 }
 
@@ -204,6 +241,16 @@ type HttpFailure = {
  * 把这两种混成一句「操作失败」，用户就永远不知道该不该再点一次。
  */
 function classify(error: unknown): HttpFailure {
+  // 流式端点自己抛的失败。它已经把「HTTP 层失败」与「流断了」折成同一组字段，
+  // 这里直接信它，而不是去猜它的形状。
+  if (error instanceof AssistantStreamFailure) {
+    return {
+      status: error.status,
+      code: error.code,
+      message: error.message,
+      reachedServer: error.reachedServer,
+    };
+  }
   const response = (error as {
     response?: { status?: number; data?: { code?: unknown; message?: unknown } };
   } | null)?.response;
@@ -256,6 +303,18 @@ function isRetryable(failure: HttpFailure): boolean {
  * 功能不可用（503）复用 `unavailable`（面板顶部显示「AI 助手未开启」并禁用输入框），
  * 其余失败进 `historyError`（一条独立的提示，不写进对话 —— 它不属于任何一轮对话）。
  *
+ * <h2>逐字回答：变的是一条记录，不是消息在变</h2>
+ * `/messages` 是流式端点（见 `AssistantStreamHandlers`）。处理它的关键只有一条：
+ * **先占位、后覆盖**。占位记录承担「请求已经出去了」这个事实；片段到达就往它身上长
+ * （`delta` 是**增量**）；收到 `reset` 就清空重来；收到 `final` 就整条换成结论。
+ * 于是屏幕上永远只有一份东西，而且最后显示的那一份一定是服务端给的结论 ——
+ * 片段只是草稿，它**不参与**「这一轮到底做成了什么」的判断。
+ *
+ * <p>由此带出一个必须记住的后果：**失败不再以 HTTP 状态码的形式到达**。模型挂了、
+ * 参数不合法、引用的待办没了，现在都是 200 + `final{kind=ERROR}`，于是「能不能重试」
+ * 必须回到结果本身来判（见 `isRetryableResult`）。只有「响应还没开始写」的失败
+ * （未登录 / 开关没开）还保留着真正的 HTTP 状态码。
+ *
  * <h2>会话号的三个来源，优先级是刻意的</h2>
  * <ol>
  *   <li>浏览器本地存的那一个（常态）；</li>
@@ -278,6 +337,7 @@ export function useAssistant() {
    * 逐条显示会变成一片重复的噪音。用户需要知道的是「助手从某一刻起看不见前面了」这件事本身。
    */
   const [trimmedHistory, setTrimmedHistory] = useState<number | null>(null);
+  const [compactedHistory, setCompactedHistory] = useState<number | null>(null);
   /**
    * 上次的对话没能读回来。与 `unavailable` 分开：那个说的是「助手用不了」，
    * 这个说的是「助手能用，但上面这段对话不完整」—— 两件事的下一步动作完全不同。
@@ -326,14 +386,51 @@ export function useAssistant() {
     setItems((prev) => [...prev, item]);
   }, []);
 
-  /** 处理一次 HTTP 层失败：503 时另外记下「功能不可用」。 */
-  const applyFailure = useCallback((error: unknown) => {
+  /**
+   * 就地改写一条记录。流里的进度与正文片段都是**同一条记录的变化**，不是新消息 ——
+   * 每收一个字就追加一条消息的话，屏幕上会变成一片一个字的瀑布。
+   */
+  const updateItem = useCallback((id: string, change: (item: AssistantChatItem) => AssistantChatItem) => {
+    setItems((prev) => prev.map((item) => (item.id === id ? change(item) : item)));
+  }, []);
+
+  /**
+   * 把占位记录换成最终记录（结论或失败）。没有占位就直接追加。
+   *
+   * 占位被**覆盖**而不是留在原地：它是草稿，不是一条消息。留着它，对话里就会出现
+   * 「助手说了两遍」—— 一遍是半截的、一遍是完整的。
+   */
+  const settle = useCallback((placeholderId: string | undefined, item: AssistantChatItem) => {
+    if (!placeholderId) {
+      append(item);
+      return;
+    }
+    setItems((prev) => {
+      const index = prev.findIndex((existing) => existing.id === placeholderId);
+      // 占位已经不在了（比如用户在这中间点了「新会话」）：只能追加。
+      // 相比之下，让这一轮的结论静默消失要糟得多。
+      if (index < 0) return [...prev, item];
+      const next = [...prev];
+      // 沿用占位的 id：React 的 key 不变，这一行就不会先卸载再挂回来（屏幕上闪一下）。
+      next[index] = { ...item, id: placeholderId };
+      return next;
+    });
+  }, [append]);
+
+  /**
+   * 处理一次「这一轮没成」：HTTP 层失败、或流断在半路。
+   *
+   * `placeholderId` 是流式那一轮先放下的占位记录 —— 失败也要**覆盖它**。
+   * 流断在半路时这一点尤其要紧：屏幕上那半句话必须消失。半句话会被当成整句话读，
+   * 而「`final` 才是权威」这条不变式不允许屏幕上留一句无法闭合的草稿。
+   */
+  const applyFailure = useCallback((error: unknown, placeholderId?: string) => {
     const failure = classify(error);
     if (failure.status === 503
       && (failure.code === AssistantCodes.DISABLED || failure.code === AssistantCodes.PROVIDER_UNAVAILABLE)) {
       setUnavailable({ code: failure.code, message: failure.message });
     }
-    append({
+    settle(placeholderId, {
       id: nextId(),
       role: 'assistant',
       text: failure.message,
@@ -341,7 +438,7 @@ export function useAssistant() {
       errorCode: failure.code,
       retryable: isRetryable(failure),
     });
-  }, [append]);
+  }, [settle]);
 
   /**
    * 处理一次「回放历史」失败。与 {@link applyFailure} 的区别不是文案，而是**它不属于任何一轮对话**：
@@ -361,9 +458,20 @@ export function useAssistant() {
     setHistoryError(failure.message);
   }, []);
 
-  /** 处理一轮 200 的响应。 */
-  const applyResult = useCallback((result: AssistantTurnResult) => {
-    setUnavailable(null);
+  /**
+   * 处理一轮的结论。确认 / 取消接口也走它 —— 那两条路没有流、没有占位，
+   * 因此 `placeholderId` 省略，行为与以前完全一样（直接追加一条）。
+   */
+  const applyResult = useCallback((result: AssistantTurnResult, placeholderId?: string) => {
+    // 服务端就这一轮给了结论 ⇒ 功能是开着的。**但「模型挂了」也走得通这条路**：
+    // 它同样是一轮正常的 200，只不过 `kind=ERROR`、`errorCode=ASSISTANT_UNAVAILABLE`。
+    // 所以这里不能一律清掉 `unavailable` —— 那会让面板顶部的「模型服务暂时不可用」
+    // 被这一行自己抹掉，而那正是用户唯一能看到的「不是你的话有问题，是对面暂时不行」。
+    if (result.kind === 'ERROR' && result.errorCode === AssistantCodes.PROVIDER_UNAVAILABLE) {
+      setUnavailable({ code: AssistantCodes.PROVIDER_UNAVAILABLE, message: result.message });
+    } else {
+      setUnavailable(null);
+    }
     // 服务端确认收到这一轮 ⇒ 库里已经有了这个会话的行，「服务端兜底」从此会给出正确的答案，
     // 那个「别问服务端」的标记可以撤掉了。
     //
@@ -375,7 +483,10 @@ export function useAssistant() {
     if (result.historyTrim) {
       setTrimmedHistory(result.historyTrim.droppedMessages);
     }
-    append(itemOf(result));
+    if (result.historyCompaction) {
+      setCompactedHistory(result.historyCompaction.summarizedMessages);
+    }
+    settle(placeholderId, itemOf(result));
     if (result.kind === 'CONFIRMATION_REQUIRED' && result.proposal) {
       // 服务端已把这条动作落库；卡片上的确认只认这个 id。
       setPending(result.proposal);
@@ -386,7 +497,7 @@ export function useAssistant() {
       // 只有真的执行成功才广播：待确认、取消、失败都不该让别的页面去重读数据。
       publishAssistantEvent({ type: 'assistant-action-executed' });
     }
-  }, [append]);
+  }, [settle]);
 
   const dispatch = useCallback(async (
     history: AssistantHistoryTurn[],
@@ -401,14 +512,49 @@ export function useAssistant() {
       append({ id: nextId(), role: 'user', text });
     }
     setBusy(true);
+
+    /*
+     * 先放一条空记录，让后面的片段往它身上长。
+     *
+     * 没有它的话，从按下发送到第一段文字到达之间有**几十秒**的静默（只读那一轮要查资料），
+     * 而那段时间屏幕上什么都不会变 —— 用户只会以为没发出去，然后再点一次。
+     * 所以这条占位记录不是视觉装饰，它承担的是「请求已经出去了」这个事实。
+     */
+    const placeholderId = nextId();
+    append({
+      id: placeholderId,
+      role: 'assistant',
+      text: '',
+      streaming: true,
+      progress: PROGRESS_TEXT.thinking,
+    });
+
+    const handlers: AssistantStreamHandlers = {
+      onStatus: (frame) => updateItem(placeholderId, (item) => ({
+        ...item,
+        progress: PROGRESS_TEXT[frame.state],
+      })),
+      // 增量：往已经显示的正文后面接，不是覆盖。
+      onDelta: (delta) => updateItem(placeholderId, (item) => ({ ...item, text: item.text + delta })),
+      // 模型这一轮重来过：屏幕上那段草稿已经不作数了，清掉再说。
+      onReset: () => updateItem(placeholderId, (item) => ({
+        ...item,
+        text: '',
+        progress: '正在重新回答…',
+      })),
+    };
+
     try {
-      applyResult(await sendAssistantMessage({ conversationId, history, text }));
+      applyResult(
+        await sendAssistantMessage({ conversationId, history, text }, handlers),
+        placeholderId,
+      );
     } catch (error) {
-      applyFailure(error);
+      applyFailure(error, placeholderId);
     } finally {
       setBusy(false);
     }
-  }, [append, applyFailure, applyResult, conversationId, setBusy]);
+  }, [append, applyFailure, applyResult, conversationId, setBusy, updateItem]);
 
   const send = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -511,6 +657,7 @@ export function useAssistant() {
     setPending(null);
     // 新会话从零开始，上一段对话的裁剪与读回失败都与它无关。
     setTrimmedHistory(null);
+    setCompactedHistory(null);
     setHistoryError(null);
     lastAttempt.current = null;
   }, []);
@@ -549,6 +696,7 @@ export function useAssistant() {
     unavailable,
     conversationId,
     trimmedHistory,
+    compactedHistory,
     historyError,
     send,
     confirm,

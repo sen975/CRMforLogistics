@@ -11,6 +11,13 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppController;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSendService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessageApplicationService;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppMessageSyncService;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppTemplateSyncService;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppTemplateService;
+import com.crmforlogistics.messagecenter.service.event.EventHub;
 
 import java.util.UUID;
 
@@ -20,12 +27,26 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(ChatAppWebhookController.class)
+@WebMvcTest({ChatAppWebhookController.class, ChatAppController.class})
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class ChatAppWebhookControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean ChatAppWebhookInboxService inboxService;
     @MockitoBean AuthSessionService authSessionService;
+    @MockitoBean ChatAppSendService sendService;
+    @MockitoBean ChatAppMessageApplicationService messageApplicationService;
+    @MockitoBean ChatAppMessageSyncService messageSyncService;
+    @MockitoBean ChatAppTemplateSyncService templateSyncService;
+    @MockitoBean ChatAppTemplateService templateService;
+    @MockitoBean EventHub eventHub;
+
+    @Test
+    void legacyWebhookRouteReturnsExplicitGoneInsteadOfAuthenticationFailure() throws Exception {
+        mvc.perform(post("/api/chatapp/webhook").content("{}"))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("CHATAPP_WEBHOOK_DEPRECATED"));
+        verifyNoInteractions(inboxService);
+    }
 
     @Test
     void webhookIsPublicAndAcceptsRequestWithoutUserToken() throws Exception {

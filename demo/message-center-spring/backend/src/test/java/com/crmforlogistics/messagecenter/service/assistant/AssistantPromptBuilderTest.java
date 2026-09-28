@@ -77,6 +77,16 @@ class AssistantPromptBuilderTest {
         assertThat(prompt).contains("不要猜一个答案交差。");
     }
 
+    /** 2026-09-23 复盘：模型照抄历史里自己的否认而不看工具清单（A/B 历史对照实证）。 */
+    @Test
+    void theToolListOutranksTheModelsOwnPastDenials() {
+        String prompt = builder.buildSystemPrompt(context);
+
+        assertThat(prompt).contains("工具清单是当前能力的唯一事实来源");
+        assertThat(prompt).contains("不要照抄历史的否认");
+        assertThat(prompt).contains("先查工具清单再回答");
+    }
+
     /**
      * 轮次上限必须出现在提示词里，否则「额度用尽」对模型是不可知的事件：
      * 它会一直以为还能再查，而服务端会在某一轮突然终止 —— 用户看到的就是「查着查着没了」。
@@ -124,7 +134,7 @@ class AssistantPromptBuilderTest {
     void theToolCatalogueComesFromTheRegistryNotFromASecondHandWrittenCopy() {
         String prompt = builder.buildSystemPrompt(context);
 
-        for (String tool : List.of(TodoAssistantTools.TOOL_CREATE, TodoAssistantTools.TOOL_COMPLETE,
+        for (String tool : List.of(TodoAssistantTools.TOOL_SEARCH, TodoAssistantTools.TOOL_CREATE, TodoAssistantTools.TOOL_COMPLETE,
                 TodoAssistantTools.TOOL_DELETE, TodoAssistantTools.TOOL_UPDATE,
                 ConversationAssistantTools.TOOL_SEARCH, ConversationAssistantTools.TOOL_PIN)) {
             assertThat(prompt).as("工具 " + tool + " 必须在提示词里可被发现").contains(tool);

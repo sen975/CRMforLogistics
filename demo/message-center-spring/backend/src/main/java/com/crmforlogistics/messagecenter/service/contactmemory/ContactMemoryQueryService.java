@@ -80,7 +80,7 @@ public class ContactMemoryQueryService {
                 toProfile(profile),
                 manual,
                 ai,
-                state == null ? "CLEAN" : safeState(state.getStatus()),
+                ContactMemoryModels.memoryState(state == null ? null : state.getStatus()),
                 attempt == null ? null : attempt.getCompletedAt(),
                 state == null ? null : safeFailureCode(state.getLastFailureCode()),
                 hasPendingInbound(state), nextCursor, hasMore));
@@ -133,10 +133,6 @@ public class ContactMemoryQueryService {
             case "DIRTY", "PROCESSING", "RETRY_WAIT", "FAILED" -> true;
             default -> false;
         };
-    }
-
-    private static String safeState(String value) {
-        return value == null || value.isBlank() ? "CLEAN" : value;
     }
 
     private static String safeFailureCode(String value) {

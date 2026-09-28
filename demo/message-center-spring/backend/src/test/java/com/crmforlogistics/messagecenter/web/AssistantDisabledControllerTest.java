@@ -53,6 +53,27 @@ class AssistantDisabledControllerTest {
                 .andExpect(jsonPath("$.code").value("ASSISTANT_DISABLED"));
     }
 
+    /**
+     * 前端若给助手请求统一加上 {@code Accept: text/event-stream}（对 {@code /messages} 的
+     * 成功路径而言完全正确），功能关闭时也<b>必须</b>还是 503 + JSON，而不是 406 + 空体。
+     *
+     * <p>这一条同时钉住一件更隐蔽的事：{@code require(...)} 必须留在
+     * {@code AssistantEventStream.open} <b>之前</b>。一旦顺序反了，响应头先生效，
+     * 「功能没开」就会变成一个 200 的流内错误 —— 那条路径由
+     * {@code AssistantControllerTest#aDisabledFeatureKeepsItsOwnCodeWhenItSurfacesInsideTheStream}
+     * 覆盖，但那是替身造出来的，不是真实的时序。
+     */
+    @Test
+    void messagesStillAnswer503JsonWhenTheCallerAsksForAnEventStream() throws Exception {
+        mvc.perform(post("/api/assistant/messages")
+                        .with(user(USER_ID.toString()))
+                        .accept(MediaType.TEXT_EVENT_STREAM)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"帮我建个待办\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_DISABLED"));
+    }
+
     @Test
     void confirmAndCancelAlsoReturn503() throws Exception {
         mvc.perform(post("/api/assistant/actions/{id}/confirm", PENDING_ID)

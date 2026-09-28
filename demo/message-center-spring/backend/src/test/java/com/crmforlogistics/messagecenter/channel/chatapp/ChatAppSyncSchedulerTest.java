@@ -40,11 +40,11 @@ class ChatAppSyncSchedulerTest {
         ordered.verify(accountMapper).updateSyncStatus(successful.getId(), "syncing", null);
         ordered.verify(messageSyncService).runAccount(successful.getId());
         ordered.verify(accountMapper).updateSyncStatus(
-                eq(successful.getId()), eq("success"), any(Instant.class));
+                eq(successful.getId()), eq("success"), eq(null));
         ordered.verify(accountMapper).updateSyncStatus(failed.getId(), "syncing", null);
         ordered.verify(messageSyncService).runAccount(failed.getId());
         ordered.verify(accountMapper).updateSyncStatus(
-                eq(failed.getId()), eq("failed"), any(Instant.class));
+                eq(failed.getId()), eq("failed"), eq(null));
         verify(accountMapper, never()).updateSyncStatus(
                 eq(failed.getId()), eq("success"), any(Instant.class));
     }

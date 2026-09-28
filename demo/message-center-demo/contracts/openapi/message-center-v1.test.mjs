@@ -40,14 +40,22 @@ const requiredPaths = [
   '/api/v1/wecom/conversation-view/sessions',
   '/api/v1/wecom/conversation-view/sessions/{viewerSessionId}',
   '/api/v1/wecom/conversation-view/events',
-  '/api/v1/webhooks/{channelType}'
+  '/api/v1/webhooks/{channelType}',
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks',
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{channelAccountId}',
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks/account'
 ];
 
 assert.match(contract, /^openapi: 3\.1\.0$/m);
 for (const path of requiredPaths) {
   assert.ok(contract.includes(`  ${path}:`), `missing ${path}`);
 }
-assert.doesNotMatch(contract, /^  \/api\/(?!v1\/)/m, 'legacy unversioned route is forbidden');
+const unversionedPaths = [...contract.matchAll(/^  (\/api\/(?!v1\/)[^:]+):$/gm)].map((match) => match[1]);
+assert.deepEqual(unversionedPaths, [
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks',
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{channelAccountId}',
+  '/api/admin/whatsapp/cams/{scopeId}/callbacks/account',
+], 'only the current admin callback contract may remain outside /api/v1');
 
 const operations = extractOperations(contract);
 assert.ok(operations.length >= 18, 'expected the complete v1 operation set');
@@ -148,12 +156,20 @@ assert.ok((contract.match(/20971520/g) ?? []).length >= 8,
 assert.doesNotMatch(contract, /26214400/, 'the stale 25 MiB media limit is forbidden');
 
 const emailSend = operation(operations, 'post', '/api/v1/email/messages');
+assert.match(emailSend.body, /application\/json:/,
+  'email sending JSON contract must map to the live controller');
 assert.match(emailSend.body, /multipart\/form-data:/,
-  'email sending must use streaming multipart form data');
+  'email sending must support multipart attachments');
+assert.match(emailSend.body, /#\/components\/schemas\/EmailSendResult/);
+assert.match(contract, /^  \/api\/v1\/email\/submissions\/unknown:$/m,
+  'unknown email outcomes must have a documented owner query');
 assert.match(emailSend.body, /#\/components\/schemas\/EmailSendMultipartRequest/);
-assert.match(emailSend.body, /EMAIL_MULTIPART_REQUIRED|EMAIL_MULTIPART_FIELD_INVALID/);
-assert.match(emailSend.body, /EMAIL_SENT_HISTORY_FAILED/);
+assert.match(emailSend.body, /EMAIL_SUBMISSION_PERSIST_FAILED/);
+assert.match(emailSend.body, /EMAIL_ATTACHMENT_READ_FAILED/);
 assert.match(emailSend.body, /EMAIL_SEND_OUTCOME_UNKNOWN/);
+assert.match(emailSend.body, /^        '503':/m,
+  'unknown SMTP delivery outcome must not be reported as a client error');
+assert.match(emailSend.body, /Do not retry without checking delivery/);
 const emailRequest = schema(contract, 'EmailSendMultipartRequest');
 assert.match(emailRequest, /required: \[to, subject\]/);
 assert.match(emailRequest, /file:/);
@@ -273,6 +289,21 @@ for (const parameter of ['msg_signature', 'timestamp', 'nonce', 'echostr']) {
 }
 assert.match(wecomAuthorizationCallbackVerification.body, /text\/plain:/);
 
+const wecomAppCallback = operation(operations, 'post', '/api/v1/wecom/app-callback');
+assert.match(wecomAppCallback.body, /operationId: receiveWeComAppCallback/);
+assert.match(wecomAppCallback.body, /^      security: \[\]$/m);
+for (const parameter of ['msg_signature', 'timestamp', 'nonce']) {
+  assert.match(wecomAppCallback.body, new RegExp(`^        - name: ${parameter}$`, 'm'));
+}
+assert.match(wecomAppCallback.body, /application\/xml:/);
+assert.match(wecomAppCallback.body, /text\/plain:/);
+assert.match(wecomAppCallback.body, /^        '403':$/m);
+assert.match(wecomAppCallback.body, /^        '503':$/m);
+const wecomAppCallbackVerification = operation(operations, 'get', '/api/v1/wecom/app-callback');
+assert.match(wecomAppCallbackVerification.body, /operationId: verifyWeComAppCallback/);
+assert.match(wecomAppCallbackVerification.body, /^      security: \[\]$/m);
+assert.match(wecomAppCallbackVerification.body, /name: echostr/);
+
 const wecomAttempt = operation(operations, 'post', '/api/v1/wecom/login/attempts');
 assert.match(wecomAttempt.body, /operationId: createWeComLoginAttempt/);
 assert.match(wecomAttempt.body, /^      security: \[\]$/m);
@@ -348,7 +379,24 @@ assert.match(schema(contract, 'ReviseCallRecordNoteRequest'), /required: \[note,
 assert.match(schema(contract, 'PhoneRepositoryPage'), /required: \[items, nextCursor, totalCount\]/);
 assert.match(contract, /audio\/mpeg/);
 assert.match(contract, /104857600/);
-assert.equal(operations.length, 40);
+
+const callbackList = operation(operations, 'get', '/api/admin/whatsapp/cams/{scopeId}/callbacks');
+assert.match(callbackList.body, /^      x-required-role: ADMIN$/m);
+assert.match(callbackList.body, /#\/components\/schemas\/AdminWhatsAppCallbackConfig/);
+const callbackPhoneUpdate = operation(operations, 'put', '/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{channelAccountId}');
+assert.match(callbackPhoneUpdate.body, /#\/components\/parameters\/CsrfTokenHeader/);
+assert.match(callbackPhoneUpdate.body, /#\/components\/schemas\/AdminWhatsAppPhoneCallbackRequest/);
+assert.match(callbackPhoneUpdate.body, /^        '409':$/m);
+const callbackAccountUpdate = operation(operations, 'put', '/api/admin/whatsapp/cams/{scopeId}/callbacks/account');
+assert.match(callbackAccountUpdate.body, /#\/components\/schemas\/AdminWhatsAppAccountCallbackRequest/);
+assert.match(callbackAccountUpdate.body, /^        '409':$/m);
+const callbackProjection = schema(contract, 'AdminWhatsAppCallbackConfig');
+assert.doesNotMatch(callbackProjection, /^        (accessKey|secret|custSpaceId|requestId|fullPhone):$/mi);
+assert.match(schema(contract, 'AdminWhatsAppPhoneCallbackConfig'), /enum: \[UNKNOWN\]/);
+const accountCallbackRequest = schema(contract, 'AdminWhatsAppAccountCallbackRequest');
+assert.doesNotMatch(accountCallbackRequest,
+  /^        (upCallbackUrl|phoneNumber|custSpaceId|accessKey|secret|requestId):$/mi);
+assert.equal(operations.length, 46);
 
 console.log(`validated ${operations.length} OpenAPI operations`);
 
@@ -357,7 +405,7 @@ function extractOperations(source) {
   const result = [];
   let currentPath;
   for (let index = 0; index < lines.length; index += 1) {
-    const pathMatch = lines[index].match(/^  (\/api\/v1\/[^:]*):$/);
+    const pathMatch = lines[index].match(/^  (\/api\/[^:]*):$/);
     if (pathMatch) {
       currentPath = pathMatch[1];
       continue;
@@ -366,7 +414,7 @@ function extractOperations(source) {
     if (!methodMatch || !currentPath) continue;
     let end = index + 1;
     while (end < lines.length
-      && !/^  \/api\/v1\/[^:]*:$/.test(lines[end])
+      && !/^  \/api\/[^:]*:$/.test(lines[end])
       && !/^    (get|post|put|patch|delete):$/.test(lines[end])
       && lines[end] !== 'components:') {
       end += 1;

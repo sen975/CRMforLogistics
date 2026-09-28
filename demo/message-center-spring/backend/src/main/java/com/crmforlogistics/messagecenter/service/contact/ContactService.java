@@ -12,6 +12,7 @@ import com.crmforlogistics.messagecenter.dto.response.ContactTagResponse;
 import com.crmforlogistics.messagecenter.dto.response.PhoneContactBindingResponse;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactIdentityEntity;
+import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.entity.ConversationEntity;
 import com.crmforlogistics.messagecenter.entity.MessageEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
@@ -19,6 +20,7 @@ import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ConversationMapper;
 import com.crmforlogistics.messagecenter.mapper.MessageMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppAccountResolver;
 import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryQueryService;
 
@@ -47,6 +49,10 @@ import java.util.UUID;
 public class ContactService {
 
     private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_ASSISTANT_CHANNEL_TYPES = 8;
+    private static final int MAX_ASSISTANT_CHANNEL_PROFILES = 8;
+    private static final int ASSISTANT_VALUE_MAX_CHARS = 255;
+    private static final int ASSISTANT_LABEL_MAX_CHARS = 80;
 
     private final ContactMapper contactMapper;
     private final ContactIdentityMapper contactIdentityMapper;
@@ -56,6 +62,7 @@ public class ContactService {
     private final ContactTagMapper contactTagMapper;
     private final ContactMemoryQueryService contactMemoryQueryService;
     private final ContactTagMatchResolver contactTagMatchResolver;
+    private final ChannelAccountMapper channelAccountMapper;
 
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
@@ -66,7 +73,6 @@ public class ContactService {
                 chatAppAccountResolver, null, null, null);
     }
 
-    @Autowired
     public ContactService(ContactMapper contactMapper,
                           ContactIdentityMapper contactIdentityMapper,
                           ConversationMapper conversationMapper,
@@ -75,6 +81,20 @@ public class ContactService {
                           ContactTagMapper contactTagMapper,
                           ContactMemoryQueryService contactMemoryQueryService,
                           ContactTagMatchResolver contactTagMatchResolver) {
+        this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper, chatAppAccountResolver,
+                contactTagMapper, contactMemoryQueryService, contactTagMatchResolver, null);
+    }
+
+    @Autowired
+    public ContactService(ContactMapper contactMapper,
+                          ContactIdentityMapper contactIdentityMapper,
+                          ConversationMapper conversationMapper,
+                          MessageMapper messageMapper,
+                          ChatAppAccountResolver chatAppAccountResolver,
+                          ContactTagMapper contactTagMapper,
+                          ContactMemoryQueryService contactMemoryQueryService,
+                          ContactTagMatchResolver contactTagMatchResolver,
+                          ChannelAccountMapper channelAccountMapper) {
         this.contactMapper = contactMapper;
         this.contactIdentityMapper = contactIdentityMapper;
         this.conversationMapper = conversationMapper;
@@ -83,6 +103,7 @@ public class ContactService {
         this.contactTagMapper = contactTagMapper;
         this.contactMemoryQueryService = contactMemoryQueryService;
         this.contactTagMatchResolver = contactTagMatchResolver;
+        this.channelAccountMapper = channelAccountMapper;
     }
 
     public ContactService(ContactMapper contactMapper,
@@ -93,6 +114,90 @@ public class ContactService {
                           ContactTagMapper contactTagMapper) {
         this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper,
                 chatAppAccountResolver, contactTagMapper, null, null);
+    }
+
+    public ContactService(ContactMapper contactMapper,
+                          ContactIdentityMapper contactIdentityMapper,
+                          ConversationMapper conversationMapper,
+                          MessageMapper messageMapper,
+                          ChatAppAccountResolver chatAppAccountResolver,
+                          ChannelAccountMapper channelAccountMapper) {
+        this(contactMapper, contactIdentityMapper, conversationMapper, messageMapper, chatAppAccountResolver,
+                null, null, null, channelAccountMapper);
+    }
+
+    /** Only channel names from identities currently visible to the caller. */
+    public List<String> listAuthorizedChannelTypes(UUID userId, UUID contactId) {
+        if (userId == null || contactId == null) {
+            throw new IllegalArgumentException("Contact not found");
+        }
+        return contactIdentityMapper.findByContactIdAndOwner(contactId, userId).stream()
+                .map(ContactIdentityEntity::getChannelType)
+                .filter(type -> type != null && type.matches("[a-z][a-z0-9_-]{0,31}"))
+                .distinct()
+                .sorted()
+                .limit(MAX_ASSISTANT_CHANNEL_TYPES)
+                .toList();
+    }
+
+    /**
+     * Explicit assistant projection of caller-authorized channel identities.
+     * Internal scope IDs, normalized values, database IDs and credentials never leave this owner.
+     */
+    public List<AuthorizedChannelProfile> listAuthorizedChannelProfiles(UUID userId, UUID contactId) {
+        if (userId == null || contactId == null) {
+            throw new IllegalArgumentException("Contact not found");
+        }
+        return contactIdentityMapper.findByContactIdAndOwner(contactId, userId).stream()
+                .filter(identity -> identity != null
+                        && identity.getChannelType() != null
+                        && identity.getChannelType().matches("[a-z][a-z0-9_-]{0,31}"))
+                .filter(identity -> identity.getIdentityValue() != null && !identity.getIdentityValue().isBlank())
+                .limit(MAX_ASSISTANT_CHANNEL_PROFILES)
+                .map(identity -> new AuthorizedChannelProfile(
+                        identity.getChannelType(),
+                        truncate(identity.getIdentityValue(), ASSISTANT_VALUE_MAX_CHARS),
+                        truncate(blankToNull(identity.getDisplayName()), ASSISTANT_LABEL_MAX_CHARS),
+                        accountLabel(identity, userId)))
+                .toList();
+    }
+
+    private String accountLabel(ContactIdentityEntity identity, UUID userId) {
+        if (channelAccountMapper == null || identity == null || userId == null) {
+            return null;
+        }
+        UUID accountId;
+        try {
+            accountId = UUID.fromString(identity.getIdentityScope());
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+        ChannelAccountEntity account = channelAccountMapper.findByIdAndOwner(accountId, userId);
+        if (account == null || account.getDeletedAt() != null) {
+            return null;
+        }
+        return truncate(firstNonBlank(account.getName(), account.getRemark()), ASSISTANT_LABEL_MAX_CHARS);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.strip();
+            }
+        }
+        return null;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    private static String truncate(String value, int max) {
+        return value == null ? null : value.length() <= max ? value : value.substring(0, max);
+    }
+
+    public record AuthorizedChannelProfile(String channelType, String identityValue,
+                                           String displayName, String accountLabel) {
     }
 
     /**
@@ -145,6 +250,12 @@ public class ContactService {
         IPage<ContactEntity> pageResult = contactMapper.listForUser(
                 pageParam, userId, search, searchMode.isTag(), beforeLastMessageAt, beforeId, isAdmin,
                 chatAppFilter ? "chatapp" : null, chatAppFilter ? channelAccountId : null);
+        // The list query only applies LIMIT; nothing populated the total, so this endpoint
+        // reported "0 contacts" on the home page. Counted with the same filter fragment the
+        // list uses, and deliberately without the cursor: the total describes the filter,
+        // not the remainder of a scroll.
+        long total = contactMapper.countForUser(userId, search, searchMode.isTag(), isAdmin,
+                chatAppFilter ? "chatapp" : null, chatAppFilter ? channelAccountId : null);
 
         List<UUID> contactIds = pageResult.getRecords().stream()
                 .map(ContactEntity::getId)
@@ -160,7 +271,7 @@ public class ContactService {
 
         Page<ContactResponse> resultPage = new Page<>(page, safeSize);
         resultPage.setRecords(records);
-        resultPage.setTotal(pageResult.getTotal());
+        resultPage.setTotal(total);
         return resultPage;
     }
 

@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.channel.email.EmailSendService;
+import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.dto.response.ChannelCapabilityResponse;
 import com.crmforlogistics.messagecenter.dto.response.MessageResponse;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMediaApplicationService;
@@ -127,6 +128,20 @@ class MessageControllerAuthorizationTest {
 
         mvc.perform(get("/api/messages/{id}", messageId))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void jsonEmailSendPreservesUnknownDeliveryAsServiceUnavailable() throws Exception {
+        when(emailSendService.send(eq(userId), eq("to@example.test"), eq("subject"), eq("body")))
+                .thenThrow(new EmailException("EMAIL_SEND_OUTCOME_UNKNOWN", "Check delivery before retrying"));
+
+        mvc.perform(post("/api/v1/email/messages")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(new com.fasterxml.jackson.databind.ObjectMapper()
+                                .writeValueAsString(Map.of("to", "to@example.test",
+                                        "subject", "subject", "body", "body"))))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("EMAIL_SEND_OUTCOME_UNKNOWN"));
     }
 
     @Test

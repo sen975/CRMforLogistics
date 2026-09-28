@@ -5,8 +5,18 @@ spring:
     import: optional:file:.env[.properties]
   servlet:
     multipart:
-      max-file-size: 64MB
-      max-request-size: 65MB
+      max-file-size: 100MB
+      max-request-size: ${CALL_RECORD_MULTIPART_MAX_REQUEST_SIZE:101MB}
+  task:
+    scheduling:
+      # 全库 @Scheduled 共用此池。默认 1 会让 17 个定时任务串行，一个调外部接口的慢任务
+      # 就能把其余任务全部饿死；调大后互不阻塞（各任务均为 fixedDelay，不会重入）。
+      pool:
+        size: ${TASK_SCHEDULING_POOL_SIZE:4}
+      thread-name-prefix: sched-
+      shutdown:
+        await-termination: true
+        await-termination-period: 20s
 
 server:
   forward-headers-strategy: framework
@@ -46,15 +56,24 @@ ai-topic:
 # 凭据刻意复用 AI_BASE_URL / AI_API_KEY / AI_MODEL，但配置项与 ai-topic 分开——换模型时互不影响。
 assistant:
   enabled: ${ASSISTANT_ENABLED:false}
+  token-encoding: ${ASSISTANT_TOKEN_ENCODING:o200k_base}
+  compaction:
+    source-batch-size: ${ASSISTANT_CONTEXT_SOURCE_BATCH_SIZE:100}
+    minimum-savings-tokens: ${ASSISTANT_CONTEXT_MINIMUM_SAVINGS_TOKENS:64}
+    summary-output-tokens: ${ASSISTANT_CONTEXT_SUMMARY_OUTPUT_TOKENS:256}
+    max-input-tokens: ${ASSISTANT_CONTEXT_MAX_INPUT_TOKENS:24576}
   base-url: ${AI_BASE_URL:}
   api-key: ${AI_API_KEY:}
   model: ${AI_MODEL:gpt-4o-mini}
-  timeout-seconds: ${ASSISTANT_TIMEOUT_SECONDS:30}
+  # 单次模型调用的超时。语义是**整个响应读取过程的总时长**，不是「等首字节的时间」：
+  # Spring 6.2.6 的 JdkClientHttpRequest 没用 JDK 的 HttpRequest.timeout，而是自己从请求发出起
+  # 计时、到点直接关掉响应流（依据见 AssistantModelClient 类注释里的两条实测）。
+  # 所以传输层改成流式也规避不了它 —— 要放开长回答只有放大这个窗口。
+  # 300 是 AssistantConfig 校验的硬上限（1..300），要再放宽必须先改那里的校验。
+  timeout-seconds: ${ASSISTANT_TIMEOUT_SECONDS:300}
   max-message-chars: ${ASSISTANT_MAX_MESSAGE_CHARS:2000}
   max-history-turns: ${ASSISTANT_MAX_HISTORY_TURNS:8}
   max-history-chars: ${ASSISTANT_MAX_HISTORY_CHARS:8000}
-  # 候选窗口：注入提示词的未完成待办条数，同时也是「标记完成 xx」的匹配范围。
-  candidate-todo-limit: ${ASSISTANT_CANDIDATE_TODO_LIMIT:70}
   # 待确认动作的有效期。过期后确认返回 410——改期/删除越晚执行越可能落在陈旧假设上。
   pending-ttl-seconds: ${ASSISTANT_PENDING_TTL_SECONDS:600}
   # 一次请求内允许执行的只读工具次数上限。循环只对只读动作开放；写动作一旦出现本轮即结束。
@@ -85,6 +104,10 @@ contact-memory:
   time-zone: ${CONTACT_MEMORY_TIME_ZONE:UTC}
 
 app:
+  # 统一自适应轮询节拍：空闲时按指数退避拉长到 ceiling-ms，有活立即回基线（AdaptivePollingScheduler）
+  polling:
+    threads: ${APP_POLLING_THREADS:4}
+    ceiling-ms: ${APP_POLLING_CEILING_MS:5000}
   data-dir: ${APP_DATA_DIR:${DATA_DIR:${user.dir}/data}}
   local-dev-mode: ${APP_LOCAL_DEV_MODE:false}
   web-bind-address: ${APP_WEB_BIND_ADDRESS:${WEB_BIND_ADDRESS:127.0.0.1}}
@@ -125,6 +148,11 @@ app:
   wecom-token: ${WECOM_TOKEN:}
   wecom-encoding-aes-key: ${WECOM_ENCODING_AES_KEY:}
   wecom-callback-receive-id: ${WECOM_CALLBACK_RECEIVE_ID:}
+  # 应用级回调（客户联系事件）：与模板级回调是两条独立通道，凭据也独立。
+  # 两个凭据留空时应用级解码器不注册，/api/v1/wecom/app-callback 返回 503。
+  wecom-app-token: ${WECOM_APP_TOKEN:}
+  wecom-app-encoding-aes-key: ${WECOM_APP_ENCODING_AES_KEY:}
+  wecom-contact-event-enabled: ${WECOM_CONTACT_EVENT_ENABLED:false}
   wecom-api-base-url: ${WECOM_API_BASE_URL:https://qyapi.weixin.qq.com}
   wecom-api-timeout-seconds: ${WECOM_API_TIMEOUT_SECONDS:10}
   wecom-token-refresh-skew-seconds: ${WECOM_TOKEN_REFRESH_SKEW_SECONDS:300}
@@ -164,13 +192,22 @@ app:
   wecom-user-notification-enabled: ${WECOM_USER_NOTIFICATION_ENABLED:false}
   wecom-user-notification-window-ms: ${WECOM_USER_NOTIFICATION_WINDOW_MS:90000}
   wecom-user-notification-worker-interval-ms: ${WECOM_USER_NOTIFICATION_WORKER_INTERVAL_MS:1000}
-  wecom-user-notification-worker-initial-delay-ms: ${WECOM_USER_NOTIFICATION_WORKER_INITIAL_DELAY_MS:1000}
   wecom-user-notification-max-attempts: ${WECOM_USER_NOTIFICATION_MAX_ATTEMPTS:3}
   wecom-user-notification-retry-backoff-seconds: ${WECOM_USER_NOTIFICATION_RETRY_BACKOFF_SECONDS:10}
+
+  # 待办提醒：当天汇总 + 事项开始前 N 小时，服务端自动调度，前端不再手动触发。
+  # 时区必须显式给：due_date/due_time 是"本地日历时间"语义，而 Clock bean 是 UTC。
+  todo-reminder-enabled: ${TODO_REMINDER_ENABLED:true}
+  todo-reminder-zone: ${TODO_REMINDER_ZONE:Asia/Shanghai}
+  todo-reminder-lead-hours: ${TODO_REMINDER_LEAD_HOURS:3}
+  todo-reminder-daily-hour: ${TODO_REMINDER_DAILY_HOUR:0}
+  todo-reminder-interval-ms: ${TODO_REMINDER_INTERVAL_MS:60000}
+  todo-reminder-max-attempts: ${TODO_REMINDER_MAX_ATTEMPTS:5}
+
   chatapp-outbox-enabled: true
   chatapp-broadcast-worker-enabled: true
   chatapp-broadcast-worker-interval-ms: 1000
-  chatapp-broadcast-worker-initial-delay-ms: 1000
   chatapp-webhook-worker-enabled: true
   chatapp-webhook-secret: ${CHATAPP_WEBHOOK_SECRET:}
   chatapp-webhook-max-skew-seconds: 300
+  chatapp-api-timeout-seconds: ${CHATAPP_API_TIMEOUT_SECONDS:30}

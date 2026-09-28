@@ -16,6 +16,7 @@ tags:
   - name: CallRecords
   - name: Channels
   - name: Events
+  - name: Admin
 security:
   - sessionCookie: []
 paths:
@@ -49,6 +50,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/SessionResponse'
         '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
@@ -364,7 +367,7 @@ paths:
   /api/v1/email/messages:
     post:
       operationId: sendEmailMessage
-      description: Send one UTF-8 plain-text email with zero to sixteen ordinary MIME attachments. The request is streamed and attachment content is bounded to 20 MiB in total. Stable errors include EMAIL_MULTIPART_REQUIRED, EMAIL_MULTIPART_FIELD_INVALID, EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT, EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_SENT_HISTORY_FAILED and EMAIL_SEND_OUTCOME_UNKNOWN.
+      description: Send one UTF-8 plain-text email as JSON or multipart form data with zero to sixteen ordinary attachments. Attachment content is bounded to 20 MiB in total. If SMTP delivery may have succeeded but local persistence is incomplete, return 503 EMAIL_SEND_OUTCOME_UNKNOWN; inspect delivery before retrying. Stable errors include EMAIL_ATTACHMENT_COUNT_LIMIT, EMAIL_ATTACHMENT_SIZE_LIMIT, EMAIL_ATTACHMENT_STORAGE_FULL, EMAIL_ATTACHMENT_READ_FAILED, EMAIL_SUBMISSION_PERSIST_FAILED and EMAIL_SEND_OUTCOME_UNKNOWN.
       tags:
         - Messaging
       parameters:
@@ -373,16 +376,22 @@ paths:
       requestBody:
         required: true
         content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailSendJsonRequest'
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/EmailSendMultipartRequest'
       responses:
         '200':
-          description: Email accepted and persisted with its attachment projection
+          description: SMTP accepted the message and its local message record was persisted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EmailMessageProjection'
+                $ref: '#/components/schemas/EmailSendResult'
+        '503':
+          description: SMTP outcome is unknown or the accepted message could not be fully recorded locally. Do not retry without checking delivery.
+          $ref: '#/components/responses/ApiErrorResponse'
         '4XX':
           $ref: '#/components/responses/ApiErrorResponse'
         default:
@@ -438,6 +447,37 @@ paths:
                 type: string
                 format: binary
                 maxLength: 20971520
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/email/submissions/unknown:
+    get:
+      operationId: listUnknownEmailSubmissions
+      description: List recent UNKNOWN email submissions for the authenticated owner. The result is bounded and read-only; the service never retries ambiguous SMTP outcomes automatically. Check provider delivery before sending again.
+      tags:
+        - Messaging
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of recent unknown submissions to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - $ref: '#/components/parameters/TraceRequestId'
+      responses:
+        '200':
+          description: Owner-scoped unresolved submission records, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: '#/components/schemas/EmailSubmissionOutcome'
         '4XX':
           $ref: '#/components/responses/ApiErrorResponse'
         default:
@@ -720,6 +760,18 @@ paths:
                 type: string
                 format: binary
                 maxLength: 104857600
+        '416':
+          description: Range is invalid, unsatisfiable, or contains multiple ranges.
+          headers:
+            Content-Range:
+              description: Unsatisfied range size.
+              schema:
+                type: string
+                pattern: '^bytes \\*/[0-9]+$'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '4XX':
           $ref: '#/components/responses/ApiErrorResponse'
         default:
@@ -1031,6 +1083,118 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/v1/wecom/app-callback:
+    get:
+      operationId: verifyWeComAppCallback
+      description: Verify the application-level WeCom customer-contact callback URL and return the decrypted echostr. The endpoint is anonymous at the HTTP layer; the server validates the WeCom signature and application callback key.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: msg_signature
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: timestamp
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 32
+            pattern: '^[0-9]{1,32}$'
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: echostr
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 1048576
+      responses:
+        '200':
+          description: Decrypted callback verification string
+          content:
+            text/plain:
+              schema:
+                type: string
+        '403':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '503':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+    post:
+      operationId: receiveWeComAppCallback
+      description: Verify and decrypt an application-level WeCom customer-contact event, then durably insert it before acknowledging success. The endpoint is anonymous at the HTTP layer; invalid signatures return 403 and unavailable persistence returns 503 so WeCom can retry. The request body is streamed into a bounded 1 MiB buffer; larger bodies return 413 before XML decoding.
+      tags:
+        - Channels
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - name: msg_signature
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: timestamp
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 32
+            pattern: '^[0-9]{1,32}$'
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/WeComAuthorizationCallbackBody'
+          text/plain:
+            schema:
+              type: string
+              minLength: 1
+              maxLength: 1048576
+      responses:
+        '200':
+          description: Event durably accepted or already known
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: success
+        '403':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '503':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '413':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/wecom/login/attempts:
     post:
       operationId: createWeComLoginAttempt
@@ -1236,6 +1400,88 @@ paths:
           $ref: '#/components/responses/ApiErrorResponse'
         default:
           $ref: '#/components/responses/ApiErrorResponse'
+  /api/admin/whatsapp/cams/{scopeId}/callbacks:
+    get:
+      operationId: getAdminWhatsAppCallbacks
+      description: Return the administrator-only desired CAMS callback configuration and latest write result. Provider state remains UNKNOWN because CAMS has no confirmed official readback API. Secrets, CustSpaceId, full phone numbers, and provider request identifiers are never returned.
+      tags:
+        - Admin
+      x-required-role: ADMIN
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CamsScopeId'
+      responses:
+        '200':
+          description: Redacted callback configuration projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminWhatsAppCallbackConfig'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{channelAccountId}:
+    put:
+      operationId: updateAdminWhatsAppPhoneCallback
+      description: Write upstream-message and delivery-status callback URLs for one phone through CAMS UpdatePhoneWebhook. The server resolves provider identity and credentials; the browser supplies only URLs, flags, and the optimistic version.
+      tags:
+        - Admin
+      x-required-role: ADMIN
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+        - $ref: '#/components/parameters/CamsScopeId'
+        - $ref: '#/components/parameters/ChannelAccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminWhatsAppPhoneCallbackRequest'
+      responses:
+        '200':
+          description: Redacted callback projection after a successful provider write
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminWhatsAppCallbackConfig'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '409':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
+  /api/admin/whatsapp/cams/{scopeId}/callbacks/account:
+    put:
+      operationId: updateAdminWhatsAppAccountCallback
+      description: Write the account-level delivery-status callback through CAMS UpdateAccountWebhook. Account-level requests cannot carry an upstream-message URL, provider identity, or credentials.
+      tags:
+        - Admin
+      x-required-role: ADMIN
+      parameters:
+        - $ref: '#/components/parameters/TraceRequestId'
+        - $ref: '#/components/parameters/CsrfTokenHeader'
+        - $ref: '#/components/parameters/CamsScopeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminWhatsAppAccountCallbackRequest'
+      responses:
+        '200':
+          description: Redacted callback projection after a successful provider write
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminWhatsAppCallbackConfig'
+        '4XX':
+          $ref: '#/components/responses/ApiErrorResponse'
+        '409':
+          $ref: '#/components/responses/ApiErrorResponse'
+        default:
+          $ref: '#/components/responses/ApiErrorResponse'
   /api/v1/webhooks/{channelType}:
     post:
       operationId: receiveChannelWebhook
@@ -1308,6 +1554,20 @@ components:
         type: string
         minLength: 16
         maxLength: 512
+    CamsScopeId:
+      name: scopeId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChannelAccountId:
+      name: channelAccountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     CursorParameter:
       name: cursor
       in: query
@@ -1480,6 +1740,136 @@ components:
           schema:
             $ref: '#/components/schemas/ApiError'
   schemas:
+    AdminWhatsAppCallbackConfig:
+      type: object
+      additionalProperties: false
+      required: [scopeId, phoneConfigs, accountConfig, ingressPath]
+      description: Redacted desired configuration and latest write result. It never includes credentials, CustSpaceId, full phone numbers, raw provider responses, or provider request identifiers.
+      properties:
+        scopeId:
+          type: string
+          format: uuid
+        phoneConfigs:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AdminWhatsAppPhoneCallbackConfig'
+        accountConfig:
+          oneOf:
+            - $ref: '#/components/schemas/AdminWhatsAppAccountCallbackConfig'
+            - type: 'null'
+        ingressPath:
+          type: string
+          const: /api/v1/webhooks/chatapp
+    AdminWhatsAppPhoneCallbackConfig:
+      type: object
+      additionalProperties: false
+      required: [channelAccountId, maskedPhone, desiredUpCallbackUrl, desiredStatusCallbackUrl,
+        httpFlag, queueFlag, providerState, lastApplyStatus, lastErrorCode, lastAppliedAt, version]
+      properties:
+        channelAccountId:
+          type: string
+          format: uuid
+        maskedPhone:
+          type: string
+          maxLength: 32
+        desiredUpCallbackUrl:
+          type: [string, 'null']
+          maxLength: 2048
+        desiredStatusCallbackUrl:
+          type: [string, 'null']
+          maxLength: 2048
+        httpFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        queueFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        providerState:
+          type: string
+          enum: [UNKNOWN]
+        lastApplyStatus:
+          $ref: '#/components/schemas/WhatsAppCallbackApplyStatus'
+        lastErrorCode:
+          type: [string, 'null']
+          maxLength: 100
+        lastAppliedAt:
+          type: [string, 'null']
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminWhatsAppAccountCallbackConfig:
+      type: object
+      additionalProperties: false
+      required: [desiredStatusCallbackUrl, httpFlag, queueFlag, providerState,
+        lastApplyStatus, lastErrorCode, lastAppliedAt, version]
+      properties:
+        desiredStatusCallbackUrl:
+          type: [string, 'null']
+          maxLength: 2048
+        httpFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        queueFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        providerState:
+          type: string
+          enum: [UNKNOWN]
+        lastApplyStatus:
+          $ref: '#/components/schemas/WhatsAppCallbackApplyStatus'
+        lastErrorCode:
+          type: [string, 'null']
+          maxLength: 100
+        lastAppliedAt:
+          type: [string, 'null']
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminWhatsAppPhoneCallbackRequest:
+      type: object
+      additionalProperties: false
+      required: [upCallbackUrl, statusCallbackUrl, httpFlag, queueFlag, expectedVersion]
+      properties:
+        upCallbackUrl:
+          type: string
+          maxLength: 2048
+          description: Empty clears the desired URL; non-empty values must use HTTPS.
+        statusCallbackUrl:
+          type: string
+          maxLength: 2048
+          description: Empty clears the desired URL; non-empty values must use HTTPS.
+        httpFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        queueFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminWhatsAppAccountCallbackRequest:
+      type: object
+      additionalProperties: false
+      required: [statusCallbackUrl, httpFlag, queueFlag, expectedVersion]
+      properties:
+        statusCallbackUrl:
+          type: string
+          maxLength: 2048
+          description: Empty clears the desired URL; non-empty values must use HTTPS.
+        httpFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        queueFlag:
+          $ref: '#/components/schemas/WhatsAppCallbackFlag'
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+    WhatsAppCallbackFlag:
+      type: string
+      enum: [Y, N]
+    WhatsAppCallbackApplyStatus:
+      type: string
+      enum: [NEVER_APPLIED, SUCCEEDED, FAILED]
     WeComAuthorizationCallbackBody:
       type: string
       format: binary
@@ -1961,6 +2351,44 @@ components:
             type: string
             format: binary
             maxLength: 20971520
+    EmailSendJsonRequest:
+      type: object
+      additionalProperties: false
+      required: [to]
+      properties:
+        to:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        subject:
+          type: string
+          maxLength: 998
+        body:
+          type: string
+          maxLength: 1048576
+    EmailSendResult:
+      type: object
+      additionalProperties: false
+      required: [messageId, from, to, subject, status]
+      properties:
+        messageId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        from:
+          type: string
+          minLength: 1
+          maxLength: 512
+        to:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        subject:
+          type: string
+          maxLength: 998
+        status:
+          type: string
+          const: sent
     EmailAttachmentProjection:
       type: object
       additionalProperties: false
@@ -2018,6 +2446,30 @@ components:
           maxItems: 16
           items:
             $ref: '#/components/schemas/EmailAttachmentProjection'
+    EmailSubmissionOutcome:
+      type: object
+      additionalProperties: false
+      required: [id, providerMessageId, recipient, subject, status, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        providerMessageId:
+          type: [string, 'null']
+          maxLength: 512
+        recipient:
+          type: string
+          minLength: 1
+          maxLength: 512
+        subject:
+          type: string
+          maxLength: 998
+        status:
+          type: string
+          const: UNKNOWN
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
     ChannelAccount:
       type: object
       additionalProperties: false

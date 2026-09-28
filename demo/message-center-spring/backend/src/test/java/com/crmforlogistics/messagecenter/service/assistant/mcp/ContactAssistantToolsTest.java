@@ -33,6 +33,9 @@ import static org.mockito.Mockito.when;
  *   <li><b>简报撑爆一条 observation</b>：提示词对单条 observation 有字符上限，超了就静默截断
  *       （只留一句「已截断」）。最后一个用例用最坏情况钉住预算 —— 各节上限一旦被人调大，
  *       它就会失败，而不是在线上让模型收到半份数据。</li>
+ *   <li><b>回话漏了「他的标签为什么没更新」</b>：一节数据看着齐全就是<b>一切正常</b>的样子，
+ *       而「有一批内容还在排队」「上一次重算失败了」正是「看着正常、其实没更新」的全部原因。
+ *       漏掉它不会有任何断言失败，只会让模型替系统编一个理由。</li>
  * </ol>
  */
 class ContactAssistantToolsTest {
@@ -63,9 +66,13 @@ class ContactAssistantToolsTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> items = (List<Map<String, Object>>) result.data().get("items");
         assertThat(items).hasSize(1);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> channels = (List<Map<String, Object>>) items.get(0).get("channels");
+        assertThat(channels).containsExactly(Map.of("channelType", "email", "identityValue", "buyer@example.invalid",
+                "displayName", "采购邮箱", "accountLabel", "销售邮箱"));
         assertThat(items.get(0).keySet())
-                .as("候选只带这三个字段：多一个键就多一类数据发给模型供应商")
-                .containsExactlyInAnyOrder("contactRef", "name", "remark");
+                .as("候选带基础消歧字段和授权后的渠道投影")
+                .containsExactlyInAnyOrder("contactRef", "name", "remark", "channels");
         assertThat(result.candidates())
                 .as("只读结果必须带回候选集，否则下一轮的 contact.brief 引用不到检索到的人")
                 .isInstanceOf(ContactCandidates.class);
@@ -123,12 +130,15 @@ class ContactAssistantToolsTest {
                 .as("候选 id 是内部标识，不该出现在给模型/用户看的回话里")
                 .doesNotContain(REF);
         assertThat(result.data()).containsEntry("name", "周明").containsEntry("memoryVisible", true);
+        assertThat(result.data()).containsEntry("channelTypes", List.of("chatapp"));
+        assertThat(result.data()).containsKey("channels");
+        assertThat(result.data()).doesNotContainKeys("identities", "identityValue", "normalizedValue");
     }
 
     @Test
     void briefSaysTheProfileIsNotVisibleInsteadOfPretendingItIsEmpty() {
-        when(briefs.brief(USER, CONTACT)).thenReturn(new ContactBrief(REF, "周明", "采购经理", null, false,
-                null, List.of(), List.of(), List.of(), List.of()));
+        when(briefs.brief(USER, CONTACT)).thenReturn(new ContactBrief(REF, "周明", "采购经理", null, List.of(), false,
+                null, null, null, List.of(), List.of(), List.of(), List.of()));
 
         ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
 
@@ -141,8 +151,8 @@ class ContactAssistantToolsTest {
 
     @Test
     void briefSaysSoWhenThereIsNothingToBriefYet() {
-        when(briefs.brief(USER, CONTACT)).thenReturn(new ContactBrief(REF, "周明", null, null, true,
-                null, List.of(), List.of(), List.of(), List.of()));
+        when(briefs.brief(USER, CONTACT)).thenReturn(new ContactBrief(REF, "周明", null, null, List.of(), true,
+                "CLEAN", null, null, List.of(), List.of(), List.of(), List.of()));
 
         ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
 
@@ -181,15 +191,90 @@ class ContactAssistantToolsTest {
      * <p>措辞刻意不区分两者 —— 区分开就等于告诉另一个账号「这条 id 是存在的」。
      */
     @Test
-    void briefReportsAnOutOfScopeContactAsAnInvalidArgumentWithoutLeakingWhy() {
+    void briefReportsAnOutOfScopeContactWithoutLeakingWhy() {
         when(briefs.brief(eq(USER), eq(CONTACT)))
                 .thenThrow(new IllegalArgumentException("Contact not found: " + CONTACT));
 
         ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.code()).isEqualTo(ToolExecutionException.INVALID_ARGUMENT);
-        assertThat(result.message()).contains("不在你能查看的范围内").doesNotContain("not found");
+        assertThat(result.code()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
+        assertThat(result.message()).isEqualTo(ToolExecutionException.ACCESS_DENIED_MESSAGE)
+                .doesNotContain(CONTACT.toString(), "not found");
+    }
+
+    // ---------- 处理状态 ----------
+
+    /**
+     * 「他的标签为什么没更新」必须由回话回答，而不是留给模型编。
+     *
+     * <p>这几档是「看着正常、其实没更新」的全部原因。措辞必须是人话（用户据此决定
+     * 「要不要催一下」还是「要不要找人」），且<b>不许出现内部状态码</b> ——
+     * 状态码进 {@code data} 是给模型判断原因用的，念给用户听等于让他自己去啃一个系统术语。
+     */
+    @Test
+    void briefExplainsWhyTheLabelsMayBeStaleInPlainWords() {
+        Map<String, String> expected = Map.of(
+                "DIRTY", "重算队列里",
+                "RETRY_WAIT", "重算队列里",
+                "PROCESSING", "正在重新生成中",
+                "FAILED", "上一次重算失败了");
+
+        for (Map.Entry<String, String> entry : expected.entrySet()) {
+            when(briefs.brief(USER, CONTACT)).thenReturn(fullBrief(entry.getKey(), null));
+
+            ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
+
+            assertThat(result.message()).as(entry.getKey()).contains(entry.getValue());
+            assertThat(result.data()).as(entry.getKey()).containsEntry("memoryState", entry.getKey());
+            assertThat(result.message())
+                    .as("状态码只进 data；回话里念出来等于把内部术语丢给用户")
+                    .doesNotContain(entry.getKey());
+        }
+    }
+
+    /** 失败<b>码</b>比状态码更不能念出来：它是实现细节，用户无法据此做任何决定。 */
+    @Test
+    void briefNeverReadsTheFailureCodeOutLoud() {
+        when(briefs.brief(USER, CONTACT)).thenReturn(fullBrief("FAILED", "INVALID_OUTPUT"));
+
+        ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
+
+        assertThat(result.data()).containsEntry("memoryFailureCode", "INVALID_OUTPUT");
+        assertThat(result.message())
+                .contains("上一次重算失败了")
+                .as("内部失败码不进面向用户的句子")
+                .doesNotContain("INVALID_OUTPUT");
+    }
+
+    /** CLEAN 不加话：它是最常见的状态，每次都补一句只会变成噪声。 */
+    @Test
+    void briefStaysQuietWhileTheMemoryIsUpToDate() {
+        when(briefs.brief(USER, CONTACT)).thenReturn(fullBrief());
+
+        ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
+
+        assertThat(result.message())
+                .doesNotContain("重算队列里")
+                .doesNotContain("正在重新生成")
+                .doesNotContain("失败");
+    }
+
+    /**
+     * 「一条都没有」+ FAILED 是最需要说状态的组合。
+     *
+     * <p>只回「暂无画像」会让用户以为这个联系人本来就没什么可提炼，而真相是提炼失败过 ——
+     * 前者无解、后者能催，用户据此要做的决定完全不同。这条走的是 {@code hasMemory()}
+     * 为假的那条提前返回，所以状态那句话在<b>两个出口</b>都得补。
+     */
+    @Test
+    void briefExplainsAFailedRunEvenWhenThereIsNoMemoryToShow() {
+        when(briefs.brief(USER, CONTACT)).thenReturn(new ContactBrief(REF, "周明", "采购经理", null, List.of(), true,
+                "FAILED", "LLM_TIMEOUT", null, List.of(), List.of(), List.of(), List.of()));
+
+        ToolResult result = registry.invoke(ContactAssistantTools.TOOL_BRIEF, USER, Map.of("contactRef", REF));
+
+        assertThat(result.message()).contains("暂无画像").contains("上一次重算失败了");
     }
 
     // ---------- 声明 ----------
@@ -222,7 +307,8 @@ class ContactAssistantToolsTest {
         List<ContactCandidates.Item> items = new ArrayList<>();
         for (int i = 0; i < Math.min(size, ContactCandidateProvider.LIMIT); i++) {
             if (i == 0) {
-                items.add(new ContactCandidates.Item(REF, "周明", "张江物流 对接人"));
+                items.add(new ContactCandidates.Item(REF, "周明", "张江物流 对接人", List.of(
+                        new ContactCandidates.Channel("email", "buyer@example.invalid", "采购邮箱", "销售邮箱"))));
             } else {
                 items.add(new ContactCandidates.Item(ContactCandidates.idOf(UUID.randomUUID()), "客户" + i, null));
             }
@@ -231,11 +317,17 @@ class ContactAssistantToolsTest {
     }
 
     private static ContactBrief fullBrief() {
-        return new ContactBrief(REF, "周明", "采购经理", "张江物流 对接人", true,
+        return fullBrief("CLEAN", null);
+    }
+
+    /** 同一份简报换一个处理状态，用来把「状态那句话」单独钉住。 */
+    private static ContactBrief fullBrief(String memoryState, String failureCode) {
+        return new ContactBrief(REF, "周明", "采购经理", "张江物流 对接人", List.of("chatapp"), true,
+                memoryState, failureCode,
                 "周明是张江物流的采购经理，负责东南亚线。",
                 List.of(new ContactBrief.Fact("决策角色", "采购决策人"),
                         new ContactBrief.Fact("业务关注", "关注东南亚线运价")),
-                List.of("价格敏感"),
+                List.of(new ContactBrief.AiLabel("价格敏感", "DECISION_FACTOR", 0.9)),
                 List.of("老客户"),
                 List.of(new ContactBrief.Topic("运价谈判", "下季度按新价目表执行")));
     }

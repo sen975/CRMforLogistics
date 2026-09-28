@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -35,6 +36,7 @@ public class FunAsrClient {
     private final Duration requestTimeout;
     private final int maxSegments;
     private final int maxDurationSeconds;
+    private final long maxResponseBytes;
 
     public FunAsrClient(FunAsrConfig config) {
         Objects.requireNonNull(config, "config");
@@ -43,6 +45,7 @@ public class FunAsrClient {
         this.requestTimeout = config.requestTimeout();
         this.maxSegments = 20_000;
         this.maxDurationSeconds = 7_200;
+        this.maxResponseBytes = config.maxResponseBytes();
         this.client = HttpClient.newBuilder()
                 .connectTimeout(config.connectTimeout())
                 .version(HttpClient.Version.HTTP_1_1)
@@ -101,7 +104,7 @@ public class FunAsrClient {
                             "FUNASR_REJECTED", 502,
                             "FunASR rejected the transcription request", false);
                 }
-                return parseResponse(stream.readAllBytes(), audioDurationSeconds);
+                return parseResponse(readBounded(stream), audioDurationSeconds);
             } catch (CallRecordException e) {
                 throw e;
             } catch (IOException e) {
@@ -116,6 +119,24 @@ public class FunAsrClient {
                     "CALL_AUDIO_NOT_FOUND", 404,
                     "Call audio does not exist", false, e);
         }
+    }
+
+    byte[] readBounded(InputStream stream) throws IOException, CallRecordException {
+        Objects.requireNonNull(stream, "stream");
+        ByteArrayOutputStream output = new ByteArrayOutputStream((int) Math.min(maxResponseBytes, 8192));
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        int read;
+        while ((read = stream.read(buffer)) != -1) {
+            if (read == 0) continue;
+            if (total > maxResponseBytes - read) {
+                throw new CallRecordException("FUNASR_RESPONSE_TOO_LARGE", 502,
+                        "FunASR response exceeds the configured size limit", false);
+            }
+            output.write(buffer, 0, read);
+            total += read;
+        }
+        return output.toByteArray();
     }
 
     CallRecordStateMachine.TranscriptionResult parseResponse(

@@ -224,8 +224,8 @@ public class AssistantDecisionParser {
         //    **只在提问路径做**：context 为 null 表示确认路径，理由见 validateConfirmedCall。
         if (context != null) {
             for (Map.Entry<String, String> binding : definition.referenceBindings().entrySet()) {
-                Object value = args.get(binding.getKey());
-                if (!(value instanceof String reference) || reference.isBlank()) {
+                List<String> references = referencesOf(args.get(binding.getKey()));
+                if (references.isEmpty()) {
                     // 缺席由 schema 的 required 管，这里不重复报「缺少必填参数」，以免把两种错混成一类。
                     continue;
                 }
@@ -234,9 +234,11 @@ public class AssistantDecisionParser {
                     return new Rejected("这次请求需要「" + binding.getValue()
                             + "」候选清单才能校验 " + binding.getKey() + "，但本轮没有提供该清单", false);
                 }
-                if (!candidates.contains(reference)) {
-                    return new Rejected("请求里的 " + binding.getKey()
-                            + " 不在当前候选" + candidates.heading() + "中", false);
+                for (String reference : references) {
+                    if (!candidates.contains(reference)) {
+                        return new Rejected("请求里的 " + binding.getKey()
+                                + " 不在当前候选" + candidates.heading() + "中", false);
+                    }
                 }
             }
         }
@@ -249,6 +251,36 @@ public class AssistantDecisionParser {
 
         return new Call(definition.name(),
                 java.util.Collections.unmodifiableMap(new LinkedHashMap<>(args)));
+    }
+
+    /**
+     * 把引用类参数的值摊平成一份待比对的引用列表 —— 单值，或<b>一组引用</b>（如「把这两条话题合并」）。
+     *
+     * <h2>为什么必须逐元素比对，而不是「判一下是不是 List 就放行」</h2>
+     * 一个字段声明了 {@code x-candidateSet} 却没有被真正比对，是<b>最坏的一种失败</b>：
+     * 它看起来有防护 —— {@code referenceBindings()} 里查得到、{@code ToolRegistry} 的启动自检
+     * 也不会拦、给声明写的测试照样绿 —— 而实际上「模型编造的 id 进不来」这道拦截整条不存在。
+     * 这道拦截的价值全部来自它真的跑过，所以数组这一路不能只判外层。
+     *
+     * <p>非字符串元素在这里被<b>忽略</b>而不是报错：它们到不了这一步。
+     * {@code ToolInputValidator} 已要求数组参数声明 {@code items.type=string} 并逐元素判类型，
+     * 在更前面就拒了。这里再报一次只会把「参数不合法」与「引用不在候选里」混成一类错，
+     * 而两者的处置完全不同。
+     */
+    private static List<String> referencesOf(Object value) {
+        if (value instanceof String reference) {
+            return reference.isBlank() ? List.of() : List.of(reference);
+        }
+        if (!(value instanceof List<?> elements)) {
+            return List.of();
+        }
+        List<String> references = new ArrayList<>(elements.size());
+        for (Object element : elements) {
+            if (element instanceof String reference && !reference.isBlank()) {
+                references.add(reference);
+            }
+        }
+        return references;
     }
 
     private static Outcome requireParsable(Map<String, Object> arguments, String key, java.util.function.Consumer<String> parser) {

@@ -107,6 +107,44 @@ class WhatsAppTemplateReconciliationServiceTest {
     }
 
     @Test
+    void providerListFailureIsStructuredAndDoesNotReportEmptySuccess() {
+        ChannelAccountEntity account = accountIn(SCOPE_ID);
+        account.setTemplateLastSyncedAt(NOW.minusSeconds(60));
+        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(account);
+        when(gateway.list(TemplateCredentialSource.space(SCOPE_ID), 1, 100))
+                .thenThrow(new RuntimeException("provider timeout"));
+
+        SyncResult result = service.syncScope(SCOPE_ID, ACCOUNT_ID);
+
+        assertThat(result.syncFailed()).isTrue();
+        assertThat(result.complete()).isFalse();
+        assertThat(result.errorCode()).isEqualTo("CHATAPP_TEMPLATE_SYNC_PROVIDER_FAILED");
+        assertThat(result.lastSuccessfulAt()).isEqualTo(account.getTemplateLastSyncedAt());
+        verify(templateMapper, never()).updateById(any(TemplateEntity.class));
+    }
+
+    @Test
+    void detailFailurePreservesExistingSendPermission() {
+        TemplateEntity existing = new TemplateEntity();
+        existing.setId(UUID.randomUUID());
+        existing.setProviderScopeId(SCOPE_ID);
+        existing.setProviderTemplateId("shipping_notice");
+        existing.setLanguageCode("zh_CN");
+        existing.setAllowSend(true);
+        when(accountMapper.selectById(ACCOUNT_ID)).thenReturn(accountIn(SCOPE_ID));
+        when(templateMapper.findScopeTemplates(SCOPE_ID)).thenReturn(List.of(existing));
+        when(gateway.list(TemplateCredentialSource.space(SCOPE_ID), 1, 100))
+                .thenReturn(new ProviderTemplatePage(List.of(summary("shipping_notice")), 1, false));
+        when(gateway.detail(TemplateCredentialSource.space(SCOPE_ID), "shipping_notice", "zh_CN"))
+                .thenThrow(new RuntimeException("detail timeout"));
+
+        service.syncScope(SCOPE_ID, ACCOUNT_ID);
+
+        verify(templateMapper).updateById(existing);
+        assertThat(existing.getAllowSend()).isTrue();
+    }
+
+    @Test
     void concurrentSyncsForTheSameScopeShareOneProviderFlight() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

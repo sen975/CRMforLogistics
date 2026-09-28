@@ -5,6 +5,7 @@ import test from 'node:test';
 const types = readFileSync(new URL('../src/api/types.ts', import.meta.url), 'utf8');
 const endpoints = readFileSync(new URL('../src/api/endpoints.ts', import.meta.url), 'utf8');
 const client = readFileSync(new URL('../src/api/client.ts', import.meta.url), 'utf8');
+const session = readFileSync(new URL('../src/api/session.ts', import.meta.url), 'utf8');
 const authHook = readFileSync(new URL('../src/hooks/useAuth.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8');
 const publicTemplateLibrary = readFileSync(
@@ -76,9 +77,15 @@ test('persists and clears every local authentication key including roles', () =>
   assert.match(authHook, /roles:\s*string\[\]/);
   assert.match(authHook, /isAdmin:\s*boolean/);
   assert.match(authHook, /roles\.includes\('ADMIN'\)/);
-  assert.match(client, /localStorage\.removeItem\('token'\)/);
-  assert.match(client, /localStorage\.removeItem\('username'\)/);
-  assert.match(client, /localStorage\.removeItem\('roles'\)/);
+  // 「认证失效要清哪几个键、把人送到哪里去」只有一份，住在 `session.ts` ——
+  // axios 实例与助手那条 fetch 流两个传输层共用它。
+  assert.match(session, /localStorage\.removeItem\('token'\)/);
+  assert.match(session, /localStorage\.removeItem\('username'\)/);
+  assert.match(session, /localStorage\.removeItem\('roles'\)/);
+  // 而 `client.ts` 只负责在 401 时调用它。它自己**不许**再写一遍那三个键：
+  // 两份清理代码就是两条会各自漂移的策略。
+  assert.match(client, /handleUnauthorized\(\)/);
+  assert.doesNotMatch(client, /localStorage\.removeItem/);
 });
 
 test('shows template management and channel settings navigation only to administrators', () => {

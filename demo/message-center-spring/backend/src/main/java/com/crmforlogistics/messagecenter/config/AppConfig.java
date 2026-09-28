@@ -55,6 +55,10 @@ public record AppConfig(
         String wecomToken,
         String wecomEncodingAesKey,
         @DefaultValue("") String wecomCallbackReceiveId,
+        // 应用级回调通道（客户联系事件）：与应用级 Token/AESKey 配套，与模板级那套相互独立
+        @DefaultValue("") String wecomAppToken,
+        @DefaultValue("") String wecomAppEncodingAesKey,
+        @DefaultValue("false") boolean wecomContactEventEnabled,
         @DefaultValue("https://qyapi.weixin.qq.com") String wecomApiBaseUrl,
         @DefaultValue("10") int wecomApiTimeoutSeconds,
         @DefaultValue("300") int wecomTokenRefreshSkewSeconds,
@@ -101,15 +105,26 @@ public record AppConfig(
         @DefaultValue("local-wecom-source.jsonl") String localWeComDataFile,
         @DefaultValue("") String chatappWebhookSecret,
         @DefaultValue("300") int chatappWebhookMaxSkewSeconds,
+        // CAMS 开放接口单次调用超时：AsyncClient 的 connect/response timeout 与 get() 等待上限共用此值
+        @DefaultValue("30") int chatappApiTimeoutSeconds,
         // 非企业微信渠道入站消息的企微应用消息提醒
         @DefaultValue("false") boolean wecomUserNotificationEnabled,
         @DefaultValue("90000") long wecomUserNotificationWindowMs,
         @DefaultValue("1000") long wecomUserNotificationWorkerIntervalMs,
         @DefaultValue("1000") long wecomUserNotificationWorkerInitialDelayMs,
-        // 业务时区：助手用它把「今天/明天」落到正确的日历日（与待办提醒共用同一口径）
-        @DefaultValue("Asia/Shanghai") String todoReminderZone
+        // 待办提醒：当天汇总（默认 0 点起）+ 事项开始前 N 小时，均由服务端调度，前端不再手动触发
+        @DefaultValue("true") boolean todoReminderEnabled,
+        @DefaultValue("Asia/Shanghai") String todoReminderZone,
+        @DefaultValue("3") int todoReminderLeadHours,
+        @DefaultValue("0") int todoReminderDailyHour,
+        @DefaultValue("60000") long todoReminderIntervalMs,
+        @DefaultValue("5") int todoReminderMaxAttempts,
+        @DefaultValue("300") int todoReminderClaimLeaseSeconds
 ) {
     public AppConfig {
+        if (chatappApiTimeoutSeconds < 1 || chatappApiTimeoutSeconds > 120) {
+            throw new IllegalArgumentException("app.chatapp-api-timeout-seconds must be between 1 and 120");
+        }
         imapHost = defaultIfBlank(imapHost, "imap.139.com");
         imapPort = defaultIfBlank(imapPort, "993");
         mailProvider = defaultIfBlank(mailProvider, "139");

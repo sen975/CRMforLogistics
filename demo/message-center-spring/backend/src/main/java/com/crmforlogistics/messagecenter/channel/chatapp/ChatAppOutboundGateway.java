@@ -7,7 +7,13 @@ public interface ChatAppOutboundGateway {
     Submission submit(Command command) throws Exception;
 
     record Command(UUID channelAccountId, UUID messageId, String clientRequestId,
-                   String kind, Map<String, Object> content) {}
+                   String kind, Map<String, Object> content,
+                   ChatAppSubmissionContext submissionContext) {
+        public Command(UUID channelAccountId, UUID messageId, String clientRequestId,
+                       String kind, Map<String, Object> content) {
+            this(channelAccountId, messageId, clientRequestId, kind, content, null);
+        }
+    }
 
     record Submission(String providerMessageId) {}
 

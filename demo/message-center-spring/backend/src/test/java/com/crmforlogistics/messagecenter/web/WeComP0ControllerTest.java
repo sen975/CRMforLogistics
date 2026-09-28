@@ -8,6 +8,7 @@ import com.crmforlogistics.messagecenter.config.SecurityConfig;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComContactEventService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComContactLinkService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
@@ -56,6 +57,7 @@ class WeComP0ControllerTest {
     @MockitoBean WeComProfileBackfillService profileBackfill;
     @MockitoBean WeComUserBindingService bindings;
     @MockitoBean WeComContactLinkService contactLinks;
+    @MockitoBean WeComContactEventService contactEvents;
     @MockitoBean AppConfig config;
     @MockitoBean AuthSessionService authSessionService;
 
@@ -283,5 +285,102 @@ class WeComP0ControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(oversized))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.code").value("WECOM_REQUEST_TOO_LARGE"));
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void listsCustomerContactEventsFromTheLocalStream() throws Exception {
+        UUID installationId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        boundTo("suite-1", "corp-1");
+        when(config.wecomSuiteId()).thenReturn("suite-1");
+        when(installations.resolveActive("suite-1", "corp-1")).thenReturn(installationWith(installationId));
+        when(contactEvents.listTimeline(installationId, Instant.parse("2026-09-20T00:00:00Z"),
+                "del_external_contact", 10)).thenReturn(List.of(contactEventRow(eventId)));
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-1/contact-events")
+                        .param("since", "2026-09-20T00:00:00Z")
+                        .param("changeType", "del_external_contact")
+                        .param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(eventId.toString()))
+                .andExpect(jsonPath("$[0].changeType").value("del_external_contact"))
+                .andExpect(jsonPath("$[0].externalUserId").value("wmZZZZZZZZ"))
+                .andExpect(jsonPath("$[0].wecomUserId").value("woYYYYYYYY"))
+                .andExpect(jsonPath("$[0].state").value("baidu-channel"))
+                .andExpect(jsonPath("$[0].providerSource").value("DELETE_BY_TRANSFER"))
+                .andExpect(jsonPath("$[0].providerCreatedAt").exists())
+                // 列表接口不得触发企微实时查询去补昵称，因此响应里根本没有 displayName 字段
+                .andExpect(jsonPath("$[0].displayName").doesNotExist());
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void defaultsCustomerContactEventLimitToFifty() throws Exception {
+        UUID installationId = UUID.randomUUID();
+        boundTo("suite-1", "corp-1");
+        when(config.wecomSuiteId()).thenReturn("suite-1");
+        when(installations.resolveActive("suite-1", "corp-1")).thenReturn(installationWith(installationId));
+        when(contactEvents.listTimeline(installationId, null, null, 50)).thenReturn(List.of());
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-1/contact-events"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+
+        verify(contactEvents).listTimeline(installationId, null, null, 50);
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void rejectsCustomerContactEventsForAnotherCorp() throws Exception {
+        boundTo("suite-1", "corp-1");
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-other/contact-events"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("WECOM_BINDING_CORP_MISMATCH"));
+
+        verifyNoInteractions(contactEvents);
+    }
+
+    @Test
+    @WithMockUser(username = "00000000-0000-0000-0000-000000000002", roles = "ADMIN")
+    void rejectsCustomerContactEventLimitsOutsideTheBoundedRange() throws Exception {
+        boundTo("suite-1", "corp-1");
+
+        mvc.perform(get("/api/v1/wecom/installations/corp-1/contact-events").param("limit", "201"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("WECOM_CONTACT_EVENT_LIMIT_INVALID"));
+        mvc.perform(get("/api/v1/wecom/installations/corp-1/contact-events").param("limit", "0"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(contactEvents);
+    }
+
+    private void boundTo(String suiteId, String authCorpId) {
+        when(bindings.requireByUserId(ADMIN_ID)).thenReturn(new WeComUserBindingService.BoundIdentity(
+                ADMIN_ID, suiteId, authCorpId, "bound-member", "BOUND_EXISTING", null, "admin"));
+    }
+
+    private static com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationEntity
+            installationWith(UUID installationId) {
+        var installation = new com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationEntity();
+        installation.setId(installationId);
+        installation.setSuiteId("suite-1");
+        installation.setAuthCorpId("corp-1");
+        return installation;
+    }
+
+    private static com.crmforlogistics.messagecenter.channel.wecom.WeComContactEventEntity
+            contactEventRow(UUID eventId) {
+        var row = new com.crmforlogistics.messagecenter.channel.wecom.WeComContactEventEntity();
+        row.setId(eventId);
+        row.setEvent("change_external_contact");
+        row.setChangeType("del_external_contact");
+        row.setWecomUserId("woYYYYYYYY");
+        row.setExternalUserId("wmZZZZZZZZ");
+        row.setState("baidu-channel");
+        row.setProviderSource("DELETE_BY_TRANSFER");
+        row.setProviderCreatedAt(Instant.parse("2026-09-20T03:00:00Z"));
+        return row;
     }
 }

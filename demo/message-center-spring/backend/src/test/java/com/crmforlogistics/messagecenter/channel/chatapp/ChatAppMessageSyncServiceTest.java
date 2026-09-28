@@ -6,6 +6,8 @@ import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponse;
 import com.aliyun.sdk.service.cams20200606.models.ListChatappMessageResponseBody;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
+import com.crmforlogistics.messagecenter.mapper.SyncCursorMapper;
+import com.crmforlogistics.messagecenter.channel.chatapp.ChannelSyncCursorEntity;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppHistoryReconciliationResult;
 import com.crmforlogistics.messagecenter.service.chatapp.ChatAppMessagePeerReconciliationService;
 import com.crmforlogistics.messagecenter.service.chatapp.PeerReconciliationModels.PeerReconciliationResult;
@@ -20,6 +22,7 @@ import org.mockito.quality.Strictness;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
@@ -27,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,6 +54,7 @@ class ChatAppMessageSyncServiceTest {
     @Mock ChatAppPollingProjector pollingProjector;
     @Mock ChatAppMessagePeerReconciliationService peerReconciliationService;
     @Mock ChatAppAccountCredentialsResolver credentialsResolver;
+    @Mock SyncCursorMapper syncCursorMapper;
 
     @BeforeEach
     void setUpCredentials() {
@@ -107,7 +112,7 @@ class ChatAppMessageSyncServiceTest {
 
         assertThat(recordComponentNames(result)).containsExactly(
                 "pages", "fetched", "saved", "skipped", "durationMs",
-                "contactsProjected", "contactProjectionSkipped");
+                "contactsProjected", "contactProjectionSkipped", "incomplete");
         assertThat(recordComponentValue(result, "pages")).isEqualTo(1);
         assertThat(recordComponentValue(result, "fetched")).isEqualTo(2);
         assertThat(recordComponentValue(result, "saved")).isEqualTo(1);
@@ -143,6 +148,28 @@ class ChatAppMessageSyncServiceTest {
         assertThat(recordComponentValue(result, "skipped")).isEqualTo(1);
         assertThat(recordComponentValue(result, "contactsProjected")).isEqualTo(0);
         assertThat(recordComponentValue(result, "contactProjectionSkipped")).isEqualTo(1);
+    }
+
+    @Test
+    void projectionFailureWithoutDurableInboxDoesNotAdvanceWatermark() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        ChannelAccountEntity account = activeAccount(accountId, "60199999999");
+        when(channelAccountMapper.selectById(accountId)).thenReturn(account);
+        ListChatappMessageResponseBody.Data row = ListChatappMessageResponseBody.Data.builder()
+                .messageId("wamid-projection-error")
+                .sendTime("1760000000000")
+                .build();
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.listChatappMessage(any())).thenReturn(CompletableFuture.completedFuture(
+                ListChatappMessageResponse.create().toBuilder()
+                        .body(ListChatappMessageResponseBody.builder().data(List.of(row)).build())
+                        .build()));
+        when(pollingProjector.project(eq(row), eq(accountId)))
+                .thenThrow(new IllegalStateException("CHATAPP_CONTACT_PROJECTION_FAILED"));
+
+        serviceWithClient(client).runAccount(accountId);
+
+        verify(syncCursorMapper, never()).upsertCursor(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -209,6 +236,56 @@ class ChatAppMessageSyncServiceTest {
         assertThat(requestCaptor.getValue().getBusinessNumber()).isEqualTo("60122222222");
         assertThat(requestCaptor.getValue().getCustSpaceId()).isEqualTo("account-space");
         verify(credentialsResolver).resolve(requestedAccount);
+    }
+
+    @Test
+    void incrementalPollingStartsFromLastSuccessfulSyncWithOverlap() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        Instant lastSyncedAt = Instant.parse("2026-09-21T09:58:00Z");
+        ChannelAccountEntity account = activeAccount(accountId, "60199999999");
+        when(channelAccountMapper.selectById(accountId)).thenReturn(account);
+        when(syncCursorMapper.selectCursor(accountId, "CHATAPP_MESSAGES", "default"))
+                .thenReturn(java.util.Optional.of(cursor(lastSyncedAt, "cursor-id")));
+
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.listChatappMessage(any())).thenReturn(CompletableFuture.completedFuture(
+                ListChatappMessageResponse.create().toBuilder()
+                        .body(ListChatappMessageResponseBody.builder().data(List.of()).build())
+                        .build()));
+
+        serviceWithClient(client).runAccount(accountId);
+
+        org.mockito.ArgumentCaptor<ListChatappMessageRequest> requestCaptor =
+                org.mockito.ArgumentCaptor.forClass(ListChatappMessageRequest.class);
+        verify(client).listChatappMessage(requestCaptor.capture());
+        ListChatappMessageRequest request = requestCaptor.getValue();
+        assertThat(request.getStartTime()).isEqualTo(lastSyncedAt.toEpochMilli() - 120_000L);
+        assertThat(request.getEndTime()).isGreaterThanOrEqualTo(lastSyncedAt.toEpochMilli());
+    }
+
+    @Test
+    void incrementalPollingIgnoresGenericAccountSyncCursor() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        ChannelAccountEntity account = activeAccount(accountId, "60199999999");
+        account.setLastSyncedAt(Instant.parse("2020-01-01T00:00:00Z"));
+        Instant messageCursor = Instant.parse("2026-09-21T09:58:00Z");
+        when(syncCursorMapper.selectCursor(accountId, "CHATAPP_MESSAGES", "default"))
+                .thenReturn(java.util.Optional.of(cursor(messageCursor, "cursor-id")));
+        when(channelAccountMapper.selectById(accountId)).thenReturn(account);
+
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.listChatappMessage(any())).thenReturn(CompletableFuture.completedFuture(
+                ListChatappMessageResponse.create().toBuilder()
+                        .body(ListChatappMessageResponseBody.builder().data(List.of()).build())
+                        .build()));
+
+        serviceWithClient(client).runAccount(accountId);
+
+        org.mockito.ArgumentCaptor<ListChatappMessageRequest> requestCaptor =
+                org.mockito.ArgumentCaptor.forClass(ListChatappMessageRequest.class);
+        verify(client).listChatappMessage(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getStartTime())
+                .isEqualTo(messageCursor.toEpochMilli() - 120_000L);
     }
 
     @Test
@@ -300,15 +377,109 @@ class ChatAppMessageSyncServiceTest {
         org.mockito.Mockito.verifyNoInteractions(client);
     }
 
+    @Test
+    void hangingProviderFailsFastWithDedicatedTimeoutCode() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        when(channelAccountMapper.selectById(accountId))
+                .thenReturn(activeAccount(accountId, "8613266259485"));
+
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.listChatappMessage(any())).thenReturn(new CompletableFuture<>());
+
+        long started = System.nanoTime();
+        assertThatThrownBy(() -> serviceWithClient(client, Duration.ofMillis(80)).runAccount(accountId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("CHATAPP_API_TIMEOUT");
+        assertThat(Duration.ofNanos(System.nanoTime() - started))
+                .isLessThan(Duration.ofSeconds(5));
+    }
+
+    @Test
+    void hangingProviderDuringHistoryReconciliationAlsoFailsFast() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        when(channelAccountMapper.selectById(accountId))
+                .thenReturn(activeAccount(accountId, "8613266259485"));
+
+        AsyncClient client = mock(AsyncClient.class);
+        when(client.listChatappMessage(any())).thenReturn(new CompletableFuture<>());
+
+        assertThatThrownBy(() -> serviceWithClient(client, Duration.ofMillis(80)).runAccount(
+                accountId,
+                Instant.parse("2026-07-01T00:00:00Z"),
+                Instant.parse("2026-08-01T00:00:00Z"),
+                5,
+                false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("CHATAPP_API_TIMEOUT");
+    }
+
+    @Test
+    void pollingFailureDiagnosticDistinguishesFutureWaitTimeout() {
+        ChatAppMessageSyncService.PollingFailureDiagnostic diagnostic =
+                ChatAppMessageSyncService.diagnosePollingFailure(
+                        new TimeoutException("future wait expired"));
+
+        assertThat(diagnostic.code()).isEqualTo("CHATAPP_API_TIMEOUT");
+        assertThat(diagnostic.source()).isEqualTo("CLIENT_FUTURE_WAIT");
+        assertThat(diagnostic.exceptionType()).isEqualTo(TimeoutException.class.getName());
+        assertThat(diagnostic.rootCauseType()).isEqualTo(TimeoutException.class.getName());
+        assertThat(diagnostic.rootCauseMessage()).isEqualTo("future wait expired");
+    }
+
+    @Test
+    void pollingFailureDiagnosticUnwrapsProviderCause() {
+        IllegalStateException providerFailure = new IllegalStateException("CAMS response unavailable");
+        java.util.concurrent.CompletionException wrapped =
+                new java.util.concurrent.CompletionException(providerFailure);
+
+        ChatAppMessageSyncService.PollingFailureDiagnostic diagnostic =
+                ChatAppMessageSyncService.diagnosePollingFailure(wrapped);
+
+        assertThat(diagnostic.code()).isEqualTo("CHATAPP_MESSAGE_HISTORY_SYNC_FAILED");
+        assertThat(diagnostic.source()).isEqualTo("SDK_COMPLETION");
+        assertThat(diagnostic.exceptionType()).isEqualTo(wrapped.getClass().getName());
+        assertThat(diagnostic.rootCauseType()).isEqualTo(providerFailure.getClass().getName());
+        assertThat(diagnostic.rootCauseMessage()).isEqualTo("CAMS response unavailable");
+    }
+
+    @Test
+    void clientIsBuiltWithConfiguredTimeout() throws Exception {
+        Method createClient = ChatAppMessageSyncService.class
+                .getDeclaredMethod("createClient", ChatAppAccountCredentials.class);
+        createClient.setAccessible(true);
+        ChatAppMessageSyncService service = new ChatAppMessageSyncService(
+                channelAccountMapper, pollingProjector, peerReconciliationService,
+                credentialsResolver, null, Duration.ofSeconds(5));
+
+        try (AsyncClient client = (AsyncClient) createClient.invoke(service,
+                new ChatAppAccountCredentials("account-key", "account-secret", "account-space",
+                        "60122222222", "ap-southeast-1", "cams.ap-southeast-1.aliyuncs.com"))) {
+            assertNotNull(client);
+        }
+    }
+
     private ChatAppMessageSyncService serviceWithClient(AsyncClient client) throws Exception {
+        return serviceWithClient(client, Duration.ofSeconds(30));
+    }
+
+    private ChatAppMessageSyncService serviceWithClient(AsyncClient client, Duration apiTimeout)
+            throws Exception {
         Constructor<ChatAppMessageSyncService> constructor = ChatAppMessageSyncService.class
                 .getDeclaredConstructor(ChannelAccountMapper.class,
                         ChatAppPollingProjector.class, ChatAppMessagePeerReconciliationService.class,
-                        ChatAppAccountCredentialsResolver.class, Supplier.class);
+                        ChatAppAccountCredentialsResolver.class, Supplier.class, Duration.class,
+                        SyncCursorMapper.class);
         constructor.setAccessible(true);
         return constructor.newInstance(channelAccountMapper, pollingProjector,
                 peerReconciliationService, credentialsResolver,
-                (Supplier<AsyncClient>) () -> client);
+                (Supplier<AsyncClient>) () -> client, apiTimeout, syncCursorMapper);
+    }
+
+    private static ChannelSyncCursorEntity cursor(Instant timestamp, String value) {
+        ChannelSyncCursorEntity cursor = new ChannelSyncCursorEntity();
+        cursor.setCursorTimestamp(timestamp);
+        cursor.setCursorValue(value);
+        return cursor;
     }
 
     private static ChannelAccountEntity activeAccount(UUID id, String identifier) {

@@ -11,12 +11,13 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 联系人候选的来源。两处用它，用<b>同一套</b>投影与上限：
+ * 联系人候选的来源。检索与跨请求恢复用<b>同一套</b>投影与上限：
  *
  * <ul>
  *   <li>{@link #recent(UUID)} —— 提问前注入的候选窗口（「最近在跟谁往来」）；</li>
  *   <li>{@link #search(UUID, String)} —— {@code contact.search} 只读工具的检索，
  *       关键词可以命中窗口<b>之外</b>的联系人，结果替换掉候选窗口，供下一轮 {@code contact.brief} 引用。</li>
+ *   <li>{@link #refresh(UUID, List)} —— 跨请求恢复已发现的引用；逐条重新授权并重新投影渠道。</li>
  * </ul>
  *
  * <h2>越权防线复用既有查询，不在这里重写</h2>
@@ -48,9 +49,11 @@ public class ContactCandidateProvider {
     static final int REMARK_MAX_CHARS = 60;
 
     private final ContactMapper contacts;
+    private final ContactService contactService;
 
-    public ContactCandidateProvider(ContactMapper contacts) {
+    public ContactCandidateProvider(ContactMapper contacts, ContactService contactService) {
         this.contacts = contacts;
+        this.contactService = contactService;
     }
 
     /** 提问前注入的候选：最近有往来的联系人。 */
@@ -64,6 +67,20 @@ public class ContactCandidateProvider {
         return load(userId, trimmed.isEmpty() ? null : trimmed);
     }
 
+    /** Restore a previous reference window only after rechecking each contact against current owner access. */
+    public ContactCandidates refresh(UUID userId, List<String> references) {
+        if (userId == null || references == null || references.isEmpty()) {
+            return new ContactCandidates(LIMIT, List.of());
+        }
+        return new ContactCandidates(LIMIT, references.stream().limit(LIMIT)
+                .map(ContactCandidates::targetOf)
+                .filter(java.util.Objects::nonNull)
+                .map(id -> contacts.findAccessibleById(id, userId, ContactService.isCurrentUserAdmin())
+                        .map(row -> toItem(row, userId)).orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList());
+    }
+
     private ContactCandidates load(UUID userId, String search) {
         if (userId == null) {
             return new ContactCandidates(LIMIT, List.of());
@@ -71,10 +88,11 @@ public class ContactCandidateProvider {
         IPage<ContactEntity> page = contacts.listForUser(new Page<>(1, LIMIT), userId, search, false,
                 null, null, ContactService.isCurrentUserAdmin(), null, null);
         List<ContactEntity> rows = page == null || page.getRecords() == null ? List.of() : page.getRecords();
-        return new ContactCandidates(LIMIT,
-                rows.size() > LIMIT
-                        ? rows.subList(0, LIMIT).stream().map(ContactCandidateProvider::toItem).toList()
-                        : rows.stream().map(ContactCandidateProvider::toItem).toList());
+        List<ContactEntity> bounded = rows.size() > LIMIT ? rows.subList(0, LIMIT) : rows;
+        return new ContactCandidates(LIMIT, bounded.stream()
+                .map(row -> toItem(row, userId))
+                .filter(java.util.Objects::nonNull)
+                .toList());
     }
 
     /**
@@ -89,14 +107,22 @@ public class ContactCandidateProvider {
      * 模型会读到一堆 {@code null}、下次改代码的人会以为它「有时候有值」—— 角色信息由
      * {@code contact.brief} 经 {@code findAccessibleById} 取（那条查询是全字段）。
      */
-    private static ContactCandidates.Item toItem(ContactEntity row) {
+    private ContactCandidates.Item toItem(ContactEntity row, UUID userId) {
         if (row == null || row.getId() == null) {
             return null;
         }
         String id = ContactCandidates.idOf(row.getId());
         String remark = blankToNull(row.getRemark());
         String name = firstNonBlank(row.getDisplayName(), remark);
-        return new ContactCandidates.Item(id, name == null ? id : name, truncate(remark));
+        // 这里的备注是「用来指认这个人是谁」的，不是给模型当事实回答的 —— 所以裸截断：
+        // 加「已截断」既不改变指认结果，又会让候选清单变难读（判据见 Texts 的类注释）。
+        List<ContactCandidates.Channel> channels = contactService.listAuthorizedChannelProfiles(userId, row.getId())
+                .stream()
+                .map(profile -> new ContactCandidates.Channel(profile.channelType(), profile.identityValue(),
+                        Texts.truncate(profile.displayName(), 60), Texts.truncate(profile.accountLabel(), 60)))
+                .toList();
+        return new ContactCandidates.Item(id, name == null ? id : name,
+                Texts.truncate(remark, REMARK_MAX_CHARS), channels);
     }
 
     private static String firstNonBlank(String... values) {
@@ -110,12 +136,5 @@ public class ContactCandidateProvider {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.strip();
-    }
-
-    private static String truncate(String value) {
-        if (value == null || value.length() <= REMARK_MAX_CHARS) {
-            return value;
-        }
-        return value.substring(0, REMARK_MAX_CHARS);
     }
 }

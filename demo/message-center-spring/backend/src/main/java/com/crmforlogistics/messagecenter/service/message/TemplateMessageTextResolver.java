@@ -5,6 +5,7 @@ import com.crmforlogistics.messagecenter.entity.TemplateEntity;
 import com.crmforlogistics.messagecenter.entity.ChannelAccountEntity;
 import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.TemplateMapper;
+import com.crmforlogistics.messagecenter.service.whatsapp.WhatsAppAccountMode;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -122,7 +123,7 @@ public class TemplateMessageTextResolver {
         if (channelAccountId == null) return Optional.empty();
         ChannelAccountEntity account = accountMapper.selectById(channelAccountId);
         if (account == null) return Optional.empty();
-        if ("BUSINESS_APP_COEXISTENCE".equalsIgnoreCase(account.getOnboardingMode())) {
+        if (WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             return sendable ? templateMapper.findPrivateForSend(channelAccountId, code, language)
                     : templateMapper.findPrivateForDisplayByIdentity(channelAccountId, code, language);
         }

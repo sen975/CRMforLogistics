@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.channel.email.EmailSendService;
+import com.crmforlogistics.messagecenter.channel.email.EmailException;
 import com.crmforlogistics.messagecenter.dto.response.ChannelCapabilityResponse;
 import com.crmforlogistics.messagecenter.dto.response.MessageResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
@@ -49,7 +50,7 @@ public class MessageController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/send/email")
+    @PostMapping({"/send/email", "/v1/email/messages"})
     public ResponseEntity<?> sendEmail(@RequestBody Map<String, Object> body) {
         try {
             String to = (String) body.get("to");
@@ -60,12 +61,15 @@ public class MessageController {
                     ? emailSendService.send(to, subject, text)
                     : emailSendService.send(ownerId, to, subject, text);
             return ResponseEntity.ok(result);
+        } catch (EmailException exception) {
+            throw exception;
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 
-    @PostMapping(value = "/send/email", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = {"/send/email", "/v1/email/messages"},
+            consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> sendEmailMultipart(
             @RequestParam String to,
             @RequestParam(defaultValue = "") String subject,

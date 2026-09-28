@@ -1,8 +1,5 @@
 package com.crmforlogistics.messagecenter.channel.wecom;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-
 final class WeComCallbackFailure extends WeComException {
     enum Stage {
         INPUT,
@@ -15,7 +12,14 @@ final class WeComCallbackFailure extends WeComException {
         PLAINTEXT,
         RECEIVE_ID,
         PAYLOAD_XML,
-        SUITE_ID
+        SUITE_ID,
+        /**
+         * 应用级事件缺 {@code ChangeType}。
+         * 与 {@link #SUITE_ID} 一样按「通道特有的解析失败」单列，避免日志里两条通道的 stage 混淆。
+         */
+        APP_EVENT_MISSING_CHANGE_TYPE,
+        /** 应用级事件类型不在本能力支持范围内（非 event 的 MsgType、非客户关系事件、未知 ChangeType）。 */
+        APP_EVENT_UNSUPPORTED
     }
 
     private final Stage stage;
@@ -29,7 +33,7 @@ final class WeComCallbackFailure extends WeComException {
         super("WECOM_CALLBACK_SIGNATURE_INVALID", 403,
                 "企业微信授权回调验签或解密失败", cause);
         this.stage = stage;
-        this.receiveIdSha256 = receiveId == null ? null : sha256(receiveId);
+        this.receiveIdSha256 = receiveId == null ? null : WeComCallbackCipher.sha256Hex(receiveId);
     }
 
     Stage stage() {
@@ -38,15 +42,5 @@ final class WeComCallbackFailure extends WeComException {
 
     String receiveIdSha256() {
         return receiveIdSha256;
-    }
-
-    private static String sha256(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            return java.util.HexFormat.of().formatHex(digest);
-        } catch (Exception exception) {
-            throw new IllegalStateException("SHA-256 unavailable", exception);
-        }
     }
 }

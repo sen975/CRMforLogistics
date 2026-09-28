@@ -71,7 +71,9 @@ class CallRecordControllerOwnerSecurityTest {
         record.setAudioDurationSeconds(1.0);
         record.setTranscriptionState("completed");
         record.setVersion(1L);
-        when(callRecordMapper.searchPhoneRepositoryByOwner(ownerId, null)).thenReturn(java.util.List.of(record));
+        when(callRecordMapper.searchPhoneRepositoryByOwner(ownerId, null, null, null, 21))
+                .thenReturn(java.util.List.of(record));
+        when(callRecordMapper.countPhoneRepositoryByOwner(ownerId, null)).thenReturn(1);
         when(contactIdentityMapper.findByContactIdAndOwner(contactId, ownerId)).thenReturn(java.util.List.of());
 
         mvc.perform(get("/api/v1/phone-repository")

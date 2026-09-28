@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Empty, Form, Input, Modal, Space, Tag, TimePicker, message } from 'antd';
-import { BellOutlined, CheckOutlined, DeleteOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { CheckOutlined, DeleteOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
-import { createTodoApi, deleteTodoApi, fetchTodos, sendTodoReminder, updateTodoApi, type TodoApiItem } from '../api/endpoints';
-import { getTodosForDate, loadReminderRecords, loadTodos, saveReminderRecord } from '../todos/todoStore';
+import { createTodoApi, deleteTodoApi, fetchTodos, updateTodoApi, type TodoApiItem } from '../api/endpoints';
+import { getTodosForDate, loadTodos } from '../todos/todoStore';
 import { subscribeAssistantEvents } from '../assistant/assistantEvents';
 import './TodoCalendarPage.css';
 
@@ -14,9 +14,7 @@ export default function TodoCalendarPage() {
   const [cursor, setCursor] = useState(() => dayjs().startOf('month'));
   const [selectedDate, setSelectedDate] = useState(() => formatDate(dayjs()));
   const [todos, setTodos] = useState<TodoApiItem[]>([]);
-  const [reminders, setReminders] = useState(loadReminderRecords);
   const [modalOpen, setModalOpen] = useState(false);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   useState(() => { void fetchTodos().then(async (remote) => {
@@ -49,19 +47,6 @@ export default function TodoCalendarPage() {
     await createTodoApi({ date: selectedDate, title: values.title, time: values.time?.format('HH:mm'), note: values.note });
     refresh(); form.resetFields(); setModalOpen(false); message.success('待办已写入这一天');
   };
-  const sendReminder = async () => {
-    setSending(true); setError(null);
-    const text = `${selected.format('M月D日')} 待办提醒\n${selectedTodos.map((todo) => `${todo.completed ? '✓' : '○'} ${todo.time ? `${todo.time} ` : ''}${todo.title}`).join('\n') || '今天没有待办'}`;
-    try {
-      const result = await sendTodoReminder({ date: selectedDate, text });
-      const record = { id: result.messageId || `${Date.now()}`, date: selectedDate, taskCount: selectedTodos.length, sentAt: new Date().toISOString(), status: 'sent' as const, messageId: result.messageId };
-      saveReminderRecord(record);
-      setReminders(loadReminderRecords());
-      message.success('企业微信应用消息已发送');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '企业微信提醒发送失败，请检查绑定和应用配置');
-    } finally { setSending(false); }
-  };
 
   return <div className="todo-page">
     <div className="todo-paper">
@@ -77,10 +62,9 @@ export default function TodoCalendarPage() {
         </section>
         <section className="detail-sheet" aria-label="当天待办">
           <div className="detail-heading"><div><span className="detail-kicker">SELECTED DAY</span><h2>{selected.format('M月D日')} <small>星期{weekdays[selected.day()]}</small></h2></div><Tag color={selectedTodos.length ? 'volcano' : 'default'}>{selectedTodos.length} 项 · 已完成 {selectedTodos.filter((todo) => todo.completed).length}</Tag></div>
-          {error && <Alert type="error" showIcon message="企业微信发送失败" description={error} closable onClose={() => setError(null)} />}
+          {error && <Alert type="error" showIcon message="待办同步失败" description={error} closable onClose={() => setError(null)} />}
           <div className="todo-list">{loading ? <p>正在加载待办…</p> : selectedTodos.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="这一天还没有待办，写下一件要记住的事。" /> : selectedTodos.map((todo) => <TodoRow key={todo.id} todo={todo} onToggle={(completed) => { void updateTodoApi(todo.id, completed).then(refresh); }} onRemove={() => { void deleteTodoApi(todo.id).then(refresh); }} />)}</div>
           <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>在这一天添加待办</Button>
-          <div className="reminder-box"><div className="reminder-title"><BellOutlined /> 企业微信应用消息 <span>官方 API</span></div><p>发送给当前已绑定企业微信的账号，内容包含这一天的待办清单。</p><Button type="primary" ghost icon={<BellOutlined />} loading={sending} onClick={sendReminder}>发送今日提醒</Button>{reminders[0] && <small className="last-sent">最近发送：{dayjs(reminders[0].sentAt).format('M月D日 HH:mm')} · message_id {reminders[0].messageId ?? '已记录'}</small>}</div>
         </section>
       </div>
     </div>

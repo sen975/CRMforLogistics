@@ -18,6 +18,6 @@ public class AssistantDisabledTestConfiguration {
 
     @Bean
     AssistantConfig assistantDisabledConfig() {
-        return new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 2000, 8, 8000, 70, 600, 3);
+        return new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 2000, 8, 8000, 600, 3);
     }
 }

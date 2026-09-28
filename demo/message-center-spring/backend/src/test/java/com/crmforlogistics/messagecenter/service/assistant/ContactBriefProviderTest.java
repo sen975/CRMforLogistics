@@ -6,17 +6,21 @@ import com.crmforlogistics.messagecenter.entity.ContactAiLabelEntity;
 import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactMemoryFactEntity;
 import com.crmforlogistics.messagecenter.entity.ContactProfileVersionEntity;
+import com.crmforlogistics.messagecenter.entity.ContactMemoryStateEntity;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMemoryMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMemoryStateMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolResult;
+import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import com.crmforlogistics.messagecenter.service.contactmemory.ContactMemoryModels;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -51,9 +55,10 @@ import static org.mockito.Mockito.when;
  * </ol>
  *
  * <p>{@code inboundMessages} / {@code transcripts}（消息原文与通话转写）在这条链路上
- * <b>连取数入口都没有</b>：{@link ContactBriefProvider} 只注入了 {@code ContactMapper} /
- * {@code ContactMemoryMapper} / {@code ContactTagMapper} 三个依赖，而
- * {@code listStableContext} 返回的是画像 + 事实 + 标签 + 话题四节。
+ * <b>连取数入口都没有</b>：{@link ContactBriefProvider} 注入的是 {@code ContactMapper} /
+ * {@code ContactMemoryMapper} / {@code ContactTagMapper} / {@code ContactMemoryStateMapper} 四个，
+ * 而前三个里唯一的内容来源 {@code listStableContext} 只回画像 + 事实 + 标签 + 话题四节；
+ * 第四个读的 {@code contact_memory_states} 是纯元数据表（没有内容字段、也没有消息外键）。
  * 所以这里没有「过滤掉正文」的测试 —— 没有可过滤的东西才是更强的保证
  * （理由详见 {@link ContactBrief} 的类注释）。
  */
@@ -66,7 +71,10 @@ class ContactBriefProviderTest {
     private final ContactMapper contacts = mock(ContactMapper.class);
     private final ContactMemoryMapper memory = mock(ContactMemoryMapper.class);
     private final ContactTagMapper humanTags = mock(ContactTagMapper.class);
-    private final ContactBriefProvider provider = new ContactBriefProvider(contacts, memory, humanTags);
+    private final ContactMemoryStateMapper states = mock(ContactMemoryStateMapper.class);
+    private final ContactService contactService = mock(ContactService.class);
+    private final ContactBriefProvider provider =
+            new ContactBriefProvider(contacts, memory, humanTags, states, contactService);
 
     // ---------- 授权 ----------
 
@@ -77,6 +85,24 @@ class ContactBriefProviderTest {
         assertThatThrownBy(() -> provider.brief(USER, CONTACT))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(memory, never()).listStableContext(any(), any(), anyInt());
+        verify(contactService, never()).listAuthorizedChannelTypes(any(), any());
+    }
+
+    @Test
+    void briefCarriesAuthorizedChannelProfilesAndNoInternalIdentityFields() {
+        givenAccessible(contact(OTHER_USER, "周明", null, null));
+        when(contactService.listAuthorizedChannelProfiles(USER, CONTACT)).thenReturn(List.of(
+                new ContactService.AuthorizedChannelProfile("email", "buyer@example.invalid", "采购邮箱", null),
+                new ContactService.AuthorizedChannelProfile("chatapp", "15550001111", "王经理", "北美账号")));
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.toData()).containsEntry("channelTypes", List.of("chatapp", "email"));
+        assertThat(brief.toData().get("channels").toString())
+                .contains("buyer@example.invalid", "15550001111", "北美账号")
+                .doesNotContain("normalizedValue", "identityScope", "private-account-id");
+        assertThat(brief.toData()).doesNotContainKeys("normalizedValue", "identityScope", "identities");
+        verify(contactService).listAuthorizedChannelProfiles(USER, CONTACT);
     }
 
     @Test
@@ -105,6 +131,10 @@ class ContactBriefProviderTest {
         assertThat(brief.hasMemory()).isFalse();
         verify(memory, never()).listStableContext(any(), any(), anyInt());
         verify(humanTags, never()).findActiveByContactIdAndOwner(any(), any());
+        // 状态同理：那是别人名下那条流水线的状态，既无用也不该给。
+        verify(states, never()).findByOwnerAndContact(any(), any());
+        assertThat(brief.memoryState()).isNull();
+        assertThat(brief.memoryFailureCode()).isNull();
     }
 
     @Test
@@ -122,7 +152,14 @@ class ContactBriefProviderTest {
                 .containsExactly("决策角色", "业务关注");
         assertThat(brief.facts()).extracting(ContactBrief.Fact::value)
                 .containsExactly("采购决策人", "关注东南亚线运价");
-        assertThat(brief.aiLabels()).containsExactly("价格敏感");
+        assertThat(brief.aiLabels()).extracting(ContactBrief.AiLabel::name).containsExactly("价格敏感");
+        // 分类与置信度是 2026-09-23 补的：只有名字时「价格敏感」是一条孤立结论，
+        // 补上这两项，模型才知道它在销售语境里属于哪一类看法、系统有多确定。
+        assertThat(brief.aiLabels()).extracting(ContactBrief.AiLabel::category)
+                .containsExactly("DECISION_FACTOR");
+        assertThat(brief.aiLabels()).extracting(ContactBrief.AiLabel::confidence)
+                .as("DB 标度是 3（0.870），给模型的应是 0.87 —— 尾零会把「大致确定」讲成精确测量")
+                .containsExactly(0.87);
         assertThat(brief.humanTags()).containsExactly("老客户");
         assertThat(brief.topics()).extracting(ContactBrief.Topic::title).containsExactly("运价谈判");
         // 人工确认过的小结优先于模型小结：会前准备要的是「上次到底谈成什么」。
@@ -176,6 +213,50 @@ class ContactBriefProviderTest {
         assertThat(brief.facts()).extracting(ContactBrief.Fact::value).containsExactly("采购决策人");
     }
 
+    // ---------- 处理状态 ----------
+
+    /**
+     * 「他的标签为什么没更新」必须答得出来。
+     *
+     * <p>补这两个字段之前，这个问题只能靠「标签看着有点旧」去猜；而状态只有五种，
+     * 猜错的代价是用户按一个假原因去处理（例如以为系统坏了，其实是那批消息还在排队）。
+     */
+    @Test
+    void theOwnersViewCarriesTheMemoryStateAndTheFailureCode() {
+        givenAccessible(contact(USER, "周明", null, null));
+        when(memory.listStableContext(eq(USER), eq(CONTACT), anyInt())).thenReturn(stable());
+        ContactMemoryStateEntity state = new ContactMemoryStateEntity();
+        state.setStatus("FAILED");
+        state.setLastFailureCode("INVALID_OUTPUT");
+        when(states.findByOwnerAndContact(USER, CONTACT)).thenReturn(Optional.of(state));
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.memoryState()).isEqualTo("FAILED");
+        assertThat(brief.memoryFailureCode()).isEqualTo("INVALID_OUTPUT");
+        assertThat(brief.toData())
+                .containsEntry("memoryState", "FAILED")
+                .containsEntry("memoryFailureCode", "INVALID_OUTPUT");
+    }
+
+    /**
+     * 没有状态行 = 这条流水线从没被标脏过，读作 {@code CLEAN}，而<b>不是</b>「状态未知」。
+     *
+     * <p>这条归一与页面（{@code ContactMemoryQueryService}）走同一个方法。两处各判一次，
+     * 早晚会一边说「干净」、另一边说「不知道」—— 而用户看到的差别是「不用管」与「是不是坏了」。
+     */
+    @Test
+    void aContactWithoutAnyStateRowReadsAsClean() {
+        givenAccessible(contact(USER, "周明", null, null));
+        when(memory.listStableContext(eq(USER), eq(CONTACT), anyInt())).thenReturn(stable());
+        when(states.findByOwnerAndContact(USER, CONTACT)).thenReturn(Optional.empty());
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.memoryState()).isEqualTo("CLEAN");
+        assertThat(brief.memoryFailureCode()).isNull();
+    }
+
     // ---------- 上限 ----------
 
     @Test
@@ -201,12 +282,36 @@ class ContactBriefProviderTest {
         assertThat(brief.facts().get(0).category()).hasSize(ContactBriefProvider.FACT_CATEGORY_MAX_CHARS);
         assertThat(brief.aiLabels()).hasSize(1)
                 .as("同名标签去重后才截断 —— 否则清单会被重复项占满")
-                .allSatisfy(name -> assertThat(name).hasSize(ContactBriefProvider.NAMED_MAX_CHARS));
+                .allSatisfy(label -> assertThat(label.name()).hasSize(ContactBriefProvider.NAMED_MAX_CHARS));
         assertThat(brief.humanTags()).hasSize(1)
                 .allSatisfy(name -> assertThat(name).hasSize(ContactBriefProvider.NAMED_MAX_CHARS));
         assertThat(brief.topics()).hasSize(ContactBriefProvider.TOPIC_LIMIT);
         assertThat(brief.topics().get(0).title()).hasSize(ContactBriefProvider.TOPIC_TITLE_MAX_CHARS);
         assertThat(brief.topics().get(0).summary()).hasSize(ContactBriefProvider.TOPIC_SUMMARY_MAX_CHARS);
+    }
+
+    /**
+     * 标签的<b>条数</b>上限。
+     *
+     * <p>{@link #everySectionIsBounded} 用的夹具是同名标签，会被去重成一条 —— 那验的是去重与截断，
+     * 验不到 {@link ContactBriefProvider#LABEL_LIMIT} 本身。这里用互不相同的名字把条数上限单独钉住：
+     * 标签条数直接决定 observation 的大小，而这件事没有别的地方会失败。
+     */
+    @Test
+    void distinctLabelsAreCappedAtTheLimitAndEachCarriesItsCategory() {
+        givenAccessible(contact(USER, "周明", null, null));
+        when(memory.listStableContext(eq(USER), eq(CONTACT), anyInt())).thenReturn(stable(
+                null, List.of(),
+                distinctLabels(ContactBriefProvider.LABEL_LIMIT + 5, "标签"),
+                List.of()));
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.aiLabels()).hasSize(ContactBriefProvider.LABEL_LIMIT);
+        assertThat(brief.aiLabels()).allSatisfy(label -> {
+            assertThat(label.name()).hasSizeLessThanOrEqualTo(ContactBriefProvider.NAMED_MAX_CHARS);
+            assertThat(label.category()).isEqualTo("PRODUCT_INTEREST");
+        });
     }
 
     /** 备注与显示名也是自由文本，同样要有上限；空值收敛成 {@code null} 而不是空串。 */
@@ -249,8 +354,10 @@ class ContactBriefProviderTest {
         Map<String, Object> data = provider.brief(USER, CONTACT).toData();
 
         assertThat(data.keySet()).containsExactlyInAnyOrder(
-                "contactRef", "name", "roleTitle", "remark",
-                "memoryVisible", "profile", "facts", "aiLabels", "humanTags", "topics");
+                "contactRef", "name", "roleTitle", "remark", "channelTypes",
+                "channels",
+                "memoryVisible", "memoryState", "memoryFailureCode",
+                "profile", "facts", "aiLabels", "humanTags", "topics");
         assertThat(data.get("contactRef")).isEqualTo(ContactCandidates.idOf(CONTACT));
         assertThat(data.toString())
                 .as("候选 id 是模型回引用所必需的；除它之外不该出现别的内部标识")
@@ -268,8 +375,12 @@ class ContactBriefProviderTest {
      * 与「{@code toData()} 的包装开销」这两处会吃预算的地方。
      *
      * <p>提示词对单条 observation 的上限是私有的实现细节，因此这里不引用那个数字，
-     * 而是断言它的<b>可观察后果</b>：那条「已截断」的提示不出现。各节上限一旦被人调大，
-     * 这个用例就会失败 —— 而不是在线上让模型收到半份数据却以为自己看全了。
+     * 而是断言它的<b>可观察后果</b>：{@code AssistantPromptBuilder} 那句「结果过长」的提示不出现。
+     * 各节上限一旦被人调大，这个用例就会失败 —— 而不是在线上让模型收到半份数据却以为自己看全了。
+     *
+     * <p>判据刻意<b>不</b>用「已截断」这三个字：各节字段自己也开始带这个标记了（见 {@code Texts}），
+     * 拿它当代理会让这条预算断言变成恒假。这里改的是判据而不是文案 ——
+     * 「结果过长」是 {@code AssistantPromptBuilder} 独有的措辞，指哪打哪。
      */
     @Test
     void aWorstCaseBriefStillFitsInASingleObservation() {
@@ -307,9 +418,57 @@ class ContactBriefProviderTest {
 
         String observation = messages.get(messages.size() - 1).get("content");
         assertThat(observation)
-                .as("截断会让模型拿到半份数据却不知道被截断过")
-                .doesNotContain("已截断")
+                .as("整条 observation 被截断会让模型拿到半份数据却不知道")
+                .doesNotContain("结果过长")
                 .contains("近期话题");
+    }
+
+    /**
+     * 画像被截断时，模型必须能看出「这不是全部」。
+     *
+     * <p>这是本轮那条发现里最要紧的一处：{@code ContactBriefProvider} 的画像原本是裸截断的，
+     * 而模型正是拿画像回答「他的画像是什么」—— 400 字后戛然而止，它无从知道后面还有。
+     * 论证与 observation 那处完全相同（静默截断会让模型把「只看到一半」当成「就这么多」），
+     * 只是这个结论原先没有推广到这一处。
+     */
+    @Test
+    void aTruncatedProfileCarriesAVisibleMarker() {
+        givenAccessible(contact(USER, "周明", "采购经理", "备注"));
+        when(memory.listStableContext(eq(USER), eq(CONTACT), anyInt())).thenReturn(stable(
+                "画".repeat(ContactBriefProvider.PROFILE_MAX_CHARS * 3), List.of(), List.of(), List.of()));
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.profile())
+                .as("没有标记，模型就会把半句画像当作完整画像来回答")
+                .endsWith("…（已截断）");
+        assertThat(brief.profile())
+                .as("标记计入上限：各节上限之和才是提示词的预算，不能因为多了句说明就突破")
+                .hasSize(ContactBriefProvider.PROFILE_MAX_CHARS);
+    }
+
+    /**
+     * 标识类字段<b>不</b>加标记。
+     *
+     * <p>判据是「模型会不会把它当作一条完整的事实用来回答」：显示名、职务的用途是<b>指认</b>，
+     * 截断后加个「已截断」既不改变指认结果，又会让清单变难读。
+     * 这条断言把「不是所有截断都加标记」钉住 —— 否则下一个人会顺手把标记铺到每一处。
+     */
+    @Test
+    void identityFieldsAreTruncatedWithoutAMarker() {
+        givenAccessible(contact(USER,
+                "名".repeat(ContactBriefProvider.NAME_MAX_CHARS * 3),
+                "职".repeat(ContactBriefProvider.NAMED_MAX_CHARS * 3),
+                "备注"));
+        when(memory.listStableContext(eq(USER), eq(CONTACT), anyInt())).thenReturn(stable(
+                "画".repeat(ContactBriefProvider.PROFILE_MAX_CHARS * 3), List.of(), List.of(), List.of()));
+
+        ContactBrief brief = provider.brief(USER, CONTACT);
+
+        assertThat(brief.name()).as("显示名是指认用的").doesNotContain("已截断")
+                .hasSize(ContactBriefProvider.NAME_MAX_CHARS);
+        assertThat(brief.roleTitle()).as("职务同理").doesNotContain("已截断")
+                .hasSize(ContactBriefProvider.NAMED_MAX_CHARS);
     }
 
     // ---------- 夹具 ----------
@@ -332,7 +491,7 @@ class ContactBriefProviderTest {
     private static ContactMemoryModels.StableContext stable() {
         return stable("周明是张江物流的采购经理，负责东南亚线。",
                 List.of(fact("决策角色", "采购决策人"), fact("业务关注", "关注东南亚线运价")),
-                labels(1, "价格敏感"),
+                List.of(label("价格敏感", "DECISION_FACTOR", "0.870")),
                 topics(1, "运价谈判", "已确认：下季度按新价目表执行。"));
     }
 
@@ -368,12 +527,28 @@ class ContactBriefProviderTest {
         return facts;
     }
 
+    private static ContactAiLabelEntity label(String name, String category, String confidence) {
+        ContactAiLabelEntity label = new ContactAiLabelEntity();
+        label.setDisplayName(name);
+        label.setCategory(category);
+        label.setConfidence(confidence == null ? null : new BigDecimal(confidence));
+        return label;
+    }
+
+    /** 同名标签（用于验证去重语义：清单不该被重复项占满）。 */
     private static List<ContactAiLabelEntity> labels(int count, String name) {
         List<ContactAiLabelEntity> labels = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            ContactAiLabelEntity label = new ContactAiLabelEntity();
-            label.setDisplayName(name);
-            labels.add(label);
+            labels.add(label(name, null, null));
+        }
+        return labels;
+    }
+
+    /** 互不相同的标签（用于验证条数上限 —— 同名会被去重，那就测不到上限了）。 */
+    private static List<ContactAiLabelEntity> distinctLabels(int count, String prefix) {
+        List<ContactAiLabelEntity> labels = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            labels.add(label(prefix + i, "PRODUCT_INTEREST", "0.800"));
         }
         return labels;
     }

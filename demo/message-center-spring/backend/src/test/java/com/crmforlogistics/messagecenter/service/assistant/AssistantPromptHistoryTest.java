@@ -2,9 +2,11 @@ package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import com.crmforlogistics.messagecenter.mapper.AssistantPendingActionMapper;
+import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidator;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
+import com.crmforlogistics.messagecenter.service.channel.OutboundMessageService;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +43,7 @@ import static org.mockito.Mockito.when;
  * <h2>断言为什么落在「发给模型的那串文本」上</h2>
  * 「哪一份历史」最终唯一的含义就是「模型看到了什么」。断言编排层内部的中间变量
  * （比如把 history 变成公开方法再断言）会让这条性质退化成实现细节 ——
- * 而真正要钉住的是端到端的结果。所以这里捕获 {@code complete(messages)} 的实参，
+ * 而真正要钉住的是端到端的结果。所以这里捕获 {@code complete(messages, maxOutputTokens, onRawDelta)} 的实参，
  * 在被真实提示词构建器渲染过的那串文本上断言。
  *
  * <p>装配真的 guard / 提示词构建器 / 解析器 / 策略 / 注册表，只把「模型」与
@@ -58,7 +60,7 @@ class AssistantPromptHistoryTest {
      * 而不是往用例里塞几 KB 字符串 —— 后者一旦断言失败，失败信息本身就没法看。
      */
     private static final AssistantConfig TIGHT = new AssistantConfig(
-            true, "https://api.deepseek.com", "secret", "deepseek-chat", 30, 2000, 8, 200, 70, 600, 3);
+            true, "https://api.deepseek.com", "secret", "deepseek-chat", 30, 2000, 8, 200, 600, 3);
 
     private final TodoItemMapper todoMapper = mock(TodoItemMapper.class);
     private final AssistantPendingActionMapper pendingMapper = mock(AssistantPendingActionMapper.class);
@@ -73,7 +75,7 @@ class AssistantPromptHistoryTest {
 
     @BeforeEach
     void setUp() {
-        when(contextBuilder.build(eq(AssistantFixtures.USER), anyInt())).thenReturn(AssistantFixtures.context());
+        when(contextBuilder.build()).thenReturn(AssistantFixtures.context());
         modelReplies("{\"decision\":\"reply\",\"reply\":\"好\"}");
     }
 
@@ -155,7 +157,7 @@ class AssistantPromptHistoryTest {
         }
 
         ArgumentCaptor<List<Map<String, String>>> captor = ArgumentCaptor.forClass(List.class);
-        verify(modelClient, times(shapes.size())).complete(captor.capture());
+        verify(modelClient, times(shapes.size())).complete(captor.capture(), any(), any());
         assertThat(captor.getAllValues())
                 .as("四种传入形状都不能让库里的记录输掉")
                 .allSatisfy(messages -> assertThat(flatten(messages))
@@ -209,7 +211,8 @@ class AssistantPromptHistoryTest {
     private AssistantConversationService service(AssistantConfig config) {
         AssistantPendingActionService pending = new AssistantPendingActionService(
                 pendingMapper, parser, registry, audit, config, AssistantFixtures.objectMapper(),
-                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-09-21T02:00:00Z"), ZoneOffset.UTC),
+                mock(OutboundMessageService.class), mock(ContactMapper.class));
         return new AssistantConversationService(
                 contextBuilder,
                 new AssistantPromptBuilder(registry, config, AssistantFixtures.objectMapper()),
@@ -221,7 +224,7 @@ class AssistantPromptHistoryTest {
     @SuppressWarnings("unchecked")
     private String promptSentToTheModel() {
         ArgumentCaptor<List<Map<String, String>>> captor = ArgumentCaptor.forClass(List.class);
-        verify(modelClient).complete(captor.capture());
+        verify(modelClient).complete(captor.capture(), any(), any());
         return flatten(captor.getValue());
     }
 
@@ -233,7 +236,7 @@ class AssistantPromptHistoryTest {
 
     private void modelReplies(String... contents) {
         org.mockito.stubbing.OngoingStubbing<AssistantModelClient.ModelReply> stub =
-                when(modelClient.complete(any()));
+                when(modelClient.complete(any(), any(), any()));
         for (String content : contents) {
             stub = stub.thenReturn(new AssistantModelClient.ModelReply(content, "deepseek-chat", 900));
         }

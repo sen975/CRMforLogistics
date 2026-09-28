@@ -99,6 +99,36 @@ class ContactMapperChatAppFilterIntegrationTest {
         assertThat(generalIds).contains(phoneContact, emailContact, currentChatApp,
                 wrongScope, deletedIdentity).doesNotContain(inaccessible);
         assertThat(chatAppIds).containsExactly(currentChatApp);
+
+        // The reported total must agree with the page it describes. Both statements share
+        // VISIBLE_CONTACTS_SELECT, so a filter edited on one side only fails right here.
+        assertThat(contactMapper.countForUser(userId, null, false, false, null, null))
+                .isEqualTo(generalIds.size())
+                .isEqualTo(5);
+        assertThat(contactMapper.countForUser(userId, null, false, false, "chatapp", accountId))
+                .isEqualTo(chatAppIds.size())
+                .isEqualTo(1);
+    }
+
+    @Test
+    void pageCurrentSkipsRowsWhileTheTotalStaysFilterWide() {
+        for (int i = 0; i < 5; i++) {
+            UUID contact = insertContact("Paged " + i, userId);
+            insertIdentity(contact, "phone", "global", "6010000001" + i, false);
+        }
+
+        List<UUID> firstPage = contactMapper.listForUser(new Page<>(1, 2), userId,
+                        null, false, null, null, false, null, null)
+                .getRecords().stream().map(ContactEntity::getId).toList();
+        List<UUID> secondPage = contactMapper.listForUser(new Page<>(2, 2), userId,
+                        null, false, null, null, false, null, null)
+                .getRecords().stream().map(ContactEntity::getId).toList();
+
+        // page.current used to be ignored, so page 2 silently returned page 1 again.
+        assertThat(firstPage).hasSize(2);
+        assertThat(secondPage).hasSize(2).doesNotContainAnyElementsOf(firstPage);
+        // ...and the total describes the filter, not the slice.
+        assertThat(contactMapper.countForUser(userId, null, false, false, null, null)).isEqualTo(5);
     }
 
     @Test

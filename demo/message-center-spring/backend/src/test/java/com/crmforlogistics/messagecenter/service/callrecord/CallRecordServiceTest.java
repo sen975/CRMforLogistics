@@ -70,6 +70,36 @@ class CallRecordServiceTest {
     }
 
     @Test
+    void ownerRetryStoresRequestKeyAndReplaysWithoutAdvancingAgain() {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
+        UUID owner = UUID.randomUUID();
+        CallRecordEntity current = failedRecord(3L);
+        when(mapper.findByIdAndOwner(current.getId(), owner)).thenReturn(Optional.of(current));
+        when(mapper.findRetryRequest(owner, current.getId(), "retry-1")).thenReturn(Optional.empty());
+        when(mapper.insertRetryRequest(owner, current.getId(), "retry-1")).thenReturn(1);
+        when(mapper.countPending()).thenReturn(0);
+        when(mapper.replace(any(CallRecordEntity.class), eq(3L))).thenReturn(1);
+        CallRecordService service = service(mapper, revisionMapper);
+
+        CallRecordEntity first = service.retry(owner, current.getId(), owner.toString(), "retry-1");
+
+        assertThat(first.getVersion()).isEqualTo(4L);
+        verify(mapper).insertRetryRequest(owner, current.getId(), "retry-1");
+
+        CallRecordEntity replay = failedRecord(4L);
+        replay.setId(current.getId());
+        replay.setTranscriptionState("queued");
+        when(mapper.findByIdAndOwner(current.getId(), owner)).thenReturn(Optional.of(replay));
+        when(mapper.findRetryRequest(owner, current.getId(), "retry-1"))
+                .thenReturn(Optional.of(new com.crmforlogistics.messagecenter.entity.CallRecordRetryRequestEntity()));
+
+        assertThat(service.retry(owner, current.getId(), owner.toString(), "retry-1")).isSameAs(replay);
+        verify(mapper, org.mockito.Mockito.times(1)).insertRetryRequest(owner, current.getId(), "retry-1");
+        verify(mapper, org.mockito.Mockito.times(1)).replace(any(CallRecordEntity.class), eq(3L));
+    }
+
+    @Test
     void retryRejectsCompletedTranscriptThatAlreadyHasSegments() {
         CallRecordMapper mapper = mock(CallRecordMapper.class);
         CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
@@ -165,6 +195,70 @@ class CallRecordServiceTest {
         verify(mapper).insert(created);
     }
 
+    @Test
+    void createDeletesPublishedAudioWhenDatabaseInsertFails() throws Exception {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
+        MinioAudioStore audioStore = mock(MinioAudioStore.class);
+        ChannelAddressBookService addressBooks = mock(ChannelAddressBookService.class);
+        UUID owner = UUID.randomUUID();
+        UUID contact = UUID.randomUUID();
+        when(addressBooks.resolvePhone(owner, null, "8613800138000", null))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(contact, UUID.randomUUID(), true));
+        when(mapper.countPending()).thenReturn(0);
+        MinioAudioStore.StagedAudio staged = mock(MinioAudioStore.StagedAudio.class);
+        MinioAudioStore.AudioAsset asset = new MinioAudioStore.AudioAsset(
+                "audio/test.mp3", "test.mp3", 10L, "a".repeat(64), "audio/mpeg", 1.0,
+                "call-records/test.mp3");
+        when(audioStore.stage(any(), eq("test.mp3"), eq("audio/mpeg"))).thenReturn(staged);
+        when(audioStore.publish(any(), eq(staged))).thenReturn(asset);
+        when(mapper.insert(any(CallRecordEntity.class))).thenThrow(new RuntimeException("duplicate"));
+
+        CallRecordService service = service(mapper, revisionMapper, null, addressBooks, audioStore);
+
+        assertThatThrownBy(() -> service.create(owner, new CallRecordService.CreateCallRecordCommand(
+                "", "phone:8613800138000", "inbound", NOW, "request-1", "test.mp3",
+                "audio/mpeg", owner.toString(), ""), new java.io.ByteArrayInputStream(new byte[]{1})))
+                .isInstanceOf(CallRecordException.class)
+                .extracting(error -> ((CallRecordException) error).code())
+                .isEqualTo("CALL_RECORD_PERSIST_FAILED");
+        verify(audioStore).delete(asset);
+    }
+
+    @Test
+    void cleanupFailureDoesNotReplaceOriginalPersistenceFailure() throws Exception {
+        CallRecordMapper mapper = mock(CallRecordMapper.class);
+        CallTranscriptRevisionMapper revisionMapper = mock(CallTranscriptRevisionMapper.class);
+        MinioAudioStore audioStore = mock(MinioAudioStore.class);
+        ChannelAddressBookService addressBooks = mock(ChannelAddressBookService.class);
+        UUID owner = UUID.randomUUID();
+        when(addressBooks.resolvePhone(owner, null, "8613800138000", null))
+                .thenReturn(new ChannelAddressBookService.ResolvedContact(UUID.randomUUID(), UUID.randomUUID(), true));
+        when(mapper.countPending()).thenReturn(0);
+        MinioAudioStore.StagedAudio staged = mock(MinioAudioStore.StagedAudio.class);
+        MinioAudioStore.AudioAsset asset = new MinioAudioStore.AudioAsset(
+                "audio/test.mp3", "test.mp3", 10L, "a".repeat(64), "audio/mpeg", 1.0,
+                "call-records/test.mp3");
+        when(audioStore.stage(any(), eq("test.mp3"), eq("audio/mpeg"))).thenReturn(staged);
+        when(audioStore.publish(any(), eq(staged))).thenReturn(asset);
+        when(mapper.insert(any(CallRecordEntity.class))).thenThrow(new RuntimeException("db down"));
+        org.mockito.Mockito.doThrow(new RuntimeException("minio down")).when(audioStore).delete(asset);
+
+        CallRecordException failure;
+        try {
+            service(mapper, revisionMapper, null, addressBooks, audioStore).create(owner,
+                    new CallRecordService.CreateCallRecordCommand(
+                            "", "phone:8613800138000", "inbound", NOW, "request-2", "test.mp3",
+                            "audio/mpeg", owner.toString(), ""),
+                    new java.io.ByteArrayInputStream(new byte[]{1}));
+            throw new AssertionError("expected persistence failure");
+        } catch (CallRecordException expected) {
+            failure = expected;
+        }
+        assertThat(failure.code()).isEqualTo("CALL_RECORD_PERSIST_FAILED");
+        assertThat(failure.getCause().getSuppressed()).hasSize(1);
+    }
+
     private static CallRecordService service(CallRecordMapper mapper,
                                              CallTranscriptRevisionMapper revisionMapper) {
         return service(mapper, revisionMapper, null);
@@ -189,7 +283,7 @@ class CallRecordServiceTest {
                 config(),
                 new FunAsrConfig(
                         "http://127.0.0.1:8000", "sensevoice",
-                        java.time.Duration.ofSeconds(3), java.time.Duration.ofSeconds(30)),
+                        java.time.Duration.ofSeconds(3), java.time.Duration.ofSeconds(30), 10_485_760L),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 topicActivityRecorder,
                 addressBooks);
@@ -219,6 +313,6 @@ class CallRecordServiceTest {
         return new CallRecordConfig(
                 "data/call-records", 104_857_600L, 7_200,
                 10_737_418_240L, 10_000, 64, 1, 2_100, 3,
-                10_485_760L, 20_000, 20, 300, 8, 256);
+                10_485_760L, 20_000, 20, 300, 8, 256, 105_906_176L);
     }
 }

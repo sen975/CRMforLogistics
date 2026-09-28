@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.chatapp.broadcast;
 
+import com.crmforlogistics.messagecenter.channel.chatapp.ChatAppSubmissionContext;
 import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastModels.RecipientStatus;
 
 import java.time.Instant;
@@ -25,7 +26,20 @@ public interface ChatAppBroadcastGateway {
             String templateName,
             String languageCode,
             String taskId,
-            List<SubmissionRecipient> recipients) {
+            List<SubmissionRecipient> recipients,
+            ChatAppSubmissionContext submissionContext) {
+        public BroadcastSubmission(
+                UUID channelAccountId,
+                String from,
+                String templateCode,
+                String templateName,
+                String languageCode,
+                String taskId,
+                List<SubmissionRecipient> recipients) {
+            this(channelAccountId, from, templateCode, templateName, languageCode, taskId,
+                    recipients, null);
+        }
+
         public BroadcastSubmission {
             recipients = recipients == null ? List.of() : List.copyOf(recipients);
         }

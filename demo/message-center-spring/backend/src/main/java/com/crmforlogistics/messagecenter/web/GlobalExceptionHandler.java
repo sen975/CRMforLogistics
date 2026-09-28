@@ -16,6 +16,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -106,7 +107,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EmailException.class)
     public ResponseEntity<ApiError> handleEmail(EmailException e, HttpServletRequest request) {
-        return ResponseEntity.badRequest().body(new ApiError(
+        HttpStatus status = "EMAIL_SEND_OUTCOME_UNKNOWN".equals(e.code())
+                ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status).body(new ApiError(
                 e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
@@ -134,7 +137,13 @@ public class GlobalExceptionHandler {
             case AssistantException.PENDING_ALREADY_DECIDED -> HttpStatus.CONFLICT;
             default -> HttpStatus.BAD_REQUEST;
         };
-        return ResponseEntity.status(status).body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
+        // 内容类型**显式**给出，不交给内容协商。`/api/assistant/messages` 是唯一一条
+        // 客户端可能声明 `Accept: text/event-stream` 的端点，而它的失败答复恰恰不是 SSE
+        // 而是这份 JSON —— 交给协商，那个 Accept 会把 503 变成 406 加一个空响应体
+        // （Jackson 转换器不产出 text/event-stream），于是「功能没开」看起来像「请求写错了」。
+        // 错误响应的类型是我们已知的事实，本来也不该由请求头投票决定。
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
     }
 
     @ExceptionHandler(ChatAppWebhookAuthenticationException.class)

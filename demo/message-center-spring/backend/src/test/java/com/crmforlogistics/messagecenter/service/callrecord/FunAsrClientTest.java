@@ -4,6 +4,7 @@ import com.crmforlogistics.messagecenter.config.FunAsrConfig;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
@@ -13,7 +14,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class FunAsrClientTest {
     private final FunAsrClient client = new FunAsrClient(new FunAsrConfig(
             "http://127.0.0.1:8000", "sensevoice",
-            Duration.ofSeconds(3), Duration.ofSeconds(30)));
+            Duration.ofSeconds(3), Duration.ofSeconds(30), 8));
+
+    @Test
+    void boundedResponseReaderRejectsPayloadAboveConfiguredLimit() {
+        assertThatThrownBy(() -> client.readBounded(new ByteArrayInputStream(new byte[9])))
+                .isInstanceOf(CallRecordException.class)
+                .hasMessage("FunASR response exceeds the configured size limit");
+    }
 
     @Test
     void usesHttp11BecauseFunAsrDoesNotAcceptTheH2cUpgradeRequest() throws Exception {

@@ -17,6 +17,7 @@ public class ContactMemoryAttemptEntity {
     private String inputCursor;
     private String outputCursor;
     private String status;
+    private String outcome;
     private String failureCode;
     private String failureMessage;
     private String model;
@@ -42,6 +43,8 @@ public class ContactMemoryAttemptEntity {
     public void setOutputCursor(String value) { outputCursor = value; }
     public String getStatus() { return status; }
     public void setStatus(String value) { status = value; }
+    public String getOutcome() { return outcome; }
+    public void setOutcome(String value) { outcome = value; }
     public String getFailureCode() { return failureCode; }
     public void setFailureCode(String value) { failureCode = value; }
     public String getFailureMessage() { return failureMessage; }

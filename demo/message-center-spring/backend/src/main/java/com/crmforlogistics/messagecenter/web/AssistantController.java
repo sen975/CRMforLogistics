@@ -7,7 +7,10 @@ import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantPendingActionService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantTurnResult;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -53,6 +56,21 @@ import java.util.UUID;
  * <h2>确认接口只接受 pendingActionId</h2>
  * 不接受工具名或参数的重放：参数以服务端落库的那一份为准，并在执行前重新校验。
  * 若允许前端回传参数，确认就退化成「前端说了算」，而落库授权这件事就白做了。
+ *
+ * <h2>{@code /messages} 是 SSE，其余端点仍是普通 JSON</h2>
+ * 只有这一条端点会「边跑边说」—— 一轮对话最多要串 3 轮只读工具，中间几十秒没有任何
+ * 用户可见的动静。其余端点（确认、取消、读会话）本来就是一次查或一次写，把它们也改成
+ * 流式只是把同一个形状写两遍。<b>刻意不保留 {@code /messages} 的非流式版本</b>：
+ * 两条语义相同的路径，后来人不知道该用哪条，而它们迟早会走偏。
+ *
+ * <p>事件协议，以及「响应头一刷出去就只能靠 {@code final} 报错」这条约束，见
+ * {@link AssistantEventStream}。
+ *
+ * <p><b>一个必须记住的坑：前端不要给这个请求设 {@code Accept: text/event-stream}。</b>
+ * 端点声明的 {@code produces} 只管成功路径；失败时异常处理器要写的是 JSON 错误体，
+ * 而内容协商看的是请求的 {@code Accept} —— 只写 {@code text/event-stream} 会让
+ * 「功能没开」的 503 退化成 406 加一个空响应体。浏览器默认的 Accept 允许任意媒体类型，
+ * 在成功与失败两条路上都通。
  */
 @RestController
 @RequestMapping("/api/assistant")
@@ -64,30 +82,41 @@ public class AssistantController {
     private final ObjectProvider<AssistantConversationService> conversations;
     private final ObjectProvider<AssistantPendingActionService> pendingActions;
     private final ObjectProvider<AssistantConversationLogService> conversationLog;
+    private final ObjectMapper objectMapper;
 
     public AssistantController(ObjectProvider<AssistantConversationService> conversations,
                                ObjectProvider<AssistantPendingActionService> pendingActions,
-                               ObjectProvider<AssistantConversationLogService> conversationLog) {
+                               ObjectProvider<AssistantConversationLogService> conversationLog,
+                               ObjectMapper objectMapper) {
         this.conversations = conversations;
         this.pendingActions = pendingActions;
         this.conversationLog = conversationLog;
+        this.objectMapper = objectMapper;
     }
 
     /**
-     * 一轮对话：解析 → 追问 / 直接执行 / 落待确认。
+     * 一轮对话：解析 → 追问 / 直接执行 / 落待确认。<b>以 SSE 边跑边报。</b>
      *
      * <p>控制器不做任何校验与选源 —— 原话的长度上限、历史的来源与裁剪，全都发生在
      * {@link AssistantConversationService#respond} 里。这里只把请求体翻译成领域入参：
      * 身份取认证上下文，历史 {@link #historyOf} 归一，其余原样交出去。
+     *
+     * <p>{@code require(...)} 与取身份都刻意留在 {@link AssistantEventStream#open} <b>之前</b>：
+     * 那时响应还没被碰过，「功能没开」答 503、「没登录」答 401，而不是把这两件事
+     * 写成一个 200 的流内错误。开流之后这条路就没了（理由见 {@link AssistantEventStream}）。
      */
-    @PostMapping("/messages")
-    public AssistantTurnResult messages(@RequestBody(required = false) MessagesRequest request) {
+    @PostMapping(value = "/messages", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public void messages(@RequestBody(required = false) MessagesRequest request,
+                         HttpServletResponse response) {
         // 「功能没开启」必须先于一切：它要能答出 503，而不是在入参校验里变成 400。
         AssistantConversationService service = require(conversations);
-        return service.respond(SecurityUtil.currentUserId(),
+        UUID userId = SecurityUtil.currentUserId();
+        AssistantEventStream stream = AssistantEventStream.open(response, objectMapper);
+        stream.run(() -> service.respond(userId,
                 request == null ? null : request.conversationId(),
                 historyOf(request),
-                request == null ? null : request.text());
+                request == null ? null : request.text(),
+                stream));
     }
 
     /** 确认并执行一条待确认动作。 */

@@ -1,13 +1,16 @@
 package com.crmforlogistics.messagecenter.web;
 
+import com.crmforlogistics.messagecenter.channel.wecom.WeComContactEventEntity;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComInstallationService;
 import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
 import com.crmforlogistics.messagecenter.config.AppConfig;
 import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
+import com.crmforlogistics.messagecenter.dto.response.WeComContactEventResponse;
 import com.crmforlogistics.messagecenter.dto.response.WeComExternalContactLinkResponse;
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.wecom.WeComApiActor;
 import com.crmforlogistics.messagecenter.service.wecom.WeComAppChatService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComContactEventService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComContactLinkService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComDirectoryService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComExternalContactService;
@@ -18,6 +21,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,6 +43,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/wecom")
 public class WeComP0Controller {
     private static final long MAX_REQUEST_BODY_BYTES = 256L * 1024L;
+    private static final int MAX_CONTACT_EVENT_LIMIT = 200;
     private final AppConfig config;
     private final WeComInstallationService installations;
     private final WeComAppChatService appChats;
@@ -46,6 +52,7 @@ public class WeComP0Controller {
     private final WeComProfileBackfillService profileBackfill;
     private final WeComUserBindingService bindings;
     private final WeComContactLinkService contactLinks;
+    private final WeComContactEventService contactEvents;
 
     public WeComP0Controller(AppConfig config, WeComInstallationService installations,
                              WeComAppChatService appChats,
@@ -53,7 +60,8 @@ public class WeComP0Controller {
                              WeComDirectoryService directory,
                              WeComProfileBackfillService profileBackfill,
                              WeComUserBindingService bindings,
-                             WeComContactLinkService contactLinks) {
+                             WeComContactLinkService contactLinks,
+                             WeComContactEventService contactEvents) {
         this.config = config;
         this.installations = installations;
         this.appChats = appChats;
@@ -62,6 +70,7 @@ public class WeComP0Controller {
         this.profileBackfill = profileBackfill;
         this.bindings = bindings;
         this.contactLinks = contactLinks;
+        this.contactEvents = contactEvents;
     }
 
     @GetMapping("/installations")
@@ -131,6 +140,44 @@ public class WeComP0Controller {
         return contactLinks.resolve(userId, externalUserIds);
     }
 
+    /**
+     * 「客户动态」：客户关系变化的流水（新增 / 编辑 / 免验证添加 / 删除客户 / 删除跟进成员 / 接替失败）。
+     *
+     * <p>与「客户联系」面板的区别：那个是**当前快照**（每次进页面现拉 {@code externalcontact/list}），
+     * 这里是**流水**。快照回答「现在有哪些客户」，只有流水才能回答「这个客户是什么时候、由谁、
+     * 经哪个渠道加进来的」以及「什么时候流失的」。
+     *
+     * <p>约束：
+     * <ul>
+     *   <li>单次数据库查询完成，**不在列表接口回查企微** —— 一页 200 条会变成 200 个外部请求；</li>
+     *   <li>首期不返回昵称。拿不到名称时前端显示「未获取昵称」，不伪造；</li>
+     *   <li>数据自接入日起，**不含接入前的历史** —— 企微不提供历史事件查询接口。</li>
+     * </ul>
+     */
+    @GetMapping("/installations/{authCorpId}/contact-events")
+    public List<WeComContactEventResponse> contactEvents(
+            @PathVariable String authCorpId,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since,
+            @RequestParam(required = false) String changeType,
+            @RequestParam(defaultValue = "50") int limit) {
+        WeComUserBindingService.BoundIdentity binding =
+                bindings.requireByUserId(SecurityUtil.currentUserId());
+        if (!authCorpId.equals(binding.authCorpId())) {
+            throw new WeComException("WECOM_BINDING_CORP_MISMATCH", 403,
+                    "当前账号绑定的企业微信企业与请求不一致");
+        }
+        if (limit < 1 || limit > MAX_CONTACT_EVENT_LIMIT) {
+            throw new WeComException("WECOM_CONTACT_EVENT_LIMIT_INVALID", 400,
+                    "limit 必须在 1 到 " + MAX_CONTACT_EVENT_LIMIT + " 之间");
+        }
+        // 当前配置的 suite_id + 密文 corpid 才能唯一定位安装；只按 auth_corp_id 会在多 suite 下串读。
+        var installation = installations.resolveActive(config.wecomSuiteId(), authCorpId);
+        return contactEvents.listTimeline(installation.getId(), since, changeType, limit).stream()
+                .map(WeComP0Controller::toContactEventResponse)
+                .toList();
+    }
+
     @GetMapping("/installations/{authCorpId}/external-contacts/{externalUserId}")
     public JsonNode getExternalContact(@PathVariable String authCorpId,
                                        @PathVariable String externalUserId,
@@ -138,7 +185,6 @@ public class WeComP0Controller {
                                        HttpServletRequest servletRequest) {
         return externalContacts.get(authCorpId, externalUserId, cursor, actor(servletRequest));
     }
-
     @PostMapping("/installations/{authCorpId}/external-contacts:batchGet")
     public JsonNode batchGetExternalContacts(@PathVariable String authCorpId,
                                               @RequestBody BatchExternalContactsRequest request,
@@ -221,6 +267,12 @@ public class WeComP0Controller {
     public JsonNode getTag(@PathVariable String authCorpId, @PathVariable long tagId,
                            HttpServletRequest servletRequest) {
         return directory.getTag(authCorpId, tagId, actor(servletRequest));
+    }
+
+    private static WeComContactEventResponse toContactEventResponse(WeComContactEventEntity event) {
+        return new WeComContactEventResponse(event.getId(), event.getChangeType(),
+                event.getExternalUserId(), event.getWecomUserId(), event.getState(),
+                event.getFailReason(), event.getProviderSource(), event.getProviderCreatedAt());
     }
 
     private static WeComApiActor actor(HttpServletRequest request) {
