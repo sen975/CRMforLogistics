@@ -13,13 +13,15 @@ export function ownedTemplatePreview(template: TemplateAdmin): OwnedTemplatePrev
   const text = [
     header?.headerFormat === 'TEXT' ? header.text : null,
     body?.text,
-    footer?.text,
   ].filter((value): value is string => Boolean(value?.trim())).join('\n\n');
 
   return {
     page: {
       name: template.displayName,
       text,
+      // 页脚单独带出去、不并进 text —— 并进去它就和正文长得一模一样，
+      // 用户会读成「正文里多了一句无关的话」。它在客户手机上是灰色小字。
+      footer: footer?.text ?? null,
       buttons: (buttons?.buttons ?? []).map((button) => ({
         name: button.text,
         type: button.type,

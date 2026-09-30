@@ -93,17 +93,69 @@ class AssistantPromptBuilderTest {
      */
     @Test
     void theReadTurnBudgetComesFromConfigurationNotFromAConstant() {
-        assertThat(builder.buildSystemPrompt(context)).contains("本次最多 3 轮只读检索");
+        assertThat(builder.buildSystemPrompt(context))
+                .contains("**处理你这一条消息的过程中**最多 3 轮只读检索");
 
         AssistantPromptBuilder oneTurn = new AssistantPromptBuilder(registry,
                 AssistantFixtures.config(1), AssistantFixtures.objectMapper());
-        assertThat(oneTurn.buildSystemPrompt(context)).contains("本次最多 1 轮只读检索");
+        assertThat(oneTurn.buildSystemPrompt(context))
+                .contains("**处理你这一条消息的过程中**最多 1 轮只读检索");
 
         // 0 = 回滚开关：整条只读轨关掉，提示词必须明说「不要调用只读工具」，
         // 否则模型会照常尝试检索，然后撞上「未完成」终态。
         AssistantPromptBuilder noRead = new AssistantPromptBuilder(registry,
                 AssistantFixtures.config(0), AssistantFixtures.objectMapper());
         assertThat(noRead.buildSystemPrompt(context)).contains("本次**不允许只读检索**");
+    }
+
+    /**
+     * 2026-09-28 事故：模型把「本次最多 3 轮」读成了「本次会话最多 3 轮」。它在一条消息里用完 3 轮之后，
+     * 下一条消息直接宣称「这次会话的只读检索额度已经用完了」，被追问时还编了
+     * 「额度是按本次会话算的，不是每轮刷新」—— 而代码里 {@code readTurns} 是每请求的局部变量。
+     *
+     * <p>两件事必须在提示词里，缺一条这条路就还是通的：①作用域写明是「这一条消息」且每条消息重新计满；
+     * ②不许照抄自己上一轮关于额度的说法、也不许向用户解释这套内部机制。
+     * 硬规则 11（工具清单是唯一事实来源）挡不住它 —— 额度不是工具清单里的东西。
+     */
+    @Test
+    void theReadBudgetIsScopedToOneMessageAndPastClaimsAboutItMustNotBeCopied() {
+        String prompt = builder.buildSystemPrompt(context);
+
+        assertThat(prompt).contains("这个上限只属于你**这一条**消息")
+                .as("「本次」是这次事故的词眼，必须换成无歧义的作用域说法");
+        assertThat(prompt).contains("用户每发一条新消息，它都重新从头计满");
+        assertThat(prompt).contains("只读检索的轮次上限是**每条消息各自重新计**的");
+        assertThat(prompt).contains("**不代表**当前这条消息也不能查")
+                .as("历史里自己的额度声明不会被当成本轮事实");
+        assertThat(prompt).contains("不要向用户解释它")
+                .as("与硬规则 9 同源：不确定的内部机制宁可不说，也不能编一个说法给用户");
+    }
+
+    /**
+     * 2026-09-29：只读工具在 {@link AssistantActionPolicy} 里走 READ 档（免确认、可循环），
+     * 但提示词原先只说了「你可以先调用只读工具」，没说这类调用不需要用户点头。
+     * 模型于是把「要不要我帮你查一下」当成 decision=ask 的正当理由，用户白等一轮 ——
+     * 系统侧没有任何收益，因为它本来就会直接执行。
+     *
+     * <p>这条断言钉的是同一行为约束的<b>两端</b>：轮次契约里贴近工具清单的那一句
+     * （模型读到这里时手边就是工具清单），以及末尾硬规则 13 的兜底。
+     * 少一处就少一层，而它守的是用户感知最直接的那件事。
+     *
+     * <p>第三句断言不是凑数：「决策：ask 能不能用来征求许可」正是这条规则的落点 ——
+     * 少了它，模型仍可自认为「我没违规，我只是先问一句」，然后照旧 ask。
+     */
+    @Test
+    void queryToolsRunWithoutAskingTheUserForPermission() {
+        String prompt = builder.buildSystemPrompt(context);
+
+        assertThat(prompt).contains("这类工具**免确认**：直接调用，不要先问用户「要不要帮你查」")
+                .as("轮次契约里这一句离工具清单最近");
+        assertThat(prompt).contains("只读/查询类工具免确认，直接调用")
+                .as("硬规则 13 是兜底：模型可能只读到末尾的规则段");
+        assertThat(prompt).contains("decision=ask 只用于缺少必填参数（第 2、3 条）")
+                .as("不划清 ask 的用途，模型会把「征求许可」当成它的合法用法");
+        assertThat(prompt).contains("不需要你在回话里先问一遍")
+                .as("写操作同理：确认由系统卡片承接，不是让模型先问一句");
     }
 
     @Test

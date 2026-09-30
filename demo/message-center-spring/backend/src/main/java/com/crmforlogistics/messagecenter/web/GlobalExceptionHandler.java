@@ -108,8 +108,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(EmailException.class)
     public ResponseEntity<ApiError> handleEmail(EmailException e, HttpServletRequest request) {
-        HttpStatus status = "EMAIL_SEND_OUTCOME_UNKNOWN".equals(e.code())
-                ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.BAD_REQUEST;
+        HttpStatus status = switch (e.code()) {
+            case "AUTHENTICATION_REQUIRED" -> HttpStatus.UNAUTHORIZED;
+            case "EMAIL_SEND_OUTCOME_UNKNOWN" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.BAD_REQUEST;
+        };
         return ResponseEntity.status(status).body(new ApiError(
                 e.code(), e.getMessage(), traceId(request), Map.of()));
     }
@@ -136,6 +139,10 @@ public class GlobalExceptionHandler {
             case AssistantException.PENDING_NOT_FOUND -> HttpStatus.NOT_FOUND;
             case AssistantException.PENDING_EXPIRED -> HttpStatus.GONE;
             case AssistantException.PENDING_ALREADY_DECIDED -> HttpStatus.CONFLICT;
+            case AssistantException.CONVERSATION_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case AssistantException.CONVERSATION_EXPIRED -> HttpStatus.GONE;
+            case AssistantException.CONVERSATION_DELETED, AssistantException.CONVERSATION_NOT_ACTIVE,
+                    AssistantException.CONVERSATION_ALREADY_EXISTS -> HttpStatus.CONFLICT;
             default -> HttpStatus.BAD_REQUEST;
         };
         // 内容类型**显式**给出，不交给内容协商。`/api/assistant/messages` 是唯一一条

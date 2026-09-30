@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class WhatsAppTemplateModels {
@@ -12,7 +13,35 @@ public final class WhatsAppTemplateModels {
     }
 
     public enum ReviewStatus {
-        PENDING, APPROVED, REJECTED, SUSPENDED, UNKNOWN
+        PENDING, APPROVED, REJECTED, SUSPENDED, UNKNOWN;
+
+        /**
+         * CAMS 的 {@code AuditStatus} 是一个自由字符串，而且<b>实测取值比官方文档还多</b>：
+         * 文档只列了 {@code pass / fail / auditing / unaudit / disabled / paused}，
+         * 线上却真实出现过 {@code sendFail}（2026-09-29 实测；同一条记录还带着
+         * {@code Reason}，例如「变量不允许出现在模板正文的开头或结尾」）。
+         *
+         * <p>所以这里必须把<b>已知取值全部覆盖</b>。任何落空的取值都会静默变成
+         * {@link #UNKNOWN}，而 {@link #UNKNOWN} 会把一个「审核被拒」的模板在界面上
+         * 显示成灰色的「未知」—— 用户于是以为它还能被「恢复发送」，点下去只会撞上
+         * 409 {@code TEMPLATE_NOT_APPROVED}，而真正的原因（模板内容违规、审核未通过）
+         * 一个字都不会露出来。这正是 2026-09-29 那次报障的完整成因。
+         *
+         * <p>{@code null} 与仍然认不出的取值继续回落到 {@link #UNKNOWN}：这里不能猜。
+         * 但调用方要清楚它是一个<b>显式的「没认出来」</b>信号，不是「没问题」，
+         * 更不该拿它当「可以发送」来用。
+         */
+        public static ReviewStatus fromProviderAuditStatus(String raw) {
+            if (raw == null) return UNKNOWN;
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "pass" -> APPROVED;
+                // sendFail 是文档外的实测取值：它带 Reason、且模板不可发送，按拒审处理。
+                case "fail", "sendfail" -> REJECTED;
+                case "auditing" -> PENDING;
+                case "unaudit", "paused", "disabled" -> SUSPENDED;
+                default -> UNKNOWN;
+            };
+        }
     }
 
     public enum OperationStatus {

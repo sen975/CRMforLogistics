@@ -26,7 +26,15 @@ import java.util.UUID;
 
 @Service
 public class WhatsAppTemplateMediaUploadService {
-    private static final long IMAGE_MAX_BYTES = 5L * 1024 * 1024;
+    /**
+     * 图片素材的大小上限（平台规格）。
+     *
+     * <p>它是 {@code public} 的，因为 {@code TemplateMediaLinkFetcher} 要用<b>同一个数</b>
+     * 决定「读到多大就掐断网络流」：从外链抓图时必须在<b>下载途中</b>停，
+     * 而不是先把 200MB 读完再拿给这里判超限。抄第二份数字的后果是两条路的上限悄悄分叉，
+     * 而分叉的方向通常是「抓取侧比上传侧宽」—— 白白吃满内存之后再报一句「文件太大」。
+     */
+    public static final long IMAGE_MAX_BYTES = 5L * 1024 * 1024;
     private static final long VIDEO_MAX_BYTES = 16L * 1024 * 1024;
     private static final long DOCUMENT_MAX_BYTES = 64L * 1024 * 1024;
     private static final long PROCESSING_TIMEOUT_SECONDS = 90;

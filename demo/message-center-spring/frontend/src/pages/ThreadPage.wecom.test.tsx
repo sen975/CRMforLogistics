@@ -177,6 +177,25 @@ beforeEach(() => {
   api.markContactRead.mockResolvedValue(undefined);
 });
 
+it('renders the contact timeline as a layered message workspace', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { container } = render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/thread/contact-1']}>
+        <Routes>
+          <Route path="/thread/:contactId" element={<ThreadPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+
+  await waitFor(() => expect(screen.getByTestId('thread-timeline')).toBeInTheDocument());
+  expect(container.querySelector('.message-center-thread-shell')).toBeInTheDocument();
+  expect(container.querySelector('.message-center-thread-header')).toBeInTheDocument();
+  expect(container.querySelector('.message-center-thread-timeline')).toBeInTheDocument();
+  expect(container.querySelector('.message-center-thread-composer')).toBeInTheDocument();
+});
+
 it('switches the merged contact to a full-page WeCom conversation and returns to the timeline', async () => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(

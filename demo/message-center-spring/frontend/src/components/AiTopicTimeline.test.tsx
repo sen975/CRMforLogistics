@@ -100,6 +100,8 @@ describe('AiTopicTimeline', () => {
     }]} onSourceClick={vi.fn()} />);
 
     expect(screen.getByText('联系人合并')).toBeInTheDocument();
+    // 分组标题上的计数胶囊（橙底 is-warn）只在有待确定 Topic 时渲染 —— 本地库没有这种数据，靠这条锁住。
+    expect(document.querySelector('.cd-group-title .cd-cnt.is-warn')?.textContent).toBe('1');
     fireEvent.click(screen.getByText('待确认报价'));
     expect(screen.getByText('原 Topic：历史报价')).toBeInTheDocument();
     expect(screen.getByText(/时间范围.*2026\/08\/01.*2026\/08\/02/)).toBeInTheDocument();

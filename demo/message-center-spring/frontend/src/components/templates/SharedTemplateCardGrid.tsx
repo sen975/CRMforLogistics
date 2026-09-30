@@ -26,7 +26,7 @@ function SharedTemplateCard({ template, isAdmin, onOpen, onEdit, onToggleSend, o
     <footer className="shared-template-card__actions">
       <Tooltip title="查看详情"><Button type="text" aria-label={`查看 ${template.templateCode}`} icon={<EyeOutlined />} onClick={() => onOpen(template)} /></Tooltip>
       <Tooltip title={commandLabel}><Button type="text" aria-label={`编辑 ${template.templateCode}`} icon={<EditOutlined />} onClick={() => onEdit(template)} /></Tooltip>
-      <Tooltip title={isAdmin ? permission.actionLabel : '提交发送权限审批'}><Button type="text" aria-label={`${permission.actionLabel} ${template.templateCode}`} disabled={isAdmin && permission.toggleDisabled} icon={template.allowSend ? <PauseCircleOutlined /> : <PlayCircleOutlined />} onClick={() => onToggleSend(template)} /></Tooltip>
+      <Tooltip title={permission.toggleUnavailable ? permission.toggleUnavailableReason ?? '' : isAdmin ? permission.actionLabel : '提交发送权限审批'}><span className="shared-template-card__toggle"><Button type="text" aria-label={`${permission.actionLabel} ${template.templateCode}`} disabled={permission.toggleUnavailable || (isAdmin && permission.toggleDisabled)} icon={template.allowSend ? <PauseCircleOutlined /> : <PlayCircleOutlined />} onClick={() => onToggleSend(template)} /></span></Tooltip>
       <Tooltip title={isAdmin ? '直接删除' : '提交删除审批'}><Button type="text" danger aria-label={`删除 ${template.templateCode}`} icon={<DeleteOutlined />} onClick={() => onDelete(template)} /></Tooltip>
     </footer>
   </article>;

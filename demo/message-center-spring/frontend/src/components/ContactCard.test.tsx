@@ -16,11 +16,27 @@ const contact: ContactResponse = {
 };
 
 describe('ContactCard channel icons', () => {
-  it('uses the phone handset icon for phone contacts', () => {
-    render(<ContactCard contact={contact} isActive={false} onClick={() => undefined} />);
+  it('renders a stable initial avatar with channel markers', () => {
+    const { rerender } = render(<ContactCard contact={contact} isActive={false} onClick={() => undefined} />);
+    const avatar = screen.getByTestId('contact-avatar');
+    expect(avatar).toHaveTextContent('8');
+    expect(avatar.querySelector('[data-channel="phone"]')).toBeInTheDocument();
+    const colorClass = avatar.className;
+    rerender(<ContactCard contact={contact} isActive onClick={() => undefined} />);
+    expect(screen.getByTestId('contact-avatar')).toHaveClass(colorClass.split(' ').find((name) => name.startsWith('contact-avatar-color-'))!);
+    expect(screen.getByText(contact.displayName).closest('.conversation-contact')).toHaveClass('is-active');
+  });
 
-    expect(screen.getByRole('img', { name: 'phone' })).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: 'message' })).not.toBeInTheDocument();
+  it('uses the first visible character for a Chinese contact name', () => {
+    render(<ContactCard contact={{ ...contact, displayName: '守望' }} isActive={false} onClick={() => undefined} />);
+
+    expect(screen.getByTestId('contact-avatar')).toHaveTextContent('守');
+  });
+
+  it('leaves the preview blank when the conversation has no message', () => {
+    render(<ContactCard contact={{ ...contact, lastText: '', messageCount: 0 }} isActive={false} onClick={() => undefined} />);
+
+    expect(screen.queryByText('暂无消息')).not.toBeInTheDocument();
   });
 
   it('shows a labelled pin icon for a pinned contact', () => {

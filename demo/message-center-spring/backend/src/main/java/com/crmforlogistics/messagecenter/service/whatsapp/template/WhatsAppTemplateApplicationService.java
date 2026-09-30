@@ -49,6 +49,7 @@ public class WhatsAppTemplateApplicationService {
     private final AuditLogMapper auditLogMapper;
     private final WhatsAppTemplateGateway gateway;
     private final WhatsAppTemplateValidator validator;
+    private final WhatsAppProviderScopeService providerScopes;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -60,6 +61,7 @@ public class WhatsAppTemplateApplicationService {
             AuditLogMapper auditLogMapper,
             WhatsAppTemplateGateway gateway,
             WhatsAppTemplateValidator validator,
+            WhatsAppProviderScopeService providerScopes,
             ObjectMapper objectMapper,
             Clock clock) {
         this.accountMapper = Objects.requireNonNull(accountMapper);
@@ -69,6 +71,7 @@ public class WhatsAppTemplateApplicationService {
         this.auditLogMapper = Objects.requireNonNull(auditLogMapper);
         this.gateway = Objects.requireNonNull(gateway);
         this.validator = Objects.requireNonNull(validator);
+        this.providerScopes = Objects.requireNonNull(providerScopes);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.clock = Objects.requireNonNull(clock);
     }
@@ -94,6 +97,45 @@ public class WhatsAppTemplateApplicationService {
                     "Business App 账号尚未完成模板空间绑定");
         }
         return createInternal(account.getProviderScopeId(), accountId, command, actorUserId, traceId, true);
+    }
+
+    /**
+     * 申请模板：按<b>账号自己的绑定方式</b>决定走到哪个域 —— 这是助手那条路的唯一入口。
+     *
+     * <h2>为什么不能只调 createPrivate（2026-09-29 修的）</h2>
+     * 两种绑定对应两个平台 API，它们的模板根本不在一个地方：
+     * Business App 的模板是<b>账号私有</b>的（{@link #createPrivate}），
+     * 企业 API 的模板是<b>整个 CAMS 空间共享</b>的（{@link #create}）。
+     * 而 {@code createPrivate} 的第一行是 {@code requireOwnedBusinessAppAccount}，
+     * 它对一个企业 API 账号只会抛 {@code WHATSAPP_TEMPLATE_DOMAIN_MISMATCH} ——
+     * 也就是说，只调它的话，<b>任何企业 API 账号都申请不了模板</b>，
+     * 而错误信息里没有一个字告诉用户「换个入口就好了」。
+     *
+     * <h2>归属为什么必须在这里查</h2>
+     * {@link #create} 自己<b>不</b>查归属：共享域的归属由 scope 门承担（调用方已经先
+     * {@code requireScopeAccount(actorUserId, scopeId)} 过）。域分派把两条路合到一处，
+     * 那道门就不再必然存在，所以这里先自己查一次 —— 判据是 SQL 里的
+     * {@code owner_user_id}（{@link #requireOwnedAccount}），两个域共用同一条。
+     *
+     * <h2>未绑空间不等于「这个账号在 CAMS 里不存在」</h2>
+     * 账号属于哪个空间由它<b>凭证里的</b> {@code custSpaceId} 决定
+     * （{@link WhatsAppProviderScopeService#bind}），{@code provider_scope_id} 只是我们
+     * 这边的缓存。缓存为空时这里补绑一次，而不是把账号判死 —— 否则一个在 CAMS 里
+     * 明明有号码的用户会因为一次没跑过的绑定而「不能申请模板」。
+     *
+     * <p>本条只覆盖<b>新建</b>。修改与删除模板不开放给助手：它们影响的是所有正在用该
+     * 模板的会话，且同样提交给外部平台、撤不回，风险面远大于「多一个待审核的模板」。
+     */
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
+    public OperationView createForActor(UUID accountId, TemplateCommand command,
+                                        UUID actorUserId, String traceId) {
+        ChannelAccountEntity account = requireOwnedAccount(accountId, actorUserId);
+        UUID providerScopeId = account.getProviderScopeId();
+        if (providerScopeId == null) {
+            providerScopeId = providerScopes.bind(account).getId();
+        }
+        boolean privateDomain = WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode());
+        return createInternal(providerScopeId, accountId, command, actorUserId, traceId, privateDomain);
     }
 
     private OperationView createInternal(UUID providerScopeId, UUID accountId, TemplateCommand command,
@@ -214,8 +256,14 @@ public class WhatsAppTemplateApplicationService {
         TemplateEntity current = lockSharedTemplate(providerScopeId, credentialAccountId, templateId);
         requireEnterpriseApiAccount(requireAccount(credentialAccountId));
         if (allowSend && !"APPROVED".equalsIgnoreCase(current.getStatus())) {
+            // 提示要中文，而且要<b>点名当前状态</b>：2026-09-29 报障时这里只有一句英文，
+            // 而模板状态又因 CAMS 的 sendFail 未被映射而显示成灰色的「未知」，
+            // 用户因此既看不出「审核没通过」，也看不出该去改模板还是改配置。
             throw business("TEMPLATE_NOT_APPROVED", HttpStatus.CONFLICT,
-                    "Only approved templates can be enabled");
+                    "只有审核通过的模板才能开启发送（该模板当前状态：" + current.getStatus() + "）");
+        }
+        if (!allowSend && !pausable(current.getCategory())) {
+            throw pauseUnsupported(current.getCategory());
         }
         boolean previousAllowSend = Boolean.TRUE.equals(current.getAllowSend());
         BeginOperation begun = beginOperation(credentialAccountId, clientRequestId, OperationType.SET_SEND_PERMISSION,
@@ -253,6 +301,9 @@ public class WhatsAppTemplateApplicationService {
                                                   boolean allowSend, String clientRequestId, String traceId) {
         requireOwnedBusinessAppAccount(accountId, actorUserId);
         TemplateEntity current = lockPrivateTemplate(accountId, templateId);
+        if (!allowSend && !pausable(current.getCategory())) {
+            throw pauseUnsupported(current.getCategory());
+        }
         boolean previousAllowSend = Boolean.TRUE.equals(current.getAllowSend());
         BeginOperation begun = beginOperation(accountId, clientRequestId, OperationType.SET_SEND_PERMISSION,
                 current.getProviderTemplateId(), current.getLanguageCode(), Map.of("allowSend", allowSend),
@@ -363,7 +414,15 @@ public class WhatsAppTemplateApplicationService {
         return account;
     }
 
-    public ChannelAccountEntity requireOwnedBusinessAppAccount(UUID accountId, UUID actorUserId) {
+    /**
+     * 账号属于调用者本人 —— 判据是 SQL 里的 {@code owner_user_id}
+     * （{@code ChannelAccountMapper#findByIdAndOwner}），不在 Java 里二次过滤。
+     *
+     * <p>抽出来是给 {@link #createForActor} 用的：那条路同时覆盖<b>两个</b>域，
+     * 而共享域的 {@link #create} 自己不含归属判据（它的调用方先过了 scope 门），
+     * 所以域分派之前必须先查一次，否则企业 API 域会整条没有归属防线。
+     */
+    public ChannelAccountEntity requireOwnedAccount(UUID accountId, UUID actorUserId) {
         if (actorUserId == null) {
             throw business("WHATSAPP_ACCOUNT_OWNER_REQUIRED", HttpStatus.UNAUTHORIZED,
                     "WhatsApp 账号 owner 未登录");
@@ -373,6 +432,11 @@ public class WhatsAppTemplateApplicationService {
             throw business("WHATSAPP_ACCOUNT_NOT_FOUND", HttpStatus.NOT_FOUND,
                     "WhatsApp 账号不存在或不属于当前用户");
         }
+        return account;
+    }
+
+    public ChannelAccountEntity requireOwnedBusinessAppAccount(UUID accountId, UUID actorUserId) {
+        ChannelAccountEntity account = requireOwnedAccount(accountId, actorUserId);
         if (!WhatsAppAccountMode.isBusinessApp(account.getOnboardingMode())) {
             throw business("WHATSAPP_TEMPLATE_DOMAIN_MISMATCH", HttpStatus.CONFLICT,
                     "当前 WhatsApp 账号不是 Business App 私有模板账号");
@@ -660,6 +724,34 @@ public class WhatsAppTemplateApplicationService {
         return new WhatsAppTemplateException("TEMPLATE_NAME_IMMUTABLE", HttpStatus.BAD_REQUEST,
                 "WhatsApp template name cannot be changed", Map.of("name", "cannot be changed after template creation"),
                 null, false);
+    }
+
+    /**
+     * AllowSend 在 CAMS 侧<b>只对营销模板成立</b>，所以「暂停发送」对一个非营销模板不是「可能失败」，
+     * 而是根本不成立 —— 必须在打给 CAMS 之前挡住。
+     *
+     * <h2>判据（2026-09-29 实测，不是推测）</h2>
+     * 对同一个通知类（{@code UTILITY}）模板、同一把空间凭据，只改 allowSend：
+     * <ul>
+     *   <li>{@code allowSend=true} → CAMS 返回成功（历史 5 次成功记录也全是 true）；</li>
+     *   <li>{@code allowSend=false} → CAMS 必然返回 {@code ERR-COMMON-001} / {@code code: 400, System error}，
+     *       被网关包成 502 {@code TEMPLATE_PROVIDER_ERROR} 抛给用户，用户只看得到一串英文 request id。</li>
+     * </ul>
+     * 本仓全部 20 个模板都是 {@code UTILITY}，所以「暂停发送」这个动作在本租户里从来没有成功过一次。
+     *
+     * <p>这条判据与既有口径是同一件事，不是新增约束：{@code AliyunChatAppTemplateGateway.templateAllowsSend(...)}
+     * 早就写着「非 MARKETING 模板不看 allowSend」，同步逻辑也会把非营销模板的 allowSend 直接改回来。
+     * 也就是说，即使 CAMS 收下了 {@code false}，本地下一轮同步也会把「已暂停」抹掉。
+     */
+    private static boolean pausable(String category) {
+        return category != null && "MARKETING".equalsIgnoreCase(category.trim());
+    }
+
+    private static WhatsAppTemplateException pauseUnsupported(String category) {
+        return business("TEMPLATE_PAUSE_UNSUPPORTED", HttpStatus.CONFLICT,
+                "无法暂停该模板：WhatsApp 只允许暂停营销模板，当前模板类别是「"
+                        + (category == null || category.isBlank() ? "未知" : category)
+                        + "」。通知类与验证类模板的发送状态由 Meta 按质量评分自动管理。");
     }
 
     private static WhatsAppTemplateException business(String code, HttpStatus status, String message) {

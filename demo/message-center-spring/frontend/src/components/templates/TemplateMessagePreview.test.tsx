@@ -100,4 +100,34 @@ describe('TemplateMessagePreview', () => {
     expect(screen.queryByRole('link', { name: '执行脚本' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '站内路径' })).not.toBeInTheDocument();
   });
+
+  it('renders the footer as its own row instead of letting it read as body text', () => {
+    const { container } = render(
+      <TemplateMessagePreview
+        page={page({ footer: '如需调整请直接回复本条消息' })}
+        variables={variables}
+        mode="parameter"
+      />,
+    );
+
+    expect(container.querySelector('.template-message-footer')).toHaveTextContent('如需调整请直接回复本条消息');
+    // 两个节点分开：并进正文里，用户会读成「正文多了一句莫名其妙的话」。
+    expect(container.querySelector('.template-message-text')).not.toHaveTextContent('如需调整请直接回复本条消息');
+  });
+
+  it('keeps the footer out of the tree when the page declares none', () => {
+    const { container } = render(<TemplateMessagePreview page={page()} variables={variables} mode="parameter" />);
+
+    expect(container.querySelector('.template-message-footer')).not.toBeInTheDocument();
+  });
+
+  it('shows a footer token verbatim because the platform does not allow variables there', () => {
+    const { container } = render(
+      <TemplateMessagePreview page={page({ footer: '退订请回 $(name)' })} variables={variables} mode="example" />,
+    );
+
+    // 页脚不解析变量：原样显示才看得见「这里写了平台不认的东西」。
+    expect(container.querySelector('.template-message-footer')).toHaveTextContent('退订请回 $(name)');
+    expect(container.querySelector('.template-message-footer .template-variable')).not.toBeInTheDocument();
+  });
 });

@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.service.aitopic.AiTopicService;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.AiTopicAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ChatAppTemplateAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactTimelineAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactWriteAssistantTools;
@@ -15,8 +16,13 @@ import com.crmforlogistics.messagecenter.service.callrecord.ContactTimelineServi
 import com.crmforlogistics.messagecenter.service.contact.ContactGroupService;
 import com.crmforlogistics.messagecenter.service.contact.ContactService;
 import com.crmforlogistics.messagecenter.service.message.MessageQueryService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppSharedTemplateCatalogService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
+import com.crmforlogistics.messagecenter.service.wecom.WeComSelfPushService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComSummaryReadService;
 import io.modelcontextprotocol.spec.McpSchema;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaCatalogService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaIngestService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
@@ -43,9 +49,22 @@ class AssistantActionPolicyTest {
             new TodoAssistantTools(new com.crmforlogistics.messagecenter.service.todo.TodoItemService(
                     org.mockito.Mockito.mock(com.crmforlogistics.messagecenter.mapper.TodoItemMapper.class)));
 
+    /**
+     * AUTO 档的<b>全部</b>成员。
+     *
+     * <p>写成逐个列举而不是 {@code contains}：这一档是「不打招呼就执行」，
+     * 多一个成员就是多一条无人复核的路径。加工具时这条断言必须一起改 ——
+     * 那一步正是让人停下来回答「最坏情况用户会失去什么」的地方。
+     *
+     * <p>2026-09-28 从一条变两条：{@code wecom.push_self} 能进来靠的是
+     * <b>收件人由调用方身份解析、不是参数</b>（模型编不出别人），最坏情况是「自己多收一条消息」。
+     * 这与 {@code message.send_email} 必须确认并不矛盾 —— 两者的差别在「能不能发给第三方」。
+     */
     @Test
-    void createIsTheOnlyAutoExecutedAction() {
-        assertThat(AssistantActionPolicy.AUTO_EXECUTE_ALLOWLIST).containsExactly(TodoAssistantTools.TOOL_CREATE);
+    void onlyTheTwoDeliberateActionsRunWithoutConfirmation() {
+        assertThat(AssistantActionPolicy.AUTO_EXECUTE_ALLOWLIST).containsExactlyInAnyOrder(
+                TodoAssistantTools.TOOL_CREATE,
+                WeComAssistantTools.TOOL_PUSH_SELF);
     }
 
     @Test
@@ -128,7 +147,17 @@ class AssistantActionPolicyTest {
     private final MessageAssistantTools messageTools = new MessageAssistantTools(
             org.mockito.Mockito.mock(MessageQueryService.class));
 
-    private final WeComAssistantTools wecomTools = new WeComAssistantTools(absentSummaryService());
+    private final WeComAssistantTools wecomTools =
+            new WeComAssistantTools(absentSummaryService(), absentPushService());
+
+    /** chatapp 模板域：一个只读（清单）、一个写（申请）。依赖全 mock，理由同上面那两组。 */
+    private final ChatAppTemplateAssistantTools templateTools = new ChatAppTemplateAssistantTools(
+            org.mockito.Mockito.mock(ChatAppAccountProvider.class),
+            org.mockito.Mockito.mock(WhatsAppSharedTemplateCatalogService.class),
+            org.mockito.Mockito.mock(WhatsAppTemplateApplicationService.class),
+            org.mockito.Mockito.mock(TemplateMediaProvider.class),
+            org.mockito.Mockito.mock(WhatsAppTemplateMediaCatalogService.class),
+            org.mockito.Mockito.mock(WhatsAppTemplateMediaIngestService.class));
 
     /**
      * 「企微没启用」时那个 provider：{@code getIfAvailable()} 恒返回 {@code null}。
@@ -138,6 +167,12 @@ class AssistantActionPolicyTest {
      */
     @SuppressWarnings("unchecked")
     private static ObjectProvider<WeComSummaryReadService> absentSummaryService() {
+        return org.mockito.Mockito.mock(ObjectProvider.class);
+    }
+
+    /** 同上，给推送门面。 */
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<WeComSelfPushService> absentPushService() {
         return org.mockito.Mockito.mock(ObjectProvider.class);
     }
 
@@ -162,7 +197,25 @@ class AssistantActionPolicyTest {
                 ContactTimelineAssistantTools.TOOL_TIMELINE,
                 AiTopicAssistantTools.TOOL_TOPICS_READ,
                 MessageAssistantTools.TOOL_READ,
-                WeComAssistantTools.TOOL_SUMMARY_READ);
+                WeComAssistantTools.TOOL_SUMMARY_READ,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_LIST,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_MEDIA_LIST);
+    }
+
+    /**
+     * 素材这一对：清单免确认、上传要确认。
+     *
+     * <p>上传<b>刻意不进</b> {@code AUTO_EXECUTE_ALLOWLIST}，理由与它为什么不进只读清单一样：
+     * 它会让服务端去访问一个外部地址、再把内容写进服务商的存储。最坏结果虽然是
+     * 「多一条能删掉的记录」，但那条记录躺在别人家的存储里、地址还是公网可达的 ——
+     * 这一步值得用户看一眼再点。
+     */
+    @Test
+    void theMediaListRunsWithoutConfirmationButTheUploadWaits() {
+        assertThat(policy.decide(templateTools.chatAppTemplateMediaListTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.READ);
+        assertThat(policy.decide(templateTools.chatAppTemplateMediaUploadTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.CONFIRM);
     }
 
     @Test
@@ -178,6 +231,8 @@ class AssistantActionPolicyTest {
         assertThat(policy.decide(messageTools.messageReadTool()))
                 .isEqualTo(AssistantActionPolicy.Decision.READ);
         assertThat(policy.decide(wecomTools.wecomSummaryReadTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.READ);
+        assertThat(policy.decide(templateTools.chatAppTemplateListTool()))
                 .isEqualTo(AssistantActionPolicy.Decision.READ);
     }
 
@@ -234,6 +289,34 @@ class AssistantActionPolicyTest {
         assertThatThrownBy(() -> policy.decide(contradictory))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(ContactAssistantTools.TOOL_BRIEF);
+    }
+
+    // ---------- 2026-09-28 新增的两条 ----------
+
+    /**
+     * 推送给自己：免确认。
+     *
+     * <p>与 {@code createRunsWithoutConfirmation} 是同一种断言，但更值得钉住 ——
+     * 它破的是「一切对外动作必过确认」那条惯例。退回确认档不会报错，
+     * 只会让用户每次说「推给我」之后还要再点一下，而那种退化不会有人注意到。
+     */
+    @Test
+    void pushingToMyOwnWeComRunsWithoutConfirmation() {
+        assertThat(policy.decide(wecomTools.wecomPushSelfTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.AUTO);
+    }
+
+    /**
+     * 申请模板：必须确认。
+     *
+     * <p>「不进任何白名单」就是全部理由：模板一旦提交就进 Meta 的审核队列，
+     * 这边改不掉也撤不回，被拒还会在这个账号上留下记录。
+     * 这条断言同时钉住「有人图方便把它加进 AUTO」这个改动。
+     */
+    @Test
+    void applyingATemplateAlwaysRequiresConfirmation() {
+        assertThat(policy.decide(templateTools.chatAppTemplateApplyTool()))
+                .isEqualTo(AssistantActionPolicy.Decision.CONFIRM);
     }
 
     // ---------- 夹具 ----------

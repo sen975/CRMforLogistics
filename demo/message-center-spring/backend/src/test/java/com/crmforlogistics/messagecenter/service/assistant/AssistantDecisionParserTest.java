@@ -443,7 +443,7 @@ class AssistantDecisionParserTest {
     void aMessageReferenceFromTheLastRoundIsAccepted() {
         AssistantDecisionParser.Outcome outcome = messageParser().parse("""
                 {"decision":"call","tool":"message.read",
-                 "arguments":{"messageRef":"MESSAGE:99999999-9999-4999-8999-999999999999"}}
+                 "arguments":{"messageRefs":["MESSAGE:99999999-9999-4999-8999-999999999999"]}}
                 """, contextWithMessages());
 
         assertThat(outcome).isInstanceOfSatisfying(AssistantDecisionParser.Call.class,
@@ -462,8 +462,25 @@ class AssistantDecisionParserTest {
     void aMessageReadBeforeAnyTimelineIsRejectedBecauseTheWindowDoesNotExistYet() {
         assertRejectedWithoutRetry(messageParser().parse("""
                 {"decision":"call","tool":"message.read",
-                 "arguments":{"messageRef":"MESSAGE:99999999-9999-4999-8999-999999999999"}}
+                 "arguments":{"messageRefs":["MESSAGE:99999999-9999-4999-8999-999999999999"]}}
                 """, AssistantFixtures.context()));
+    }
+
+    /**
+     * 队里混进一个不在窗口里的引用 → <b>整体</b>拒。
+     *
+     * <p>这是批量化最容易漏的那一格：只判「它是个数组」会让模型混一个编造的 id 进来，
+     * 而防线看起来还在（绑定查得到、启动自检也过、给声明写的测试照样绿）。
+     * 与 {@link #aMessageReferenceFromTheLastRoundIsAccepted} 配对读才有意义 ——
+     * 一条通过、一条拒绝，才证明逐元素比对真的在跑（{@code AssistantDecisionParser.referencesOf}）。
+     */
+    @Test
+    void oneUnknownReferenceInABatchRejectsTheWholeCall() {
+        assertRejectedWithoutRetry(messageParser().parse("""
+                {"decision":"call","tool":"message.read",
+                 "arguments":{"messageRefs":["MESSAGE:99999999-9999-4999-8999-999999999999",
+                                             "MESSAGE:88888888-8888-4888-8888-888888888888"]}}
+                """, contextWithMessages()));
     }
 
     private static AssistantDecisionParser messageParser() {

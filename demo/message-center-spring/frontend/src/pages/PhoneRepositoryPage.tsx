@@ -216,7 +216,7 @@ export default function PhoneRepositoryPage() {
         onCancel={() => setUploadOpen(false)}
         footer={null}
         destroyOnClose
-        width={520}
+        width={600}
       >
         <CallRecordUploadForm
           onSuccess={() => {

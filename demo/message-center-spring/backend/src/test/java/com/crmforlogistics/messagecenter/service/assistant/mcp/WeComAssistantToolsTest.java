@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant.mcp;
 
 import com.crmforlogistics.messagecenter.service.assistant.ConversationCandidates;
+import com.crmforlogistics.messagecenter.service.wecom.WeComSelfPushService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComSummaryReadService;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,12 @@ import static org.mockito.Mockito.when;
  *
  * <p>三者一旦合并成一个码，用户的处置就只剩"再试一次" —— 而那对后两种是纯浪费。
  *
+ * <h1>推送那几条为什么断 {@code ToolResult} 而不是「期望抛异常」</h1>
+ * {@link ToolRegistry#invoke} 把 {@link ToolExecutionException} <b>收成</b>
+ * {@code ToolResult.failure(code, message)}（见该方法体），所以失败在工具层表现为
+ * 「一个带错误码的结果」。写 {@code assertThatThrownBy} 会得到「期望抛异常、什么都没发生」
+ * 的假失败 —— 这条踩过，记在这里。
+ *
  * <h1>另外两件事</h1>
  * 「空结果」必须区分「还在生成」与「确实没有内容」：只有空列表的话，模型只能猜其中一个，
  * 而猜错的代价是用户以为功能坏了（或以为群里没聊过）。以及截断必须说出来，
@@ -41,14 +48,23 @@ class WeComAssistantToolsTest {
     private static final String GROUP_REF = AssistantFixtures.CONVERSATION_SEA;
 
     private final WeComSummaryReadService summaries = mock(WeComSummaryReadService.class);
-    private final WeComAssistantTools tools = new WeComAssistantTools(providerOf(summaries));
+    private final WeComSelfPushService pushService = mock(WeComSelfPushService.class);
+    private final WeComAssistantTools tools =
+            new WeComAssistantTools(providerOf(summaries), pushProviderOf(pushService));
+
+    /** 只装摘要工具的注册表：上面那二十来个用例的事实与推送无关，不该被它带进来。 */
     private final ToolRegistry registry = new ToolRegistry(
             List.of(tools.wecomSummaryReadTool()),
             new ToolInputValidator(), AssistantFixtures.objectMapper());
 
-    /** 企微整块关掉时的注册表：工具仍在注册表里，只是摘要服务取不到。 */
+    /** 只装推送工具的注册表。 */
+    private final ToolRegistry pushRegistry = new ToolRegistry(
+            List.of(tools.wecomPushSelfTool()),
+            new ToolInputValidator(), AssistantFixtures.objectMapper());
+
+    /** 企微整块关掉时的注册表：工具仍在注册表里，只是摘要服务与推送门面都取不到。 */
     private final ToolRegistry registryWithoutWeCom = new ToolRegistry(
-            List.of(new WeComAssistantTools(providerOf(null)).wecomSummaryReadTool()),
+            List.of(new WeComAssistantTools(providerOf(null), pushProviderOf(null)).wecomSummaryReadTool()),
             new ToolInputValidator(), AssistantFixtures.objectMapper());
 
     /**
@@ -62,6 +78,14 @@ class WeComAssistantToolsTest {
     @SuppressWarnings("unchecked")
     private static ObjectProvider<WeComSummaryReadService> providerOf(WeComSummaryReadService service) {
         ObjectProvider<WeComSummaryReadService> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(service);
+        return provider;
+    }
+
+    /** 同上，给推送门面。 */
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<WeComSelfPushService> pushProviderOf(WeComSelfPushService service) {
+        ObjectProvider<WeComSelfPushService> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(service);
         return provider;
     }
@@ -231,7 +255,138 @@ class WeComAssistantToolsTest {
         assertThat(definition.requiredArguments()).containsExactly("groupRef");
     }
 
+    // ---------- wecom.push_self ----------
+
+    /**
+     * 成功路径：把门面给的 msgid 原样带出来，并说清「推送成功」。
+     *
+     * <p>措辞与 WhatsApp 那条刻意不同：企微是同步接口、回了 {@code errcode=0} 才返回，
+     * 所以这里可以说「已推送」；而 WhatsApp 只是入队，只能说「已提交」。
+     * 两个渠道的机制不同，措辞也不该被统一 —— 统一会把其中一个说成假话。
+     */
+    @Test
+    void pushingToSelfReturnsTheMessageIdAndSaysItWasPushed() {
+        when(pushService.push(eq(USER), any()))
+                .thenReturn(new WeComSelfPushService.PushOutcome("msg-1"));
+
+        ToolResult result = pushRegistry.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER,
+                Map.of("text", "会议报告：9 月 28 日客户沟通要点……"));
+
+        assertThat(result.isError()).isFalse();
+        assertThat(result.message()).contains("已把这条消息推送到你的企业微信");
+        assertThat(result.data()).containsEntry("status", "sent").containsEntry("messageId", "msg-1");
+        verify(pushService).push(eq(USER), eq("会议报告：9 月 28 日客户沟通要点……"));
+    }
+
+    /**
+     * 钉住「模型编不出收件人」。
+     *
+     * <p>这是这个工具能进免确认档的<b>唯一理由</b>：收件人由 userId 解析，不是参数。
+     * 一旦有人给它加一个 {@code toUser}（看起来很自然的需求），这条用例会红 ——
+     * 而它红的意义不是「多了一个非法参数」，而是「免确认的前提消失了，
+     * 请同时把它移出 {@code AUTO_EXECUTE_ALLOWLIST}」。
+     */
+    @Test
+    void theToolRefusesAnyRecipientParameter() {
+        ToolResult result = pushRegistry.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER,
+                Map.of("text", "x", "toUser", "zhangsan"));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.code()).isEqualTo(ToolExecutionException.INVALID_ARGUMENT);
+        assertThat(result.message()).contains("toUser");
+    }
+
+    /** 没绑定企微：要告诉用户「去绑定」，而不是让他重试（重试一万次也一样）。 */
+    @Test
+    void anUnboundUserIsToldToBindInsteadOfBeingAskedToRetry() {
+        when(pushService.push(eq(USER), any()))
+                .thenThrow(new IllegalStateException(WeComSelfPushService.UNAVAILABLE_MESSAGE));
+
+        ToolResult result = pushRegistry.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER, Map.of("text", "x"));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.code()).isEqualTo(ToolExecutionException.UNAVAILABLE);
+    }
+
+    /**
+     * 门面缺席（企微没启用／没配 suite-id）时，工具仍在注册表里、仍然可调用，
+     * 只是回一句「不可用」—— 而不是让 {@code tools/list} 的形状随部署变化。
+     */
+    @Test
+    void whenThePushFacadeIsAbsentTheToolStillSaysUnavailableRatherThanInternal() {
+        ToolRegistry noWeCom = new ToolRegistry(
+                List.of(new WeComAssistantTools(providerOf(summaries), pushProviderOf(null)).wecomPushSelfTool()),
+                new ToolInputValidator(), AssistantFixtures.objectMapper());
+
+        ToolResult result = noWeCom.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER, Map.of("text", "x"));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.code()).isEqualTo(ToolExecutionException.UNAVAILABLE);
+    }
+
+    /**
+     * 结果未知是唯一一个「重试 = 第二条真实消息」的失败，必须有自己的码。
+     *
+     * <p>报成 {@code INTERNAL} 的话，模型会照着「请稍后再试」自己去重试，用户收到两条一样的推送。
+     */
+    @Test
+    void anUnknownOutcomeIsNeverRetried() {
+        when(pushService.push(eq(USER), any()))
+                .thenThrow(new WeComSelfPushService.OutcomeUnknown("可能已经发出去了，请不要重发", null));
+
+        ToolResult result = pushRegistry.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER, Map.of("text", "x"));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.code()).isEqualTo(ToolExecutionException.SEND_OUTCOME_UNKNOWN);
+        assertThat(result.message()).contains("不要重发");
+    }
+
+    /** 上游明确拒绝：原因要带给模型（它可能能改），且不能报成「系统故障」。 */
+    @Test
+    void aRejectedPushCarriesTheUpstreamReason() {
+        when(pushService.push(eq(USER), any()))
+                .thenThrow(new WeComSelfPushService.PushRejected("企业微信拒绝了这次推送：invalid user", null));
+
+        ToolResult result = pushRegistry.invoke(WeComAssistantTools.TOOL_PUSH_SELF, USER, Map.of("text", "x"));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.message()).contains("invalid user");
+    }
+
+    /**
+     * 声明：可免确认的写动作。
+     *
+     * <p>{@code destructiveHint=false} 是<b>进 AUTO 档的必要条件</b> ——
+     * 策略类对未声明的注解按保守值（=破坏性）解释，漏写会静默退回确认档，
+     * 而那种退化在别处看不出来。这条断言就是那道绊线。
+     */
+    @Test
+    void thePushDeclarationIsAWriteThatIsNotDestructive() {
+        ToolDefinition definition = pushRegistry.find(WeComAssistantTools.TOOL_PUSH_SELF).orElseThrow();
+
+        assertThat(definition.tool().annotations().readOnlyHint()).isFalse();
+        assertThat(definition.tool().annotations().destructiveHint()).isFalse();
+        assertThat(definition.tool().annotations().idempotentHint()).isFalse();
+        assertThat(definition.requiredArguments()).containsExactly("text");
+        assertThat(definition.referenceBindings()).isEmpty();
+    }
+
+    /** 长度闸门与门面里的字节闸门同源：声明侧改宽了而门面没改（或反之）会让这条红。 */
+    @Test
+    void theDeclaredTextLimitComesFromTheFacade() {
+        ToolDefinition definition = pushRegistry.find(WeComAssistantTools.TOOL_PUSH_SELF).orElseThrow();
+
+        assertThat(propertyOf(definition, "text")).containsEntry("maxLength", WeComSelfPushService.MAX_TEXT_CHARS);
+    }
+
     // ---------- 夹具 ----------
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> propertyOf(ToolDefinition definition, String name) {
+        Map<String, Object> properties =
+                (Map<String, Object>) definition.tool().inputSchema().get("properties");
+        return (Map<String, Object>) properties.get(name);
+    }
 
     private static WeComSummaryReadService.SummaryWindow window(String groupName,
                                                                 List<WeComSummaryReadService.Summary> items,

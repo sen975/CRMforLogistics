@@ -29,7 +29,8 @@ public class AssistantConversationContextService {
     private final AssistantConversationSummarizer summarizer;
     private final AssistantTokenEstimator tokens;
     private final AssistantPromptBuilder promptBuilder;
-    private final int recentLimit;
+    private final int recentMemoryTokenBudget;
+    private final int summaryMemoryTokenBudget;
     private final int sourceBatchSize;
     private final int minimumSavingsTokens;
     private final int summaryOutputTokens;
@@ -41,21 +42,24 @@ public class AssistantConversationContextService {
                                               AssistantConversationSummarizer summarizer,
                                               AssistantTokenEstimator tokens,
                                               AssistantPromptBuilder promptBuilder,
-                                              @Value("${assistant.max-history-turns:8}") int recentLimit,
+                                              @Value("${assistant.recent-memory-token-budget:8192}") int recentMemoryTokenBudget,
+                                              @Value("${assistant.summary-memory-token-budget:2048}") int summaryMemoryTokenBudget,
                                               @Value("${assistant.compaction.source-batch-size:100}") int sourceBatchSize,
                                               @Value("${assistant.compaction.minimum-savings-tokens:64}") int minimumSavingsTokens,
                                               @Value("${assistant.compaction.summary-output-tokens:256}") int summaryOutputTokens,
                                               @Value("${assistant.compaction.max-input-tokens:24576}") int maxInputTokens) {
-        validateBounds(recentLimit, sourceBatchSize, minimumSavingsTokens, summaryOutputTokens, maxInputTokens);
+        validateBounds(recentMemoryTokenBudget, summaryMemoryTokenBudget, sourceBatchSize,
+                minimumSavingsTokens, summaryOutputTokens, maxInputTokens);
         this.summaries = summaries;
         this.messages = messages;
         this.summarizer = summarizer;
         this.tokens = tokens;
         this.promptBuilder = promptBuilder;
-        this.recentLimit = recentLimit;
+        this.recentMemoryTokenBudget = recentMemoryTokenBudget;
+        this.summaryMemoryTokenBudget = summaryMemoryTokenBudget;
         this.sourceBatchSize = sourceBatchSize;
         this.minimumSavingsTokens = minimumSavingsTokens;
-        this.summaryOutputTokens = summaryOutputTokens;
+        this.summaryOutputTokens = Math.min(summaryOutputTokens, summaryMemoryTokenBudget);
         this.maxInputTokens = maxInputTokens;
     }
 
@@ -65,23 +69,52 @@ public class AssistantConversationContextService {
                                         AssistantTokenEstimator tokens,
                                         int recentLimit, int sourceBatchSize,
                                         int minimumSavingsTokens, int summaryOutputTokens) {
-        validateBounds(recentLimit, sourceBatchSize, minimumSavingsTokens, summaryOutputTokens, Integer.MAX_VALUE);
+        // Legacy test-only constructor. Production wiring uses the token-budget constructor above;
+        // keeping this overload avoids making old isolated tests encode Spring configuration details.
+        validateBounds(Integer.MAX_VALUE, Integer.MAX_VALUE, sourceBatchSize,
+                minimumSavingsTokens, summaryOutputTokens, Integer.MAX_VALUE);
         this.summaries = summaries;
         this.messages = messages;
         this.summarizer = summarizer;
         this.tokens = tokens;
         this.promptBuilder = null;
-        this.recentLimit = recentLimit;
+        this.recentMemoryTokenBudget = Integer.MAX_VALUE;
+        this.summaryMemoryTokenBudget = Integer.MAX_VALUE;
         this.sourceBatchSize = sourceBatchSize;
         this.minimumSavingsTokens = minimumSavingsTokens;
         this.summaryOutputTokens = summaryOutputTokens;
         this.maxInputTokens = Integer.MAX_VALUE;
     }
 
-    private static void validateBounds(int recentLimit, int sourceBatchSize,
-                                       int minimumSavingsTokens, int summaryOutputTokens, int maxInputTokens) {
-        if (recentLimit < 0 || sourceBatchSize <= 0 || minimumSavingsTokens < 0
-                || summaryOutputTokens <= 0 || maxInputTokens <= 0) {
+    /** Legacy prompt-aware test constructor; history turns are no longer a production semantic limit. */
+    AssistantConversationContextService(AssistantConversationSummaryMapper summaries,
+                                        AssistantConversationMessageMapper messages,
+                                        AssistantConversationSummarizer summarizer,
+                                        AssistantTokenEstimator tokens,
+                                        AssistantPromptBuilder promptBuilder,
+                                        int recentLimit, int sourceBatchSize,
+                                        int minimumSavingsTokens, int summaryOutputTokens,
+                                        int maxInputTokens) {
+        validateBounds(Integer.MAX_VALUE, Integer.MAX_VALUE, sourceBatchSize,
+                minimumSavingsTokens, summaryOutputTokens, maxInputTokens);
+        this.summaries = summaries;
+        this.messages = messages;
+        this.summarizer = summarizer;
+        this.tokens = tokens;
+        this.promptBuilder = promptBuilder;
+        this.recentMemoryTokenBudget = Integer.MAX_VALUE;
+        this.summaryMemoryTokenBudget = Integer.MAX_VALUE;
+        this.sourceBatchSize = sourceBatchSize;
+        this.minimumSavingsTokens = minimumSavingsTokens;
+        this.summaryOutputTokens = summaryOutputTokens;
+        this.maxInputTokens = maxInputTokens;
+    }
+
+    private static void validateBounds(int recentMemoryTokenBudget, int summaryMemoryTokenBudget,
+                                       int sourceBatchSize, int minimumSavingsTokens,
+                                       int summaryOutputTokens, int maxInputTokens) {
+        if (recentMemoryTokenBudget <= 0 || summaryMemoryTokenBudget <= 0 || sourceBatchSize <= 0
+                || minimumSavingsTokens < 0 || summaryOutputTokens <= 0 || maxInputTokens <= 0) {
             throw new IllegalArgumentException("invalid assistant context compaction bounds");
         }
     }
@@ -90,25 +123,21 @@ public class AssistantConversationContextService {
                                    List<AssistantConversationMessageEntity> recentPersistedRows,
                                    List<AssistantMessage> guardedRecentHistory,
                                    String currentText, AssistantContext context) {
-        List<AssistantMessage> recent = guardedRecentHistory == null ? List.of() : List.copyOf(guardedRecentHistory);
-        if (recentPersistedRows != null && recentPersistedRows.size() > recentLimit) {
-            recentPersistedRows = recentPersistedRows.subList(recentPersistedRows.size() - recentLimit,
-                    recentPersistedRows.size());
-        }
-        if (recent.size() > recentLimit) {
-            recent = recent.subList(recent.size() - recentLimit, recent.size());
-        }
-        if (recentPersistedRows != null && recentPersistedRows.size() > recent.size()) {
-            recentPersistedRows = recentPersistedRows.subList(recentPersistedRows.size() - recent.size(),
-                    recentPersistedRows.size());
-        }
-        if (userId == null || conversationId == null || recentPersistedRows == null || recentPersistedRows.isEmpty()) {
+        List<AssistantConversationMessageEntity> persisted = recentPersistedRows == null
+                ? List.of() : List.copyOf(recentPersistedRows);
+        List<AssistantConversationMessageEntity> selectedRows = selectRecentRows(persisted);
+        List<AssistantMessage> recent = selectedRows.isEmpty()
+                ? selectRecentMessages(guardedRecentHistory)
+                : selectedRows.stream()
+                        .map(row -> new AssistantMessage(AssistantMessage.Role.fromWire(row.getRole()), row.getText()))
+                        .toList();
+        if (userId == null || conversationId == null || selectedRows.isEmpty()) {
             return new PreparedContext(null, recent, 0, 0);
         }
 
-        AssistantConversationMessageEntity anchor = recentPersistedRows.get(0);
+        AssistantConversationMessageEntity anchor = selectedRows.get(0);
         try {
-            return fitBudget(project(userId, conversationId, anchor, recentPersistedRows, recent),
+            return fitBudget(project(userId, conversationId, anchor, selectedRows, recent),
                     context, currentText);
         } catch (DataAccessException failure) {
             log.warn("event=assistant.context_projection_unavailable conversationId={} diagnostic=DATA_ACCESS",
@@ -136,7 +165,13 @@ public class AssistantConversationContextService {
                             existing.getThroughMessageId()) > 0)
                     .map(row -> new AssistantMessage(AssistantMessage.Role.fromWire(row.getRole()), row.getText()))
                     .toList();
-            return new PreparedContext(existing.getSummary(), nonDuplicatedRecent,
+            String usableSummary = summaryWithinBudget(existing.getSummary());
+            if (usableSummary == null) {
+                return new PreparedContext(null, recent,
+                        messages.countBefore(userId, conversationId,
+                                anchor.getCreatedAt(), anchor.getId()), 0);
+            }
+            return new PreparedContext(usableSummary, nonDuplicatedRecent,
                     Math.max(0, messages.countBefore(userId, conversationId,
                             anchor.getCreatedAt(), anchor.getId()) - existing.getCoveredMessageCount()),
                     existing.getCoveredMessageCount());
@@ -188,9 +223,48 @@ public class AssistantConversationContextService {
         }
 
         int dropped = Math.max(0, totalOlder - Math.min(coveredCount, totalOlder));
-        PreparedContext prepared = new PreparedContext(summaryText, recent, dropped,
-                Math.min(coveredCount, totalOlder));
+        String usableSummary = summaryWithinBudget(summaryText);
+        int summarized = usableSummary == null ? 0 : Math.min(coveredCount, totalOlder);
+        if (usableSummary == null && coveredCount > 0) {
+            dropped += Math.min(coveredCount, totalOlder);
+        }
+        PreparedContext prepared = new PreparedContext(usableSummary, recent, dropped, summarized);
         return prepared;
+    }
+
+    private List<AssistantConversationMessageEntity> selectRecentRows(
+            List<AssistantConversationMessageEntity> rows) {
+        if (rows.isEmpty()) return List.of();
+        List<AssistantConversationMessageEntity> selected = new ArrayList<>();
+        int remaining = recentMemoryTokenBudget;
+        for (int index = rows.size() - 1; index >= 0; index--) {
+            AssistantConversationMessageEntity row = rows.get(index);
+            int cost = tokens.count(row.getText());
+            if (cost > remaining) break;
+            remaining -= cost;
+            selected.add(0, row);
+        }
+        return List.copyOf(selected);
+    }
+
+    private List<AssistantMessage> selectRecentMessages(List<AssistantMessage> history) {
+        if (history == null || history.isEmpty()) return List.of();
+        List<AssistantMessage> selected = new ArrayList<>();
+        int remaining = recentMemoryTokenBudget;
+        for (int index = history.size() - 1; index >= 0; index--) {
+            AssistantMessage message = history.get(index);
+            if (message == null || message.text() == null || message.text().isBlank()) continue;
+            int cost = tokens.count(message.text());
+            if (cost > remaining) break;
+            remaining -= cost;
+            selected.add(0, message);
+        }
+        return List.copyOf(selected);
+    }
+
+    private String summaryWithinBudget(String summary) {
+        return summary != null && !summary.isBlank()
+                && tokens.count(summary) <= summaryMemoryTokenBudget ? summary : null;
     }
 
     private PreparedContext fitBudget(PreparedContext prepared, AssistantContext context, String currentText) {
@@ -198,12 +272,12 @@ public class AssistantConversationContextService {
         List<AssistantMessage> recent = new ArrayList<>(prepared.recentHistory());
         String summary = prepared.summary();
         int trimmed = 0;
+        if (renderedTokens(context, summary, recent, currentText) > maxInputTokens && summary != null) {
+            summary = null;
+        }
         while (renderedTokens(context, summary, recent, currentText) > maxInputTokens && !recent.isEmpty()) {
             recent.remove(0);
             trimmed++;
-        }
-        if (renderedTokens(context, summary, recent, currentText) > maxInputTokens && summary != null) {
-            summary = null;
         }
         if (renderedTokens(context, summary, recent, currentText) > maxInputTokens) {
             throw new ContextBudgetExceeded();

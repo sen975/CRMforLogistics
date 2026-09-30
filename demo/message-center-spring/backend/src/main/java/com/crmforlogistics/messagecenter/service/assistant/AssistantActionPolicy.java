@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.service.assistant.mcp.AiTopicAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ChatAppTemplateAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactTimelineAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
@@ -70,14 +71,31 @@ public class AssistantActionPolicy {
     /**
      * 可以免确认直接执行的动作。<b>只放「不会改动已有数据」的动作。</b>
      *
-     * <p>当前只有 {@code todo.create}：它只增不改，最坏情况是多出一条用户能删掉的记录，
-     * 不影响任何既有数据。{@code todo.complete} / {@code todo.delete} / {@code todo.update}
-     * 都会改掉或抹掉已存在的数据，一律需要确认 —— 其中删除不可逆、改期会覆盖既有日期，
-     * 风险都不低于标记完成。
+     * <p>当前两条：
+     *
+     * <ul>
+     *   <li>{@code todo.create} —— 只增不改，最坏情况是多出一条用户能删掉的记录，
+     *       不影响任何既有数据。{@code todo.complete} / {@code todo.delete} / {@code todo.update}
+     *       都会改掉或抹掉已存在的数据，一律需要确认 —— 其中删除不可逆、改期会覆盖既有日期，
+     *       风险都不低于标记完成。</li>
+     *
+     *   <li>{@code wecom.push_self}（2026-09-28 加）—— 把一段文本推送到<b>调用方自己</b>绑定的
+     *       企业微信。它破了「对外动作一律过确认」那条惯例，所以理由必须写在这里：
+     *       <b>收件人不是参数</b>（由 userId 解析，模型编不出别人），
+     *       最坏后果是「自己多收一条自己让发的消息」，且用户说「推给我」之后本来就期望它立刻到达 ——
+     *       再点一次确认没有新增任何判断依据。完整的取舍见 {@code WeComAssistantTools} 的类注释。
+     *       <p><b>它与 {@code message.send_email} 的差别不在「发没发出去」，而在「发给谁」</b>：
+     *       后者能给任意第三方，前者不能。所以这两条判据不是矛盾的，
+     *       而是同一条判据（收件人由谁决定）在两个工具上得出的不同结论。</li>
+     * </ul>
      *
      * <p>新增条目必须同时回答：「最坏情况用户会失去什么？」答不上来就不该进这个集合。
+     * 对 {@code wecom.push_self} 的回答是「一条自己收到的消息」—— 注意这条答案之所以成立，
+     * 靠的是它的收件人解析方式；把收件人改成参数的那一刻，它就该被移出这个集合。
      */
-    public static final Set<String> AUTO_EXECUTE_ALLOWLIST = Set.of(TodoAssistantTools.TOOL_CREATE);
+    public static final Set<String> AUTO_EXECUTE_ALLOWLIST = Set.of(
+            TodoAssistantTools.TOOL_CREATE,
+            WeComAssistantTools.TOOL_PUSH_SELF);
 
     /**
      * 只读动作清单：免确认，且<b>可以在一次请求内循环多轮</b>。
@@ -98,7 +116,8 @@ public class AssistantActionPolicy {
      *       现口径是<b>「允许原文进上下文」</b> —— 由用户在 {@code message.read}（C4）就绪前拍板。
      *       于是判据从「有没有原文」变成<b>「这份原文是不是用户点名要的那一份」</b>：
      *       一次回 20 条的时间线仍然要剥掉正文（那段正文不是用户要看的，还会挤掉真正的内容），
-     *       而 {@code message.read} 一次只取一条、且是用户指名的那一条，所以它带原文是对的。
+     *       而 {@code message.read} 取的是用户指名的那几条（2026-09-28 起一次可传一队引用，
+     *       但仍是用户点名要的对象，不是「顺手捞一批」），所以它带原文是对的。
      *       「只读 = 不含原文」这条旧推论<b>不再成立</b>，别再用它否决新工具。</li>
      * </ol>
      *
@@ -106,15 +125,28 @@ public class AssistantActionPolicy {
      * 而写动作在一次请求里仍然至多一个，且必须过确认（约束 4）。这条分界让
      * 「先查再改」成为可能，同时不给「多写」开任何口子。
      *
-     * <p>当前七条：会话检索、联系人检索、联系人简报、联系人往来时间线、联系人 AI 话题、
-     * 单条消息原文、企微群聊天摘要。前五条只读库里的结构化字段与摘要；
-     * 后两条的差别值得单独说明 ——
+     * <p>当前九条：会话检索、联系人检索、联系人简报、联系人往来时间线、联系人 AI 话题、
+     * 单条消息原文、企微群聊天摘要、chatapp 模板清单、chatapp 素材清单。前五条只读库里的
+     * 结构化字段与摘要；后四条的区别值得单独说明 ——
      *
      * <ul>
      *   <li>{@code message.read} 是<b>第一个故意回原文</b>的（见上面口径变更那一段）；</li>
      *   <li>{@code wecom.summary_read} 回的是<b>摘要</b>（企微侧已经算好的），
      *       所以它本身不越界；它进这个清单的真正原因是它底下补了一条按 owner 过滤的读路径
      *       （原先那条全链路没有 {@code where user_id}），可见性由此与「只看自己的」对齐。</li>
+     *   <li>{@code chatapp.template_list}（2026-09-28 加）回的是模板的<b>元数据</b>
+     *       （名称、语言、类别、审核状态、被拒原因），不是模板内容本身；
+     *       而它底下的账号清单带着 {@code where owner_user_id}。
+     *       它进这个清单还有一个附带作用：<b>它是 {@code chatapp.template_apply} 的候选来源</b>，
+     *       而只读轨才允许「先查再写」，所以申请链要走通，这一条必须可循环。</li>
+     *
+     *   <li>{@code chatapp.template_media_list}（2026-09-29 加）回的也是<b>元数据</b>
+     *       （类型、大小、上传时间），不是图片本身；它底下的账号清单带着
+     *       {@code where owner_user_id}，素材那条查询按账号过滤、归属判在 SQL 里。
+     *       它进这个清单的另一个前提是它<b>不返回图片地址</b>：素材在服务商侧那个公网 URL
+     *       只留在服务层内部（见 {@code WhatsAppTemplateMediaCatalogService.MediaAsset}），
+     *       否则一次只读调用就能拿到一批可分享的外链，「这份内容是不是用户点名要的那一份」
+     *       这条口径就守不住了。</li>
      * </ul>
      *
      * <p><b>为什么"只读"这一档反而要逐个交代</b>：进这个集合 = 免确认<b>且可以在一次请求内循环多轮</b>。
@@ -129,7 +161,9 @@ public class AssistantActionPolicy {
             ContactTimelineAssistantTools.TOOL_TIMELINE,
             AiTopicAssistantTools.TOOL_TOPICS_READ,
             MessageAssistantTools.TOOL_READ,
-            WeComAssistantTools.TOOL_SUMMARY_READ);
+            WeComAssistantTools.TOOL_SUMMARY_READ,
+            ChatAppTemplateAssistantTools.TOOL_TEMPLATE_LIST,
+            ChatAppTemplateAssistantTools.TOOL_TEMPLATE_MEDIA_LIST);
 
     public enum Decision {
         /** 只读动作：免确认执行，结果回灌后继续下一轮。 */

@@ -10,6 +10,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
@@ -27,6 +28,18 @@ import javax.net.ssl.SSLException;
 
 @Component
 public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
+
+    /**
+     * 内核/OS 层「读超时」（{@code ETIMEDOUT}）的固定串。与
+     * {@code AssistantModelClient#NATIVE_TIMEOUT_MESSAGE} 同一口径 —— 两处分类必须一致，
+     * 否则同一次故障在两个模块里会得到不同的诊断码，比对日志就失去意义。
+     *
+     * <p>读超时在类型层面就是一个裸 {@code java.io.IOException}（见 {@code SocketDispatcher.read0}），
+     * 不是 {@link HttpTimeoutException}。只按类型判会掉进兜底的 {@code CLIENT_ERROR}，
+     * 而这里的分类码会<b>落进审计表</b>，写错的代价是持久的。
+     */
+    private static final String NATIVE_TIMEOUT_MESSAGE = "Operation timed out";
+
     private final AiTopicConfig config;
     private final ObjectMapper mapper;
     private final TopicAiResponseParser parser;
@@ -131,6 +144,10 @@ public class OpenAiCompatibleTopicGateway implements TopicAiGateway {
             if (current instanceof HttpTimeoutException || current instanceof SocketTimeoutException) return "TIMEOUT";
             if (current instanceof ConnectException) return "CONNECT_ERROR";
             if (current instanceof SSLException) return "TLS_ERROR";
+            // 放在最后：上面几个都是 IOException 的子类，必须先被更具体的类型拦下。
+            if (current instanceof IOException && NATIVE_TIMEOUT_MESSAGE.equals(current.getMessage())) {
+                return "TIMEOUT";
+            }
             current = current.getCause();
         }
         return "CLIENT_ERROR";

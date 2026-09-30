@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.net.URI;
 import java.net.ConnectException;
@@ -128,8 +129,21 @@ class OpenAiCompatibleTopicGatewayTest {
         assertThat(OpenAiCompatibleTopicGateway.rejectionCode(422)).isEqualTo("AI_PROVIDER_REQUEST_INVALID");
     }
 
+    /**
+     * 分类口径，2026-09-30 收窄过一次，改前叫
+     * {@code classifiesProviderTransportFailuresWithoutUsingExceptionMessages}。
+     *
+     * <p><b>当初那条边界在拦什么</b>：异常消息可能含地址、TLS 细节、供应商原文，所以分类结果
+     * 绝不能把消息带出去 —— 这一点<b>原样保留</b>（见末尾三条 {@code doesNotContain} 断言）。
+     *
+     * <p><b>为什么必须收窄</b>：只按类型判表达不了「socket 读超时」——
+     * {@code SocketDispatcher.read0} 抛的是裸 {@code java.io.IOException: Operation timed out}，
+     * 既不是 {@code HttpTimeoutException} 也不是 {@code SocketTimeoutException}，于是掉进兜底的
+     * {@code CLIENT_ERROR}，而这里的分诊码会落进审计表。现在额外认<b>一个</b>由内核产出的固定串
+     * {@code "Operation timed out"}；供应商可控的任意文本仍然不参与分类。
+     */
     @Test
-    void classifiesProviderTransportFailuresWithoutUsingExceptionMessages() {
+    void classifiesProviderTransportFailuresByTypeAndNeverEchoesMessages() {
         assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(new UnknownHostException("secret-host")))
                 .isEqualTo("DNS_ERROR");
         assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(new ConnectException("secret-host")))
@@ -140,5 +154,28 @@ class OpenAiCompatibleTopicGatewayTest {
                 .isEqualTo("TLS_ERROR");
         assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(new IllegalStateException("secret-response")))
                 .isEqualTo("CLIENT_ERROR");
+
+        // 新增：内核级读超时（ETIMEDOUT）是裸 IOException，必须判成 TIMEOUT 而不是 CLIENT_ERROR。
+        assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(new IOException("Operation timed out")))
+                .isEqualTo("TIMEOUT");
+        // 包在外层异常里也要认（真实的形状是 ResourceAccessException 套 IOException）。
+        assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(
+                new IllegalStateException("wrapped", new IOException("Operation timed out"))))
+                .isEqualTo("TIMEOUT");
+        // 同样是 IOException、但消息不是内核超时串的，仍然落兜底 —— 收窄只针对一个固定串。
+        assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(new IOException("Connection reset by peer")))
+                .isEqualTo("CLIENT_ERROR");
+        // 供应商把消息伪装成超时串也没用：它来自 HTTP 响应体，不是这个类型。
+        assertThat(OpenAiCompatibleTopicGateway.providerDiagnostic(
+                new IllegalStateException("Operation timed out")))
+                .isEqualTo("CLIENT_ERROR");
+
+        // 消息永不外带：诊断码本身既不含消息，也不含被塞进消息里的任何东西。
+        for (String diagnostic : List.of("DNS_ERROR", "CONNECT_ERROR", "TIMEOUT", "TLS_ERROR", "CLIENT_ERROR")) {
+            assertThat(diagnostic)
+                    .doesNotContain("secret")
+                    .doesNotContain("Operation timed out")
+                    .doesNotContain("reset");
+        }
     }
 }

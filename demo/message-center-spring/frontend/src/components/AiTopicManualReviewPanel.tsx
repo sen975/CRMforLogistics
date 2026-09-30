@@ -106,9 +106,9 @@ export default function AiTopicManualReviewPanel({ contactId, identities, topics
     finally { setLoading(null); }
   };
 
-  return <div data-testid="topic-manual-review" style={{ margin: '0 16px 16px' }}>
+  return <div className="cd-group cd-review" data-testid="topic-manual-review" style={{ margin: '0 16px 16px' }}>
     <Button aria-label="手动整理 Topic" icon={<RobotOutlined aria-hidden="true" />} onClick={() => setOpen(value => !value)} aria-expanded={open}>手动整理 Topic</Button>
-    {open && <div style={{ marginTop: 12, padding: 12, border: '1px solid #d9d9d9', borderRadius: 6 }}>
+    {open && <div className="cd-card" style={{ marginTop: 12 }}>
       <Space direction="vertical" size={10} style={{ width: '100%' }}>
         <Select aria-label="联系方式" value={identityId || undefined} onChange={setIdentityId} style={{ width: '100%' }}
           placeholder="选择联系方式" options={supportedIdentities.map(identity => ({
@@ -128,8 +128,8 @@ export default function AiTopicManualReviewPanel({ contactId, identities, topics
           <Checkbox aria-label="全选当前结果" checked={allSelected} indeterminate={selectedIds.length > 0 && !allSelected}
             onChange={event => setSelectedIds(event.target.checked ? selectableIds : [])}>全选当前结果</Checkbox>
           {sources.items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前范围没有可整理记录" /> :
-            <Space direction="vertical" size={6} style={{ width: '100%', maxHeight: 280, overflow: 'auto' }}>
-              {sources.items.map(source => <div key={source.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <Space direction="vertical" size={6} className="cd-src-list" style={{ width: '100%' }}>
+              {sources.items.map(source => <div key={source.id} className="cd-src-row">
                 <Checkbox aria-label={`选择记录 ${source.id}`} disabled={!source.selectable} checked={selectedIds.includes(source.id)}
                   onChange={event => setSelectedIds(current => event.target.checked ? [...current, source.id] : current.filter(id => id !== source.id))} />
                 <div style={{ minWidth: 0 }}><Space wrap><Tag>{channelLabels[source.channelType] ?? source.channelType}</Tag><Text type="secondary">{new Date(source.occurredAt).toLocaleString('zh-CN')}</Text></Space>
@@ -153,7 +153,7 @@ export default function AiTopicManualReviewPanel({ contactId, identities, topics
                         </Button>
                         {isExpanded && <div
                           data-testid={`assigned-topic-${source.assignedTopicId}`}
-                          style={{ marginTop: 6, padding: '8px 10px', borderLeft: '3px solid #1677ff', background: '#f5f8ff' }}
+                          className="cd-callout"
                         >
                           <Text strong style={{ display: 'block' }}>{assignedTopic?.title ?? source.assignedTopicTitle.trim()}</Text>
                           <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
@@ -179,7 +179,7 @@ export default function AiTopicManualReviewPanel({ contactId, identities, topics
         {preview && <div>
           <Text strong>AI 整理预览</Text>
           <Space direction="vertical" size={12} style={{ width: '100%', marginTop: 8 }}>
-            {assignments.map((assignment, index) => <div key={`${assignment.topicKey}-${index}`} style={{ paddingTop: 10, borderTop: '1px solid #f0f0f0' }}>
+            {assignments.map((assignment, index) => <div key={`${assignment.topicKey}-${index}`} className="cd-review-card">
               <Space style={{ marginBottom: 8 }}><Text strong>{assignment.title}</Text><Text type="secondary">{assignment.sourceIds.length} 条来源</Text></Space>
               <Space direction="vertical" style={{ width: '100%' }}>
               <Select aria-label={`目标 Topic ${index + 1}`} value={assignment.topicKey} style={{ width: '100%' }}

@@ -436,7 +436,7 @@ class WhatsAppTemplateChangeRequestServiceTest {
         template.setLanguageCode("zh_CN");
         template.setCategory("UTILITY");
         template.setRemark("旧备注");
-        template.setComponentsJsonb("[{\"type\":\"BODY\",\"text\":\"您好 $(name)\"}]");
+        template.setComponentsJsonb("[{\"type\":\"BODY\",\"text\":\"您好，$(name)，您的货物已发出\"}]");
         template.setExamplesJsonb("{\"name\":[\"Ada\"]}");
         template.setVersion(4L);
         return template;
@@ -444,10 +444,10 @@ class WhatsAppTemplateChangeRequestServiceTest {
 
     private static TemplateDraft draft(UUID mediaAssetId) {
         TemplateComponent header = mediaAssetId == null
-                ? new TemplateComponent(ComponentType.BODY, null, "您好 $(name)", null, List.of())
+                ? new TemplateComponent(ComponentType.BODY, null, "您好，$(name)，您的货物已发出", null, List.of())
                 : new TemplateComponent(ComponentType.HEADER, HeaderFormat.IMAGE, null, mediaAssetId.toString(), List.of());
         List<TemplateComponent> components = mediaAssetId == null ? List.of(header)
-                : List.of(header, new TemplateComponent(ComponentType.BODY, null, "您好 $(name)", null, List.of()));
+                : List.of(header, new TemplateComponent(ComponentType.BODY, null, "您好，$(name)，您的货物已发出", null, List.of()));
         return new TemplateDraft("shipping_notice", "UTILITY", components, Map.of("name", List.of("Ada")), null);
     }
 
@@ -475,6 +475,29 @@ class WhatsAppTemplateChangeRequestServiceTest {
         user.setId(id);
         user.setDisplayName(displayName);
         return user;
+    }
+
+    /**
+     * 管理员直连（DIRECT）失败时，那条 {@code FAILED} 的操作记录必须留得下来。
+     *
+     * <p>2026-09-29 报障取证：一次 {@code setSendPermission} 失败（CAMS 返回 {@code ERR-COMMON-001}）之后，
+     * {@code template_operations} 里查不到任何痕迹。原因是本方法原本是默认的「RuntimeException 即回滚」，
+     * 而内层 {@code WhatsAppTemplateApplicationService} 自己声明的是
+     * {@code noRollbackFor = WhatsAppTemplateException.class}：异常穿过 {@code submit} 时把<b>同一个</b>事务
+     * 标成回滚，内层刚写下的失败记录被一起丢掉，「这次调用到底发出去没有」只能靠前端截图猜。
+     *
+     * <p>内层声明不回滚、外层声明回滚 ⇒ 内层的声明是假的。这个回滚行为在单测里观察不到（mock 没有事务代理），
+     * 所以把口径直接钉在注解上。
+     */
+    @Test
+    void keepsFailedDirectOperationsVisibleByNotRollingBackBusinessFailures() throws Exception {
+        java.lang.reflect.Method submit = WhatsAppTemplateChangeRequestService.class.getMethod(
+                "submit", UUID.class, UUID.class, ChangeCommand.class, ScopeAccount.class, String.class);
+        org.springframework.transaction.annotation.Transactional declaration =
+                submit.getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+
+        assertThat(declaration).isNotNull();
+        assertThat(declaration.noRollbackFor()).contains(WhatsAppTemplateException.class);
     }
 
     private static WhatsAppTemplateApplicationService.OperationView operation() {

@@ -56,6 +56,7 @@ class AssistantConversationServiceTest {
     private final AssistantAuditService audit = mock(AssistantAuditService.class);
     /** 对话落地在单元测试里是 mock：它写库，而这里要验的是「有没有记、记了什么」。 */
     private final AssistantConversationLogService conversationLog = mock(AssistantConversationLogService.class);
+    private final AssistantConversationLifecycleService lifecycle = mock(AssistantConversationLifecycleService.class);
 
     private final ToolRegistry registry = AssistantFixtures.registry(new TodoItemService(todoMapper));
     private final AssistantDecisionParser parser =
@@ -76,7 +77,20 @@ class AssistantConversationServiceTest {
                 contextBuilder,
                 new AssistantPromptBuilder(registry, CONFIG, AssistantFixtures.objectMapper()),
                 modelClient, parser, policy, pending, audit, conversationLog,
-                new AssistantRequestGuard(CONFIG), registry, CONFIG);
+                new AssistantRequestGuard(CONFIG), registry, CONFIG, null, null, null, lifecycle);
+    }
+
+    @Test
+    void expiredConversationIsRejectedBeforeModelAuditLogOrToolSideEffects() {
+        org.mockito.Mockito.doThrow(new AssistantException(AssistantException.CONVERSATION_EXPIRED, "expired"))
+                .when(lifecycle).requireActive(AssistantFixtures.USER, AssistantFixtures.CONVERSATION);
+
+        assertThatThrownBy(() -> service.respond(AssistantFixtures.USER, AssistantFixtures.CONVERSATION,
+                List.of(), "继续"))
+                .isInstanceOf(AssistantException.class)
+                .extracting("code").isEqualTo(AssistantException.CONVERSATION_EXPIRED);
+
+        verifyNoInteractions(modelClient, audit, conversationLog, todoMapper, pendingMapper, contextBuilder);
     }
 
     // ---------- ask / reply：不碰任何存储 ----------

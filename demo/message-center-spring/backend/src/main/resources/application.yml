@@ -74,6 +74,8 @@ assistant:
   max-message-chars: ${ASSISTANT_MAX_MESSAGE_CHARS:2000}
   max-history-turns: ${ASSISTANT_MAX_HISTORY_TURNS:8}
   max-history-chars: ${ASSISTANT_MAX_HISTORY_CHARS:8000}
+  recent-memory-token-budget: ${ASSISTANT_RECENT_MEMORY_TOKEN_BUDGET:8192}
+  summary-memory-token-budget: ${ASSISTANT_SUMMARY_MEMORY_TOKEN_BUDGET:2048}
   # 待确认动作的有效期。过期后确认返回 410——改期/删除越晚执行越可能落在陈旧假设上。
   pending-ttl-seconds: ${ASSISTANT_PENDING_TTL_SECONDS:600}
   # 一次请求内允许执行的只读工具次数上限。循环只对只读动作开放；写动作一旦出现本轮即结束。

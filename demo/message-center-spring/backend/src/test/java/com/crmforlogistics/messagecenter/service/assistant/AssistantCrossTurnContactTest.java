@@ -75,7 +75,12 @@ class AssistantCrossTurnContactTest {
                 new AssistantPromptBuilder(registry, config, AssistantFixtures.objectMapper()), model, parser,
                 new AssistantActionPolicy(), mock(AssistantPendingActionService.class),
                 mock(AssistantAuditService.class), log, new AssistantRequestGuard(config), registry, config,
-                null, store);
+                null, store,
+                // 本类不涉及附件（两轮都不带 attachments，注入点根本不会被调用）。
+                // 给 mock 而不是 null，是为了让这里的装配与生产**同一个构造器** ——
+                // null 只出现在「不关心附件的窄重载」里。漏了这个参数的表现是
+                // NoSuchMethodError，而不是编译错误（pom 不重编本类），很难当场看出来。
+                mock(TemplateMediaProvider.class));
 
         AssistantTurnResult first = service.respond(AssistantFixtures.USER, AssistantFixtures.CONVERSATION,
                 List.of(), "找守望");

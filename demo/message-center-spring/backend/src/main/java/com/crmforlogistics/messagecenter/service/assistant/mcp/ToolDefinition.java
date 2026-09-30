@@ -64,7 +64,11 @@ public record ToolDefinition(McpSchema.Tool tool, ToolHandler handler) {
                 bindings.put(String.valueOf(entry.getKey()), setName.strip());
             }
         }
-        return java.util.Map.copyOf(bindings);
+        // 不能用 Map.copyOf：它返回的不可变 Map 迭代顺序**未定义**（ImmutableCollections 按
+        // 每次 JVM 启动随机化的 SALT 排序）⇒ 上面 javadoc 承诺的「保序」是假的，而
+        // AssistantDecisionParser 是**取第一个**比对失败的引用作为拒绝理由的 ⇒ 两个引用都非法时
+        // 用户看到哪一条会随 JVM 变。Collections.unmodifiableMap 同样不可变，但保住 LinkedHashMap 的顺序。
+        return java.util.Collections.unmodifiableMap(bindings);
     }
 
     /** {@code x-unboundIds} 的取值：显式声明「这些 id 不来自候选」，用于豁免 {@code *Id} 检查。 */

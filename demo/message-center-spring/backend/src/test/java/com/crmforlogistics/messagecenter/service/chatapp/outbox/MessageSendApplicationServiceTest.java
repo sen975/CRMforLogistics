@@ -91,8 +91,9 @@ class MessageSendApplicationServiceTest {
         existing.setConversationId(conversationId);
         existing.setClientRequestId("request-1");
         existing.setCurrentStatus("pending");
+        // 两次 accept：第一次没命中（新建），第二次命中同一条（幂等返回既有消息）。
+        // stub 只喂两个答案，多余的第三个只在被调用时才生效 —— 多写一个就会把第二次也变成「没命中」。
         when(messageMapper.findByClientRequestId(accountId, "request-1"))
-                .thenReturn(Optional.empty())
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(existing));
         when(messageMapper.insertWithSequence(any())).thenAnswer(invocation -> {

@@ -30,5 +30,7 @@ describe('ContactsPage unified list', () => {
     expect(screen.getByText('客户 A')).toBeInTheDocument();
     expect(screen.getByText('内部群')).toBeInTheDocument();
     expect(screen.getByText('4 人')).toBeInTheDocument();
+    expect(screen.getByText('内部群').closest('.conversation-group')).toBeInTheDocument();
+    expect(screen.getByText('客户 A').closest('.message-center-conversations')).toBeInTheDocument();
   });
 });

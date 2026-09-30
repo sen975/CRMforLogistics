@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Form, Input, Select, Button, Tabs, App, Upload, Spin } from 'antd';
-import { SendOutlined, UploadOutlined } from '@ant-design/icons';
+import { PaperClipOutlined, PictureOutlined, SendOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import {
   sendEmail,
@@ -438,51 +438,77 @@ export default function SendForm({
             <Form
               form={emailForm}
               onFinish={(values) => handleEmail(values, emailForm)}
+              className="send-form"
               layout="vertical"
               size="small"
               initialValues={{ to: selectedEmailIdentityValue }}
             >
-              <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
-                {toSelect('email')}
+              <div className="send-meta-row">
+                <Form.Item name="to" label="收件人" rules={[{ required: true }]}>
+                  {toSelect('email')}
+                </Form.Item>
+                <Form.Item name="subject" label="主题" rules={[{ required: true }]}>
+                  <Input placeholder="邮件主题" />
+                </Form.Item>
+              </div>
+              <Form.Item name="body" label="正文" className="send-grow">
+                <TextArea rows={4} placeholder="邮件正文" />
               </Form.Item>
-              <Form.Item name="subject" label="主题" rules={[{ required: true }]}>
-                <Input placeholder="邮件主题" />
-              </Form.Item>
-              <Form.Item name="body" label="正文">
-                <TextArea rows={6} placeholder="邮件正文" />
-              </Form.Item>
-              <Form.Item label="附件">
-                <Upload
-                  multiple
-                  fileList={attachmentFiles.map((f, i) => ({
-                    uid: `${i}-${f.name}`,
-                    name: f.name,
-                    status: 'done' as const,
-                  }))}
-                  beforeUpload={(file) => {
-                    const nextCount = attachmentFiles.length + 1;
-                    const nextSize = attachmentFiles.reduce((sum, item) => sum + item.size, 0) + file.size;
-                    if (nextCount > EMAIL_ATTACHMENT_MAX_COUNT) {
-                      message.error('最多添加 16 个附件');
-                      return Upload.LIST_IGNORE;
-                    }
-                    if (nextSize > EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
-                      message.error('附件总大小不能超过 20 MiB');
-                      return Upload.LIST_IGNORE;
-                    }
-                    setAttachmentFiles((prev) => [...prev, file]);
-                    return false;
-                  }}
-                  onRemove={(f) => {
-                    setAttachmentFiles((prev) => prev.filter((_, i) => `${i}-${prev[i].name}` !== f.uid));
-                  }}
-                >
-                  <Button icon={<UploadOutlined />}>选择文件</Button>
-                </Upload>
-              </Form.Item>
-              <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
-                发送邮件
-              </Button>
+              {attachmentFiles.length > 0 && (
+                <div className="send-attachments">
+                  {attachmentFiles.map((f, i) => (
+                    <span key={`${i}-${f.name}`} className="send-attachment">
+                      <PaperClipOutlined />
+                      <span className="send-attachment-name">{f.name}</span>
+                      <button
+                        type="button"
+                        className="send-attachment-remove"
+                        aria-label={`移除附件 ${f.name}`}
+                        onClick={() => setAttachmentFiles((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="send-toolbar">
+                <div className="send-tools">
+                  <Upload
+                    multiple
+                    showUploadList={false}
+                    fileList={attachmentFiles.map((f, i) => ({
+                      uid: `${i}-${f.name}`,
+                      name: f.name,
+                      status: 'done' as const,
+                    }))}
+                    beforeUpload={(file) => {
+                      const nextCount = attachmentFiles.length + 1;
+                      const nextSize = attachmentFiles.reduce((sum, item) => sum + item.size, 0) + file.size;
+                      if (nextCount > EMAIL_ATTACHMENT_MAX_COUNT) {
+                        message.error('最多添加 16 个附件');
+                        return Upload.LIST_IGNORE;
+                      }
+                      if (nextSize > EMAIL_ATTACHMENT_MAX_TOTAL_BYTES) {
+                        message.error('附件总大小不能超过 20 MiB');
+                        return Upload.LIST_IGNORE;
+                      }
+                      setAttachmentFiles((prev) => [...prev, file]);
+                      return false;
+                    }}
+                  >
+                    <Button
+                      className="send-tool"
+                      icon={<PaperClipOutlined />}
+                      aria-label="添加附件"
+                      title="添加附件"
+                    />
+                  </Upload>
+                </div>
+                <Button className="send-submit" type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                  发送邮件
+                </Button>
+              </div>
             </Form>
           ),
         }]
@@ -493,6 +519,7 @@ export default function SendForm({
           label: 'ChatApp',
           children: (
             <Tabs
+              className="send-mode-tabs"
               size="small"
               items={[
                 {
@@ -501,18 +528,24 @@ export default function SendForm({
                   children: (
                     <Form
                       onFinish={handleChatApp}
+                      className="send-form"
                       layout="vertical"
                       size="small"
                     >
-                      {chatAppAccountField}
-                      {chatAppRecipientField()}
-                      <Form.Item name="text" label="消息" rules={[{ required: true }]}>
+                      <div className="send-meta-row">
+                        {chatAppAccountField}
+                        {chatAppRecipientField()}
+                      </div>
+                      <Form.Item name="text" label="消息" className="send-grow" rules={[{ required: true }]}>
                         <TextArea rows={4} placeholder="消息内容" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending}
-                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
-                        发送
-                      </Button>
+                      <div className="send-toolbar">
+                        <div className="send-tools" />
+                        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}
+                          disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
+                          发送
+                        </Button>
+                      </div>
                     </Form>
                   ),
                 },
@@ -523,6 +556,7 @@ export default function SendForm({
                     <Form
                       form={templateForm}
                       onFinish={handleTemplate}
+                      className="send-form"
                       layout="vertical"
                       size="small"
                       onValuesChange={(changed: Record<string, string | undefined>) => {
@@ -546,8 +580,10 @@ export default function SendForm({
                         });
                       }}
                     >
-                      {chatAppAccountField}
-                      {chatAppRecipientField()}
+                      <div className="send-meta-row">
+                        {chatAppAccountField}
+                        {chatAppRecipientField()}
+                      </div>
                       {templatesError && (
                         <Alert
                           type="error"
@@ -598,10 +634,13 @@ export default function SendForm({
                           <Input placeholder={`模板参数: ${key}`} />
                         </Form.Item>
                       ))}
-                      <Button type="primary" htmlType="submit" loading={sending}
-                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
-                        发送模板
-                      </Button>
+                      <div className="send-toolbar">
+                        <div className="send-tools" />
+                        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}
+                          disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
+                          发送模板
+                        </Button>
+                      </div>
                     </Form>
                   ),
                 },
@@ -611,28 +650,50 @@ export default function SendForm({
                   children: (
                     <Form
                       onFinish={handleMedia}
+                      className="send-form"
                       layout="vertical"
                       size="small"
                     >
-                      {chatAppAccountField}
-                      {chatAppRecipientField()}
-                      <Form.Item label="图片">
-                        <Upload
-                          accept="image/*"
-                          fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
-                          beforeUpload={(file) => { setMediaFile(file); setMediaMode('image'); return false; }}
-                          onRemove={() => setMediaFile(null)}
-                        >
-                          <Button icon={<UploadOutlined />}>选择图片</Button>
-                        </Upload>
-                      </Form.Item>
+                      <div className="send-meta-row">
+                        {chatAppAccountField}
+                        {chatAppRecipientField()}
+                      </div>
+                      {mediaFile && (
+                        <div className="send-attachments">
+                          <span className="send-attachment">
+                            <PictureOutlined />
+                            <span className="send-attachment-name">{mediaFile.name}</span>
+                            <button
+                              type="button"
+                              className="send-attachment-remove"
+                              aria-label={`移除 ${mediaFile.name}`}
+                              onClick={() => setMediaFile(null)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        </div>
+                      )}
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="图片说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending}
-                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
-                        发送图片
-                      </Button>
+                      <div className="send-toolbar">
+                        <div className="send-tools">
+                          <Upload
+                          accept="image/*"
+                            showUploadList={false}
+                            fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
+                            beforeUpload={(file) => { setMediaFile(file); setMediaMode('image'); return false; }}
+                            onRemove={() => setMediaFile(null)}
+                          >
+                            <Button className="send-tool" icon={<PictureOutlined />} aria-label="选择图片" title="选择图片" />
+                          </Upload>
+                        </div>
+                        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}
+                          disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
+                          发送图片
+                        </Button>
+                      </div>
                     </Form>
                   ),
                 },
@@ -642,28 +703,50 @@ export default function SendForm({
                   children: (
                     <Form
                       onFinish={handleMedia}
+                      className="send-form"
                       layout="vertical"
                       size="small"
                     >
-                      {chatAppAccountField}
-                      {chatAppRecipientField()}
-                      <Form.Item label="视频">
-                        <Upload
-                          accept="video/*"
-                          fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
-                          beforeUpload={(file) => { setMediaFile(file); setMediaMode('video'); return false; }}
-                          onRemove={() => setMediaFile(null)}
-                        >
-                          <Button icon={<UploadOutlined />}>选择视频</Button>
-                        </Upload>
-                      </Form.Item>
+                      <div className="send-meta-row">
+                        {chatAppAccountField}
+                        {chatAppRecipientField()}
+                      </div>
+                      {mediaFile && (
+                        <div className="send-attachments">
+                          <span className="send-attachment">
+                            <VideoCameraOutlined />
+                            <span className="send-attachment-name">{mediaFile.name}</span>
+                            <button
+                              type="button"
+                              className="send-attachment-remove"
+                              aria-label={`移除 ${mediaFile.name}`}
+                              onClick={() => setMediaFile(null)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        </div>
+                      )}
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="视频说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending}
-                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
-                        发送视频
-                      </Button>
+                      <div className="send-toolbar">
+                        <div className="send-tools">
+                          <Upload
+                          accept="video/*"
+                            showUploadList={false}
+                            fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
+                            beforeUpload={(file) => { setMediaFile(file); setMediaMode('video'); return false; }}
+                            onRemove={() => setMediaFile(null)}
+                          >
+                            <Button className="send-tool" icon={<VideoCameraOutlined />} aria-label="选择视频" title="选择视频" />
+                          </Upload>
+                        </div>
+                        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}
+                          disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
+                          发送视频
+                        </Button>
+                      </div>
                     </Form>
                   ),
                 },
@@ -673,27 +756,49 @@ export default function SendForm({
                   children: (
                     <Form
                       onFinish={handleMedia}
+                      className="send-form"
                       layout="vertical"
                       size="small"
                     >
-                      {chatAppAccountField}
-                      {chatAppRecipientField()}
-                      <Form.Item label="文件">
-                        <Upload
-                          fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
-                          beforeUpload={(file) => { setMediaFile(file); setMediaMode('document'); return false; }}
-                          onRemove={() => setMediaFile(null)}
-                        >
-                          <Button icon={<UploadOutlined />}>选择文件</Button>
-                        </Upload>
-                      </Form.Item>
+                      <div className="send-meta-row">
+                        {chatAppAccountField}
+                        {chatAppRecipientField()}
+                      </div>
+                      {mediaFile && (
+                        <div className="send-attachments">
+                          <span className="send-attachment">
+                            <PaperClipOutlined />
+                            <span className="send-attachment-name">{mediaFile.name}</span>
+                            <button
+                              type="button"
+                              className="send-attachment-remove"
+                              aria-label={`移除 ${mediaFile.name}`}
+                              onClick={() => setMediaFile(null)}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        </div>
+                      )}
                       <Form.Item name="caption" label="说明">
                         <Input placeholder="文件说明（可选）" />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" loading={sending}
-                        disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
-                        发送文件
-                      </Button>
+                      <div className="send-toolbar">
+                        <div className="send-tools">
+                          <Upload
+                            showUploadList={false}
+                            fileList={mediaFile ? [{ uid: 'media', name: mediaFile.name, status: 'done' as const }] : []}
+                            beforeUpload={(file) => { setMediaFile(file); setMediaMode('document'); return false; }}
+                            onRemove={() => setMediaFile(null)}
+                          >
+                            <Button className="send-tool" icon={<PaperClipOutlined />} aria-label="选择文件" title="选择文件" />
+                          </Upload>
+                        </div>
+                        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}
+                          disabled={!effectiveChatAppIdentityId} icon={<SendOutlined />}>
+                          发送文件
+                        </Button>
+                      </div>
                     </Form>
                   ),
                 },
@@ -709,6 +814,7 @@ export default function SendForm({
           children: (
             <Form
               onFinish={handleWeCom}
+              className="send-form"
               layout="vertical"
               size="small"
               initialValues={{ to: firstIdentityValue(contact, 'wecom') }}
@@ -722,12 +828,15 @@ export default function SendForm({
               <Form.Item name="to" label="接收人" rules={[{ required: true }]}>
                 {toSelect('wecom')}
               </Form.Item>
-              <Form.Item name="text" label="消息内容" rules={[{ required: true }]}>
+              <Form.Item name="text" label="消息内容" className="send-grow" rules={[{ required: true }]}>
                 <TextArea rows={4} placeholder="消息文本内容" />
               </Form.Item>
-              <Button type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
-                发送企业微信
-              </Button>
+              <div className="send-toolbar">
+                <div className="send-tools" />
+                <Button className="send-submit" type="primary" htmlType="submit" loading={sending} icon={<SendOutlined />}>
+                  发送企业微信
+                </Button>
+              </div>
             </Form>
           ),
         }]
@@ -746,8 +855,9 @@ export default function SendForm({
       : channelKeys[0];
 
   return (
-    <div style={{ padding: 16 }}>
+    <div className="send-composer">
       <Tabs
+        className="send-channel-tabs"
         {...(activeChannel !== undefined
           ? { activeKey: effectiveActiveChannel }
           : { defaultActiveKey: effectiveActiveChannel })}

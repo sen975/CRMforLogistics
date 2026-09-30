@@ -86,8 +86,21 @@ public class WhatsAppTemplateChangeRequestService {
     /**
      * The space to change is resolved by the caller, so an administrator reviewing another CAMS
      * space changes the template they can see rather than the one their own account happens to own.
+     *
+     * <h2>为什么这里必须声明 {@code noRollbackFor}（2026-09-29）</h2>
+     * 管理员直连执行（DIRECT）时 {@code submit} 只是把 {@link WhatsAppTemplateApplicationService}
+     * 包了一层，而底下那个方法自己声明的是 {@code @Transactional(noRollbackFor = WhatsAppTemplateException.class)}
+     * —— 它失败时会先写一条 {@code FAILED} 的 {@code template_operations} 再重抛。可外层这里是默认的
+     * 「RuntimeException 即回滚」，异常穿过 {@code submit} 往外走时把**同一个**事务标成回滚，
+     * 于是那条失败记录被一起丢掉。实测症状：一次 {@code setSendPermission} 失败（CAMS 返回
+     * {@code ERR-COMMON-001}）之后，{@code template_operations} 里查不到任何痕迹，
+     * 排查时「这次调用到底发出去没有」变成了只能靠前端截图猜。
+     *
+     * <p>内层声明不回滚、外层声明回滚 ⇒ 内层的声明是假的。两边口径必须一致。
+     * 这是安全的：{@code submit} 在抛 {@code WhatsAppTemplateException} 之前只会写
+     * 「失败的操作记录」，业务写（改模板、改备注）全都发生在成功分支里。
      */
-    @Transactional
+    @Transactional(noRollbackFor = WhatsAppTemplateException.class)
     public ChangeOutcome submit(UUID userId, UUID templateId, ChangeCommand command,
                                 WhatsAppProviderScopeService.ScopeAccount scopeAccount, String traceId) {
         requireUser(userId);

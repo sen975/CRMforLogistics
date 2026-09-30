@@ -9,7 +9,9 @@ const authorizationPanel = readFileSync(
 );
 
 test('uses the shared WhatsApp API contract instead of account-scoped template paths', () => {
-  assert.match(endpoints, /function whatsappManagementBase\([^)]*\): string[\s\S]*?return ['"]\/v1\/whatsapp['"]/);
+  // 实现已从 account-scoped 的 whatsappManagementBase(accountId) 收敛成单一共享常量
+  // （常量本身由 whatsapp-template-lifecycle-contract.test.mjs 钉住），旧形态不得复活。
+  assert.doesNotMatch(endpoints, /function whatsappManagementBase\b/);
   assert.match(endpoints, /export async function fetchSharedTemplates\b/);
   assert.match(endpoints, /export async function createSharedTemplate\b/);
   assert.doesNotMatch(endpoints, /\/v1\/channel-accounts\/\$\{accountId\}\/whatsapp/);

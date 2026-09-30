@@ -46,14 +46,29 @@ export function templatePermissionState(template: SharedTemplate): {
   color: string;
   actionLabel: '暂停发送' | '恢复发送';
   toggleDisabled: boolean;
+  /**
+   * 「暂停」这个动作对一个非营销类模板根本不成立，按钮必须不可点，并且要把原因说出来。
+   *
+   * 2026-09-29 实测：同一个通知类（UTILITY）模板、同一把空间凭据，`allowSend=true` 成功，
+   * `allowSend=false` 必然拿到 CAMS 的 `ERR-COMMON-001`（`code: 400, System error`），
+   * 服务端把它包成 502 抛出来，用户看到的是一串英文加 UUID。Meta 侧也没有业务可控的暂停接口
+   * —— 模板的 PAUSED 状态是 Meta 按质量评分自己给的。所以这是个必然失败的动作，不该给出口。
+   */
+  toggleUnavailable: boolean;
+  toggleUnavailableReason: string | null;
 } {
   const actionLabel = template.allowSend ? '暂停发送' : '恢复发送';
   const toggleDisabled = !template.allowSend && template.reviewStatus !== 'APPROVED';
+  const toggleUnavailable = template.allowSend && template.category !== 'MARKETING';
   return {
     label: template.allowSend ? '已启用' : '已暂停',
     color: template.allowSend ? 'green' : 'default',
     actionLabel,
     toggleDisabled,
+    toggleUnavailable,
+    toggleUnavailableReason: toggleUnavailable
+      ? 'WhatsApp 只允许暂停营销模板：此模板不是营销类，发送状态由 Meta 按质量评分自动管理'
+      : null,
   };
 }
 
@@ -174,4 +189,26 @@ export function variableNames(text: string): string[] {
 
 export function hasUnsupportedVariableSyntax(text: string): boolean {
   return /\$\{\s*[A-Za-z][A-Za-z0-9_]*\s*}|\{\{\s*[A-Za-z][A-Za-z0-9_]*\s*}}/.test(text);
+}
+
+/**
+ * 变量是不是落在正文的开头或结尾。
+ *
+ * 平台会因此直接拒审（拒审原话 Variables can't be at the start or end of the template，
+ * 拒审码 Leading or Trailing Params Not Allowed），后端 WhatsAppTemplateValidator 按同一口径拦。
+ * 两处判据必须一致：前端放过去、后端再拒，用户看到的是「点了提交什么也没发生」。
+ *
+ * 先 trim 再判：「 $(name) 您好」这种垫一个空格的写法意图仍是让变量打头，从严。
+ * 「两个变量相邻」那条平台口径未定（一处写作拒审、一处写作建议），与后端一样不在这里判。
+ */
+export function hasLeadingOrTrailingVariable(text: string): boolean {
+  const stripped = text.trim();
+  if (!stripped) return false;
+  return /^\$\(\s*[A-Za-z][A-Za-z0-9_]*\s*\)/.test(stripped)
+    || /\$\(\s*[A-Za-z][A-Za-z0-9_]*\s*\)$/.test(stripped);
+}
+
+/** 文本里有没有一个 $(name) 形态的变量。页脚一个都不能有：平台的 FOOTER 组件不支持参数。 */
+export function hasVariable(text: string): boolean {
+  return variableNames(text).length > 0;
 }

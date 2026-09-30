@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,6 +36,30 @@ public interface TemplateMediaAssetMapper extends BaseMapper<TemplateMediaAssetE
             + "and channel_account_id = #{accountId}::uuid limit 1")
     Optional<TemplateMediaAssetEntity> findByIdAndChannelAccountId(@Param("assetId") UUID assetId,
                                                                    @Param("accountId") UUID accountId);
+
+    /**
+     * 按账号列出<b>还能被模板引用</b>的素材，最近的在前（素材库的读口）。
+     *
+     * <h2>{@code asset_status = 'UPLOADED'} 这个口径不是这里定的</h2>
+     * 它出自 {@code WhatsAppTemplateApplicationService.prepareMedia}：只有上传完成、且<b>还没挂到
+     * 别的模板上</b>的素材才能被新模板引用。{@code ATTACHED} 看着像「传好了、只是上次用掉了」，
+     * 但建模板时照样会被拒；{@code ORPHANED} 更不用说。列出来等于让调用方发起一次注定失败的
+     * 调用，再把失败转述成一个用户无从下手的错误码 —— 所以过滤放在 SQL 里，读口出来的每一条
+     * 都是当场能用的。
+     *
+     * <p>注解的值必须是编译期常量，拼不进枚举名，所以这里写的是字面量 ——
+     * 改 {@code MediaAssetStatus} 的取值时，把本方法、
+     * {@code WhatsAppTemplateApplicationService#prepareMedia} 与
+     * {@code TemplateMediaProvider#USABLE_STATUS} 三处一起看。
+     *
+     * <p>去哪查正好走 {@code template_media_assets} 上那条
+     * {@code (channel_account_id, asset_status, created_at desc)} 专用索引 ——
+     * 过滤与排序都在索引里，不需要回表排序。
+     */
+    @Select("select * from template_media_assets where channel_account_id = #{accountId}::uuid "
+            + "and asset_status = 'UPLOADED' order by created_at desc limit #{limit}")
+    List<TemplateMediaAssetEntity> findUsableByChannelAccountId(@Param("accountId") UUID accountId,
+                                                                @Param("limit") int limit);
 
     @Update("update template_media_assets set asset_status = 'ATTACHED', attached_at = #{attachedAt}, "
             + "updated_at = #{attachedAt} "

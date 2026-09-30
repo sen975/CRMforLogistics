@@ -1240,6 +1240,11 @@ export interface PublicTemplateButton {
 export interface PublicTemplatePage {
   name: string | null;
   text: string | null;
+  /**
+   * 页脚（FOOTER 组件）单独一档，渲染时要和正文区分。
+   * 可选：自有/共享模板的预览会填它；公共模板的内容结构里没有这一档，那里页脚是 text 的一部分。
+   */
+  footer?: string | null;
   buttons: PublicTemplateButton[];
 }
 
@@ -1388,6 +1393,15 @@ export interface AssistantLatestConversation {
   conversationId: string | null;
 }
 
+export type AssistantConversationStatus = 'ACTIVE' | 'ARCHIVED';
+
+export interface AssistantConversationSummary {
+  id: string;
+  status: AssistantConversationStatus;
+  lastActivityAt?: string | null;
+  createdAt?: string | null;
+}
+
 export interface AssistantMessageRequest {
   /**
    * 会话号。由**前端生成并持久化**，用于把同一段对话的消息与审计串起来。
@@ -1398,6 +1412,36 @@ export interface AssistantMessageRequest {
   conversationId?: string;
   history?: AssistantHistoryTurn[];
   text: string;
+  /**
+   * 用户随这条消息带上来的模板素材。
+   *
+   * <h2>传什么，不传什么</h2>
+   * 只传**素材 id**。字节已经在 `POST /template-media` 上传完了（那一步拿到 id 与
+   * `providerUrl`），助手这条链不该再背一次 multipart —— 传 id 之后，这一轮请求体仍然是一个
+   * 纯 JSON，SSE 那条流的开头形状没变。
+   *
+   * <h2>为什么它不是「一次性」的</h2>
+   * 前端刻意**不在发送后清空附件**（见 `AssistantPanel` 的 `attachment` 状态）。
+   * 用户很可能先说「用这张图建个模板」，助手回一句「模板叫什么名字」，
+   * 等他回答时附件必须还在 —— 否则那个素材在第二轮就从候选里消失了，
+   * 模型只能回一句「我看不到图片」。
+   *
+   * <p>服务端每轮都按这个字段重建候选组（{@code TemplateMediaCandidates}），
+   * 所以「带上它 = 这一轮可用」；移除它由用户显式点掉。
+   *
+   * <p>空数组与不传等价；上限由服务端的候选条数（现为 1）决定，多传会被截断。
+   */
+  attachments?: AssistantAttachment[];
+}
+
+/**
+ * 一条随消息带上来的素材。
+ *
+ * 现在只有 `mediaAssetId` 一个字段，仍然写成对象而不是裸字符串：数组元素是对象时，
+ * 「以后要加一句给模型看的说明」不必改签名。
+ */
+export interface AssistantAttachment {
+  mediaAssetId: string;
 }
 
 /**

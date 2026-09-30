@@ -87,11 +87,14 @@ describe('ContactDetailPanel identity display', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: '联系人信息' }));
-    expect(screen.getAllByText('联系人信息').length).toBeGreaterThanOrEqual(2);
+    // 面板正文现在是设计稿的分组标题（「联系人」/「AI 画像」），不再有与 tab 同名的 Title
+    expect(await screen.findByText('联系人')).toBeInTheDocument();
+    expect(screen.getByText('AI 画像')).toBeInTheDocument();
+    expect(screen.getByText('名称')).toBeInTheDocument();
     expect(screen.getByText('8613428277520')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '账号渠道' }));
-    expect(screen.getAllByText('账号渠道').length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText('渠道身份')).toBeInTheDocument();
     expect(screen.getByText('悦为小森')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: '消息详情' }));
@@ -367,8 +370,8 @@ describe('ContactDetailPanel identity display', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
 
-    const nameRow = (await screen.findByText('名称')).closest('tr');
-    const remarkRow = screen.getByText('备注').closest('tr');
+    const nameRow = (await screen.findByText('名称')).closest('.cd-row');
+    const remarkRow = screen.getByText('备注').closest('.cd-row');
     // 「名称」是渠道真名，备注不顶替它（列表里用备注认人；详情里两个都要给）
     expect(nameRow?.textContent).toContain('calm1026');
     expect(nameRow?.textContent).not.toContain('张百凡');
@@ -403,8 +406,8 @@ describe('ContactDetailPanel identity display', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('tab', { name: '联系人信息' }));
 
-    const nameRow = (await screen.findByText('名称')).closest('tr');
-    const remarkRow = screen.getByText('备注').closest('tr');
+    const nameRow = (await screen.findByText('名称')).closest('.cd-row');
+    const remarkRow = screen.getByText('备注').closest('.cd-row');
     expect(nameRow?.textContent).toContain('-');
     expect(nameRow?.textContent).not.toContain('张百凡');
     expect(remarkRow?.textContent).toContain('张百凡');

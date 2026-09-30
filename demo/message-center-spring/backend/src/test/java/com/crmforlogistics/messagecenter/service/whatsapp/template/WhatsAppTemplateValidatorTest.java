@@ -53,11 +53,86 @@ class WhatsAppTemplateValidatorTest {
                 "body.text", "must not exceed 1024 characters");
     }
 
+    /**
+     * 变量落在首尾被平台直接拒审（拒审原话 {@code Variables can't be at the start or end of
+     * the template}，拒审码 {@code Leading or Trailing Params Not Allowed}），
+     * 所以在提交之前挡住，不让用户白等一轮、再换个模板名重走。
+     *
+     * <p>三种形态都要拦：变量打头、变量收尾、以及垫了空格的同名写法。
+     * 第二种是最容易踩的 —— 中文里「您好 $(customer)」是最自然的问候写法。
+     */
+    @Test
+    void rejectsVariablesAtTheStartOrEndOfTheBody() {
+        Map<String, List<String>> examples = Map.of("customer", List.of("Alice"));
+
+        assertValidationError(command(List.of(body("$(customer)，您好")), examples),
+                "body.text", "must not start or end with a variable");
+        assertValidationError(command(List.of(body("您好 $(customer)")), examples),
+                "body.text", "must not start or end with a variable");
+        assertValidationError(command(List.of(body("  $(customer) 您好")), examples),
+                "body.text", "must not start or end with a variable");
+    }
+
+    /** 变量两侧都有固定文字是唯一被接受的形态 —— 顺带钉住它不会被上面那条误伤。 */
+    @Test
+    void acceptsVariablesThatAreNeitherAtTheStartNorAtTheEndOfTheBody() {
+        TemplateCommand command = command(List.of(body("您好，$(customer)，您的货物已发出")),
+                Map.of("customer", List.of("Alice")));
+
+        assertThat(validator.validate(command)).isEqualTo(command);
+    }
+
+    /**
+     * 页脚比正文更严：<b>一个变量都不能有</b>。
+     *
+     * <p>这与正文那条是两回事 —— 平台对 FOOTER 组件的口径是「不支持参数」，
+     * 不是「参数位置受限」。所以这两条必须分别判，不能合并。
+     */
+    @Test
+    void rejectsAnyVariableInTheFooter() {
+        assertValidationError(command(List.of(
+                        body("您好，$(customer)，您的货物已发出"),
+                        footer("退订请回 $(customer)")),
+                Map.of("customer", List.of("Alice"))),
+                "footer.text", "must not contain variables");
+    }
+
+    /**
+     * 「首尾不能是变量」只适用于正文，不适用于标题。
+     *
+     * <p>平台的 TEXT header 是「至多 1 个变量」，变量占满整个标题（{@code $(subject)}）
+     * 是合法且常见的形态。这条用例钉住这两条规则的边界 ——
+     * 顺手把正文那条推广到标题上，会拒掉平台本来收的模板。
+     */
+    @Test
+    void doesNotApplyTheBodyPlacementRuleToTheHeader() {
+        TemplateCommand command = command(List.of(
+                        headerText("$(subject)"),
+                        body("您好，$(customer)，您的货物已发出")),
+                Map.of("customer", List.of("Alice"), "subject", List.of("发货通知")));
+
+        assertThat(validator.validate(command)).isEqualTo(command);
+    }
+
+    /**
+     * 「两个变量相邻」刻意<b>不</b>拦：平台口径不一（拒审原因表把它列为拒审，
+     * 内容模板文档又写作 should not be adjacent，建议级），而本地校验只做确定的拦截。
+     *
+     * <p>这条用例钉住的是那个取舍本身：将来要改成拦，得先把口径定死再回来改这里。
+     */
+    @Test
+    void leavesAdjacentVariablesToThePlatformBecauseThatRuleIsNotSettled() {
+        TemplateCommand command = command(List.of(body("您好，$(first)$(last)，请查收")),
+                Map.of("first", List.of("张"), "last", List.of("总")));
+
+        assertThat(validator.validate(command)).isEqualTo(command);
+    }
+
     @Test
     void acceptsTextHeaderAndFooterAt60Characters() {
         TemplateCommand command = command(List.of(
                 headerText("h".repeat(60)),
-                body("Hello $(customer)"),
+                body("Hello $(customer), welcome"),
                 footer("f".repeat(60))), Map.of("customer", List.of("Alice")));
 
         assertThat(validator.validate(command)).isEqualTo(command);
@@ -132,13 +207,13 @@ class WhatsAppTemplateValidatorTest {
     @Test
     void requiresExamplesWithExactlyTheVariablesUsedByBodyAndTextHeader() {
         TemplateCommand valid = command(List.of(
-                headerText("Hi $(salesRep)"), body("Hello $(customer)")),
+                headerText("Hi $(salesRep)"), body("Hello $(customer), welcome")),
                 Map.of("customer", List.of("Alice"), "salesRep", List.of("Sam")));
         assertThat(validator.validate(valid)).isEqualTo(valid);
 
-        assertValidationError(command(List.of(body("Hello $(customer)")), Map.of()),
+        assertValidationError(command(List.of(body("Hello $(customer), welcome")), Map.of()),
                 "examples", "must contain exactly the variables used by BODY and text HEADER");
-        assertValidationError(command(List.of(body("Hello $(customer)")),
+        assertValidationError(command(List.of(body("Hello $(customer), welcome")),
                 Map.of("customer", List.of("Alice"), "extra", List.of("value"))),
                 "examples", "must contain exactly the variables used by BODY and text HEADER");
     }
@@ -157,7 +232,7 @@ class WhatsAppTemplateValidatorTest {
         Map<String, List<String>> examples = new LinkedHashMap<>();
         examples.put("customer", customerExamples);
 
-        TemplateCommand command = command(List.of(body("Hello $(customer)")), examples);
+        TemplateCommand command = command(List.of(body("Hello $(customer), welcome")), examples);
         customerExamples.add("Bob");
 
         assertThat(command.examples().get("customer")).containsExactly("Alice");

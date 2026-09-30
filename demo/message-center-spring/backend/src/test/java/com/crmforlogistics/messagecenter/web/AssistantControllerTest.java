@@ -115,7 +115,7 @@ class AssistantControllerTest {
      */
     @Test
     void theTurnIsAnEventStreamWithHeadersThatKeepItFromBeingBuffered() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenReturn(AssistantTurnResult.answer("好"));
 
         MvcResult result = mvc.perform(turn("继续")).andExpect(status().isOk()).andReturn();
@@ -135,9 +135,10 @@ class AssistantControllerTest {
      */
     @Test
     void sinkCallsBecomeFramesInOrder() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
-                    AssistantTurnSink sink = invocation.getArgument(4);
+                    // respond 的第 6 个参数才是 sink（第 5 个是用户这一轮带的素材 id）
+                    AssistantTurnSink sink = invocation.getArgument(5);
                     sink.thinking();
                     sink.reading("todo.list");
                     sink.answerDelta("你");
@@ -166,9 +167,10 @@ class AssistantControllerTest {
      */
     @Test
     void aResetBecomesItsOwnFrame() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
-                    AssistantTurnSink sink = invocation.getArgument(4);
+                    // respond 的第 6 个参数才是 sink（第 5 个是用户这一轮带的素材 id）
+                    AssistantTurnSink sink = invocation.getArgument(5);
                     sink.answerDelta("你好，我");
                     sink.reset();
                     sink.answerDelta("我不确定");
@@ -189,9 +191,10 @@ class AssistantControllerTest {
      */
     @Test
     void emptyDeltasAreNotSentAsFrames() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenAnswer(invocation -> {
-                    AssistantTurnSink sink = invocation.getArgument(4);
+                    // respond 的第 6 个参数才是 sink（第 5 个是用户这一轮带的素材 id）
+                    AssistantTurnSink sink = invocation.getArgument(5);
                     sink.answerDelta("");
                     sink.answerDelta(null);
                     sink.answerDelta("好");
@@ -208,7 +211,7 @@ class AssistantControllerTest {
 
     @Test
     void aQuestionMapsToTheQuestionKindWithItsMissingFields() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), eq("帮我建一个关于张总的待办"), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), eq("帮我建一个关于张总的待办"), any(), any()))
                 .thenReturn(AssistantTurnResult.question("这条待办安排在什么时间？", List.of("date")));
 
         MvcResult result = mvc.perform(turn("帮我建一个关于张总的待办"))
@@ -224,7 +227,7 @@ class AssistantControllerTest {
 
     @Test
     void aConfirmationCarriesTheProposalWithItsSummaryAndChanges() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenReturn(AssistantTurnResult.confirmationRequired(new AssistantTurnResult.Proposal(
                         PENDING_ID, "todo.complete", "标记完成：「和张总确认报价」 2026-09-22 15:00",
                         List.of(new AssistantTurnResult.Proposal.Change("completed", "状态", null, "已完成")),
@@ -255,7 +258,7 @@ class AssistantControllerTest {
 
     @Test
     void anExecutedTurnReportsWhatWasDone() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenReturn(AssistantTurnResult.executed("已创建待办：9月22日 15:00 和张总确认报价"));
 
         MvcResult result = mvc.perform(turn("明天下午三点和张总确认报价，帮我建个待办"))
@@ -271,7 +274,7 @@ class AssistantControllerTest {
 
     @Test
     void anErrorCarriesItsCode() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenReturn(AssistantTurnResult.error("TODO_NOT_FOUND", "待办不存在"));
 
         MvcResult result = mvc.perform(turn("标记完成那条")).andExpect(status().isOk()).andReturn();
@@ -297,7 +300,7 @@ class AssistantControllerTest {
      */
     @Test
     void aRequestInvalidExceptionArrivesAsAFinalErrorFrame() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenThrow(new AssistantException(AssistantException.REQUEST_INVALID, "这条消息太长了"));
 
         MvcResult result = mvc.perform(turn("随便一句")).andExpect(status().isOk()).andReturn();
@@ -316,7 +319,7 @@ class AssistantControllerTest {
      */
     @Test
     void aProviderFailureStaysAProviderFailureAndNeverBecomesAnAnswer() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenThrow(new AssistantException(AssistantException.PROVIDER_UNAVAILABLE,
                         "AI 服务暂时不可用，请稍后再试"));
 
@@ -338,7 +341,7 @@ class AssistantControllerTest {
      */
     @Test
     void anUnexpectedFailureStillEndsTheStreamWithAFinalFrameAndNoInternals() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("jdbc: connection refused to db-host:5432"));
 
         MvcResult result = mvc.perform(turn("随便一句")).andExpect(status().isOk()).andReturn();
@@ -359,7 +362,7 @@ class AssistantControllerTest {
      */
     @Test
     void aDisabledFeatureKeepsItsOwnCodeWhenItSurfacesInsideTheStream() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenThrow(new AssistantException(AssistantException.DISABLED, "助手功能未开启"));
 
         MvcResult result = mvc.perform(turn("帮我建个待办")).andExpect(status().isOk()).andReturn();
@@ -377,7 +380,7 @@ class AssistantControllerTest {
      */
     @Test
     void theTrimReportedByTheServiceReachesTheResponseUnchanged() throws Exception {
-        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any()))
+        when(conversations.respond(eq(USER_ID), isNull(), any(), any(), any(), any()))
                 .thenReturn(AssistantTurnResult.answer("好").withTrimmedHistory(2));
 
         MvcResult result = mvc.perform(turn("继续")).andExpect(status().isOk()).andReturn();

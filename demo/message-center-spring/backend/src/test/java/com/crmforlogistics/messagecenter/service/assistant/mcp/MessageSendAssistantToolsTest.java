@@ -101,6 +101,16 @@ class MessageSendAssistantToolsTest {
     // ---------- 邮件 ----------
 
     @Test
+    void emailRecipientBoundaryIsReturnedAsAStructuredToolError() {
+        when(outbound.sendEmail(USER, CONTACT, "", "body"))
+                .thenThrow(new OutboundException("EMAIL_RECIPIENT_NOT_FOUND", "Recipient not found"));
+        ToolResult result = registry.invoke(MessageSendAssistantTools.TOOL_SEND_EMAIL, USER,
+                Map.of("contactRef", REF, "body", "body"));
+        assertThat(result.isError()).isTrue();
+        assertThat(result.code()).isEqualTo("EMAIL_RECIPIENT_NOT_FOUND");
+    }
+
+    @Test
     void aDraftIsHandedToTheServiceWithTheCallersIdentityAndTheResolvedAddressComesBack() {
         when(outbound.sendEmail(USER, CONTACT, "报价确认", "价格按上次谈的走"))
                 .thenReturn(new OutboundMessageService.EmailReceipt(

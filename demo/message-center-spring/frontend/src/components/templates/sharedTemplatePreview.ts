@@ -8,8 +8,10 @@ export function sharedTemplatePreview(template: SharedTemplate): { page: PublicT
   return {
     page: {
       name: template.displayName,
-      text: [header?.headerFormat === 'TEXT' ? header.text : null, body?.text, footer?.text]
+      text: [header?.headerFormat === 'TEXT' ? header.text : null, body?.text]
         .filter((value): value is string => Boolean(value?.trim())).join('\n\n'),
+      // 与 ownedTemplatePreview 同口径：页脚单独一档，不并进正文。
+      footer: footer?.text ?? null,
       buttons: (buttons?.buttons ?? []).map((button) => ({ name: button.text, type: button.type, url: button.url })),
     },
     variables: Object.entries(template.examples).map(([code, examples]) => ({

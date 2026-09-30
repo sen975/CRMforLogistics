@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant.mcp;
 
 import com.crmforlogistics.messagecenter.service.assistant.ConversationCandidates;
+import com.crmforlogistics.messagecenter.service.wecom.WeComSelfPushService;
 import com.crmforlogistics.messagecenter.service.wecom.WeComSummaryReadService;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.beans.factory.ObjectProvider;
@@ -14,7 +15,29 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 企业微信域的第一个能力：{@code wecom.summary_read} —— 「那个群昨天聊了啥」。
+ * 企业微信域的助手能力：{@code wecom.summary_read}（「那个群昨天聊了啥」）与
+ * {@code wecom.push_self}（「把这条推给我」）。
+ *
+ * <h2>{@code wecom.push_self}（2026-09-28 加）是这个助手唯一一个免确认的对外动作</h2>
+ * 此前所有「能造成外部后果」的写工具一律过确认卡片（{@code message.send_email} 是典型）。
+ * 这一个刻意<b>不进</b>确认队列，直接执行，理由三条：
+ *
+ * <ol>
+ *   <li><b>收件人不是参数</b>：它由调用方身份解析（{@code sendToBoundUser(userId, …)} 内部走
+ *       {@code WeComUserBindingService.requireByUserId}）。模型能编的只有内容，
+ *       而一个编不出来的收件人不可能被编错 —— 与 {@code message.send_email} 刻意不给地址参数同源。</li>
+ *   <li><b>最坏后果是「自己多收一条消息」</b>：这不是「不可撤回」（推出去的消息删不掉），
+ *       但它落在<b>自己</b>的企微里，可核对、可忽略、可顺手删，不构成对外风险。
+ *       确认卡片要保护的是「用户不知道系统会替他发给别人」这一类事，这里不成立。</li>
+ *   <li><b>它的典型用途是「把刚生成的东西带走」</b>：会议报告、待办清单 ——
+ *       用户说完「推送过去」之后要的就是它立刻到手机上。再让他点一次确认是把动作拆成两步，
+ *       而第二步没有新增任何判断依据（卡片上显示的内容他刚在对话里看过）。</li>
+ * </ol>
+ *
+ * <p>代价必须写清楚，免得后来人以为这是疏漏：<b>模型可以在用户没说「推送」的时候调用它</b>。
+ * 兜底的是描述里的时机约束（同 {@code MessageSendAssistantTools.WHEN_TO_CALL}）与
+ * {@code AssistantActionPolicy} 的档位声明 —— 档位在那边，
+ * 这里的 {@code annotations} 只是给模型看的提示。
  *
  * <h2>它读的不是原文，是 AI 摘要</h2>
  * 本项目的企微链路里已经有一条完整的「消息 → AI 摘要」通道（{@code WeComMessageSummaryWorker}
@@ -46,6 +69,7 @@ import java.util.UUID;
 public class WeComAssistantTools {
 
     public static final String TOOL_SUMMARY_READ = "wecom.summary_read";
+    public static final String TOOL_PUSH_SELF = "wecom.push_self";
 
     /**
      * 默认回看天数。
@@ -81,8 +105,20 @@ public class WeComAssistantTools {
      */
     private final ObjectProvider<WeComSummaryReadService> summaries;
 
-    public WeComAssistantTools(ObjectProvider<WeComSummaryReadService> summaries) {
+    /**
+     * 推送门面，可能不存在（企微没启用 / 没配 suite-id / 没有绑定）。
+     *
+     * <p>它住在 {@code service.wecom} 而不是 {@code channel.wecom}，是<b>架构门禁</b>要求的：
+     * 本类所在包不在 {@code ArchitectureBoundaryTest.CHANNEL_AWARE_SERVICE_PACKAGES} 里，
+     * 直接依赖 {@code WeComSendService} 会让构建变红。门禁注释禁止「为了绕过门禁而加白名单」，
+     * 所以正确做法是那一层门面，而不是往白名单里添一行 —— 见 {@code WeComSelfPushService} 的类注释。
+     */
+    private final ObjectProvider<WeComSelfPushService> selfPush;
+
+    public WeComAssistantTools(ObjectProvider<WeComSummaryReadService> summaries,
+                               ObjectProvider<WeComSelfPushService> selfPush) {
         this.summaries = summaries;
+        this.selfPush = selfPush;
     }
 
     // ---------- 声明 ----------
@@ -115,7 +151,72 @@ public class WeComAssistantTools {
                 this::read);
     }
 
+    @Bean
+    public ToolDefinition wecomPushSelfTool() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("text", stringSpec(
+                "要推送的正文（纯文本），最多 " + WeComSelfPushService.MAX_TEXT_CHARS
+                        + " 个字符。超过就先压缩成摘要 —— 企业微信单条文本消息放不下长文档",
+                "maxLength", WeComSelfPushService.MAX_TEXT_CHARS));
+
+        return new ToolDefinition(
+                McpSchema.Tool.builder()
+                        .name(TOOL_PUSH_SELF)
+                        .title("把一条消息推送到我的企业微信")
+                        .description("把一段文本推送到<b>和你当前账号绑定的那个企业微信</b>，"
+                                + "你会立刻在企微里收到。适合「把刚才那份报告/清单推给我」这类要求。"
+                                + "本工具没有「推给谁」参数：收件人固定是你自己，"
+                                + "你无法、也不需要指定别人。"
+                                + "内容由你组织后传入，所以请把要带走的东西写完整、可以直接用；"
+                                + "它是纯文本，不要写 Markdown 标记。"
+                                + "**只有当用户明确要求推送（如「推给我」「发到企微」「发到我微信」）时才调用**；"
+                                + "用户只是让你生成内容时，不要顺手推送。这是对外发送，发出后撤不回。")
+                        .inputSchema(objectSchema(properties, List.of("text")))
+                        .annotations(pushAllowed())
+                        .build(),
+                this::pushSelf);
+    }
+
     // ---------- 执行 ----------
+
+    /**
+     * 推送给调用方自己。
+     *
+     * <p>四类失败分别翻译：<b>内容问题</b>（长度）与<b>功能不可用</b>必须分开 ——
+     * 前者模型自己能改，后者换什么内容都没用；<b>结果未知</b>必须单独一档，
+     * 因为它是唯一一个「重试 = 第二条真实消息」的失败。
+     */
+    private ToolResult pushSelf(UUID userId, Map<String, Object> arguments) {
+        String text = requiredText(arguments, "text");
+
+        WeComSelfPushService service = selfPush.getIfAvailable();
+        if (service == null) {
+            throw new ToolExecutionException(ToolExecutionException.UNAVAILABLE,
+                    WeComSelfPushService.UNAVAILABLE_MESSAGE);
+        }
+
+        try {
+            WeComSelfPushService.PushOutcome outcome = service.push(userId, text);
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("status", "sent");
+            if (outcome.messageId() != null && !outcome.messageId().isBlank()) {
+                data.put("messageId", outcome.messageId());
+            }
+            // 措辞只说「已推送」。企微那边此刻确实是收到了（同步接口回了 errcode=0），
+            // 所以这里不像 WhatsApp 那样只能说「已提交」——两者机制不同，措辞也不该统一。
+            return ToolResult.ok("已把这条消息推送到你的企业微信", data);
+        } catch (IllegalArgumentException e) {
+            // 门面在本地拦下的长度问题，message 已经是给用户看的话。
+            throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT, e.getMessage(), e);
+        } catch (IllegalStateException e) {
+            throw new ToolExecutionException(ToolExecutionException.UNAVAILABLE, e.getMessage(), e);
+        } catch (WeComSelfPushService.OutcomeUnknown e) {
+            throw new ToolExecutionException(ToolExecutionException.SEND_OUTCOME_UNKNOWN, e.getMessage(), e);
+        } catch (WeComSelfPushService.PushRejected e) {
+            // 上游明确拒绝（errcode ≠ 0）：确定没送达，所以可以重试，但重试前该先看看哪里不对。
+            throw new ToolExecutionException(ToolExecutionException.INTERNAL, e.getMessage(), e);
+        }
+    }
 
     private ToolResult read(UUID userId, Map<String, Object> arguments) {
         String reference = requiredText(arguments, "groupRef");
@@ -273,6 +374,28 @@ public class WeComAssistantTools {
         Map<String, Object> field = stringSpec(description, "maxLength", GROUP_REF_MAX_CHARS);
         field.put(ToolInputValidator.CANDIDATE_SET, candidateSet);
         return field;
+    }
+
+    /**
+     * 免确认写动作的注解。
+     *
+     * <p>三个 hint 都不是随手写的，{@code AssistantActionPolicy} 会按它们判档：
+     *
+     * <ul>
+     *   <li>{@code readOnlyHint=false} —— 它确实改了外部状态（企微里多一条消息）。</li>
+     *   <li>{@code destructiveHint=false} —— 这一条是<b>进免确认档的必要条件</b>：
+     *       策略类对未声明的注解按保守值（=破坏性）解释，漏写这一行会静默退回确认档，
+     *       而不是报错。它的语义是「不会造成不可逆的变更」，推给自己一条消息符合。</li>
+     *   <li>{@code idempotentHint=false} —— 重发一次就是真的多一条，不能写成 true。</li>
+     * </ul>
+     */
+    private static McpSchema.ToolAnnotations pushAllowed() {
+        return McpSchema.ToolAnnotations.builder()
+                .readOnlyHint(false)
+                .destructiveHint(false)
+                .idempotentHint(false)
+                .openWorldHint(true)
+                .build();
     }
 
     /** 只读注解。{@code readOnlyHint=true} 是「进只读清单」的<b>声明</b>；权威在 {@code AssistantActionPolicy}。 */

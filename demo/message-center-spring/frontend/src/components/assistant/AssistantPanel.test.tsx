@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { App as AntApp } from 'antd';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AssistantPanel } from './AssistantPanel';
@@ -16,8 +16,27 @@ const api = vi.hoisted(() => ({
   confirmAssistantAction: vi.fn(),
   cancelAssistantAction: vi.fn(),
   fetchAssistantConversation: vi.fn(),
+  fetchAssistantConversations: vi.fn(),
   fetchLatestAssistantConversation: vi.fn(),
+  createAssistantConversation: vi.fn(),
+  openAssistantConversation: vi.fn(),
+  deleteAssistantConversation: vi.fn(),
+  // 附件那两个端点在这里只是为了「有这个东西」：真正的上传链路由下面的 tplMedia 顶掉。
+  // 留成 undefined 也能跑，但一旦哪天某条路径真调到它，失败长相会是个 TypeError。
+  fetchTemplateMediaUpload: vi.fn(),
+  uploadTemplateMedia: vi.fn(),
 }));
+
+/**
+ * 上传链路整体替换。
+ *
+ * <p>它自己的行为（上传 → 回查 → 等到可用）是 `templateMediaUpload` 那个模块的测试的事；
+ * 本文件要验的是**面板在三种状态下的表现**：传的时候发不发得出去、传失败带不带假 id、
+ * 传完之后图还在不在。所以只留一个可以随意 resolve / reject / 永不 resolve 的缝。
+ */
+const tplMedia = vi.hoisted(() => ({ recoverTemplateMediaUpload: vi.fn() }));
+
+vi.mock('../templates/templateMediaUpload', () => tplMedia);
 
 vi.mock('../../api/endpoints', () => api);
 
@@ -49,8 +68,15 @@ beforeEach(() => {
   // 逐字那一轮的 mock 会**留住**回调与那个还没 resolve 的 promise，而
   // `clearAllMocks` 只清调用记录、不清实现 —— 不额外重置的话，上一轮的实现会漏到下一轮。
   api.sendAssistantMessage.mockReset();
+  // 与上一行同一个理由：不重置实现的话，某个用例里那个「永不 resolve」的上传会漏到下一轮，
+  // 后面每个用图的用例都会卡在「正在上传」。
+  tplMedia.recoverTemplateMediaUpload.mockReset();
   // 回放是面板挂载时的默认动作：不给默认值，每个用例都会走一遍 catch 分支。
   api.fetchAssistantConversation.mockResolvedValue([]);
+  api.fetchAssistantConversations.mockResolvedValue([]);
+  api.createAssistantConversation.mockResolvedValue({ id: 'new', status: 'ACTIVE' });
+  api.openAssistantConversation.mockResolvedValue({ id: 'open', status: 'ACTIVE' });
+  api.deleteAssistantConversation.mockResolvedValue(undefined);
   // 本地会话号读回空时会问服务端「我上次在哪个会话里」。默认答「还没有任何对话」——
   // 这正是新用户第一次打开面板时的答案，也就不该有任何历史被拉回来。
   api.fetchLatestAssistantConversation.mockResolvedValue({ conversationId: null });
@@ -448,6 +474,48 @@ it('starting a new conversation switches the id and clears the transcript', asyn
   expect(api.fetchAssistantConversation).toHaveBeenCalledTimes(1);
 });
 
+it('reopens an archived conversation and deletes it without removing its history through the UI', async () => {
+  const archivedId = '50000000-0000-0000-0000-000000000005';
+  api.fetchAssistantConversations.mockResolvedValue([{
+    id: archivedId,
+    status: 'ARCHIVED',
+    lastActivityAt: '2026-09-28T10:00:00Z',
+  }]);
+  api.fetchAssistantConversation.mockImplementation((id: string) => Promise.resolve(
+    id === archivedId ? [{ role: 'assistant', kind: 'ANSWER', text: '可回看的旧对话' }] : [],
+  ));
+  api.openAssistantConversation.mockResolvedValue({ id: archivedId, status: 'ACTIVE' });
+  renderPanel();
+  const user = userEvent.setup();
+
+  await user.click(screen.getByRole('combobox', { name: '选择助手会话' }));
+  await user.click(await screen.findByText('归档 2026-09-28'));
+  expect(await screen.findByText('可回看的旧对话')).toBeVisible();
+  expect(api.openAssistantConversation).toHaveBeenCalledWith(archivedId);
+
+  await user.click(screen.getByRole('button', { name: '删除当前会话' }));
+
+  await waitFor(() => expect(api.deleteAssistantConversation).toHaveBeenCalledWith(archivedId));
+  expect(api.createAssistantConversation).not.toHaveBeenCalled();
+  expect(screen.queryByText('可回看的旧对话')).not.toBeInTheDocument();
+
+  // 删除后的刷新即使短暂返回旧快照，已删除会话也不能重新出现在前端列表。
+  await user.click(screen.getByRole('combobox', { name: '选择助手会话' }));
+  expect(screen.queryByText('归档 2026-09-28')).not.toBeInTheDocument();
+});
+
+it('does not render duplicate conversation ids as selectable rows', async () => {
+  const archivedId = '50000000-0000-0000-0000-000000000006';
+  const archived = { id: archivedId, status: 'ARCHIVED' as const, lastActivityAt: '2026-09-29T10:00:00Z' };
+  api.fetchAssistantConversations.mockResolvedValue([archived, archived]);
+  renderPanel();
+  const user = userEvent.setup();
+
+  await user.click(screen.getByRole('combobox', { name: '选择助手会话' }));
+
+  expect(screen.getAllByText('归档 2026-09-29')).toHaveLength(1);
+});
+
 // ---------- 语境被裁剪：「我已经记不住前面了」必须说出来 ----------
 
 it('says so when the earlier conversation is no longer in context', async () => {
@@ -747,4 +815,142 @@ it('keeps the conversation usable after a stream of deltas', async () => {
     history: { role: string; text: string }[];
   };
   expect(request.history).toContainEqual({ role: 'assistant', text: ANSWERED.message });
+});
+
+
+// ---------- 图片附件 ----------
+//
+// 这条路的关键全在**时序**上：上传发生在「选中」而不是「发送」。于是有三件事
+// 在界面上是看不见的，只能靠断言钉 —— 传的过程中发不出去、传失败时发出去的那条
+// 不能带一个假 id、以及发完之后图还在（用户下一轮很可能还要用它）。
+
+const PNG = () => new File(['x'], 'photo.png', { type: 'image/png' });
+
+/** 选一张图。走 fireEvent 而不是 user 的 upload：那个 input 是 display:none 的。 */
+function chooseImage(file: File) {
+  fireEvent.change(screen.getByLabelText('选择图片'), { target: { files: [file] } });
+}
+
+it('uploads the chosen image and sends its asset id with the message', async () => {
+  tplMedia.recoverTemplateMediaUpload.mockResolvedValue({ id: 'asset-1', providerUrl: 'blob:uploaded' });
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '收到' });
+  renderPanel();
+
+  chooseImage(PNG());
+
+  // 上传在「选中」时就发生了：这条「已就绪」出现时用户还没打一个字。
+  expect(await screen.findByText('已就绪，发消息时一起带过去')).toBeVisible();
+  expect(tplMedia.recoverTemplateMediaUpload).toHaveBeenCalledTimes(1);
+
+  await ask('拿这张图做个模板');
+
+  const request = api.sendAssistantMessage.mock.calls[0][0] as {
+    attachments: { mediaAssetId: string }[];
+  };
+  expect(request.attachments).toEqual([{ mediaAssetId: 'asset-1' }]);
+  // 本地那张 blob 预览地址不是给服务端看的。
+  expect(request).not.toHaveProperty('previewUrl');
+});
+
+it('cannot send while the image is still uploading', async () => {
+  // 一个永不 resolve 的上传，就是「图还在传」那段窗口。
+  tplMedia.recoverTemplateMediaUpload.mockReturnValue(new Promise(() => {}));
+  renderPanel();
+  const user = userEvent.setup();
+
+  await user.type(input(), '拿这张图做个模板');
+  expect(sendButton()).toBeEnabled();
+
+  chooseImage(PNG());
+
+  expect(await screen.findByText('正在上传，传完才能发出去')).toBeVisible();
+  // 同样的文字，只因为附件还没传完就发不出去 —— 否则用户会以为助手看得见图。
+  await waitFor(() => expect(sendButton()).toBeDisabled());
+  expect(api.sendAssistantMessage).not.toHaveBeenCalled();
+});
+
+it('a failed upload is reported on the attachment and never invents an asset id', async () => {
+  tplMedia.recoverTemplateMediaUpload.mockRejectedValue(new Error('boom'));
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '收到' });
+  renderPanel();
+
+  chooseImage(PNG());
+
+  expect(await screen.findByText('图片上传失败，请稍后重试')).toBeVisible();
+  // 失败不拦着说话：话照说，只是这条消息不带图。
+  await ask('拿这张图做个模板');
+
+  const request = api.sendAssistantMessage.mock.calls[0][0] as { attachments: unknown[] };
+  expect(request.attachments).toEqual([]);
+});
+
+it('refuses a file that is not an image without asking the server', async () => {
+  renderPanel();
+
+  chooseImage(new File(['x'], 'anim.gif', { type: 'image/gif' }));
+
+  expect(await screen.findByText('只能上传 JPEG 或 PNG 图片')).toBeVisible();
+  // 本地就拦掉，不上传一张注定会被平台拒的图。
+  expect(tplMedia.recoverTemplateMediaUpload).not.toHaveBeenCalled();
+});
+
+it('refuses an image over the platform limit without asking the server', async () => {
+  renderPanel();
+
+  chooseImage(new File([new ArrayBuffer(5 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' }));
+
+  // 上限与 WhatsAppTemplateValidator 的图片规格同源，所以这句话里的数字是判据不是文案。
+  expect(await screen.findByText('图片不能超过 5MB')).toBeVisible();
+  expect(tplMedia.recoverTemplateMediaUpload).not.toHaveBeenCalled();
+});
+
+it('keeps the image after sending so the next turn can still use it', async () => {
+  tplMedia.recoverTemplateMediaUpload.mockResolvedValue({ id: 'asset-1', providerUrl: 'blob:uploaded' });
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'QUESTION', message: '这个模板叫什么名字？' });
+  renderPanel();
+
+  chooseImage(PNG());
+  await screen.findByText('已就绪，发消息时一起带过去');
+
+  await ask('拿这张图做个模板');
+  // 助手问名字，用户下一轮还要用这张图 —— 发完就清掉的话，那时它已经不在候选里了。
+  expect(screen.getByTestId('assistant-attachment')).toBeVisible();
+
+  await ask('叫 shipment_update');
+
+  expect(api.sendAssistantMessage).toHaveBeenCalledTimes(2);
+  const second = api.sendAssistantMessage.mock.calls[1][0] as { attachments: unknown[] };
+  expect(second.attachments).toEqual([{ mediaAssetId: 'asset-1' }]);
+  // 也没有因为「还在」就再传一遍。
+  expect(tplMedia.recoverTemplateMediaUpload).toHaveBeenCalledTimes(1);
+});
+
+it('a pasted screenshot is treated like a chosen file', async () => {
+  tplMedia.recoverTemplateMediaUpload.mockResolvedValue({ id: 'asset-2', providerUrl: 'blob:uploaded' });
+  renderPanel();
+
+  // 截图直接贴进来是用户最顺手的动作，不该逼他先存成文件。
+  fireEvent.paste(input(), { clipboardData: { files: [PNG()] } });
+
+  expect(await screen.findByText('已就绪，发消息时一起带过去')).toBeVisible();
+  expect(tplMedia.recoverTemplateMediaUpload).toHaveBeenCalledTimes(1);
+});
+
+it('removing the image is the only thing that clears it', async () => {
+  tplMedia.recoverTemplateMediaUpload.mockResolvedValue({ id: 'asset-1', providerUrl: 'blob:uploaded' });
+  api.sendAssistantMessage.mockResolvedValue({ kind: 'ANSWER', message: '收到' });
+  renderPanel();
+  const user = userEvent.setup();
+
+  chooseImage(PNG());
+  await screen.findByText('已就绪，发消息时一起带过去');
+
+  await user.click(screen.getByRole('button', { name: '移除图片' }));
+
+  expect(screen.queryByTestId('assistant-attachment')).not.toBeInTheDocument();
+
+  await ask('现在没有图了');
+
+  const request = api.sendAssistantMessage.mock.calls[0][0] as { attachments: unknown[] };
+  expect(request.attachments).toEqual([]);
 });

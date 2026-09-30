@@ -26,14 +26,18 @@
 - [企业微信统一会话工作区设计](specs/2026-08-25-wecom-unified-conversation-workspace-design.md)：定义联系人直聊聚合、左侧独立群聊、群发送者与参与者、单 OpenDataFrame 串行更新和导航行为。涉及 UI、路由、会话列表或 frame 生命周期时，以该文档为当前真源。
 - [企业微信消息级官方摘要设计](specs/2026-08-31-wecom-message-summary-design.md)：定义每条企业微信消息异步调用 `conversation_daily_summary`、原始响应审计、失败分层和消息保留保护。
 - [助手对话上下文滚动摘要设计](specs/2026-09-23-assistant-conversation-context-compaction-design.md)：定义保留完整原始对话、持久化滚动摘要、覆盖游标、有界上下文预算、失败回退和并发更新 fencing。
+  近期记忆层使用独立 token 预算：最近原文 `assistant.recent-memory-token-budget` 默认 8192 tokens，滚动摘要 `assistant.summary-memory-token-budget` 默认 2048 tokens；轮数仅作分页/运行保护，字符数仅作最后资源保护。
+- [助手对话归档、删除与 30 天过期设计](specs/2026-09-29-assistant-conversation-lifecycle-design.md)：定义按 `(user_id, conversation_id)` 隔离的生命周期 owner、ACTIVE/ARCHIVED/EXPIRED/DELETED 状态、新会话归档、历史重开、软删除及 30 天无活动自动过期边界。
 
 ## 当前实施
+
+- [邮件收件人解析修正实施计划](plans/2026-09-28-email-recipient-visibility-remediation.md)：撤掉「收件人必须是已有联系人」的归属校验（原实现按本项目**从未接线**的 `contacts.owner_user_id` 过滤，实测 41/53 为 NULL，导致任何收件人都发不出邮件）；改为任意合法邮箱地址可发、复用查询兼容 email `identity_scope` 的历史字面量 `'email'` 形态、陌生地址落成孤立身份而**不创建联系人**，AI 侧仍只接受已有联系人。**已完成（2026-09-28）**，专项 **82 例 0 失败**（含真库 Testcontainers + 真 SMTP）。
 
 - [助手授权读取边界实施计划](plans/2026-09-28-assistant-authorization-boundary.md)：落实当前用户权限继承、owner 重新授权、最小数据投影、隐私审计和助手工具 Mapper 架构门禁。
 
 - [助手授权读取边界验收记录](reviews/2026-09-28-assistant-authorization-boundary-verification.md)：记录 241 例权限专项、Spring 集成边界、审计脱敏和未闭合的外部/历史数据验收。
 
-- [助手对话上下文滚动摘要实施计划](plans/2026-09-23-assistant-conversation-context-compaction.md)：落实有界 Token 估算、持久化摘要游标、并发 fencing、失败回退和完整原文回放验收。
+- [助手对话上下文滚动摘要实施计划](plans/2026-09-23-assistant-conversation-context-compaction.md)：旧版实施记录；因近期记忆窗口已改为摘要与原文共享 Token 预算，待预算修订 spec 获批后重写，当前不可直接执行。
 
 - [联系人 AI 记忆首次历史回填实施计划](plans/2026-09-23-contact-memory-bootstrap.md)：按 Gate 0 与逐 Task 闸口实施无画像联系人的有界历史回填、迟到消息回执、失败重试和 API/UI 状态。
 

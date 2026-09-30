@@ -55,6 +55,10 @@ demo/outputs/
 video-pitch/out/
 video-pitch-portable*.tar.gz
 
+# 本地打包产物：message-center.jar 单个就有 69MB，frontend.zip 0.9MB。
+# 都能由 mvn package / npm run build 重建，入库只会让 .git 永久膨胀，故刻意排除。
+release/
+
 # Local agent memory and session state
 .workbuddy/
 

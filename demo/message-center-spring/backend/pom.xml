@@ -181,8 +181,7 @@
                         <exclude>**/MessageSendAssistantTools.java</exclude>
                     </excludes>
                     <testIncludes>
-                        <testInclude>**/ContactMemoryBackfillMigrationTest.java</testInclude>
-                        <testInclude>**/PostgresTestSchema.java</testInclude>
+                        <testInclude>**/*Test.java</testInclude>
                     </testIncludes>
                 </configuration>
             </plugin>

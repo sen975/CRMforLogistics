@@ -34,6 +34,13 @@ it('groups top-level navigation by channel and system settings', () => {
   expect(screen.queryByRole('button', { name: /^模板$/ })).not.toBeInTheDocument();
 });
 
+it('scopes the dark appearance to the header and conversation sidebar', () => {
+  const { container } = render(<MemoryRouter><AppLayout /></MemoryRouter>);
+  expect(container.querySelector('header.message-center-header')).toBeInTheDocument();
+  expect(container.querySelector('aside.message-center-sidebar')).toBeInTheDocument();
+  expect(container.querySelector('main.message-center-content')).toBeInTheDocument();
+});
+
 it('shows channel and system actions in their dropdowns', async () => {
   render(<MemoryRouter><AppLayout /></MemoryRouter>);
   const user = userEvent.setup();

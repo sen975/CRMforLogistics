@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.ContactEntity;
 import com.crmforlogistics.messagecenter.mapper.AssistantPendingActionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.AiTopicAssistantTools;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ChatAppTemplateAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactMemoryAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ContactWriteAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ConversationAssistantTools;
@@ -384,6 +385,32 @@ public class AssistantPendingActionService {
                             OutboundMessageService.CHANNEL_CHATAPP)
                             + "发一条 WhatsApp 消息：\n" + argument(arguments, "text"),
                     List.of());
+            // ---------- 模板申请（提交给外部平台审核） ----------
+            //
+            // 与上面两张同规格、理由不同：邮件与 WhatsApp 消息是「发出去」，这个是「提交上去」——
+            // 内容会进 Meta 的审核队列，在这边改不掉也撤不回，被拒还会在这个账号上留一条记录。
+            // 所以标题/正文/页脚同样一字不改地放进卡片，并带上类别与语言：
+            // 「选错类别」是最常见的一种拒因，而提交后无法当场改正 ——
+            // 这张卡片是用户最后一次能拦住它的机会。
+            //
+            // changes 同样留空：这里没有「改前」，硬造一条 before=null 会被渲染成一次修改。
+            case ChatAppTemplateAssistantTools.TOOL_TEMPLATE_APPLY -> new Card(
+                    "申请 WhatsApp 模板「" + argument(arguments, "name") + "」（"
+                            + argument(arguments, "category") + renderTemplateLanguage(arguments)
+                            + "），提交给平台的内容：\n" + renderTemplateBody(arguments),
+                    List.of());
+            // ---------- 素材入库（服务端去下载用户给的地址） ----------
+            //
+            // 这张卡片要回答的是「从哪儿抓这张图」，所以地址必须完整显示、不摘要：
+            // 用户这一条消息里可能有几个链接，模型挑错了只有在这里才看得出来。
+            // 账号名也带上 —— 素材是落到某个账号的空间里的，多账号时它决定了这张图之后
+            // 能不能被那个账号的模板用上。
+            //
+            // changes 留空：这里没有「改前」，素材是新增的（同 todo.create / 模板申请）。
+            case ChatAppTemplateAssistantTools.TOOL_TEMPLATE_MEDIA_UPLOAD -> new Card(
+                    "把图片存进素材库（账号：「" + templateAccountName(arguments, context) + "」）：\n"
+                            + describeIngestLink(arguments),
+                    List.of());
             default -> new Card(toolName + " " + writeJson(arguments), List.of());
         };
         // 卡片是给人核对用的 ⇒ 裸截断（截断标记对人是噪音）；代理对仍要防：
@@ -440,6 +467,87 @@ public class AssistantPendingActionService {
     private static String contactName(Map<String, Object> arguments, AssistantContext context) {
         ContactCandidates.Item item = contactItem(arguments, context);
         return item == null ? "联系人 " + argument(arguments, "contactRef") : "「" + item.name() + "」";
+    }
+
+    /**
+     * 模板卡片上的「内容」一栏：标题、正文、页脚、按钮按平台要求的顺序拼起来。
+     *
+     * <p>不摘要、不省略 —— 与邮件正文同一个理由（见 {@code card} 里发送类分支的注释）：
+     * 用户在这张卡片上点头的是「这几段文字被提交上去」，少给一段就等于让他对没看到的内容负责。
+     *
+     * <p>长度上界可算。<b>按钮数一改这个预算就要重算，所以把算式留在这里：</b>
+     * 前缀（{@code 申请 WhatsApp 模板「} + 名字 + {@code 」（} + 类别 + 语言 + {@code ），提交给平台的内容：}）
+     * = 15+64+2+9+17+12 = 119；内容 = 标题 60+1 + 正文 1024 + 页脚 1+60 + 两个按钮
+     * （每个 1+4+60+3+URL）= 1401 + 2×URL。合计 1401+2×URL，{@link #SUMMARY_MAX} 是 4000
+     * ⇒ 单个 URL 不得超过 1299，而 {@code BUTTON_URL_MAX_CHARS} 取的是 512（合计约 2425）。
+     * <b>改任一上限都要重算这四行</b>——超过之后卡片会被裸截断，
+     * 而一张只显示半个模板的确认卡片比没有卡片更危险。
+     */
+    /**
+     * 素材入库卡片上的那个地址。
+     *
+     * <p>用 {@link TemplateMediaLinkCandidates#urlOf} 把候选引用还原成地址，而不是把
+     * {@code TEMPLATE_MEDIA_LINK:https://…} 整串印上去：用户要核对的是「抓的是不是这张图」，
+     * 前缀对他是噪声。形状不对时退回原串 —— 卡片显示一个奇怪的字符串，
+     * 也比抛异常让整个确认流程挂掉好（那会让用户连「这次要做什么」都看不到）。
+     */
+    private static String describeIngestLink(Map<String, Object> arguments) {
+        String reference = argument(arguments, ChatAppTemplateAssistantTools.LINK_REF);
+        String url = TemplateMediaLinkCandidates.urlOf(reference);
+        return url == null ? reference : url;
+    }
+
+    /**
+     * 卡片上的账号名，从候选清单里取。
+     *
+     * <p>取不到时退回 {@code accountRef}，<b>不编一个名字</b>：编出来的账号名会让用户
+     * 在一张给他核对用的卡片上核对一个不存在的东西（同工具层 {@code accountTarget} 的口径）。
+     */
+    private static String templateAccountName(Map<String, Object> arguments, AssistantContext context) {
+        String reference = argument(arguments, "accountRef");
+        CandidateSet set = context == null ? null : context.candidateSet(ChatAppAccountCandidates.NAME);
+        if (set instanceof ChatAppAccountCandidates available) {
+            ChatAppAccountCandidates.Item found = available.find(reference);
+            if (found != null) {
+                return found.name();
+            }
+        }
+        return reference;
+    }
+
+    private static String renderTemplateBody(Map<String, Object> arguments) {
+        StringBuilder text = new StringBuilder();
+        String header = argument(arguments, "headerText");
+        if (!header.isBlank()) {
+            text.append(header).append('\n');
+        }
+        text.append(argument(arguments, "body"));
+        String footer = argument(arguments, "footerText");
+        if (!footer.isBlank()) {
+            // 页脚在客户手机上自成一行小字，和正文不是一回事。卡片上不加标记的话，
+            // 用户会把它读成「正文里多了一句莫名其妙的话」—— 确认前就先产生误会。
+            text.append("\n［页脚］").append(footer);
+        }
+        for (int index = 1; index <= ChatAppTemplateAssistantTools.MAX_URL_BUTTONS; index++) {
+            // 逐槽位取名字，而不是在这里拼 "button" + n + "Text"：
+            // 命名规则只有工具类那一份，改了参数名这里会自动跟上。
+            String button = argument(arguments, ChatAppTemplateAssistantTools.buttonTextKey(index));
+            if (button.isBlank()) {
+                continue;
+            }
+            text.append("\n［按钮］").append(button);
+            String url = argument(arguments, ChatAppTemplateAssistantTools.buttonUrlKey(index));
+            if (!url.isBlank()) {
+                text.append(" → ").append(url);
+            }
+        }
+        return text.toString();
+    }
+
+    /** 语言只在不为空时上卡片：模型没传时它其实落在一个服务端默认值上，写上去会让用户以为是自己选的。 */
+    private static String renderTemplateLanguage(Map<String, Object> arguments) {
+        String language = argument(arguments, "language");
+        return language.isBlank() ? "" : "，" + language;
     }
 
     /** 主题的渲染。没给主题是常态（邮件主题可空），必须写出来而不是留一个空括号。 */

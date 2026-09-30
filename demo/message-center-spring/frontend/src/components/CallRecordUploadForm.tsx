@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Form, Select, Radio, DatePicker, Input, Upload, Button, App, InputNumber } from 'antd';
-import { UploadOutlined, PhoneOutlined } from '@ant-design/icons';
+import { AudioOutlined, PhoneOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { createCallRecord, bindPhoneContact, fetchContacts } from '../api/endpoints';
 import type { ContactResponse } from '../api/types';
@@ -72,6 +72,7 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
   return (
     <Form
       onFinish={handleSubmit}
+      className="send-form"
       layout="vertical"
       size="small"
       initialValues={{
@@ -84,7 +85,7 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
       }}
     >
       {!contact && (
-        <Form.Item name="contactId" label="联系人">
+        <Form.Item name="contactId" label="联系人" className="send-meta-inline">
           <Select
             showSearch
             placeholder="选择联系人"
@@ -99,6 +100,7 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
         </Form.Item>
       )}
 
+      <div className="send-meta-row send-meta-row-3">
       {phoneIdentities.length > 0 ? (
         <Form.Item name="phonePointId" label="电话号码" rules={[{ required: true, message: '请选择电话号码' }]}>
           <Select
@@ -125,37 +127,63 @@ export default function CallRecordUploadForm({ contact, onSuccess }: CallRecordU
       <Form.Item name="occurredAt" label="通话时间" rules={[{ required: true, message: '请选择通话时间' }]}>
         <DatePicker showTime style={{ width: '100%' }} />
       </Form.Item>
+      </div>
 
-      <Form.Item name="note" label="备注">
-        <TextArea rows={2} placeholder="备注（可选）" />
+      <Form.Item name="note" label="备注" className="send-grow">
+        <TextArea rows={3} placeholder="备注（可选）" />
       </Form.Item>
 
-      <Form.Item label="录音文件" required>
-        <Upload
-          accept="audio/mpeg,.mp3"
-          fileList={mp3File ? [{ uid: 'mp3', name: mp3File.name, status: 'done' as const }] : []}
-          beforeUpload={(file) => {
-            if (!file.type.startsWith('audio/') && !file.name.toLowerCase().endsWith('.mp3')) {
-              message.error('仅支持MP3格式');
+      {/* 录音文件就地显示在工具栏左侧：另起一行会把备注区挤掉一截，
+          发送区高度是定死的。没选文件时这一格让给格式提示。 */}
+      <div className="send-toolbar">
+        <div className="send-tools">
+          <Upload
+            accept="audio/mpeg,.mp3"
+            showUploadList={false}
+            fileList={mp3File ? [{ uid: 'mp3', name: mp3File.name, status: 'done' as const }] : []}
+            beforeUpload={(file) => {
+              if (!file.type.startsWith('audio/') && !file.name.toLowerCase().endsWith('.mp3')) {
+                message.error('仅支持MP3格式');
+                return false;
+              }
+              if (file.size > 100 * 1024 * 1024) {
+                message.error('文件不能超过100MB');
+                return false;
+              }
+              setMp3File(file);
               return false;
-            }
-            if (file.size > 100 * 1024 * 1024) {
-              message.error('文件不能超过100MB');
-              return false;
-            }
-            setMp3File(file);
-            return false;
-          }}
-          onRemove={() => setMp3File(null)}
-          maxCount={1}
-        >
-          <Button icon={<UploadOutlined />}>选择MP3录音文件</Button>
-        </Upload>
-      </Form.Item>
-
-      <Button type="primary" htmlType="submit" loading={sending}>
-        上传录音
-      </Button>
+            }}
+            onRemove={() => setMp3File(null)}
+            maxCount={1}
+          >
+            <Button
+              className="send-tool"
+              icon={<AudioOutlined />}
+              aria-label="选择MP3录音文件"
+              title="选择MP3录音文件"
+            />
+          </Upload>
+          {mp3File ? (
+            <span className="send-attachment">
+              <AudioOutlined />
+              <span className="send-attachment-name">{mp3File.name}</span>
+              <button
+                type="button"
+                className="send-attachment-remove"
+                aria-label={`移除 ${mp3File.name}`}
+                onClick={() => setMp3File(null)}
+              >
+                ×
+              </button>
+            </span>
+          ) : (
+            <span className="send-tool-hint">支持 MP3，单文件 ≤ 100MB</span>
+          )}
+        </div>
+        <Button className="send-submit" type="primary" htmlType="submit" loading={sending}>
+          上传录音
+        </Button>
+      </div>
     </Form>
   );
 }

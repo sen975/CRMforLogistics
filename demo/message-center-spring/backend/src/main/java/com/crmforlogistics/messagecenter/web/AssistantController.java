@@ -2,6 +2,8 @@ package com.crmforlogistics.messagecenter.web;
 
 import com.crmforlogistics.messagecenter.infrastructure.SecurityUtil;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLogService;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationLifecycleService;
+import com.crmforlogistics.messagecenter.entity.AssistantConversationEntity;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantConversationService;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
 import com.crmforlogistics.messagecenter.service.assistant.AssistantMessage;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
 
 /**
  * 助手端点。
@@ -82,15 +85,18 @@ public class AssistantController {
     private final ObjectProvider<AssistantConversationService> conversations;
     private final ObjectProvider<AssistantPendingActionService> pendingActions;
     private final ObjectProvider<AssistantConversationLogService> conversationLog;
+    private final ObjectProvider<AssistantConversationLifecycleService> lifecycle;
     private final ObjectMapper objectMapper;
 
     public AssistantController(ObjectProvider<AssistantConversationService> conversations,
                                ObjectProvider<AssistantPendingActionService> pendingActions,
                                ObjectProvider<AssistantConversationLogService> conversationLog,
+                               ObjectProvider<AssistantConversationLifecycleService> lifecycle,
                                ObjectMapper objectMapper) {
         this.conversations = conversations;
         this.pendingActions = pendingActions;
         this.conversationLog = conversationLog;
+        this.lifecycle = lifecycle;
         this.objectMapper = objectMapper;
     }
 
@@ -116,6 +122,7 @@ public class AssistantController {
                 request == null ? null : request.conversationId(),
                 historyOf(request),
                 request == null ? null : request.text(),
+                attachmentIdsOf(request),
                 stream));
     }
 
@@ -163,6 +170,40 @@ public class AssistantController {
         return new LatestConversation(service.latestConversationId(SecurityUtil.currentUserId()));
     }
 
+    /** 只返回仍可见的 ACTIVE/ARCHIVED 会话；EXPIRED/DELETED 在查询层即被排除。 */
+    @GetMapping("/conversations")
+    public List<ConversationSummary> conversations() {
+        AssistantConversationLifecycleService service = require(lifecycle);
+        return service.listVisible(SecurityUtil.currentUserId()).stream()
+                .map(ConversationSummary::from)
+                .toList();
+    }
+
+    /** 显式创建新会话，同时归档当前 ACTIVE 会话。 */
+    @PostMapping("/conversations")
+    public ConversationSummary createConversation(@RequestBody CreateConversationRequest request) {
+        AssistantConversationLifecycleService service = require(lifecycle);
+        UUID id = request == null || request.conversationId() == null ? UUID.randomUUID() : request.conversationId();
+        UUID created = service.createNew(SecurityUtil.currentUserId(), id);
+        return new ConversationSummary(created, "ACTIVE", null, null);
+    }
+
+    /** 重新打开归档会话；过期会话不可恢复。 */
+    @PostMapping("/conversations/{id}/open")
+    public ConversationSummary openConversation(@PathVariable UUID id) {
+        AssistantConversationLifecycleService service = require(lifecycle);
+        UUID userId = SecurityUtil.currentUserId();
+        service.open(userId, id);
+        return ConversationSummary.from(service.listVisible(userId).stream()
+                .filter(row -> id.equals(row.getId())).findFirst().orElseThrow());
+    }
+
+    /** 软删除会话；历史消息不会被物理删除。 */
+    @org.springframework.web.bind.annotation.DeleteMapping("/conversations/{id}")
+    public void deleteConversation(@PathVariable UUID id) {
+        require(lifecycle).delete(SecurityUtil.currentUserId(), id);
+    }
+
     private static <T> T require(ObjectProvider<T> provider) {
         T service = provider.getIfAvailable();
         if (service == null) {
@@ -188,7 +229,21 @@ public class AssistantController {
      * <p>{@code history} 可空（单轮提问），且**只在服务端没有该会话的记录时才会被采用**；
      * {@code conversationId} 可空（前端还没有会话号时不该阻塞对话，只是审计串不起来）。
      */
-    public record MessagesRequest(UUID conversationId, List<HistoryTurn> history, String text) {
+    public record MessagesRequest(UUID conversationId, List<HistoryTurn> history, String text,
+                                  List<Attachment> attachments) {
+    }
+
+    /**
+     * 请求体里的一条素材引用。
+     *
+     * <p>只有 id：字节已经在 {@code POST /template-media} 上传完了。带 id 而不是带字节，
+     * 是为了让这条请求仍然是一个纯 JSON —— multipart 与流式响应混在一起会让失败路径没法解释
+     * （上传失败该是 4xx，而这条流一旦开写就只能 200）。
+     *
+     * <p>写成对象而不是裸 uuid 数组：这个字段的语义是「附了一条素材」，
+     * 以后要带上「它是给哪句话用的」时不必改签名。
+     */
+    public record Attachment(UUID mediaAssetId) {
     }
 
     /**
@@ -201,6 +256,30 @@ public class AssistantController {
      * 在响应体里用 {@code null} 表达「没有」，正好是这个区别的载体。
      */
     public record LatestConversation(UUID conversationId) {
+    }
+
+    public record CreateConversationRequest(UUID conversationId) {
+    }
+
+    public record ConversationSummary(UUID id, String status, Instant lastActivityAt, Instant createdAt) {
+        static ConversationSummary from(AssistantConversationEntity row) {
+            return new ConversationSummary(row.getId(), row.getStatus(), row.getLastActivityAt(), row.getCreatedAt());
+        }
+    }
+
+    /**
+     * 把请求体里的素材引用摊平成 id 列表。
+     *
+     * <p>只做形状归一（丢掉 null 元素），**不做归属与状态校验** —— 那是
+     * {@code TemplateMediaProvider} 的活，而且它需要用户身份；这里只是在翻译请求体
+     * （见本类对 {@code messages} 的说明：控制器不做任何选源与校验）。
+     */
+    private static List<UUID> attachmentIdsOf(MessagesRequest request) {
+        if (request == null || request.attachments() == null) return List.of();
+        return request.attachments().stream()
+                .filter(attachment -> attachment != null && attachment.mediaAssetId() != null)
+                .map(Attachment::mediaAssetId)
+                .toList();
     }
 
     /**

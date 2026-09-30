@@ -234,7 +234,7 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
             GetChatappTemplateDetailResponseBody.Data data = body.getData();
             if (data == null) return Optional.empty();
             return Optional.of(new TemplateSnapshot(data.getTemplateCode(), data.getName(), data.getLanguage(),
-                    data.getCategory(), reviewStatus(data.getAuditStatus()), data.getAuditStatus(), data.getReason(),
+                    data.getCategory(), ReviewStatus.fromProviderAuditStatus(data.getAuditStatus()), data.getAuditStatus(), data.getReason(),
                     templateAllowsSend(data.getAuditStatus(), data.getCategory(), data.getAllowSend()), detailComponents(data.getComponents()),
                     expandExamples(data.getExample()), data.getMessageSendTtlSeconds(), null, null));
         } catch (WhatsAppTemplateException e) {
@@ -387,17 +387,6 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
         }
     }
 
-    private static ReviewStatus reviewStatus(String status) {
-        if (status == null) return ReviewStatus.UNKNOWN;
-        return switch (status.trim().toLowerCase(Locale.ROOT)) {
-            case "auditing" -> ReviewStatus.PENDING;
-            case "pass" -> ReviewStatus.APPROVED;
-            case "fail" -> ReviewStatus.REJECTED;
-            case "unaudit" -> ReviewStatus.SUSPENDED;
-            default -> ReviewStatus.UNKNOWN;
-        };
-    }
-
     private static String sha256(byte[] bytes) throws Exception {
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
         StringBuilder hex = new StringBuilder(digest.length * 2);
@@ -460,9 +449,36 @@ public class AliyunChatAppTemplateGateway implements WhatsAppTemplateGateway {
                     "该模板名称已被 CAMS 占用（CAMS 的列表里看不到它），请更换名称，或先在 CAMS 侧释放旧模板",
                     Map.of(), providerRequestId, false);
         }
+        String providerMessage = cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+        if (isCamsSystemError(cause)) {
+            return new WhatsAppTemplateException("TEMPLATE_PROVIDER_ERROR", org.springframework.http.HttpStatus.BAD_GATEWAY,
+                    operation + "：CAMS 返回系统异常（ERR-COMMON-001），本地无法自愈，请带下面的请求 ID 找阿里云排查；原始返回："
+                            + providerMessage,
+                    Map.of(), providerRequestId, true);
+        }
         return new WhatsAppTemplateException("TEMPLATE_PROVIDER_ERROR", org.springframework.http.HttpStatus.BAD_GATEWAY,
-                operation + " failed: " + (cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage()),
+                operation + " failed: " + providerMessage,
                 Map.of(), providerRequestId, true);
+    }
+
+    /**
+     * CAMS 把 {@code ERR-COMMON-001} 归类为「系统异常，请联系管理员」（见其官方错误码表），上游给的是
+     * HTTP 400 + {@code System error} + 一个 request id。原样抛出去，用户看到的只有一串英文加一个 UUID，
+     * 既不知道是谁的问题，也不知道下一步该做什么。这里翻成一句能行动的中文，但<b>必须保留 request id</b>——
+     * 那是唯一能拿去阿里云工单里定位的东西，也是判断「本地是不是又发了一次」的依据。
+     */
+    private static boolean isCamsSystemError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof PopClientException client && "ERR-COMMON-001".equalsIgnoreCase(client.getErrCode())) {
+                return true;
+            }
+            if (current.getMessage() != null && current.getMessage().contains("ERR-COMMON-001")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

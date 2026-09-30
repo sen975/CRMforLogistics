@@ -136,6 +136,17 @@ class OutboundMessageServiceTest {
     // ---------- 邮件 ----------
 
     @Test
+    void emailRecipientBoundaryCodeIsPreservedForAi() throws Exception {
+        when(identities.findByContactIdAndOwner(CONTACT, USER))
+                .thenReturn(List.of(email(EMAIL_IDENTITY, "zhou@example.com", "zhou@example.com")));
+        when(emails.send(USER, "zhou@example.com", "subject", "body"))
+                .thenThrow(new EmailException("EMAIL_RECIPIENT_NOT_FOUND", "Recipient not found"));
+        Throwable failure = catchThrowable(() -> service.sendEmail(USER, CONTACT, "subject", "body"));
+        assertThat(failure).isInstanceOf(OutboundException.class);
+        assertThat(((OutboundException) failure).code()).isEqualTo("EMAIL_RECIPIENT_NOT_FOUND");
+    }
+
+    @Test
     void sendEmailUsesTheOwnerScopedOverloadAndTheResolvedAddress() throws Exception {
         when(identities.findByContactIdAndOwner(CONTACT, USER))
                 .thenReturn(List.of(email(EMAIL_IDENTITY, "zhou@example.com", "zhou@example.com")));

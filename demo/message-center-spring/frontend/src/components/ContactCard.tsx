@@ -1,17 +1,28 @@
-import { Badge, Typography, Space, Tag, Tooltip } from 'antd';
-import { MailOutlined, MessageOutlined, PhoneOutlined, PushpinFilled, WechatOutlined } from '@ant-design/icons';
+import { Badge, Typography, Tag, Tooltip } from 'antd';
+import { PushpinFilled } from '@ant-design/icons';
 import type { ContactResponse } from '../api/types';
 import { contactDisplayName } from '../utils/contactDisplayName';
 
 const { Text } = Typography;
 
-const channelIcons: Record<string, React.ReactNode> = {
-  email: <MailOutlined />,
-  chatapp: <MessageOutlined />,
-  wecom: <WechatOutlined />,
-  phone: <PhoneOutlined />,
-  call: <PhoneOutlined />,
+const AVATAR_COLORS = ['blue', 'green', 'indigo', 'amber', 'red', 'teal', 'slate'] as const;
+const CHANNEL_MARKERS: Record<string, string> = {
+  email: 'mail',
+  chatapp: 'wa',
+  wecom: 'wecom',
+  phone: 'phone',
+  call: 'phone',
 };
+
+function stableAvatarColor(id: string): typeof AVATAR_COLORS[number] {
+  let hash = 0;
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function contactInitial(name: string): string {
+  return Array.from(name.trim())[0] ?? '?';
+}
 
 function formatTime(iso: string | null): string {
   if (!iso) return '';
@@ -31,69 +42,47 @@ interface ContactCardProps {
 }
 
 export default function ContactCard({ contact, isActive, onClick }: ContactCardProps) {
+  const displayName = contactDisplayName(contact);
+  const avatarColor = stableAvatarColor(contact.id);
+  const channelTypes = contact.channelTypes ?? [];
   return (
     <div
+      className={`conversation-contact ${isActive ? 'is-active' : ''}`}
       onClick={onClick}
       style={{
-        padding: '10px 12px',
+        padding: '8px 10px',
         cursor: 'pointer',
-        background: isActive ? '#e6f4ff' : undefined,
-        borderBottom: '1px solid #f0f0f0',
-        borderLeft: isActive ? '3px solid #1677ff' : '3px solid transparent',
         transition: 'background 0.2s',
         width: '100%',
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <Space size={4}>
-          {contact.channelTypes?.map((ch) => (
-            <span key={ch} style={{ fontSize: 14 }}>
-              {channelIcons[ch] ?? <MessageOutlined />}
-            </span>
-          ))}
-        </Space>
-        <Text strong ellipsis style={{ flex: 1 }}>
-          {contactDisplayName(contact)}
-        </Text>
-        <Space size={4}>
-          {contact.pinned ? (
-            <Tooltip title="已置顶">
-              <PushpinFilled aria-label="已置顶" style={{ color: '#1677ff', fontSize: 12 }} />
-            </Tooltip>
-          ) : null}
-          {contact.unreadCount > 0 && (
-            <Badge count={contact.unreadCount} size="small" />
-          )}
-          {contact.messageCount > 0 && (
-            <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-              {formatTime(contact.lastMessageAt)}
-            </Text>
-          )}
-        </Space>
-      </div>
-      {contact.lastText && (
-        <Text
-          type="secondary"
-          ellipsis
-          style={{ fontSize: 12, paddingLeft: 24 }}
-        >
-          {contact.lastText}
-        </Text>
-      )}
-      {contact.matchedTags && contact.matchedTags.length > 0 && (
-        <div style={{ paddingLeft: 24, marginTop: 2 }}>
-          {contact.matchedTags.map((name) => (
-            <Tag key={name} color="blue" style={{ fontSize: 10, lineHeight: '16px' }}>{name}</Tag>
-          ))}
-        </div>
-      )}
-      <div style={{ paddingLeft: 24, marginTop: 2 }}>
-        {contact.channelTypes?.map((ch) => (
-          <Tag key={ch} style={{ fontSize: 10, lineHeight: '16px' }}>
-            {ch}
-          </Tag>
+      <div className={`contact-avatar contact-avatar-color-${avatarColor}`} data-testid="contact-avatar">
+        {contactInitial(displayName)}
+        {channelTypes.slice(0, 2).map((channel, index) => (
+          <i
+            key={`${channel}-${index}`}
+            className={`contact-channel-dot contact-channel-dot-${CHANNEL_MARKERS[channel] ?? 'other'} ${index === 0 ? 'is-top' : 'is-bottom'}`}
+            data-channel={channel}
+            aria-label={`${channel} 渠道`}
+          />
         ))}
+      </div>
+      <div className="contact-copy">
+        <div className="contact-heading">
+          <Text strong ellipsis className="contact-name">{displayName}</Text>
+          {contact.messageCount > 0 && <Text type="secondary" className="contact-time">{formatTime(contact.lastMessageAt)}</Text>}
+        </div>
+        {contact.lastText && <div className="contact-preview">{contact.lastText}</div>}
+        {contact.matchedTags && contact.matchedTags.length > 0 && (
+          <div className="contact-tags">
+            {contact.matchedTags.map((name) => <Tag key={name} color="blue">{name}</Tag>)}
+          </div>
+        )}
+      </div>
+      <div className="contact-actions">
+        {contact.pinned ? <Tooltip title="已置顶"><PushpinFilled aria-label="已置顶" /></Tooltip> : null}
+        {contact.unreadCount > 0 && <Badge count={contact.unreadCount} size="small" />}
       </div>
     </div>
   );

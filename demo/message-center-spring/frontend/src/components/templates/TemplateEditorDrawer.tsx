@@ -4,7 +4,7 @@ import { DeleteOutlined } from '@ant-design/icons';
 import type { SharedTemplate, TemplateButton, TemplateCategory, TemplateHeaderFormat, TemplateMediaAsset } from '../../api/types';
 import TemplateMessagePreview from './TemplateMessagePreview';
 import type { PublicTemplateConversionResult } from './publicTemplateConversion';
-import { buildCommand, hasUnsupportedVariableSyntax, headerFormatLabels, initialValueForTemplate, isTemplateLanguage, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NAME_LENGTH, requestId, variableNames } from './templateUi';
+import { buildCommand, hasLeadingOrTrailingVariable, hasUnsupportedVariableSyntax, hasVariable, headerFormatLabels, initialValueForTemplate, isTemplateLanguage, MAX_TEMPLATE_BODY_LENGTH, MAX_TEMPLATE_NAME_LENGTH, requestId, variableNames } from './templateUi';
 import { MediaUploadStateError } from './templateMediaUpload';
 import { WHATSAPP_TEMPLATE_LANGUAGE_OPTIONS } from './whatsappLanguages';
 
@@ -218,8 +218,10 @@ export default function TemplateEditorDrawer({
     !body.trim() && '正文不能为空',
     body.length > MAX_TEMPLATE_BODY_LENGTH && '正文不能超过 1024 个字符',
     hasUnsupportedVariableSyntax(body) && '变量只能使用 $(name) 格式',
+    hasLeadingOrTrailingVariable(body) && '变量不能出现在正文的开头或结尾',
     headerFormat === 'TEXT' && hasUnsupportedVariableSyntax(headerText) && '变量只能使用 $(name) 格式',
     hasUnsupportedVariableSyntax(footer) && '变量只能使用 $(name) 格式',
+    hasVariable(footer) && '页脚不能包含变量',
     ...sourceResolutionBlockers(resolutions),
     ...buttonContractBlockers([...buttons, ...sourceButtons]),
   ].filter((blocker): blocker is string => Boolean(blocker));

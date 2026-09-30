@@ -50,7 +50,9 @@ public record AssistantConfig(
          * <p>放在记录末尾是刻意的：这个 record 的构造器是位置参数，插在中间会让既有调用
          * 按位置错配（比如把 {@code pendingTtlSeconds} 当成轮数），而那种错误不会有任何编译或运行时提示。
          */
-        @DefaultValue("3") int maxReadTurns
+        @DefaultValue("3") int maxReadTurns,
+        @DefaultValue("8192") int recentMemoryTokenBudget,
+        @DefaultValue("2048") int summaryMemoryTokenBudget
 ) {
 
     /**
@@ -77,6 +79,12 @@ public record AssistantConfig(
         if (maxHistoryChars < 0 || maxHistoryChars > 100_000) {
             throw new IllegalArgumentException("assistant maxHistoryChars must be 0..100000");
         }
+        if (recentMemoryTokenBudget < 1_024 || recentMemoryTokenBudget > 16_384) {
+            throw new IllegalArgumentException("assistant recentMemoryTokenBudget must be 1024..16384");
+        }
+        if (summaryMemoryTokenBudget < 256 || summaryMemoryTokenBudget > 8_192) {
+            throw new IllegalArgumentException("assistant summaryMemoryTokenBudget must be 256..8192");
+        }
         if (pendingTtlSeconds < 30 || pendingTtlSeconds > 86_400) {
             throw new IllegalArgumentException("assistant pendingTtlSeconds must be 30..86400");
         }
@@ -88,5 +96,16 @@ public record AssistantConfig(
         if (maxReadTurns < 0 || maxReadTurns > MAX_READ_TURNS) {
             throw new IllegalArgumentException("assistant maxReadTurns must be 0.." + MAX_READ_TURNS);
         }
+    }
+
+    /**
+     * Legacy positional constructor retained while assistant fixtures migrate to the two token budgets.
+     * The old history-turn/character values remain resource guards only; they do not control semantic history.
+     */
+    public AssistantConfig(boolean enabled, String baseUrl, String apiKey, String model,
+                           int timeoutSeconds, int maxMessageChars, int maxHistoryTurns,
+                           int maxHistoryChars, int pendingTtlSeconds, int maxReadTurns) {
+        this(enabled, baseUrl, apiKey, model, timeoutSeconds, maxMessageChars, maxHistoryTurns,
+                maxHistoryChars, pendingTtlSeconds, maxReadTurns, 8_192, 2_048);
     }
 }

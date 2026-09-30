@@ -2,14 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   cancelAssistantAction,
   confirmAssistantAction,
+  createAssistantConversation,
+  deleteAssistantConversation,
   fetchAssistantConversation,
+  fetchAssistantConversations,
   fetchLatestAssistantConversation,
+  openAssistantConversation,
   sendAssistantMessage,
 } from '../../api/endpoints';
 import { AssistantStreamFailure } from '../../api/assistantStream';
 import type { AssistantStreamHandlers } from '../../api/assistantStream';
 import type {
+  AssistantAttachment,
   AssistantConversationMessage,
+  AssistantConversationSummary,
   AssistantHistoryTurn,
   AssistantProposal,
   AssistantStreamState,
@@ -88,6 +94,18 @@ const CONVERSATION_STORAGE_KEY = 'assistant.conversationId';
  * 服务端的答案自动变成正确的那个，标记的使命就结束了。
  */
 const NEW_CONVERSATION_STORAGE_KEY = 'assistant.conversationStarted';
+
+function visibleConversationRows(
+  rows: AssistantConversationSummary[],
+  deletedIds: Set<string>,
+): AssistantConversationSummary[] {
+  const seen = new Set<string>();
+  return rows.filter((conversation) => {
+    if (deletedIds.has(conversation.id) || seen.has(conversation.id)) return false;
+    seen.add(conversation.id);
+    return true;
+  });
+}
 
 const TURN_KINDS: readonly AssistantTurnKind[] = [
   'QUESTION',
@@ -330,6 +348,9 @@ export function useAssistant() {
   const [pending, setPending] = useState<AssistantProposal | null>(null);
   const [unavailable, setUnavailable] = useState<AssistantUnavailable | null>(null);
   const [conversationId, setConversationId] = useState<string>(() => readStoredConversationId());
+  const [conversations, setConversations] = useState<AssistantConversationSummary[]>([]);
+  // 删除请求成功后，短暂的旧列表响应不能把该会话重新画回前端。
+  const deletedConversationIdsRef = useRef<Set<string>>(new Set());
   /**
    * 最近一次「语境被裁剪」的规模，`null` 表示这个会话里还没发生过。
    *
@@ -352,6 +373,14 @@ export function useAssistant() {
     storeConversationId(conversationId);
   }, [conversationId]);
 
+  useEffect(() => {
+    void fetchAssistantConversations()
+      .then((rows) => setConversations(visibleConversationRows(rows, deletedConversationIdsRef.current)))
+      .catch(() => {
+        // 历史/会话列表失败不阻断当前会话发送；发送入口仍由服务端鉴权和生命周期门禁保护。
+      });
+  }, []);
+
   /**
    * `busy` 的同步镜像。`send` / `retry` 会被用户连点两下，而 `setBusyState` 是异步的，
    * 只靠 `busy` 拦不住同一帧里的第二次调用 —— 那会发出两条一模一样的请求。
@@ -366,7 +395,7 @@ export function useAssistant() {
    * 上一次实际发出的请求。保留它是为了「重试」能重发**同一句话**，
    * 而不是让用户重新打一遍 —— 重试的价值就在于他不用再想一次。
    */
-  const lastAttempt = useRef<{ history: AssistantHistoryTurn[]; text: string } | null>(null);
+  const lastAttempt = useRef<{ history: AssistantHistoryTurn[]; text: string; attachments: AssistantAttachment[] } | null>(null);
 
   /**
    * 历史是否已经回放过。用 ref 而不是 state：StrictMode 下 effect 会跑两次，
@@ -503,8 +532,9 @@ export function useAssistant() {
     history: AssistantHistoryTurn[],
     text: string,
     appendUser: boolean,
+    attachments: AssistantAttachment[],
   ) => {
-    lastAttempt.current = { history, text };
+    lastAttempt.current = { history, text, attachments };
     if (appendUser) {
       // 一旦用户在这里说过话，这段会话号就不能再被服务端兜底换掉 ——
       // 换掉之后他刚说的话虽然还画在屏幕上，归属却已经不是当前上下文了。
@@ -546,7 +576,7 @@ export function useAssistant() {
 
     try {
       applyResult(
-        await sendAssistantMessage({ conversationId, history, text }, handlers),
+        await sendAssistantMessage({ conversationId, history, text, attachments }, handlers),
         placeholderId,
       );
     } catch (error) {
@@ -556,7 +586,18 @@ export function useAssistant() {
     }
   }, [append, applyFailure, applyResult, conversationId, setBusy, updateItem]);
 
-  const send = useCallback((text: string) => {
+  /**
+   * 说一句话。
+   *
+   * <p>{@code attachments} 是**随这一轮带上来的素材 id**（现为模板图片）。默认空数组，
+   * 所以没有附件的调用点一个字都不用改。
+   *
+   * <p>这里只负责转发，**不负责上传**：字节在用户选中文件的那一刻就已经由
+   * {@code uploadTemplateMedia} 传完了，进到这个函数时手上只剩一个 id。
+   * 把上传留在面板里，是为了让「正在传 / 传失败可重试」有一个能显示的地方 ——
+   * 塞进发送流程的话，上传的几十秒会假装成「助手在思考」。
+   */
+  const send = useCallback((text: string, attachments: AssistantAttachment[] = []) => {
     const trimmed = text.trim();
     if (!trimmed || busyRef.current) return;
     // 历史只取角色与文本：不夹带任何前端状态，更不能借它给自己换个身份。
@@ -566,14 +607,14 @@ export function useAssistant() {
     const history: AssistantHistoryTurn[] = items
       .slice(-MAX_HISTORY_TURNS)
       .map((item) => ({ role: item.role, text: item.text }));
-    void dispatch(history, trimmed, true);
+    void dispatch(history, trimmed, true, attachments);
   }, [dispatch, items]);
 
   /** 重发上一次的请求。 */
   const retry = useCallback(() => {
     const attempt = lastAttempt.current;
     if (!attempt || busyRef.current) return;
-    void dispatch(attempt.history, attempt.text, false);
+    void dispatch(attempt.history, attempt.text, false, attempt.attachments);
   }, [dispatch]);
 
   /**
@@ -645,10 +686,72 @@ export function useAssistant() {
     }
   }, [conversationId, applyReplayFailure]);
 
+  const refreshConversations = useCallback(async () => {
+    try {
+      const rows = await fetchAssistantConversations();
+      setConversations(visibleConversationRows(rows, deletedConversationIdsRef.current));
+    } catch (error) {
+      applyReplayFailure(error);
+    }
+  }, [applyReplayFailure]);
+
+  const openConversation = useCallback(async (id: string) => {
+    if (busyRef.current || deletedConversationIdsRef.current.has(id)
+      || !conversations.some((conversation) => conversation.id === id)) return;
+    setBusy(true);
+    try {
+      await openAssistantConversation(id);
+      const messages = await fetchAssistantConversation(id);
+      setConversationId(id);
+      storeNewConversation(false);
+      localActivityRef.current = false;
+      setItems(messages.map(itemOfHistory));
+      setPending(null);
+      setTrimmedHistory(null);
+      setCompactedHistory(null);
+      setHistoryError(null);
+      await refreshConversations();
+    } catch (error) {
+      applyReplayFailure(error);
+      await refreshConversations();
+    } finally {
+      setBusy(false);
+    }
+  }, [applyReplayFailure, conversations, refreshConversations, setBusy]);
+
+  const deleteConversation = useCallback(async (id: string) => {
+    if (busyRef.current || deletedConversationIdsRef.current.has(id)
+      || !conversations.some((conversation) => conversation.id === id)) return;
+    setBusy(true);
+    try {
+      await deleteAssistantConversation(id);
+      deletedConversationIdsRef.current.add(id);
+      setConversations((previous) => previous.filter((conversation) => conversation.id !== id));
+      if (id === conversationId) {
+        const nextIdValue = newConversationId();
+        setConversationId(nextIdValue);
+        storeNewConversation(true);
+        localActivityRef.current = true;
+        setItems([]);
+        setPending(null);
+        setTrimmedHistory(null);
+        setCompactedHistory(null);
+        setHistoryError(null);
+        lastAttempt.current = null;
+        await refreshConversations();
+      }
+    } catch (error) {
+      applyReplayFailure(error);
+    } finally {
+      setBusy(false);
+    }
+  }, [applyReplayFailure, conversationId, conversations, refreshConversations, setBusy]);
+
   /** 开一段新对话：换会话号并清空本地记录。正在请求时不允许切换（会把结果写进错误的上下文）。 */
   const startNewConversation = useCallback(() => {
     if (busyRef.current) return;
-    setConversationId(newConversationId());
+    const nextIdValue = newConversationId();
+    setConversationId(nextIdValue);
     // 这段新会话在服务端眼里还不存在（它从消息表推）。记下这件事，
     // 否则下次打开面板时服务端兜底会把它换成上一段对话 —— 用户的「清空」当场作废。
     storeNewConversation(true);
@@ -660,7 +763,10 @@ export function useAssistant() {
     setCompactedHistory(null);
     setHistoryError(null);
     lastAttempt.current = null;
-  }, []);
+    void createAssistantConversation(nextIdValue)
+      .then(() => refreshConversations())
+      .catch(applyReplayFailure);
+  }, [applyReplayFailure, refreshConversations]);
 
   const decide = useCallback(async (
     action: (pendingActionId: string) => Promise<AssistantTurnResult>,
@@ -695,6 +801,7 @@ export function useAssistant() {
     pending,
     unavailable,
     conversationId,
+    conversations,
     trimmedHistory,
     compactedHistory,
     historyError,
@@ -703,6 +810,9 @@ export function useAssistant() {
     cancel,
     retry,
     loadHistory,
+    refreshConversations,
+    openConversation,
+    deleteConversation,
     startNewConversation,
   };
 }

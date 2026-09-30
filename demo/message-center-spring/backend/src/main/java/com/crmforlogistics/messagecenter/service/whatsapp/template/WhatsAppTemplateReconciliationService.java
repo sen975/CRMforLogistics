@@ -431,7 +431,7 @@ public class WhatsAppTemplateReconciliationService {
                                 UUID accountId, Instant now, boolean privateDomain) {
         if (entity == null) {
             TemplateSnapshot snapshot = new TemplateSnapshot(summary.templateCode(), summary.templateName(),
-                    summary.language(), summary.category(), reviewStatus(summary.rawAuditStatus()),
+                    summary.language(), summary.category(), ReviewStatus.fromProviderAuditStatus(summary.rawAuditStatus()),
                     summary.rawAuditStatus(), summary.reason(), false, List.of(), Map.of(), null,
                     summary.providerUpdatedAt(), null);
             persistSnapshot(snapshot, null, providerScopeId, accountId, now, privateDomain);
@@ -439,7 +439,7 @@ public class WhatsAppTemplateReconciliationService {
         }
         entity.setName(summary.templateName());
         entity.setCategory(summary.category());
-        entity.setStatus(reviewStatus(summary.rawAuditStatus()).name());
+        entity.setStatus(ReviewStatus.fromProviderAuditStatus(summary.rawAuditStatus()).name());
         entity.setProviderAuditStatus(summary.rawAuditStatus());
         entity.setRejectionReason(summary.reason());
         entity.setProviderUpdatedAt(summary.providerUpdatedAt());
@@ -537,17 +537,6 @@ public class WhatsAppTemplateReconciliationService {
         int attempt = operation.getReconcileAttemptCount() == null ? 1 : operation.getReconcileAttemptCount();
         long seconds = 60L << Math.min(Math.max(attempt - 1, 0), 12);
         return Duration.ofSeconds(Math.min(seconds, MAX_BACKOFF.toSeconds()));
-    }
-
-    private static ReviewStatus reviewStatus(String raw) {
-        if (raw == null) return ReviewStatus.UNKNOWN;
-        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
-            case "pass" -> ReviewStatus.APPROVED;
-            case "fail" -> ReviewStatus.REJECTED;
-            case "auditing" -> ReviewStatus.PENDING;
-            case "unaudit" -> ReviewStatus.SUSPENDED;
-            default -> ReviewStatus.UNKNOWN;
-        };
     }
 
     private static String body(List<TemplateComponent> components) {

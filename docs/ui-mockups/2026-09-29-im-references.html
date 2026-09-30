@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>会话列表的信息密度 · 三个真实参照</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#fff;
+    --ink:#0f1419; --ink2:#5b6675; --ink3:#95a0ad;
+    --hair:#e9ecef; --hair2:#dfe3e8;
+    --red:#d92d20; --amber:#b54708; --green:#12724a;
+    --wa:#25d366; --wa-ink:#111b21; --wa-2:#667781;
+    --slack:#19171d; --linear:#0f1011;
+    --acc:#4a5cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);
+    font-size:13.5px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    font-variant-numeric:tabular-nums;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:46px 28px 96px}
+  h1{margin:0 0 14px;font-size:25px;font-weight:680;letter-spacing:-.03em;line-height:1.26}
+  .lead{margin:0 0 7px;font-size:14px;color:var(--ink2);max-width:820px}
+  .lead b{color:var(--ink);font-weight:640}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:#eceef1;padding:1px 5px;border-radius:4px}
+
+  .sect{margin-top:50px}
+  .sect>h2{
+    margin:0 0 7px;font-size:16.5px;font-weight:660;letter-spacing:-.018em;
+    display:flex;align-items:baseline;gap:11px;
+  }
+  .sect>h2 em{font-style:normal;font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.12em;font-variant-numeric:normal}
+  .sect>p.desc{margin:0 0 20px;font-size:13px;color:var(--ink2);max-width:800px}
+
+  /* ============ 案例卡 ============ */
+  .cases{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  .case{background:var(--card);border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22);overflow:hidden;display:flex;flex-direction:column}
+  .case-hd{display:flex;align-items:baseline;gap:9px;padding:15px 17px 12px}
+  .case-hd b{font-size:14px;font-weight:660;letter-spacing:-.012em}
+  .case-hd span{font-size:11.5px;color:var(--ink3)}
+  .stage{padding:10px 0;flex:none}
+  .stage-wa{background:#fff;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:6px 0}
+  .stage-slack{background:var(--slack);padding:12px 0}
+  .stage-linear{background:var(--linear);padding:12px 0}
+
+  /* --- WhatsApp 行（真实规格：头像 48 / 名字 16·600 / 预览 14 / 时间 12 / 徽标 pill） --- */
+  .wa-row{display:flex;align-items:center;gap:14px;padding:8px 16px}
+  .wa-av{
+    width:44px;height:44px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:#25d366;color:#fff;font-size:16px;font-weight:600;
+  }
+  .wa-av.g2{background:#0f7f6d} .wa-av.g3{background:#8a9aa5}
+  .wa-mid{flex:1;min-width:0}
+  .wa-name{font-size:16px;font-weight:600;color:var(--wa-ink);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.35}
+  .wa-prev{font-size:14px;color:var(--wa-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4}
+  .wa-right{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none}
+  .wa-time{font-size:12px;color:var(--wa-2)}
+  .wa-time.hot{color:var(--wa)}
+  .wa-badge{
+    min-width:20px;height:20px;padding:0 6px;display:grid;place-items:center;border-radius:999px;
+    background:var(--wa);color:#fff;font-size:12px;font-weight:600;
+  }
+
+  /* --- Slack 侧栏（真实规格：workspace 白粗 / 分组标签 10px 大写 muted / 项 slate / active 底色 / 未读白 600 / DM 带状态点） --- */
+  .sl-ws{font-size:15px;font-weight:700;color:#fff;padding:2px 16px 12px;letter-spacing:-.01em}
+  .sl-sec{font-size:10px;font-weight:700;letter-spacing:.1em;color:rgba(255,255,255,.44);padding:12px 16px 5px;text-transform:uppercase}
+  .sl-row{
+    display:flex;align-items:center;gap:7px;height:28px;margin:1px 8px;padding:0 8px;
+    border-radius:6px;font-size:14px;color:rgba(255,255,255,.66);
+  }
+  .sl-row.on{background:#1164a3;color:#fff;font-weight:600}
+  .sl-row.unread{color:#fff;font-weight:600}
+  .sl-row .hash{color:rgba(255,255,255,.44);font-weight:400}
+  .sl-row.on .hash{color:rgba(255,255,255,.8)}
+  .sl-dot{width:9px;height:9px;border-radius:50%;flex:none;border:2px solid var(--slack);margin-left:-2px}
+  .sl-dot.on{background:#2bac76} .sl-dot.away{background:transparent;border-color:rgba(255,255,255,.45)}
+  .sl-av{width:20px;height:20px;border-radius:5px;flex:none;display:grid;place-items:center;font-size:10.5px;font-weight:700;color:#fff}
+  .sl-n{margin-left:auto;font-size:11px;font-weight:700;color:#fff;background:#e5484d;border-radius:999px;padding:0 6px;height:17px;display:grid;place-items:center}
+
+  /* --- Linear 侧栏（8 个模式里的关键：状态用 2px 色点，不用文字） --- */
+  .ln-hd{display:flex;align-items:center;gap:8px;padding:0 14px 12px;font-size:13.5px;font-weight:640;color:#fff}
+  .ln-hd kbd{margin-left:auto;font:600 10px/1 inherit;color:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.16);border-radius:4px;padding:3px 5px;letter-spacing:.04em}
+  .ln-row{
+    display:flex;align-items:center;gap:8px;height:27px;margin:1px 8px;padding:0 7px;border-radius:6px;
+    font-size:13px;color:rgba(255,255,255,.62);
+  }
+  .ln-row.on{background:rgba(255,255,255,.09);color:#fff;font-weight:600}
+  .ln-row .ic{width:13px;height:13px;flex:none;opacity:.8}
+  .ln-dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .ln-n{margin-left:auto;font-size:10.5px;font-weight:700;color:rgba(255,255,255,.75);background:rgba(255,255,255,.13);border-radius:999px;padding:0 6px;height:16px;display:grid;place-items:center}
+  .ln-tag{font-size:10px;font-weight:700;letter-spacing:.06em;color:rgba(255,255,255,.4);padding:11px 14px 4px}
+
+  .spec{margin:0;padding:13px 17px 15px;border-top:1px solid var(--hair);display:flex;flex-direction:column;gap:5px}
+  .spec div{display:flex;align-items:baseline;gap:8px;font-size:12px}
+  .spec dt{color:var(--ink3);flex:none;width:66px}
+  .spec dd{margin:0;color:var(--ink);font-weight:550}
+  .case-note{margin:0;padding:11px 17px 15px;border-top:1px solid var(--hair);font-size:11.5px;color:var(--ink2);background:#fbfcfd}
+  .case-note b{color:var(--red);font-weight:660}
+  .src{margin:9px 0 0;font-size:10.5px;color:var(--ink3);padding:0 17px 14px}
+
+  /* ============ 审计区 ============ */
+  .audit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:16px;align-items:start}
+  .panel{background:var(--card);border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22)}
+  .panel-hd{padding:14px 17px 12px;border-bottom:1px solid var(--hair);display:flex;align-items:baseline;gap:9px}
+  .panel-hd b{font-size:13.5px;font-weight:640}
+  .panel-hd span{font-size:11.5px;color:var(--ink3);margin-left:auto}
+  .dark-stage{background:#11161c;padding:10px}
+
+  /* v2 行复刻（深底，与 v2 同规格） */
+  .v2-row{position:relative;display:flex;gap:10px;padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.10)}
+  .v2-av{width:36px;height:36px;border-radius:10px;flex:none;display:grid;place-items:center;font-size:13px;font-weight:650;background:rgba(47,122,229,.24);color:#9ec5ff}
+  .v2-b{flex:1;min-width:0}
+  .v2-t{display:flex;align-items:baseline;gap:8px}
+  .v2-t b{font-size:13px;font-weight:660;color:#fff;letter-spacing:-.005em}
+  .v2-t time{margin-left:auto;font-size:11px;color:rgba(255,255,255,.42);flex:none}
+  .v2-p{font-size:12px;color:rgba(255,255,255,.54);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .v2-m{display:flex;align-items:center;gap:5px;margin-top:7px}
+  .v2-ct{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:rgba(255,255,255,.42);font-weight:500}
+  .v2-ct i{width:5px;height:5px;border-radius:2px;display:block}
+  .v2-sep{width:1px;height:8px;background:rgba(255,255,255,.12);margin:0 2px}
+  .v2-pn{margin-left:auto;min-width:17px;height:17px;padding:0 5px;display:grid;place-items:center;border-radius:999px;background:#e5484d;color:#fff;font-size:10.5px;font-weight:700}
+
+  /* 逐元素清单 */
+  .elist{padding:5px 17px 14px;display:flex;flex-direction:column}
+  .elist .row{display:flex;align-items:center;gap:10px;padding:7.5px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+  .elist .row:last-child{border-bottom:0}
+  .elist .num{width:16px;height:16px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:9.5px;font-weight:800;color:#fff;background:#4a5cff;font-variant-numeric:normal}
+  .elist .num.cut{background:#e5484d}
+  .elist .nm{width:74px;flex:none;color:var(--ink3)}
+  .elist .val{flex:1;min-width:0;color:var(--ink);font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .elist .row.cutline .nm{color:#cba6a2}
+  .elist .row.cutline .val{color:#b42318;font-weight:600}
+  .elist .act{flex:none;font-size:10.5px;font-weight:700;color:#b42318}
+  .elist .keep{flex:none;font-size:10.5px;font-weight:700;color:var(--ink3)}
+
+  /* 小结 */
+  .callout{margin-top:16px;background:var(--card);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .callout .c{border-left:2.5px solid var(--hair2);padding-left:13px}
+  .callout .c.red{border-left-color:#e5484d}
+  .callout .c b{display:block;font-size:12.5px;font-weight:660;margin-bottom:3px}
+  .callout .c span{font-size:11.5px;color:var(--ink2);line-height:1.58}
+
+  /* 对照区的 KPI 要比真机小一号，否则 4 列放不下 */
+  .ba .kpi{padding:16px 2px}
+  .ba .kpi .k{padding:0 12px}
+  .ba .kpi .k:first-child{padding-left:14px}
+  .ba .kpi .lab{font-size:11.5px}
+  .ba .kpi .v{margin-top:9px;white-space:nowrap}
+  .ba .kpi .v b{font-size:25px}
+  .ba .kpi .v em{font-size:10.5px;padding:2px 5px;white-space:nowrap}
+
+  .elegend{padding:6px 17px 16px;display:flex;flex-direction:column;gap:0}
+  .elegend .el{display:flex;align-items:flex-start;gap:9px;padding:8px 0;border-bottom:1px solid var(--hair);font-size:12.5px}
+  .elegend .el:last-child{border-bottom:0}
+  .elegend .num{
+    width:16px;height:16px;border-radius:50%;flex:none;display:grid;place-items:center;margin-top:2px;
+    font-size:9.5px;font-weight:800;color:#fff;background:#4a5cff;
+  }
+  .elegend .num.cut{background:#e5484d}
+  .elegend .el b{font-weight:600}
+  .elegend .el .why{margin-left:auto;flex:none;font-size:11px;color:var(--ink3);text-align:right}
+  .elegend .el.cutline{color:var(--ink3)}
+  .elegend .el.cutline b{font-weight:500;text-decoration:line-through;text-decoration-color:#c9ced6}
+
+  /* ============ 清单表 ============ */
+  table.tbl{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22)}
+  table.tbl th,table.tbl td{padding:11px 15px;text-align:left;font-size:12.5px;border-bottom:1px solid var(--hair);vertical-align:top}
+  table.tbl th{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink3);background:#fbfcfd}
+  table.tbl tr:last-child td{border-bottom:0}
+  table.tbl td.loc{color:var(--ink2);white-space:nowrap}
+  table.tbl td.txt{font-weight:550}
+  table.tbl td.why{color:var(--ink2)}
+  .chip{display:inline-flex;align-items:center;height:19px;padding:0 7px;border-radius:5px;font-size:10.5px;font-weight:700}
+  .chip.cut{background:#fef3f2;color:#b42318}
+  .chip.keep{background:#e8f5ee;color:#12724a}
+  .chip.move{background:#fdf3e5;color:#b54708}
+
+  /* ============ 规则 ============ */
+  .rules{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  .rule{background:var(--card);border-radius:14px;padding:18px 18px 17px;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22)}
+  .rule .n{width:22px;height:22px;border-radius:7px;background:#14181f;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800;margin-bottom:11px}
+  .rule h3{margin:0 0 7px;font-size:13.5px;font-weight:660;letter-spacing:-.012em}
+  .rule p{margin:0;font-size:12.5px;color:var(--ink2);line-height:1.6}
+  .rule .from{display:block;margin-top:9px;font-size:11px;color:var(--ink3)}
+  .rule .from b{color:var(--ink2);font-weight:600}
+
+  /* ============ 前后对照 ============ */
+  .ba{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+  .ba-tag{font-size:11px;font-weight:700;letter-spacing:.07em;padding:12px 17px 0;color:var(--ink3)}
+  .ba-tag.red{color:#b42318}
+
+  .light-stage{background:#fff;padding:0 0 4px}
+  .s-sub{font-size:11.5px;color:var(--ink3);margin-top:9px;display:flex;gap:8px;align-items:baseline;white-space:nowrap;overflow:hidden}
+  .s-sub b{color:var(--ink2);font-weight:600}
+
+  /* v3 行（减字后：渠道只留色点、挂在头像角上） */
+  .v3-row{position:relative;display:flex;gap:10px;padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.10)}
+  .v3-av{position:relative;width:36px;height:36px;border-radius:10px;flex:none;display:grid;place-items:center;font-size:13px;font-weight:650;background:rgba(47,122,229,.24);color:#9ec5ff}
+  .v3-av .d{position:absolute;right:-3px;bottom:-3px;width:12px;height:12px;border-radius:50%;border:2.5px solid #11161c;background:#84b1ff}
+  .v3-av .d.two{right:-3px;top:-3px;bottom:auto;background:#4ee0a3}
+  .v3-b{flex:1;min-width:0}
+  .v3-t{display:flex;align-items:baseline;gap:8px}
+  .v3-t b{font-size:13.5px;font-weight:660;color:#fff;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .v3-t time{margin-left:auto;font-size:11px;color:rgba(255,255,255,.42);flex:none}
+  .v3-p{font-size:12.5px;color:rgba(255,255,255,.60);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .v3-pn{margin-left:auto;min-width:18px;height:18px;padding:0 6px;display:grid;place-items:center;border-radius:999px;background:#e5484d;color:#fff;font-size:10.5px;font-weight:700;flex:none}
+  .v3-t .pn-wrap{margin-left:auto;display:flex;align-items:center}
+
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);padding:18px 2px}
+  .kpi .k{padding:0 18px;border-left:1px solid #eceef1;min-width:0}
+  .kpi .k:first-child{border-left:0;padding-left:20px}
+  .kpi .lab{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);font-weight:530}
+  .kpi .lab i{width:6px;height:6px;border-radius:2px;display:block}
+  .kpi .v{margin-top:11px;display:flex;align-items:baseline;gap:8px}
+  .kpi .v b{font-size:33px;font-weight:650;letter-spacing:-.04em;line-height:1;color:var(--ink)}
+  .kpi .v em{font-style:normal;font-size:11.5px;font-weight:600;padding:2.5px 7px;border-radius:6px;background:#f4f5f7;color:var(--ink2);position:relative;top:-4px}
+  .kpi .v em.good{background:#e8f5ee;color:#1a7a50}
+  .kpi .v em.hot{background:#fef3f2;color:#b42318}
+  .kpi .k.alert .v b{color:#d92d20}
+
+  .sum{margin-top:20px;background:var(--card);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(16,24,40,.05),0 10px 26px -18px rgba(16,24,40,.22);font-size:12.5px;color:var(--ink2)}
+  .sum b{color:var(--ink);font-weight:640}
+  .sum .row{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid var(--hair);align-items:baseline}
+  .sum .row:last-child{border-bottom:0;padding-bottom:0}
+  .sum .k2{flex:none;width:112px;color:var(--ink);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>会话列表的信息密度：三个真实参照</h1>
+  <p class="lead">你说「说明性的小字有点多了」——这句话是对的，而且能量化。<b>v2 的会话列表项有 8 个文字元素，WhatsApp 只有 5 个</b>；差的三个全是解释，不是信息。</p>
+  <p class="lead">下面把三个成熟产品的同一位置按公开规格复刻出来，好让「该留几个元素」这个问题有出处，而不是我说了算。</p>
+
+  <!-- ============ 一 ============ -->
+  <section class="sect">
+    <h2><em>一</em>同一个位置，三家各放什么</h2>
+    <p class="desc">都取「会话列表项」这一格。注意看每个产品**只**放了多少文字元素，以及状态是用文字还是用图形表达的。</p>
+
+    <div class="cases">
+
+      <!-- WhatsApp -->
+      <article class="case">
+        <header class="case-hd"><b>WhatsApp</b><span>消费者 IM</span></header>
+        <div class="stage stage-wa">
+          <div class="wa-row">
+            <span class="wa-av">守</span>
+            <div class="wa-mid">
+              <div class="wa-name">守望</div>
+              <div class="wa-prev">上次我们聊到开一条从广东到澳大利亚…</div>
+            </div>
+            <div class="wa-right"><span class="wa-time hot">19:20</span><span class="wa-badge">2</span></div>
+          </div>
+          <div class="wa-row">
+            <span class="wa-av g2">K</span>
+            <div class="wa-mid">
+              <div class="wa-name">洛杉矶 Kevin</div>
+              <div class="wa-prev">下周三那批货的提单能不能先给我？</div>
+            </div>
+            <div class="wa-right"><span class="wa-time">昨天</span></div>
+          </div>
+          <div class="wa-row">
+            <span class="wa-av g3">Y</span>
+            <div class="wa-mid">
+              <div class="wa-name">雅加达 Yusuf</div>
+              <div class="wa-prev">Please confirm the CIF price for 2x40HQ.</div>
+            </div>
+            <div class="wa-right"><span class="wa-time">周一</span></div>
+          </div>
+        </div>
+        <dl class="spec">
+          <div><dt>名字</dt><dd>16px / 600</dd></div>
+          <div><dt>消息预览</dt><dd>14px / 常规灰</dd></div>
+          <div><dt>时间</dt><dd>12px / 右对齐</dd></div>
+          <div><dt>头像</dt><dd>48px 圆形</dd></div>
+          <div><dt>未读</dt><dd>数字 pill（无文字）</dd></div>
+        </dl>
+        <p class="case-note"><b>不放</b>：组织标签 · 渠道名 · 计数说明 · 底部注释</p>
+        <p class="src">规格来源：公开的 WhatsApp UI 设计规格（名字 16/600、预览 14、时间戳 12、头像 48、未读徽标 12px 白字）</p>
+      </article>
+
+      <!-- Slack -->
+      <article class="case">
+        <header class="case-hd"><b>Slack</b><span>团队 IM</span></header>
+        <div class="stage stage-slack">
+          <div class="sl-ws">深圳鑫海物流</div>
+          <div class="sl-sec">Channels</div>
+          <div class="sl-row on"><span class="hash">#</span>美线询价</div>
+          <div class="sl-row unread"><span class="hash">#</span>澳洲线开发<span class="sl-n">3</span></div>
+          <div class="sl-row"><span class="hash">#</span>财务对接</div>
+          <div class="sl-sec">Direct messages</div>
+          <div class="sl-row"><span class="sl-dot on"></span>守望</div>
+          <div class="sl-row"><span class="sl-dot away"></span>洛杉矶 Kevin</div>
+        </div>
+        <dl class="spec">
+          <div><dt>层级</dt><dd>5 档：标题→分组→项→激活→未读</dd></div>
+          <div><dt>分组标签</dt><dd>10px / 大写 / 弱灰</dd></div>
+          <div><dt>未读</dt><dd>白色 + 600 字重</dd></div>
+          <div><dt>在线状态</dt><dd>9px 色点，无文字</dd></div>
+        </dl>
+        <p class="case-note"><b>靠什么区分</b>：位置 + 字重 + 色，不靠加字</p>
+        <p class="src">规格来源：Slack 侧栏层级的公开设计拆解（active 用底色、unread 用 600 字重、DM 用状态点区分）</p>
+      </article>
+
+      <!-- Linear -->
+      <article class="case">
+        <header class="case-hd"><b>Linear</b><span>工作流应用</span></header>
+        <div class="stage stage-linear">
+          <div class="ln-hd">工作台<kbd>⌘K</kbd></div>
+          <div class="ln-row on">
+            <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3.5 12l7 7 10-13"/><path d="M3.5 6.5h5"/></svg>
+            收件箱<span class="ln-n">3</span>
+          </div>
+          <div class="ln-row"><span class="ln-dot" style="background:#f2c94c"></span>待回复</div>
+          <div class="ln-row"><span class="ln-dot" style="background:#2bac76"></span>进行中</div>
+          <div class="ln-row"><span class="ln-dot" style="background:#8b95a1"></span>已归档</div>
+          <div class="ln-tag">团队</div>
+          <div class="ln-row"><span style="width:13px;height:13px;border-radius:4px;background:#4a5cff;flex:none;display:grid;place-items:center;font-size:8px;font-weight:800;color:#fff">美</span>美线组</div>
+          <div class="ln-row"><span style="width:13px;height:13px;border-radius:4px;background:#22a06b;flex:none;display:grid;place-items:center;font-size:8px;font-weight:800;color:#fff">澳</span>澳洲组</div>
+        </div>
+        <dl class="spec">
+          <div><dt>状态</dt><dd>2px 色点，<b>零文字</b></dd></div>
+          <div><dt>计数</dt><dd>极小 pill</dd></div>
+          <div><dt>分组</dt><dd>大写小标签</dd></div>
+          <div><dt>项高</dt><dd>27px（很紧）</dd></div>
+        </dl>
+        <p class="case-note"><b>关键</b>：状态「色点单独承担」，不配「进行中」以外的任何解释</p>
+        <p class="src">规格来源：Linear 侧栏的公开复刻拆解（明确列出「状态点代替文字」「极小徽标」「分组标签」等模式）</p>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ 二 ============ -->
+  <section class="sect">
+    <h2><em>二</em>你那版（v2）同一格的元素数</h2>
+    <p class="desc">同一格，v2 有 <b>8 个文字元素</b>（红圈的三个是成熟产品都不放的）。</p>
+
+    <div class="audit">
+      <div class="panel">
+        <div class="panel-hd"><b>v2 会话列表项</b><span>深色左栏 · 原样复刻</span></div>
+        <div class="dark-stage">
+          <div class="v2-row"><span class="v2-av">守</span><div class="v2-b">
+            <div class="v2-t"><b>守望</b><time>9月28日</time></div>
+            <div class="v2-p">上次我们聊到开一条从广东到澳大利亚…</div>
+            <div class="v2-m"><span class="v2-ct"><i style="background:#84b1ff"></i>邮件</span><span class="v2-sep"></span><span class="v2-ct"><i style="background:#4ee0a3"></i>WA</span><span class="v2-pn">2</span></div>
+          </div></div>
+          <div class="v2-row" style="margin-top:2px"><span class="v2-av" style="background:rgba(34,160,107,.24);color:#84e3b5">K</span><div class="v2-b">
+            <div class="v2-t"><b>洛杉矶 Kevin</b><time>9月28日</time></div>
+            <div class="v2-p">下周三那批货的提单能不能先给我？</div>
+            <div class="v2-m"><span class="v2-ct"><i style="background:#84b1ff"></i>邮件</span><span class="v2-sep"></span><span class="v2-ct"><i style="background:#4ee0a3"></i>WA</span></div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-hd"><b>逐元素拆开</b><span>8 个文字元素</span></div>
+        <div class="elist">
+          <div class="row"><span class="num">1</span><span class="nm">头像</span><span class="val">守</span><span class="keep">留</span></div>
+          <div class="row"><span class="num">2</span><span class="nm">名字</span><span class="val">守望</span><span class="keep">留</span></div>
+          <div class="row"><span class="num">3</span><span class="nm">日期</span><span class="val">9月28日</span><span class="keep">留</span></div>
+          <div class="row"><span class="num">4</span><span class="nm">消息预览</span><span class="val">上次我们聊到开一条从广东到澳大利亚…</span><span class="keep">留</span></div>
+          <div class="row cutline"><span class="num cut">5</span><span class="nm">渠道名</span><span class="val">“邮件”</span><span class="act">砍字留点</span></div>
+          <div class="row cutline"><span class="num cut">6</span><span class="nm">分隔竖线</span><span class="val">│</span><span class="act">砍</span></div>
+          <div class="row cutline"><span class="num cut">7</span><span class="nm">渠道名</span><span class="val">“WA”</span><span class="act">砍字留点</span></div>
+          <div class="row"><span class="num">8</span><span class="nm">未读数</span><span class="val">2</span><span class="keep">留</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="c red"><b>多出来的是一整行</b><span>第 3 行（渠道标签）是 v2 独有的。WhatsApp / Slack / Linear 在这个位置都没有这一行。</span></div>
+      <div class="c"><b>为什么多</b><span>把「走哪个渠道」当成了必须写出来的信息 —— 而它已经由颜色表达了。</span></div>
+      <div class="c"><b>代价</b><span>行高 78px，一屏少看 2 条；且渠道名和头像上的颜色是同一信息的第二遍。</span></div>
+    </div>
+
+  </section>
+
+  <!-- ============ 三 ============ -->
+  <section class="sect">
+    <h2><em>三</em>整页扫一遍：13 处「解释性」小字</h2>
+    <p class="desc">判据是：<b>删掉它，用户还能不能自己看懂？</b> 能 = 它是解释，不是信息。下面 13 处都能。</p>
+
+    <table class="tbl">
+      <thead>
+        <tr><th style="width:150px">位置</th><th style="width:290px">现在的文字</th><th style="width:76px">处置</th><th>为什么</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="loc">统计卡 · 第 3 行</td><td class="txt">覆盖 4 个渠道 · <b>9</b> 家已报过价</td><td><span class="chip cut">砍</span></td><td class="why">上面已有「15」，旁边已有「+2 本周」—— 三个数说同一件事</td></tr>
+        <tr><td class="loc">统计卡 · 第 3 行</td><td class="txt">最久已等 <b>14 小时</b>（守望 · 邮件）</td><td><span class="chip cut">砍</span></td><td class="why">卡片下方「需要你处理」第一条就是它，写了两遍</td></tr>
+        <tr><td class="loc">统计卡 · 第 3 行</td><td class="txt">邮件 9 · 企微 5 · WA 4 · 电话 2</td><td><span class="chip cut">砍</span></td><td class="why">与右下「渠道构成」完全重复</td></tr>
+        <tr><td class="loc">统计卡 · 第 3 行</td><td class="txt"><b>1 件已逾期</b> · 2 件高优先级</td><td><span class="chip cut">砍</span></td><td class="why">「今日待办」面板里那 5 条逐条写着状态</td></tr>
+        <tr><td class="loc">列表项 · 第 3 行</td><td class="txt">邮件 ／ WA ／ 企微（渠道名）</td><td><span class="chip cut">砍字留点</span></td><td class="why">色点已表达渠道；文字是同一信息的第二遍</td></tr>
+        <tr><td class="loc">「需要你处理」页脚</td><td class="txt">其余 12 个会话都在 3 天内回复过，无需跟进</td><td><span class="chip cut">砍</span></td><td class="why">在解释「为什么这里只有 3 条」—— 属于自证，不是内容</td></tr>
+        <tr><td class="loc">待办 · 副行</td><td class="txt">关联联系人：守望 ／ 上午 12:00 前 ／ 已逾期 1 天</td><td><span class="chip cut">砍</span></td><td class="why">右侧「今天／逾期」徽标已表达紧迫度；关联人点开就有，标题也含人名</td></tr>
+        <tr><td class="loc">渠道构成 · 页脚</td><td class="txt">同一联系人可能同时走多个渠道，故合计大于会话数</td><td><span class="chip cut">砍</span></td><td class="why">最典型的「解释图表的图注」—— 图本身该说清</td></tr>
+        <tr><td class="loc">渠道构成 · 图例</td><td class="txt">45% ／ 25% ／ 20% ／ 10%</td><td><span class="chip cut">砍</span></td><td class="why">左边已有数字，百分比是同一数的第二遍</td></tr>
+        <tr><td class="loc">左栏 · 页脚</td><td class="txt">同公司自动合并</td><td><span class="chip cut">砍</span></td><td class="why">实现细节，泄漏到界面上了</td></tr>
+        <tr><td class="loc">左栏 · 页脚</td><td class="txt">共 15 个会话</td><td><span class="chip move">并入</span></td><td class="why">过滤行「全部」右侧已有 15</td></tr>
+        <tr><td class="loc">面板标题 · 右侧</td><td class="txt">近 30 天会话</td><td><span class="chip move">并入</span></td><td class="why">并进标题「渠道构成 · 近 30 天」</td></tr>
+        <tr><td class="loc">顶部问候 · 副标题</td><td class="txt">3 位客户在等你回复 · 今天还有 5 件事要办</td><td><span class="chip keep">留一半</span></td><td class="why">「3 位客户在等你回复」有信息量，后半句与 KPI 重复</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 四 ============ -->
+  <section class="sect">
+    <h2><em>四</em>三条规则（从上面三家归纳）</h2>
+    <div class="rules">
+      <div class="rule">
+        <div class="n">1</div>
+        <h3>状态用图形，不用文字</h3>
+        <p>渠道、在线、优先级，都用一个色点扛。文字只在「点不出含义」时才补，且补在能就近解释的位置（图例、悬浮）。</p>
+        <span class="from">来源：<b>Linear</b> —— 侧栏状态全用 2px 色点，不配说明文字</span>
+      </div>
+      <div class="rule">
+        <div class="n">2</div>
+        <h3>层级靠位置和字重，不靠加句子</h3>
+        <p>要让人一眼分出「标题 / 分组 / 项 / 激活 / 未读」，用字重、颜色、缩进、底色这四样就够。加解释句是最贵也最无效的办法。</p>
+        <span class="from">来源：<b>Slack</b> —— 侧栏五档层级，去掉任何一档都会毁掉辨识，但每档都没有多余文字</span>
+      </div>
+      <div class="rule">
+        <div class="n">3</div>
+        <h3>一屏的图注，删到零</h3>
+        <p>「合计大于会话数」「其余 12 个无需跟进」这类话，是设计没做到自明时的补丁。补丁写在界面上，等于把设计问题交给用户读。</p>
+        <span class="from">来源：<b>三家都没有</b> —— 成熟产品里找不到「解释自己」的图注</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 五 ============ -->
+  <section class="sect">
+    <h2><em>五</em>砍完之后</h2>
+    <p class="desc">同一个位置，减字前后并排。左边是 v2，右边是照上面三条规则改过。信息一条没少，只是不再说第二遍。</p>
+
+    <div class="ba">
+
+      <div class="panel">
+        <div class="ba-tag red">v2 · 8 个元素 · 行高 78px</div>
+        <div class="dark-stage" style="margin-top:10px">
+          <div class="v2-row"><span class="v2-av">守</span><div class="v2-b">
+            <div class="v2-t"><b>守望</b><time>9月28日</time></div>
+            <div class="v2-p">上次我们聊到开一条从广东到澳大利亚…</div>
+            <div class="v2-m"><span class="v2-ct"><i style="background:#84b1ff"></i>邮件</span><span class="v2-sep"></span><span class="v2-ct"><i style="background:#4ee0a3"></i>WA</span><span class="v2-pn">2</span></div>
+          </div></div>
+          <div class="v2-row" style="margin-top:2px"><span class="v2-av" style="background:rgba(34,160,107,.24);color:#84e3b5">K</span><div class="v2-b">
+            <div class="v2-t"><b>洛杉矶 Kevin</b><time>9月28日</time></div>
+            <div class="v2-p">下周三那批货的提单能不能先给我？</div>
+            <div class="v2-m"><span class="v2-ct"><i style="background:#84b1ff"></i>邮件</span><span class="v2-sep"></span><span class="v2-ct"><i style="background:#4ee0a3"></i>WA</span></div>
+          </div></div>
+          <div class="v2-row" style="margin-top:2px"><span class="v2-av" style="background:rgba(91,91,214,.30);color:#b6b6ff">晓</span><div class="v2-b">
+            <div class="v2-t"><b>财务对接-晓雯</b><time>9月27日</time></div>
+            <div class="v2-p">好的，发票我已经收到了，稍后核对。</div>
+            <div class="v2-m"><span class="v2-ct"><i style="background:#84b1ff"></i>邮件</span><span class="v2-sep"></span><span class="v2-ct"><i style="background:#ffbb66"></i>电话</span></div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="ba-tag">v3 · 5 个元素 · 行高 60px</div>
+        <div class="dark-stage" style="margin-top:10px">
+          <div class="v3-row"><span class="v3-av">守<span class="d"></span><span class="d two"></span></span><div class="v3-b">
+            <div class="v3-t"><b>守望</b><time>9月28日</time><span class="pn-wrap"><span class="v3-pn">2</span></span></div>
+            <div class="v3-p">上次我们聊到开一条从广东到澳大利亚…</div>
+          </div></div>
+          <div class="v3-row" style="margin-top:2px"><span class="v3-av" style="background:rgba(34,160,107,.24);color:#84e3b5">K<span class="d"></span><span class="d two"></span></span><div class="v3-b">
+            <div class="v3-t"><b>洛杉矶 Kevin</b><time>9月28日</time></div>
+            <div class="v3-p">下周三那批货的提单能不能先给我？</div>
+          </div></div>
+          <div class="v3-row" style="margin-top:2px"><span class="v3-av" style="background:rgba(91,91,214,.30);color:#b6b6ff">晓<span class="d"></span><span class="d two" style="background:#ffbb66"></span></span><div class="v3-b">
+            <div class="v3-t"><b>财务对接-晓雯</b><time>9月27日</time></div>
+            <div class="v3-p">好的，发票我已经收到了，稍后核对。</div>
+          </div></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="ba" style="margin-top:16px">
+      <div class="panel">
+        <div class="ba-tag red">v2 · 统计条 · 每格 3 行</div>
+        <div class="light-stage" style="margin-top:6px">
+          <div class="kpi">
+            <div class="k"><div class="lab"><i style="background:#95a0ad"></i>联系人总数</div><div class="v"><b>15</b><em class="good">+2 本周</em></div><div class="s-sub">覆盖 4 个渠道 · <b>9</b> 家已报过价</div></div>
+            <div class="k"><div class="lab"><i style="background:#d92d20"></i>待你回复</div><div class="v"><b>3</b><em class="hot">需今天处理</em></div><div class="s-sub">最久已等 <b>14 小时</b>（守望 · 邮件）</div></div>
+            <div class="k"><div class="lab"><i style="background:#5b5bd6"></i>活跃渠道</div><div class="v"><b>4</b><em>全部健康</em></div><div class="s-sub">邮件 9 · 企微 5 · WA 4 · 电话 2</div></div>
+            <div class="k"><div class="lab"><i style="background:#d1851c"></i>今日待办</div><div class="v"><b>5</b><em>已完成 2</em></div><div class="s-sub"><b>1 件已逾期</b> · 2 件高优先级</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="ba-tag">v3 · 统计条 · 每格 2 行</div>
+        <div class="light-stage" style="margin-top:6px">
+          <div class="kpi">
+            <div class="k"><div class="lab"><i style="background:#95a0ad"></i>联系人总数</div><div class="v"><b>15</b><em class="good">+2 本周</em></div></div>
+            <div class="k alert"><div class="lab"><i style="background:#d92d20"></i>待你回复</div><div class="v"><b>3</b><em class="hot">需今天处理</em></div></div>
+            <div class="k"><div class="lab"><i style="background:#5b5bd6"></i>活跃渠道</div><div class="v"><b>4</b><em>全部健康</em></div></div>
+            <div class="k"><div class="lab"><i style="background:#d1851c"></i>今日待办</div><div class="v"><b>5</b><em>已完成 2</em></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <div class="sum">
+    <div class="row"><span class="k2">共砍掉</span><span><b>13 处</b>解释性小字（其中 4 处是整行消失、4 处是同一数字写第二遍、2 处是页面自己解释自己）</span></div>
+    <div class="row"><span class="k2">列表项</span><span>8 个文字元素 → <b>5 个</b>；行高 78px → <b>60px</b>（一屏多看 2 条会话）</span></div>
+    <div class="row"><span class="k2">统计条</span><span>3 行 → <b>2 行</b>；纵向省出 <b>34px</b></span></div>
+    <div class="row"><span class="k2">信息量</span><span>一条没少 —— 被砍的全是「同一件事的第二遍」或「页面解释自己」</span></div>
+    <div class="row"><span class="k2">完整实稿</span><span>见同目录 <code>2026-09-29-workbench-v3.html</code>（整屏减字版，可与 v2 并排看）</span></div>
+  </div>
+
+</div>
+</body>
+</html>

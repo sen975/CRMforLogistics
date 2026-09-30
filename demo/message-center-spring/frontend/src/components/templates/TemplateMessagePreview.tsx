@@ -28,6 +28,9 @@ export default function TemplateMessagePreview({
   compact = false,
 }: TemplateMessagePreviewProps) {
   const segments = previewSegments(page.text ?? '', variables, mode);
+  // 页脚不解析 $(变量)：平台的 FOOTER 组件本来就不允许变量，
+  // 真出现了也不该在这里替它圆成高亮 —— 原样显示才看得见问题。
+  const footer = page.footer?.trim();
 
   return (
     <div className={`template-message-canvas${compact ? ' template-message-canvas--compact' : ''}`}>
@@ -37,6 +40,7 @@ export default function TemplateMessagePreview({
             ? <span key={index}>{segment.value}</span>
             : <span key={`${segment.code}-${index}`} className="template-variable">{segment.value}</span>)}
         </div>
+        {footer && <div className="template-message-footer">{footer}</div>}
         {page.buttons.length > 0 && (
           <div className="template-message-actions">
             {page.buttons.map((button, index) => {

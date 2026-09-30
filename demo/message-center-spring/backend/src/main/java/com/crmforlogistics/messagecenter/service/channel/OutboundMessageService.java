@@ -214,6 +214,8 @@ public class OutboundMessageService {
     private static OutboundException translate(EmailException e) {
         String code = e.code() == null ? "" : e.code();
         return switch (code) {
+            case "EMAIL_RECIPIENT_NOT_FOUND" -> new OutboundException("EMAIL_RECIPIENT_NOT_FOUND",
+                    "收件邮箱不属于当前用户的已有联系人", e);
             case "EMAIL_SEND_OUTCOME_UNKNOWN" -> new OutboundException(OutboundException.OUTCOME_UNKNOWN,
                     "SMTP 已接收，但本地投递状态没能记全；重发前必须先确认", e);
             case "CHANNEL_ACCOUNT_REQUIRED", "CHANNEL_ACCOUNT_CREDENTIALS_UNAVAILABLE",

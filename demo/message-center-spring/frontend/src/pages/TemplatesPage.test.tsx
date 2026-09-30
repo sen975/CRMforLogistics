@@ -27,11 +27,57 @@ describe('TemplatesPage shared workspace', () => {
   });
 
   it('lets ordinary users submit an edit request rather than directly changing the shared template', async () => { const user = userEvent.setup(); api.createTemplateChangeRequest.mockResolvedValue({ mode: 'APPROVAL_REQUIRED', request: { id: 'r1' } }); renderPage(); await screen.findByText('发货提醒'); expect(screen.getByRole('tab', { name: '共享模板' })).toBeVisible(); await user.click(screen.getByRole('button', { name: '编辑 shipping_notice' })); expect(screen.getByRole('button', { name: '提交修改' })).toBeVisible(); await user.click(screen.getByRole('button', { name: '提交修改' })); await waitFor(() => expect(api.createTemplateChangeRequest).toHaveBeenCalledWith('template-1', expect.objectContaining({ expectedVersion: 3, changeType: 'MODIFY' }), undefined)); });
-  it('requires a shared-impact confirmation before an administrator directly changes send permission', async () => { const user = userEvent.setup(); auth.isAdmin = true; api.createTemplateChangeRequest.mockResolvedValue({ mode: 'DIRECT', request: null }); renderPage(); await screen.findByText('发货提醒'); await user.click(screen.getByRole('button', { name: '暂停发送 shipping_notice' })); const dialog = screen.getByRole('dialog', { name: '暂停模板发送' }); expect(within(dialog).getByText('此变更会影响所有用户。请确认后继续。')).toBeInTheDocument(); await user.click(within(dialog).getByRole('button', { name: '确认影响所有用户' })); await waitFor(() => expect(api.createTemplateChangeRequest.mock.calls[0]?.slice(0, 2)).toEqual(['template-1', expect.objectContaining({ changeType: 'SET_SEND_PERMISSION', allowSend: false })])); });
+  it('requires a shared-impact confirmation before an administrator directly changes send permission', async () => { const user = userEvent.setup(); auth.isAdmin = true;
+    // 只有营销模板能暂停（CAMS 对其它类别返回 ERR-COMMON-001，见 templateUi.test.ts），所以这条用例必须用营销模板，
+    // 否则点的是一个被刻意禁用的按钮，测到的就不是「管理员直连前要确认」了。
+    api.fetchSharedTemplates.mockResolvedValue({ items: [{ ...template, category: 'MARKETING' }], total: 1, page: 1, size: 20 });
+    api.fetchSharedTemplate.mockResolvedValue({ ...template, category: 'MARKETING' });
+    api.createTemplateChangeRequest.mockResolvedValue({ mode: 'DIRECT', request: null }); renderPage(); await screen.findByText('发货提醒'); await user.click(screen.getByRole('button', { name: '暂停发送 shipping_notice' })); const dialog = screen.getByRole('dialog', { name: '暂停模板发送' }); expect(within(dialog).getByText('此变更会影响所有用户。请确认后继续。')).toBeInTheDocument(); await user.click(within(dialog).getByRole('button', { name: '确认影响所有用户' })); await waitFor(() => expect(api.createTemplateChangeRequest.mock.calls[0]?.slice(0, 2)).toEqual(['template-1', expect.objectContaining({ changeType: 'SET_SEND_PERMISSION', allowSend: false })])); });
   it('管理员不再看到变更审批标签，且我的申请标签仍可用', async () => { const user = userEvent.setup(); auth.isAdmin = true; renderPage(); await screen.findByText('发货提醒'); expect(screen.queryByRole('tab', { name: '变更审批' })).not.toBeInTheDocument(); const myRequestsTab = screen.getByRole('tab', { name: '我的申请' }); expect(myRequestsTab).toBeVisible(); await user.click(myRequestsTab); expect(await screen.findByText('暂无申请')).toBeVisible(); });
   it('keeps the shared catalog visible when the current user has no WhatsApp account', async () => { api.fetchChannelAccounts.mockResolvedValue([]); renderPage(); expect(await screen.findByText('发货提醒')).toBeVisible(); expect(screen.getByText('没有可用的 WhatsApp 账号')).toBeVisible(); expect(screen.getByRole('button', { name: /同步模板/ })).toBeDisabled(); });
   it('每个 CAMS 空间有自己的模板库，管理员切换空间后按新空间查询', async () => { const user = userEvent.setup(); auth.isAdmin = true; api.fetchAdminCams.mockResolvedValue([{ scopeId: 'cams-1', displayName: '小森', custSpaceId: 'cams-9jvb6o87e6m8', status: 'READY' }, { scopeId: 'cams-2', displayName: '九豆', custSpaceId: 'cams-9dou6dubx2ww', status: 'READY' }]); renderPage(); await screen.findByText('发货提醒'); await waitFor(() => expect(api.fetchSharedTemplates).toHaveBeenCalledWith(expect.objectContaining({ scopeId: 'cams-1' }))); await user.click(screen.getByRole('combobox', { name: '选择 CAMS' })); await user.click(await screen.findByText('九豆（cams-9dou6dubx2ww）')); await waitFor(() => expect(api.fetchSharedTemplates).toHaveBeenCalledWith(expect.objectContaining({ scopeId: 'cams-2' }))); await user.click(screen.getByRole('tab', { name: '公共模板库' })); await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({ language: 'zh_CN' }), 'cams-2')); });
   it('管理员创建和同步模板时带上所选 CAMS 空间', async () => { const user = userEvent.setup(); auth.isAdmin = true; api.fetchAdminCams.mockResolvedValue([{ scopeId: 'cams-1', displayName: '小森', custSpaceId: 'cams-9jvb6o87e6m8', status: 'READY' }, { scopeId: 'cams-2', displayName: '九豆', custSpaceId: 'cams-9dou6dubx2ww', status: 'READY' }]); api.syncSharedTemplates.mockResolvedValue({ fetched: 0, changed: 0 }); api.createSharedTemplate.mockResolvedValue({ id: 'operation-1' }); renderPage(); await screen.findByText('发货提醒'); await user.click(screen.getByRole('combobox', { name: '选择 CAMS' })); await user.click(await screen.findByText('九豆（cams-9dou6dubx2ww）')); await user.click(screen.getByRole('button', { name: /同步模板/ })); await waitFor(() => expect(api.syncSharedTemplates).toHaveBeenCalledWith('cams-2')); await user.click(screen.getByRole('button', { name: '新建模板' })); await user.type(screen.getByLabelText('模板名称'), 'shipping_notice_v2'); const languages = screen.getAllByRole('combobox', { name: '语言' }); fireEvent.mouseDown(languages[languages.length - 1]); await user.click(await screen.findByText('简体中文', { selector: '.ant-select-item-option-content' })); await user.type(screen.getByLabelText('正文'), '您好'); await user.click(screen.getByRole('button', { name: '提交创建' })); await waitFor(() => expect(api.createSharedTemplate).toHaveBeenCalledWith(expect.objectContaining({ name: 'shipping_notice_v2' }), 'cams-2')); });
   it('管理员修改模板和上传素材时带上所选 CAMS 空间', async () => { const user = userEvent.setup(); auth.isAdmin = true; api.fetchAdminCams.mockResolvedValue([{ scopeId: 'cams-1', displayName: '小森', custSpaceId: 'cams-9jvb6o87e6m8', status: 'READY' }, { scopeId: 'cams-2', displayName: '九豆', custSpaceId: 'cams-9dou6dubx2ww', status: 'READY' }]); api.createTemplateChangeRequest.mockResolvedValue({ mode: 'APPROVAL_REQUIRED', request: { id: 'r1' } }); api.uploadTemplateMedia.mockResolvedValue({ id: 'asset-1', clientRequestId: 'upload-1', format: 'IMAGE', contentType: 'image/png', sizeBytes: 3, sha256: 'a', providerUrl: null, assetStatus: 'UPLOADED', errorCode: null, errorMessage: null, traceId: 't' }); renderPage(); await screen.findByText('发货提醒'); await user.click(screen.getByRole('combobox', { name: '选择 CAMS' })); await user.click(await screen.findByText('九豆（cams-9dou6dubx2ww）')); await user.click(screen.getByRole('button', { name: '编辑 shipping_notice' })); await user.click(screen.getByRole('button', { name: '提交修改' })); await waitFor(() => expect(api.createTemplateChangeRequest).toHaveBeenCalledWith('template-1', expect.objectContaining({ changeType: 'MODIFY' }), 'cams-2')); await user.click(screen.getByRole('button', { name: '编辑 shipping_notice' })); const headerTypes = screen.getAllByRole('combobox', { name: 'Header 类型' }); fireEvent.mouseDown(headerTypes[headerTypes.length - 1]); await user.click(await screen.findByText('图片', { selector: '.ant-select-item-option-content' })); fireEvent.change(screen.getByLabelText('Header 素材'), { target: { files: [new File(['x'], 'header.png', { type: 'image/png' })] } }); await waitFor(() => expect(api.uploadTemplateMedia).toHaveBeenCalledWith('IMAGE', expect.any(File), expect.any(String), expect.any(AbortSignal), undefined, 'cams-2')); });
   it('普通用户看不到空间选择器，也不向服务端传 scopeId', async () => { const user = userEvent.setup(); renderPage(); await screen.findByText('发货提醒'); expect(screen.queryByRole('combobox', { name: '选择 CAMS' })).not.toBeInTheDocument(); expect(api.fetchSharedTemplates.mock.calls[0][0].scopeId).toBeUndefined(); await user.click(screen.getByRole('tab', { name: '公共模板库' })); await waitFor(() => expect(api.fetchPublicTemplates).toHaveBeenLastCalledWith(expect.objectContaining({ language: 'zh_CN' }), undefined)); });
+  it('管理员在共享模板详情里不能开启未通过审核模板的发送', async () => {
+    const user = userEvent.setup();
+    auth.isAdmin = true;
+    // CAMS 已判定「审核被拒」：模板本身不可发送，服务端会以 409 TEMPLATE_NOT_APPROVED 拒绝。
+    const rejected = { ...template, reviewStatus: 'REJECTED', allowSend: false };
+    api.fetchSharedTemplates.mockResolvedValue({ items: [rejected], total: 1, page: 1, size: 20 });
+    api.fetchSharedTemplate.mockResolvedValue(rejected);
+    renderPage();
+    await screen.findByText('发货提醒');
+    // 卡片上有两个同名「查看 shipping_notice」按钮（整块预览区 + 眼睛图标），点预览区那个。
+    await user.click(document.querySelector('.shared-template-card__preview') as HTMLElement);
+    const dialog = await screen.findByRole('dialog', { name: '共享模板详情' });
+    expect(within(dialog).getByRole('button', { name: '恢复发送' })).toBeDisabled();
+  });
+
+  it('普通用户在同一个详情里仍可提交开启发送的审批', async () => {
+    const user = userEvent.setup();
+    // 非管理员走审批流，服务端不要求模板已审核通过 —— 按钮必须保持可用，不能一并禁掉。
+    const rejected = { ...template, reviewStatus: 'REJECTED', allowSend: false };
+    api.fetchSharedTemplates.mockResolvedValue({ items: [rejected], total: 1, page: 1, size: 20 });
+    api.fetchSharedTemplate.mockResolvedValue(rejected);
+    renderPage();
+    await screen.findByText('发货提醒');
+    // 卡片上有两个同名「查看 shipping_notice」按钮（整块预览区 + 眼睛图标），点预览区那个。
+    await user.click(document.querySelector('.shared-template-card__preview') as HTMLElement);
+    const dialog = await screen.findByRole('dialog', { name: '共享模板详情' });
+    expect(within(dialog).getByRole('button', { name: '恢复发送' })).toBeEnabled();
+  });
+
+  // 2026-09-29 报障：通知类模板的「暂停发送」打给 CAMS 必得 ERR-COMMON-001（同一模板 allowSend=true 成功、
+  // false 必失败），Meta 侧也没有业务可控的暂停接口。按钮不该给出口，但灰掉时更要能看到原因，
+  // 所以 Tooltip 挂在外层 span 上 —— 原生 disabled 的 button 不派发鼠标事件，直接套 Tooltip 是看不到提示的。
+  it('通知类模板不给「暂停发送」出口', async () => {
+    auth.isAdmin = true;
+    renderPage();
+    await screen.findByText('发货提醒');
+
+    expect(screen.getByRole('button', { name: '暂停发送 shipping_notice' })).toBeDisabled();
+    expect(document.querySelector('.shared-template-card__toggle')).not.toBeNull();
+  });
+
 });

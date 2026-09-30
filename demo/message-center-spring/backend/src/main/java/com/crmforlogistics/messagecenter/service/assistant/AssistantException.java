@@ -21,6 +21,16 @@ public class AssistantException extends RuntimeException {
     public static final String PENDING_EXPIRED = "ASSISTANT_ACTION_EXPIRED";
     /** 待确认动作已被处理过（已确认或已取消）。 */
     public static final String PENDING_ALREADY_DECIDED = "ASSISTANT_ACTION_ALREADY_DECIDED";
+    /** 会话不存在或不属于当前用户。 */
+    public static final String CONVERSATION_NOT_FOUND = "ASSISTANT_CONVERSATION_NOT_FOUND";
+    /** 会话最后活动已超过生命周期，不能恢复、发送或普通读取。 */
+    public static final String CONVERSATION_EXPIRED = "ASSISTANT_CONVERSATION_EXPIRED";
+    /** 已软删除的会话不再允许访问。 */
+    public static final String CONVERSATION_DELETED = "ASSISTANT_CONVERSATION_DELETED";
+    /** 只有 ACTIVE 会话可以发送。 */
+    public static final String CONVERSATION_NOT_ACTIVE = "ASSISTANT_CONVERSATION_NOT_ACTIVE";
+    /** 会话号已被当前用户使用，不能作为新会话重复注册。 */
+    public static final String CONVERSATION_ALREADY_EXISTS = "ASSISTANT_CONVERSATION_ALREADY_EXISTS";
 
     private final String code;
 

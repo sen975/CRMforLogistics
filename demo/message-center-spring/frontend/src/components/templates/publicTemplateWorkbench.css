@@ -220,6 +220,22 @@
   vertical-align: baseline;
 }
 
+/*
+ * 页脚。它在客户手机上就是正文下方一行灰色小字 —— 卡片上必须长得像小字，
+ * 否则用户会把「如需调整请直接回复本条消息」读成正文里多出来的一句话。
+ * 上边距为 0：正文自己有 16px 下内边距，两段之间自然留出 16px。
+ */
+.template-message-footer {
+  min-width: 0;
+  padding: 0 16px 16px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  color: #8c8c8c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .template-message-actions {
   display: grid;
   border-top: 1px solid #f0f0f0;
@@ -311,4 +327,11 @@ a.template-message-action:focus-visible {
   .public-template-detail-preview {
     position: static;
   }
+}
+
+/* Tooltip 要挂得住「禁用的」按钮：原生 disabled 的 button 不派发鼠标事件，直接套 Tooltip 是看不到提示的，
+   中间垫一层 span 承接 hover。2026-09-29 加：暂停发送对非营销类模板会被禁用，按钮灰掉时用户更需要知道原因。 */
+.shared-template-card__toggle,
+.shared-template-detail__toggle {
+  display: inline-flex;
 }

@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.assistant.mcp;
 
 import com.crmforlogistics.messagecenter.dto.response.MessageAttachmentResponse;
 import com.crmforlogistics.messagecenter.dto.response.MessageResponse;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantPromptBuilder;
 import com.crmforlogistics.messagecenter.service.assistant.MessageCandidates;
 import com.crmforlogistics.messagecenter.service.message.MessageQueryService;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -27,7 +28,14 @@ import java.util.UUID;
  * 原来「只读 = 不含原文」，现在「只读 = 不含<b>没必要的</b>原文」。
  * 因此这里没有把 {@code contact.timeline} 的剥离动作撤回：时间线一次回 20 条，
  * 把 20 段原文一起塞进一条 observation 既超过预算、也不是用户想看的；
- * 而 {@code message.read} 一次只取一条，且是用户点名要的那一条 —— 这才是「必要」。
+ * 而 {@code message.read} 取的是用户点名要的那几条 —— 这才是「必要」。
+ *
+ * <h2>2026-09-28：入参从单条扩成一队（{@code messageRefs}）</h2>
+ * 理由是实测出来的：一次只读一条时，「把这几条都念一遍」要吃掉与条数相同的只读轮数，
+ * 而额度是 3 轮 —— 模型于是在第 2 轮就自己下结论「额度用完了」（假的：那一轮它拿到的是
+ * 全新 3 轮，全库 {@code ASSISTANT_READ_TURNS_EXHAUSTED} 一直是 0 次）。粒度放到「一次调用能读一批」
+ * 之后，这类请求一轮就够。**这是同一个工具第二次被「粒度」绊住**：第一次是正文要不要出边界，
+ * 这次是引用能带几个。
  *
  * <h2>它为什么是一个新工具，而不是给 {@code contact.timeline} 加参数</h2>
  * 时间线的语义是「什么时候、通过哪个渠道、有没有联系过」，它回答的是「有没有」。
@@ -44,10 +52,17 @@ import java.util.UUID;
  * 而不是像 {@code conversation.search} 那样只是「下一轮引用得到」的便利
  * —— 少一道都不行，所以这个工具必须走候选。
  *
- * <h2>越权防线不在这一层</h2>
- * {@link MessageQueryService#getMessage(UUID, UUID)} 自带 owner 过滤
+ * <p>批量化<b>不放宽</b>这道防线：{@code x-candidateSet} 挂在数组字段上，解析器对
+ * <b>每个元素</b>逐个比对（{@code AssistantDecisionParser.referencesOf}），
+ * 队里任何一个元素不在候选里就整体拒掉 —— 不是「取交集」也不是「只放行认得的那几个」。
+ *
+ * <p>越权防线不在这一层：{@link MessageQueryService#getMessage(UUID, UUID)} 自带 owner 过滤
  * （{@code findByIdAndOwner}，企微历史消息再补一道 {@code requireAccessible}）。
  * 这里只负责把 {@code null} 翻译成「不在你能查看的范围内」，不重复也不放宽任何一条。
+ *
+ * <p>批量之后这条不变，且<b>不做部分成功</b>：一队里任一条拿不到就整体失败 ——
+ * 「带回 4 条、静默少 2 条」会让模型把那 2 条当成本来就不存在。唯一按条让步的地方是
+ * 体积预算，而那里的让步是<b>显式</b>的（{@code omittedRefs} + 一句「需要时只传这几个再调一次」）。
  */
 @Configuration(proxyBeanMethods = false)
 public class MessageAssistantTools {
@@ -56,6 +71,26 @@ public class MessageAssistantTools {
 
     /** 一个 {@code MESSAGE:<uuid>} 的长度上界（7 + 1 + 36），留余量。 */
     static final int MESSAGE_REF_MAX_CHARS = 64;
+
+    /**
+     * 一次最多读多少条。与候选集上限同值（见 {@link MessageCandidates#LIMIT}）：
+     * 超出的引用本轮本来也造不出来 —— 候选清单一次就只给那么多条。
+     */
+    static final int MAX_REFS = MessageCandidates.LIMIT;
+
+    /**
+     * 一批消息的<b>正文合计</b>字符上限。
+     *
+     * <p>它不是节流阀，而是「一次结果要装得进一条 observation」的预算：observation 的总上限是
+     * {@link AssistantPromptBuilder#OBSERVATION_MAX_CHARS}，这里留出 1000 字符给 JSON 信封、
+     * 每条消息的元数据与转义膨胀（正文里的换行与引号在 JSON 里会变长）。
+     *
+     * <p>超预算的条<b>不静默丢</b>：会进 {@code omittedRefs}，并在 {@code message} 里说明
+     * 「需要它们时只传这几个引用再调一次」。反过来，<b>第一条永远带回来</b> ——
+     * 只读一条时的保真度必须与改批量之前逐字一致（那一条可能比预算还长，此时靠 observation
+     * 那一层的截断兜底，它在观测里明写了「已截断」，不是静默的）。
+     */
+    static final int BATCH_TEXT_BUDGET_CHARS = AssistantPromptBuilder.OBSERVATION_MAX_CHARS - 1000;
 
     private final MessageQueryService messages;
 
@@ -68,21 +103,24 @@ public class MessageAssistantTools {
     @Bean
     public ToolDefinition messageReadTool() {
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("messageRef", referenceTo(MessageCandidates.NAME,
-                "消息标识，只能取自候选消息清单里的 messageRef（形如 MESSAGE:<uuid>）"
-                        + "—— 那份清单来自 contact.timeline 的返回结果"));
+        properties.put("messageRefs", referenceArray(MessageCandidates.NAME,
+                "消息标识，一次可以给多条（最多 " + MAX_REFS + " 条）。每一项只能取自候选消息清单里的 "
+                        + "messageRef（形如 MESSAGE:<uuid>）—— 那份清单来自 contact.timeline 的返回结果",
+                1, MAX_REFS, MESSAGE_REF_MAX_CHARS));
 
         return new ToolDefinition(
                 McpSchema.Tool.builder()
                         .name(TOOL_READ)
-                        .title("读取一条消息的原文")
-                        .description("按 messageRef 取出某一条消息的内容（正文原文、主题、收发方向、"
+                        .title("读取消息的原文")
+                        .description("按 messageRefs 取出这些消息的内容（正文原文、主题、收发方向、"
                                 + "时间、渠道、附件清单）。适合「把那条消息调出来」「他原话是怎么说的」这类问题："
-                                + "先用 contact.timeline 定位到某一条消息，再用它的 messageRef 调用这里。"
-                                + "messageRef 只能来自候选消息清单 —— 清单是空的就说明还没调用过 contact.timeline，"
+                                + "先用 contact.timeline 定位到要看的消息，再把它们的 messageRef 放进 messageRefs 调用这里。"
+                                + "要读多条就一次全传，不要一条一条地反复调用本工具。"
+                                + "messageRefs 只能来自候选消息清单 —— 清单是空的就说明还没调用过 contact.timeline，"
                                 + "这时不要调用本工具，也不要用时间点自己编一个引用。"
+                                + "若结果里带 omittedRefs，说明那几条这一轮因体积没带回来，需要时只传它们再调一次。"
                                 + "这是只读操作。")
-                        .inputSchema(objectSchema(properties, List.of("messageRef")))
+                        .inputSchema(objectSchema(properties, List.of("messageRefs")))
                         .annotations(readOnly())
                         .build(),
                 this::read);
@@ -91,22 +129,49 @@ public class MessageAssistantTools {
     // ---------- 执行 ----------
 
     private ToolResult read(UUID userId, Map<String, Object> arguments) {
-        String reference = requiredText(arguments, "messageRef");
-        UUID messageId = MessageCandidates.targetOf(reference);
-        if (messageId == null) {
-            throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT,
-                    "消息标识格式不正确，只能取自候选消息清单里的 messageRef");
+        List<String> references = requiredReferences(arguments, "messageRefs");
+
+        List<Map<String, Object>> rendered = new ArrayList<>(references.size());
+        List<String> omitted = new ArrayList<>();
+        MessageResponse first = null;
+        int usedChars = 0;
+        for (String reference : references) {
+            UUID messageId = MessageCandidates.targetOf(reference);
+            if (messageId == null) {
+                throw new ToolExecutionException(ToolExecutionException.INVALID_ARGUMENT,
+                        "消息标识格式不正确，只能取自候选消息清单里的 messageRef");
+            }
+
+            MessageResponse message = messages.getMessage(messageId, userId);
+            if (message == null) {
+                // 措辞刻意不区分「不存在」与「不属于你」：区分开就等于告诉另一个账号
+                // 「这条 id 是存在的」（与 ConversationAssistantTools.guarded 同口径）。
+                // 批量也不做部分成功：带回一半会让模型把没带回来的当成「本来就不存在」。
+                throw new ToolExecutionException(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND,
+                        ToolExecutionException.ACCESS_DENIED_MESSAGE);
+            }
+            if (first == null) {
+                first = message;
+            }
+
+            int textChars = textCharsOf(message);
+            // 第一条永远带回来（单条读取的保真度与批量之前一致）。此后超预算的**不静默丢**：
+            // 记进 omitted，并接着往后看 —— 后面若有短消息仍能带回来，凑出这轮体积下的最大信息量。
+            if (!rendered.isEmpty() && usedChars + textChars > BATCH_TEXT_BUDGET_CHARS) {
+                omitted.add(reference);
+                continue;
+            }
+            usedChars += textChars;
+            rendered.add(data(reference, message));
         }
 
-        MessageResponse message = messages.getMessage(messageId, userId);
-        if (message == null) {
-            // 措辞刻意不区分「不存在」与「不属于你」：区分开就等于告诉另一个账号
-            // 「这条 id 是存在的」（与 ConversationAssistantTools.guarded 同口径）。
-            throw new ToolExecutionException(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND,
-                    ToolExecutionException.ACCESS_DENIED_MESSAGE);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("messages", rendered);
+        if (!omitted.isEmpty()) {
+            // 只有真的丢过东西才出现这个键：恒定给一个空数组会让模型以为「这次也丢了」。
+            payload.put("omittedRefs", List.copyOf(omitted));
         }
-
-        return ToolResult.ok(describe(message), data(reference, message));
+        return ToolResult.ok(describe(first, rendered.size(), omitted.size()), payload);
     }
 
     // ---------- 渲染 ----------
@@ -161,27 +226,56 @@ public class MessageAssistantTools {
      * 正文在这里抄一遍等于让同一段文本占两份 4000 字符预算
      * （同 {@code AiTopicAssistantTools.describe} 的理由）。
      */
-    private static String describe(MessageResponse message) {
-        StringBuilder text = new StringBuilder("找到了这条消息：");
-        text.append(message.occurredAt() == null ? "时间未知" : message.occurredAt().toString());
-        text.append("，").append("inbound".equalsIgnoreCase(message.direction()) ? "收到" : "发出");
-        if (!isBlank(message.subject())) {
-            text.append("，主题「").append(message.subject().strip()).append("」");
+    private static String describe(MessageResponse first, int returned, int omitted) {
+        StringBuilder text = new StringBuilder();
+        if (returned == 1) {
+            text.append("找到了这条消息：");
+            text.append(first.occurredAt() == null ? "时间未知" : first.occurredAt().toString());
+            text.append("，").append("inbound".equalsIgnoreCase(first.direction()) ? "收到" : "发出");
+            if (!isBlank(first.subject())) {
+                text.append("，主题「").append(first.subject().strip()).append("」");
+            }
+            if (!isBlank(first.kind())) {
+                text.append("，类型 ").append(first.kind());
+            }
+            text.append("；正文在 messages 的 messageText 字段里。");
+        } else {
+            text.append("按请求顺序带回了 ").append(returned)
+                    .append(" 条消息；正文在 messages 里，逐条的 messageRef 与 messageRefs 对应。");
         }
-        if (!isBlank(message.kind())) {
-            text.append("，类型 ").append(message.kind());
+        if (omitted > 0) {
+            text.append("另有 ").append(omitted)
+                    .append(" 条因体积这一轮没带回来（见 omittedRefs）—— 需要它们时只传这几个引用再调用一次。");
         }
-        return text.append("；正文在 messageText 字段里。").toString();
+        return text.toString();
     }
 
     // ---------- 参数读取 ----------
 
-    private static String requiredText(Map<String, Object> arguments, String key) {
+    /**
+     * 读取「一组引用」参数。恒非空：缺席与空数组都算「没给出要读的东西」，
+     * 报 {@code MISSING_ARGUMENT}，而不是让它走到「带回了 0 条消息」那种看起来成功的形状。
+     */
+    private static List<String> requiredReferences(Map<String, Object> arguments, String key) {
         Object value = arguments.get(key);
-        if (value instanceof String text && !text.isBlank()) {
-            return text.strip();
+        if (value instanceof List<?> elements) {
+            List<String> references = new ArrayList<>(elements.size());
+            for (Object element : elements) {
+                if (element instanceof String text && !text.isBlank()) {
+                    references.add(text.strip());
+                }
+            }
+            if (!references.isEmpty()) {
+                return references;
+            }
         }
         throw new ToolExecutionException(ToolExecutionException.MISSING_ARGUMENT, "缺少必填参数：" + key);
+    }
+
+    /** 一条消息占预算的字符数：正文，没有纯文本时退到 HTML（与 {@link #data} 的取舍同源）。 */
+    private static int textCharsOf(MessageResponse message) {
+        String text = isBlank(message.bodyText()) ? message.bodyHtml() : message.bodyText();
+        return text == null ? 0 : text.length();
     }
 
     private static boolean isBlank(String value) {
@@ -200,18 +294,29 @@ public class MessageAssistantTools {
         return schema;
     }
 
-    private static Map<String, Object> stringSpec(String description, Object... extra) {
-        Map<String, Object> field = new LinkedHashMap<>();
-        field.put("type", "string");
-        field.put("description", description);
-        for (int i = 0; i + 1 < extra.length; i += 2) {
-            field.put(String.valueOf(extra[i]), extra[i + 1]);
-        }
-        return field;
-    }
+    /**
+     * 「一组引用」字段：外层是 array，元素是绑定到某个候选组的字符串引用。
+     *
+     * <p>{@code x-candidateSet} 必须挂在<b>数组字段</b>上，不能挂在 {@code items} 上：
+     * {@link ToolDefinition#referenceBindings()} 读的正是字段级的那一个，解析器据此对
+     * <b>每个元素</b>比对候选。挂错位置会让绑定查不到，而字段名以 {@code Refs} 结尾
+     * 仍会被启动自检要求绑定 —— 直接起不来。
+     *
+     * <p>与 {@code AiTopicAssistantTools} / {@code ContactWriteAssistantTools} 同形：
+     * 这是本注册表里「一组引用」的既定声明方式，别在这里发明第二种。
+     */
+    private static Map<String, Object> referenceArray(String candidateSet, String description,
+                                                      int minItems, int maxItems, int itemMaxLength) {
+        Map<String, Object> items = new LinkedHashMap<>();
+        items.put("type", "string");
+        items.put("maxLength", itemMaxLength);
 
-    private static Map<String, Object> referenceTo(String candidateSet, String description) {
-        Map<String, Object> field = stringSpec(description, "maxLength", MESSAGE_REF_MAX_CHARS);
+        Map<String, Object> field = new LinkedHashMap<>();
+        field.put("type", "array");
+        field.put("description", description);
+        field.put("minItems", minItems);
+        field.put("maxItems", maxItems);
+        field.put("items", items);
         field.put(ToolInputValidator.CANDIDATE_SET, candidateSet);
         return field;
     }

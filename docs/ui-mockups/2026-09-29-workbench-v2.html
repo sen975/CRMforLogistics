@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>统一消息中心 · 工作台（v2 深色外壳）</title>
+<style>
+  :root{
+    /* ---- 深色 chrome ---- */
+    --chrome:#141a22;
+    --chrome-2:#11161c;
+    --c-ink:#ffffff;
+    --c-ink2:rgba(255,255,255,.72);
+    --c-ink3:rgba(255,255,255,.54);
+    --c-ink4:rgba(255,255,255,.42);
+    --c-line:rgba(255,255,255,.075);
+    --c-hover:rgba(255,255,255,.055);
+    --c-on:rgba(255,255,255,.10);
+    --c-field:rgba(255,255,255,.07);
+
+    /* ---- 浅色内容区 ---- */
+    --canvas:#f1f2f4;
+    --surface:#ffffff;
+    --ink:#0f1419;
+    --ink2:#5b6675;
+    --ink3:#98a1ad;
+    --hair:#eceef1;
+    --hair2:#e2e5e9;
+    --btn:#14181f;
+
+    --red:#d92d20;   --red-soft:#fef3f2;
+    --amber:#b54708; --amber-soft:#fdf3e5;
+
+    --wa:#22a06b;    --wa-soft:#e8f5ee;
+    --mail:#2f7ae5;  --mail-soft:#eaf1fd;
+    --wecom:#5b5bd6; --wecom-soft:#eeeefb;
+    --phone:#d1851c; --phone-soft:#fdf3e4;
+
+    /* 深底上的亮色变体 */
+    --d-wa:#4ee0a3;
+    --d-mail:#84b1ff;
+    --d-wecom:#aaaaff;
+    --d-phone:#ffbb66;
+    --d-red:#ff8f84;
+
+    --r-panel:16px;
+    --r-md:10px;
+    --r-sm:8px;
+
+    --sh-panel:0 1px 2px rgba(16,24,40,.04), 0 8px 22px -14px rgba(16,24,40,.16);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--canvas);color:var(--ink);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    font-size:13.5px;line-height:1.5;font-variant-numeric:tabular-nums;
+  }
+  button{font:inherit;color:inherit}
+  .app{min-height:700px;height:100vh;display:flex;flex-direction:column;background:var(--chrome)}
+
+  /* ==================== 顶栏 ==================== */
+  .top{
+    height:56px;flex:none;display:flex;align-items:center;gap:20px;padding:0 20px;
+    background:var(--chrome);color:var(--c-ink);
+  }
+  .brand{display:flex;align-items:center;gap:9px;font-size:14.5px;font-weight:640;letter-spacing:-.012em}
+  .brand .mark{
+    width:24px;height:24px;border-radius:7px;flex:none;display:grid;place-items:center;
+    background:rgba(255,255,255,.12);
+  }
+  .brand .mark svg{width:13px;height:13px;color:#fff}
+
+  .nav{display:flex;align-items:center;gap:2px;height:56px}
+  .nav a{
+    position:relative;display:flex;align-items:center;height:56px;padding:0 11px;
+    color:var(--c-ink2);text-decoration:none;font-size:13.5px;font-weight:500;
+  }
+  .nav a:hover{color:#fff}
+  .nav a.on{color:#fff;font-weight:620}
+  .nav a.on::after{
+    content:"";position:absolute;left:11px;right:11px;bottom:0;height:2px;
+    border-radius:2px 2px 0 0;background:#fff;
+  }
+  .nav a .dot{width:5px;height:5px;border-radius:50%;background:#ff6b5e;margin-left:5px;position:relative;top:-5px}
+  .spacer{flex:1}
+
+  .search{
+    display:flex;align-items:center;gap:8px;width:250px;height:34px;padding:0 10px;
+    border-radius:var(--r-md);background:var(--c-field);color:var(--c-ink3);
+  }
+  .search svg{width:14px;height:14px;flex:none}
+  .search span{font-size:13px}
+  .search kbd{
+    margin-left:auto;font:500 11px/1 inherit;color:var(--c-ink3);letter-spacing:.04em;
+    border:1px solid rgba(255,255,255,.14);border-radius:5px;padding:3px 5px;
+  }
+  .icon-btn{
+    width:34px;height:34px;flex:none;display:grid;place-items:center;position:relative;
+    border:0;border-radius:var(--r-md);background:transparent;color:var(--c-ink2);cursor:pointer;
+  }
+  .icon-btn:hover{background:var(--c-hover);color:#fff}
+  .icon-btn svg{width:16px;height:16px}
+  .icon-btn .badge{
+    position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;
+    display:grid;place-items:center;border-radius:999px;
+    background:#e5484d;color:#fff;font-size:10px;font-weight:700;border:2px solid var(--chrome);
+  }
+  .who{
+    display:flex;align-items:center;gap:9px;margin-left:2px;padding-left:14px;
+    border-left:1px solid var(--c-line);
+  }
+  .who .av{
+    width:30px;height:30px;border-radius:9px;flex:none;display:grid;place-items:center;
+    background:rgba(255,255,255,.13);color:#fff;font-size:12px;font-weight:650;
+  }
+  .who b{font-size:13px;font-weight:600;display:block;line-height:1.25;color:#fff}
+  .who small{display:block;font-size:11px;color:var(--c-ink3);font-weight:400;line-height:1.25}
+
+  /* ==================== 主体：左栏 + 内容 ==================== */
+  .body{flex:1;min-height:0;display:flex;background:var(--chrome)}
+
+  /* ---------- 左栏（深色） ---------- */
+  .rail{
+    width:290px;flex:none;display:flex;flex-direction:column;min-height:0;
+    background:var(--chrome-2);
+  }
+  .rail-hd{flex:none;padding:12px 12px 8px}
+  .rsearch{
+    display:flex;align-items:center;gap:7px;height:32px;padding:0 10px;
+    border-radius:var(--r-sm);background:var(--c-field);color:var(--c-ink3);font-size:12.5px;
+  }
+  .rsearch svg{width:13px;height:13px;flex:none}
+
+  .sec{flex:none;padding:4px 8px 8px}
+  .sec-t{
+    font-size:10.5px;font-weight:600;letter-spacing:.08em;
+    color:var(--c-ink4);padding:6px 9px 4px;
+  }
+  .frow{
+    position:relative;display:flex;align-items:center;gap:9px;height:30px;padding:0 9px;
+    border-radius:7px;font-size:12.5px;color:var(--c-ink2);cursor:pointer;font-weight:500;
+  }
+  .frow i{width:6px;height:6px;border-radius:2px;flex:none;display:block}
+  .frow .n{margin-left:auto;font-size:11px;font-weight:600;color:var(--c-ink4)}
+  .frow:hover{background:var(--c-hover);color:#fff}
+  .frow.on{background:var(--c-on);color:#fff;font-weight:620}
+  .frow.on .n{color:var(--c-ink2)}
+  .frow.on::before{
+    content:"";position:absolute;left:0;top:7px;bottom:7px;width:2.5px;
+    border-radius:0 3px 3px 0;background:#fff;
+  }
+
+  .rlist{
+    flex:1;min-height:0;overflow:auto;padding:8px;
+    border-top:1px solid var(--c-line);
+  }
+  .rlist::-webkit-scrollbar{width:8px}
+  .rlist::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+
+  .item{
+    position:relative;display:flex;gap:10px;padding:9px 10px;border-radius:var(--r-md);
+    cursor:pointer;margin-bottom:1px;
+  }
+  .item:hover{background:var(--c-hover)}
+  .item.on{background:var(--c-on)}
+  .item.on::before{
+    content:"";position:absolute;left:0;top:12px;bottom:12px;width:2.5px;
+    border-radius:0 3px 3px 0;background:#fff;
+  }
+  .av{
+    width:36px;height:36px;border-radius:10px;flex:none;display:grid;place-items:center;
+    font-size:13px;font-weight:650;letter-spacing:.02em;
+  }
+  .av.t1{background:rgba(47,122,229,.24);color:#9ec5ff}
+  .av.t2{background:rgba(34,160,107,.24);color:#84e3b5}
+  .av.t3{background:rgba(91,91,214,.30);color:#b6b6ff}
+  .av.t4{background:rgba(209,133,28,.24);color:#ffca85}
+  .av.t5{background:rgba(217,45,32,.24);color:#ffa39b}
+  .av.t6{background:rgba(31,111,133,.30);color:#95dcec}
+  .av.t7{background:rgba(255,255,255,.11);color:#cdd3da}
+  .it-b{min-width:0;flex:1}
+  .it-t{display:flex;align-items:baseline;gap:8px}
+  .it-t b{
+    font-size:13px;font-weight:520;letter-spacing:-.005em;color:var(--c-ink2);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .item.unread .it-t b{font-weight:660;color:#fff}
+  .it-t time{margin-left:auto;font-size:11px;color:var(--c-ink4);flex:none}
+  .it-p{
+    font-size:12px;color:var(--c-ink4);margin-top:3px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .item.unread .it-p{color:var(--c-ink3)}
+  .it-m{display:flex;align-items:center;gap:5px;margin-top:7px}
+  .ct{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--c-ink4);font-weight:500}
+  .ct i{width:5px;height:5px;border-radius:2px;flex:none;display:block}
+  .ct-sep{width:1px;height:8px;background:rgba(255,255,255,.12);margin:0 2px}
+  .pill-n{
+    margin-left:auto;min-width:17px;height:17px;padding:0 5px;display:grid;place-items:center;
+    border-radius:999px;background:#e5484d;color:#fff;font-size:10.5px;font-weight:700;
+  }
+  .rail-ft{
+    flex:none;display:flex;align-items:center;padding:10px 14px;
+    border-top:1px solid var(--c-line);font-size:11px;color:var(--c-ink4);
+  }
+
+  /* ---------- 内容区（浅色） ---------- */
+  .content{
+    flex:1;min-width:0;min-height:0;overflow:auto;background:var(--canvas);
+    padding:18px 22px 20px;display:flex;flex-direction:column;gap:18px;
+  }
+  .content::-webkit-scrollbar{width:8px}
+  .content::-webkit-scrollbar-thumb{background:#dcdfe4;border-radius:8px;border:2px solid var(--canvas)}
+  .panel{background:var(--surface);border-radius:var(--r-panel);box-shadow:var(--sh-panel)}
+
+  .greet{display:flex;align-items:flex-end;gap:16px;padding:2px 2px 0}
+  .greet h1{margin:0;font-size:22px;font-weight:660;letter-spacing:-.028em;line-height:1.2}
+  .greet p{margin:6px 0 0;font-size:13px;color:var(--ink2)}
+  .greet p b{color:var(--red);font-weight:650}
+  .greet .act{margin-left:auto;display:flex;gap:8px;padding-bottom:1px}
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:var(--r-md);
+    border:1px solid var(--hair2);background:#fff;color:var(--ink);font-size:13px;font-weight:550;cursor:pointer;
+  }
+  .btn:hover{background:#fafbfc}
+  .btn svg{width:14px;height:14px}
+  .btn.pri{background:var(--btn);border-color:var(--btn);color:#fff;box-shadow:0 3px 10px -4px rgba(15,20,25,.55)}
+  .btn.pri:hover{background:#242a33;border-color:#242a33}
+
+  /* 统计条 */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);padding:20px 4px}
+  .stat{padding:0 20px;border-left:1px solid var(--hair);min-width:0}
+  .stat:first-child{border-left:0;padding-left:22px}
+  .stat .lab{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);font-weight:530}
+  .stat .lab i{width:6px;height:6px;border-radius:2px;flex:none;display:block}
+  .stat .v{margin-top:10px;display:flex;align-items:baseline;gap:8px}
+  .stat .v b{font-size:33px;font-weight:650;letter-spacing:-.04em;line-height:1;color:var(--ink)}
+  .stat .v em{
+    font-style:normal;font-size:11.5px;font-weight:600;padding:2.5px 7px;border-radius:6px;
+    background:#f4f5f7;color:var(--ink2);position:relative;top:-4px;
+  }
+  .stat .v em.good{background:var(--wa-soft);color:#1a7a50}
+  .stat .v em.hot{background:var(--red-soft);color:#b42318}
+  .stat .sub{margin-top:11px;font-size:11.5px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat .sub b{color:var(--ink2);font-weight:600}
+  .stat.alert .v b{color:var(--red)}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;align-items:stretch}
+  .stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+
+  .hd{display:flex;align-items:center;gap:8px;padding:16px 20px 13px}
+  .hd h2{margin:0;font-size:14px;font-weight:640;letter-spacing:-.012em}
+  .hd .cnt{
+    min-width:19px;height:19px;padding:0 6px;display:grid;place-items:center;border-radius:6px;
+    background:#f4f5f7;color:var(--ink2);font-size:11px;font-weight:700;
+  }
+  .hd .cnt.hot{background:var(--red-soft);color:var(--red)}
+  .hd .meta{margin-left:auto;font-size:11.5px;color:var(--ink3)}
+  .hd .more{
+    margin-left:auto;font-size:12.5px;color:var(--ink2);font-weight:550;text-decoration:none;
+    display:inline-flex;align-items:center;gap:2px;
+  }
+  .hd .more:hover{color:var(--ink)}
+  .hd .more svg{width:13px;height:13px}
+
+  .need-wrap{display:flex;flex-direction:column;padding:0 8px 8px}
+  .need{position:relative;display:flex;gap:11px;padding:16px 12px;border-radius:var(--r-md);cursor:pointer}
+  .need + .need::before{content:"";position:absolute;left:12px;right:12px;top:0;height:1px;background:var(--hair)}
+  .need:hover{background:#fafbfc}
+  .need .av{width:34px;height:34px;border-radius:9px;font-size:12.5px}
+  .need .av.t1{background:#e9f0fb;color:#2b5fa8}
+  .need .av.t3{background:#efeffc;color:#4b4bc0}
+  .need .av.t5{background:#fbeceb;color:#b13a34}
+  .need .b{flex:1;min-width:0}
+  .need .t{display:flex;align-items:baseline;gap:8px}
+  .need .t b{font-size:13.5px;font-weight:620;letter-spacing:-.008em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .need .t .org{font-size:11.5px;color:var(--ink3);flex:none}
+  .need .t time{margin-left:auto;font-size:11px;color:var(--ink3);flex:none}
+  .need .q{
+    margin-top:9px;padding:10px 12px;border-radius:var(--r-sm);background:#f7f8fa;
+    font-size:12.5px;color:var(--ink2);line-height:1.58;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .need .m{display:flex;align-items:center;gap:7px;margin-top:11px}
+  .tag{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:600}
+  .tag i{width:5px;height:5px;border-radius:2px;display:block}
+  .tag.t-wa{background:var(--wa-soft);color:#12724a} .tag.t-wa i{background:var(--wa)}
+  .tag.t-mail{background:var(--mail-soft);color:#1c56a8} .tag.t-mail i{background:var(--mail)}
+  .tag.t-wecom{background:var(--wecom-soft);color:#4040b8} .tag.t-wecom i{background:var(--wecom)}
+  .tag.t-phone{background:var(--phone-soft);color:#97590f} .tag.t-phone i{background:var(--phone)}
+  .tag.w8{background:var(--red-soft);color:#b42318;font-weight:650}
+  .tag.w4{background:var(--amber-soft);color:var(--amber);font-weight:650}
+  .need .mini{
+    margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 11px;
+    border-radius:7px;background:var(--btn);color:#fff;font-size:12px;font-weight:600;border:0;cursor:pointer;
+  }
+  .need .mini:hover{background:#242a33}
+  .need .mini.ghost{background:#fff;color:var(--ink);border:1px solid var(--hair2)}
+  .need .mini.ghost:hover{background:#f7f8fa}
+  .need .mini svg{width:12px;height:12px}
+  .need-foot{
+    margin-top:auto;display:flex;align-items:center;gap:6px;padding:13px 20px;
+    border-top:1px solid var(--hair);font-size:11.5px;color:var(--ink3);
+  }
+  .need-foot svg{width:13px;height:13px;flex:none}
+
+  .todo{display:flex;flex-direction:column;padding:0 8px 12px}
+  .td{display:flex;gap:10px;padding:10px 12px;border-radius:var(--r-sm);cursor:pointer;align-items:flex-start}
+  .td:hover{background:#fafbfc}
+  .td .box{
+    width:16px;height:16px;border-radius:5px;border:1.5px solid #cfd4db;flex:none;margin-top:1.5px;
+    display:grid;place-items:center;
+  }
+  .td .box svg{width:10px;height:10px;color:#fff;opacity:0}
+  .td.done .box{background:var(--btn);border-color:var(--btn)}
+  .td.done .box svg{opacity:1}
+  .td.done .txt{color:var(--ink3);text-decoration:line-through;text-decoration-color:#c9ced6}
+  .td .txt{font-size:12.5px;color:var(--ink);min-width:0;line-height:1.45}
+  .td .sub{display:block;font-size:11px;color:var(--ink3);margin-top:2px}
+  .td .due{margin-left:auto;flex:none;font-size:11px;font-weight:600;color:var(--ink3);padding-top:1px}
+  .td .due.hot{color:var(--red)}
+  .td .due.warm{color:var(--amber)}
+
+  .chan{padding:2px 20px 22px}
+  .stackbar{display:flex;height:9px;border-radius:999px;overflow:hidden;background:#f1f2f4;gap:2px}
+  .stackbar i{display:block;height:100%}
+  .stackbar i:first-child{border-radius:999px 0 0 999px}
+  .stackbar i:last-child{border-radius:0 999px 999px 0}
+  .lgds{display:flex;flex-wrap:wrap;gap:9px 16px;margin-top:15px}
+  .lgd{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink2)}
+  .lgd i{width:6px;height:6px;border-radius:2px;display:block;flex:none}
+  .lgd b{font-weight:650;color:var(--ink);letter-spacing:-.01em}
+  .lgd span{color:var(--ink3);font-weight:400}
+  .chan-note{margin-top:13px;font-size:11px;color:var(--ink3)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ==================== 顶栏 ==================== -->
+  <header class="top">
+    <div class="brand">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7.5h16M4 12h11M4 16.5h7"/></svg>
+      </span>
+      统一消息中心
+    </div>
+
+    <nav class="nav">
+      <a href="#" class="on">工作台</a>
+      <a href="#">收件箱<span class="dot"></span></a>
+      <a href="#">联系人</a>
+      <a href="#">模板</a>
+      <a href="#">渠道</a>
+    </nav>
+
+    <div class="spacer"></div>
+
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span>搜索联系人、公司、消息</span>
+      <kbd>⌘K</kbd>
+    </div>
+
+    <button class="icon-btn" title="待办日历">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.2"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/></svg>
+      <span class="badge">3</span>
+    </button>
+    <button class="icon-btn" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 3.2v2.1M12 18.7v2.1M20.8 12h-2.1M5.3 12H3.2M18.2 5.8l-1.5 1.5M7.3 16.7l-1.5 1.5M18.2 18.2l-1.5-1.5M7.3 7.3L5.8 5.8"/></svg>
+    </button>
+
+    <div class="who">
+      <span class="av">森</span>
+      <span><b>admin</b><small>管理员</small></span>
+    </div>
+  </header>
+
+  <!-- ==================== 主体 ==================== -->
+  <div class="body">
+
+    <!-- ---------- 左栏 ---------- -->
+    <aside class="rail">
+      <div class="rail-hd">
+        <div class="rsearch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          搜索联系人、邮箱
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-t">收件箱</div>
+        <div class="frow on"><i style="background:#fff"></i>全部<span class="n">15</span></div>
+        <div class="frow"><i style="background:var(--d-mail)"></i>邮件<span class="n">9</span></div>
+        <div class="frow"><i style="background:var(--d-wecom)"></i>企业微信<span class="n">5</span></div>
+        <div class="frow"><i style="background:var(--d-wa)"></i>WhatsApp<span class="n">4</span></div>
+        <div class="frow"><i style="background:var(--d-phone)"></i>电话<span class="n">2</span></div>
+      </div>
+
+      <div class="rlist">
+        <div class="item unread on">
+          <span class="av t1">守</span>
+          <div class="it-b">
+            <div class="it-t"><b>守望</b><time>9月28日</time></div>
+            <div class="it-p">上次我们聊到开一条从广东到澳大利亚…</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="pill-n">2</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t2">K</span>
+          <div class="it-b">
+            <div class="it-t"><b>洛杉矶 Kevin</b><time>9月28日</time></div>
+            <div class="it-p">下周三那批货的提单能不能先给我？</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wa)"></i>WA</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t3">晓</span>
+          <div class="it-b">
+            <div class="it-t"><b>财务对接-晓雯</b><time>9月27日</time></div>
+            <div class="it-p">好的，发票我已经收到了，稍后核对。</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-phone)"></i>电话</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t4">Y</span>
+          <div class="it-b">
+            <div class="it-t"><b>雅加达 Yusuf</b><time>9月26日</time></div>
+            <div class="it-p">Please confirm the CIF price for 2x40HQ.</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wa)"></i>WA</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t5">王</span>
+          <div class="it-b">
+            <div class="it-t"><b>深圳鑫海 · 王总</b><time>9月25日</time></div>
+            <div class="it-p">舱位帮我锁一下 10 月 8 号那班。</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wecom)"></i>企微</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t6">N</span>
+          <div class="it-b">
+            <div class="it-t"><b>越南工厂 Nora</b><time>9月24日</time></div>
+            <div class="it-p">We need the inspection report before shipment.</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wa)"></i>WA</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t7">M</span>
+          <div class="it-b">
+            <div class="it-t"><b>新加坡代理 Marcus</b><time>9月23日</time></div>
+            <div class="it-p">Noted, will revert by Friday.</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wa)"></i>WA</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t2">宁</span>
+          <div class="it-b">
+            <div class="it-t"><b>宁波远洋 · 老客户</b><time>9月22日</time></div>
+            <div class="it-p">合同条款我们再对一下第三条。</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wecom)"></i>企微</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t3">D</span>
+          <div class="it-b">
+            <div class="it-t"><b>David（上海）· 美线询价</b><time>9月21日</time></div>
+            <div class="it-p">麻烦报一下 40HQ 到 LA 的价格。</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-wecom)"></i>企微</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t4">悦</span>
+          <div class="it-b">
+            <div class="it-t"><b>悦为小森</b><time>9月21日</time></div>
+            <div class="it-p">样品照片我发你邮箱了，你看下包装。</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+              <span class="ct-sep"></span>
+              <span class="ct"><i style="background:var(--d-wa)"></i>WA</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av t6">J</span>
+          <div class="it-b">
+            <div class="it-t"><b>青岛船代 Jason</b><time>9月20日</time></div>
+            <div class="it-p">SOC 箱的免费用箱期能给到几天？</div>
+            <div class="it-m">
+              <span class="ct"><i style="background:var(--d-mail)"></i>邮件</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="rail-ft">
+        <span>共 15 个会话</span>
+        <span style="margin-left:auto">同公司自动合并</span>
+      </div>
+    </aside>
+
+    <!-- ---------- 内容区 ---------- -->
+    <main class="content">
+
+      <div class="greet">
+        <div>
+          <h1>下午好，小森</h1>
+          <p><b>3 位客户</b>在等你回复 · 今天还有 <b>5 件事</b>要办</p>
+        </div>
+        <div class="act">
+          <button class="btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            新建消息
+          </button>
+          <button class="btn pri">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h11M4 17h7"/></svg>
+            开始处理
+          </button>
+        </div>
+      </div>
+
+      <section class="panel stats">
+        <div class="stat">
+          <div class="lab"><i style="background:var(--ink3)"></i>联系人总数</div>
+          <div class="v"><b>15</b><em class="good">+2 本周</em></div>
+          <div class="sub">覆盖 4 个渠道 · <b>9</b> 家已报过价</div>
+        </div>
+
+        <div class="stat alert">
+          <div class="lab"><i style="background:var(--red)"></i>待你回复</div>
+          <div class="v"><b>3</b><em class="hot">需今天处理</em></div>
+          <div class="sub">最久已等 <b>14 小时</b>（守望 · 邮件）</div>
+        </div>
+
+        <div class="stat">
+          <div class="lab"><i style="background:var(--wecom)"></i>活跃渠道</div>
+          <div class="v"><b>4</b><em>全部健康</em></div>
+          <div class="sub">邮件 9 · 企微 5 · WA 4 · 电话 2</div>
+        </div>
+
+        <div class="stat">
+          <div class="lab"><i style="background:var(--phone)"></i>今日待办</div>
+          <div class="v"><b>5</b><em>已完成 2</em></div>
+          <div class="sub"><b>1 件已逾期</b> · 2 件高优先级</div>
+        </div>
+      </section>
+
+      <section class="cols">
+
+        <div class="panel" style="display:flex;flex-direction:column">
+          <div class="hd">
+            <h2>需要你处理</h2><span class="cnt hot">3</span>
+            <a class="more" href="#">全部会话
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+            </a>
+          </div>
+
+          <div class="need-wrap">
+            <div class="need">
+              <span class="av t1">守</span>
+              <div class="b">
+                <div class="t"><b>守望</b><span class="org">物流同行</span><time>9月28日 19:20</time></div>
+                <div class="q">上次我们聊到开一条从广东到澳大利亚的线路，我这边可以先出个方案，你看什么时候方便？</div>
+                <div class="m">
+                  <span class="tag t-mail"><i></i>邮件</span>
+                  <span class="tag w8">等 14 小时</span>
+                  <button class="mini">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 12h13M12 6l6 6-6 6"/></svg>回复
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="need">
+              <span class="av t3">D</span>
+              <div class="b">
+                <div class="t"><b>David（上海）· 美线询价</b><span class="org">直客</span><time>今天 09:12</time></div>
+                <div class="q">麻烦报一下 40HQ 到 LA 的价格，客户这周要定，越快越好。</div>
+                <div class="m">
+                  <span class="tag t-wecom"><i></i>企业微信</span>
+                  <span class="tag w4">等 4 小时</span>
+                  <button class="mini">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 12h13M12 6l6 6-6 6"/></svg>回复
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="need">
+              <span class="av t5">王</span>
+              <div class="b">
+                <div class="t"><b>深圳鑫海 · 王总</b><span class="org">直客</span><time>今天 08:40</time></div>
+                <div class="q">来电未接（响铃 32 秒），未留言。上周他提过要锁 10 月 8 号的舱位。</div>
+                <div class="m">
+                  <span class="tag t-phone"><i></i>电话</span>
+                  <span class="tag w4">来电未接</span>
+                  <button class="mini ghost">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6.5 4.5h3l1.5 4-2 1.4a11 11 0 005.6 5.6l1.4-2 4 1.5v3a1.5 1.5 0 01-1.6 1.5C10.4 19.8 4.2 13.6 3.5 6.1A1.5 1.5 0 015 4.5z"/></svg>回拨
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="need-foot">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></svg>
+            其余 12 个会话都在 3 天内回复过，无需跟进
+          </div>
+        </div>
+
+        <div class="stack">
+
+          <div class="panel">
+            <div class="hd">
+              <h2>今日待办</h2><span class="cnt">5</span>
+              <a class="more" href="#">日历
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+              </a>
+            </div>
+            <div class="todo">
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">回复 David 的美线询价<span class="sub">上午 12:00 前</span></span>
+                <span class="due hot">今天</span>
+              </div>
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">给守望发澳洲线运价表<span class="sub">关联联系人：守望</span></span>
+                <span class="due hot">今天</span>
+              </div>
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">跟进宁波远洋合同第三条<span class="sub">已逾期 1 天</span></span>
+                <span class="due warm">逾期</span>
+              </div>
+              <div class="td done">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">核对晓雯的发票<span class="sub">今天 09:30 完成</span></span>
+                <span class="due">低</span>
+              </div>
+              <div class="td done">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">导出 9 月渠道对话量<span class="sub">今天 09:05 完成</span></span>
+                <span class="due">低</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="hd"><h2>渠道构成</h2><span class="meta">近 30 天会话</span></div>
+            <div class="chan">
+              <div class="stackbar">
+                <i style="width:45%;background:var(--mail)"></i>
+                <i style="width:25%;background:var(--wecom)"></i>
+                <i style="width:20%;background:var(--wa)"></i>
+                <i style="width:10%;background:var(--phone)"></i>
+              </div>
+              <div class="lgds">
+                <span class="lgd"><i style="background:var(--mail)"></i>邮件 <b>9</b><span>45%</span></span>
+                <span class="lgd"><i style="background:var(--wecom)"></i>企微 <b>5</b><span>25%</span></span>
+                <span class="lgd"><i style="background:var(--wa)"></i>WhatsApp <b>4</b><span>20%</span></span>
+                <span class="lgd"><i style="background:var(--phone)"></i>电话 <b>2</b><span>10%</span></span>
+              </div>
+              <div class="chan-note">同一联系人可能同时走多个渠道，故合计大于会话数</div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

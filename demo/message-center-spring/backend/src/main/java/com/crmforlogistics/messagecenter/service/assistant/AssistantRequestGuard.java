@@ -2,6 +2,7 @@ package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.config.AssistantConfig;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,9 +47,17 @@ import java.util.List;
 public class AssistantRequestGuard {
 
     private final AssistantConfig config;
+    private final AssistantTokenEstimator tokens;
 
-    public AssistantRequestGuard(AssistantConfig config) {
+    @Autowired
+    public AssistantRequestGuard(AssistantConfig config, AssistantTokenEstimator tokens) {
         this.config = config;
+        this.tokens = tokens;
+    }
+
+    /** Test/legacy entry point using the production tokenizer default. */
+    public AssistantRequestGuard(AssistantConfig config) {
+        this(config, new AssistantTokenEstimator("o200k_base"));
     }
 
     public NormalisedRequest normalise(List<AssistantMessage> history, String text) {
@@ -65,10 +74,10 @@ public class AssistantRequestGuard {
     }
 
     /**
-     * 从最新往旧保留，直到轮数或字符数触顶。保留的是**最近**的语境 ——
+     * 从最新往旧保留，直到近期原文 token 预算触顶。保留的是**最近**的语境 ——
      * 指代（「那条」）永远指向最近说过的内容，先丢最旧的才不会破坏它。
      *
-     * <p>顺带数出**丢掉了多少条**。裁剪策略一个字没变，多出来的只是「这件事被记下来」。
+     * <p>顺带数出**丢掉了多少条**。轮数和字符数只作为旧配置/资源保护，不参与语义裁剪。
      */
     private Trimmed trimHistory(List<AssistantMessage> history) {
         if (history == null || history.isEmpty()) {
@@ -84,19 +93,16 @@ public class AssistantRequestGuard {
         }
 
         List<AssistantMessage> kept = new ArrayList<>();
-        int budget = config.maxHistoryChars();
+        int budget = config.recentMemoryTokenBudget();
         for (int index = history.size() - 1; index >= 0; index--) {
             AssistantMessage message = history.get(index);
             if (message == null || message.text() == null || message.text().isBlank()) {
                 // 空消息不占额度也不占轮数：它既没有语境价值，也不该把一条有效历史挤出窗口。
                 continue;
             }
-            if (kept.size() >= config.maxHistoryTurns()) {
-                break;
-            }
-            int length = message.text().length();
+            int length = tokens.count(message.text());
             if (length > budget) {
-                // 单条就超预算：丢弃它并停止。截半条历史比没有历史更容易误导模型。
+                // 单条就超 token 预算：丢弃它并停止。截半条历史比没有历史更容易误导模型。
                 break;
             }
             budget -= length;

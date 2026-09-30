@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Dropdown, Input, List, Typography, Spin, Empty, message, Tooltip } from 'antd';
 import { DeleteOutlined, PushpinFilled, PushpinOutlined, SearchOutlined, WechatOutlined } from '@ant-design/icons';
@@ -51,6 +51,17 @@ export default function ContactsPage() {
   });
 
   const conversations = data?.records ?? [];
+  const unreadTotal = useMemo(
+    () => conversations.reduce((total, conversation) => total + conversation.unreadCount, 0),
+    [conversations],
+  );
+  const channelCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    conversations.forEach((conversation) => conversation.channelTypes.forEach((channel) => {
+      counts.set(channel, (counts.get(channel) ?? 0) + 1);
+    }));
+    return counts;
+  }, [conversations]);
 
   const handleSelect = (id: string) => {
     navigate(`/conversations/contact/${id}`);
@@ -159,8 +170,8 @@ export default function ContactsPage() {
   });
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '8px 12px' }}>
+    <div className="message-center-conversations" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div className="message-center-conversation-search">
         <Input
           prefix={<SearchOutlined />}
           addonBefore={<SearchModeSwitch value={searchMode} onChange={changeSearchMode} />}
@@ -170,7 +181,34 @@ export default function ContactsPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div className="conversation-filter-panel">
+        <div className="conversation-section-title">会话</div>
+        <div className="conversation-filter-row is-active">
+          <i className="conversation-filter-dot all" />
+          <span>全部会话</span>
+          <b>{data?.total ?? 0}</b>
+        </div>
+        <div className="conversation-filter-row">
+          <i className="conversation-filter-dot unread" />
+          <span>未读消息</span>
+          <b>{unreadTotal}</b>
+        </div>
+        <div className="conversation-channel-chips">
+          {[
+            ['email', '邮件', 'mail'],
+            ['wecom', '企微', 'wecom'],
+            ['chatapp', 'WhatsApp', 'wa'],
+            ['phone', '电话', 'phone'],
+          ].map(([channel, label, color]) => (
+            <span className="conversation-channel-chip" key={channel}>
+              <i className={`conversation-filter-dot ${color}`} />
+              {label}
+              <b>{channelCounts.get(channel) ?? 0}</b>
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="message-center-conversation-list" style={{ flex: 1, overflow: 'auto' }}>
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 24 }}>
             <Spin />
@@ -219,6 +257,7 @@ export default function ContactsPage() {
                     {gap}
                     <Dropdown trigger={['contextMenu']} menu={contextMenu(conversation)}>
                       <div
+                        className={`conversation-group ${sourceConversationId === conversation.id ? 'is-active' : ''}`}
                         data-testid={`conversation-${conversation.id}`}
                         data-drop-mode={dragOver?.id === conversation.id ? dragOver.mode : undefined}
                         onClick={() => navigate(`/conversations/wecom-group/${conversation.id}`)}
@@ -231,12 +270,10 @@ export default function ContactsPage() {
                         style={{
                           padding: '10px 12px',
                           cursor: 'pointer',
-                          borderBottom: '1px solid #f0f0f0',
                           opacity: draggingId === conversation.id ? 0.4 : 1,
                           boxShadow: dragOver?.id === conversation.id && dragOver.mode === 'merge'
                             ? '0 0 0 2px #fa8c16'
                             : undefined,
-                          background: sourceConversationId === conversation.id ? '#e6f4ff' : undefined,
                           transform: dragOver?.id === conversation.id
                             ? dragOver.mode === 'before' ? 'translateY(2px)' : dragOver.mode === 'after' ? 'translateY(-2px)' : 'scale(0.99)'
                             : undefined,
@@ -264,6 +301,7 @@ export default function ContactsPage() {
               <Fragment key={`contact-${contact.id}`}>
                 {gap}
                 <div
+                  className="conversation-contact-shell"
                   data-testid={`conversation-${contact.id}`}
                   data-drop-mode={dragOver?.id === contact.id ? dragOver.mode : undefined}
                   draggable={!search}
@@ -277,7 +315,6 @@ export default function ContactsPage() {
                     boxShadow: dragOver?.id === contact.id && dragOver.mode === 'merge'
                       ? '0 0 0 2px #fa8c16'
                       : undefined,
-                    background: dragOver?.id === contact.id && dragOver.mode === 'merge' ? '#fff7e6' : undefined,
                     transform: dragOver?.id === contact.id
                       ? dragOver.mode === 'before' ? 'translateY(2px)' : dragOver.mode === 'after' ? 'translateY(-2px)' : 'scale(0.99)'
                       : undefined,
@@ -298,12 +335,9 @@ export default function ContactsPage() {
           />
         )}
       </div>
-      <div style={{ padding: '4px 12px', borderTop: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="message-center-conversation-footer" style={{ padding: '4px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           {data?.total ?? 0} 个会话
-        </Text>
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          拖动排序 · 中心重合合并
         </Text>
       </div>
     </div>

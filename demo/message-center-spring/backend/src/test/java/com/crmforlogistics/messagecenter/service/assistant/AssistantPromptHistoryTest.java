@@ -53,14 +53,10 @@ class AssistantPromptHistoryTest {
 
     private static final AssistantConfig CONFIG = AssistantFixtures.config();
 
-    /**
-     * 历史预算 8 轮 / <b>200 字符</b>（其余同默认）。
-     *
-     * <p>把字符预算压到 200 的理由：让一次真实的裁剪用几条一眼数得清的短文本就能构造出来，
-     * 而不是往用例里塞几 KB 字符串 —— 后者一旦断言失败，失败信息本身就没法看。
-     */
+    /** 近期原文预算 1024 tokens；字符预算仅作为资源保护，不参与语义窗口。 */
     private static final AssistantConfig TIGHT = new AssistantConfig(
-            true, "https://api.deepseek.com", "secret", "deepseek-chat", 30, 2000, 8, 200, 600, 3);
+            true, "https://api.deepseek.com", "secret", "deepseek-chat", 30, 2000, 8, 200, 600, 3,
+            1024, 2048);
 
     private final TodoItemMapper todoMapper = mock(TodoItemMapper.class);
     private final AssistantPendingActionMapper pendingMapper = mock(AssistantPendingActionMapper.class);
@@ -170,20 +166,20 @@ class AssistantPromptHistoryTest {
     /**
      * 裁剪结果必须带上响应，而且<b>算的是被采用的那一份</b>。
      *
-     * <p>{@code TIGHT} 的字符预算是 200，三条各 100 字符只装得下两条 ⇒ {@code droppedMessages=1}。
+     * <p>{@code TIGHT} 的原文预算是 1024 tokens，三条各约 500 tokens 只装得下两条 ⇒ {@code droppedMessages=1}。
      * 用户看到的那句「我丢掉了前面几条」靠它才存在。这条用例原来在 web 切片里
      * （{@code AssistantControllerTest.aTrimmedHistoryIsReportedInTheResponse}）——
      * 它当初就不该在那里：裁剪与否跟 HTTP 无关，只跟历史有多长有关。
      */
     @Test
     void aTrimmedHistoryIsReportedOnTheTurnResult() {
-        String hundred = "x".repeat(100);
+        String halfBudget = "x ".repeat(500);
 
         AssistantTurnResult result = service(TIGHT).respond(AssistantFixtures.USER,
                 AssistantFixtures.CONVERSATION,
-                List.of(AssistantMessage.user(hundred),
-                        AssistantMessage.assistant(hundred),
-                        AssistantMessage.user(hundred)),
+                List.of(AssistantMessage.user(halfBudget),
+                        AssistantMessage.assistant(halfBudget),
+                        AssistantMessage.user(halfBudget)),
                 "继续");
 
         assertThat(result.historyTrim()).isNotNull();

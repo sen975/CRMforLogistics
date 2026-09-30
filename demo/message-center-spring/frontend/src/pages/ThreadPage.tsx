@@ -43,6 +43,7 @@ export default function ThreadPage() {
   const prevScrollHeightRef = useRef(0);
   const weComViewer = useWeComViewer();
   const timelineScrollTopRef = useRef(0);
+  const previousChannelRef = useRef<string | undefined>(undefined);
   const contactRequestGenerationRef = useRef(0);
   const activeContactIdRef = useRef<string | undefined>(contactId);
   const requestedChannel = searchParams.get('channel');
@@ -139,11 +140,17 @@ export default function ThreadPage() {
   }, [contact, selectedChannel, selectChannel, weComContactPointId]);
 
   const handleChannelChange = useCallback((channel: string) => {
+    // 切渠道时消息列表的位置必须钉住：只有「从企微视图切回普通时间轴」才需要还原滚动 ——
+    // 那时普通时间轴是一份重新挂载的 DOM，scrollTop 天然归零。此前对任何渠道都无条件还原，
+    // 于是 邮件 ⇄ ChatApp ⇄ 电话记录 之间的切换也被按「上次离开企微时的位置」重置，
+    // 表现就是切个 tab 消息自己跳走。
+    const leavingWeCom = previousChannelRef.current === 'wecom' && channel !== 'wecom';
     if (channel === 'wecom' && weComContactPointId) {
       timelineScrollTopRef.current = containerRef.current?.scrollTop ?? 0;
     }
+    previousChannelRef.current = channel;
     selectChannel(channel);
-    if (channel !== 'wecom') {
+    if (leavingWeCom) {
       requestAnimationFrame(() => {
         if (containerRef.current) containerRef.current.scrollTop = timelineScrollTopRef.current;
       });
@@ -246,8 +253,9 @@ export default function ThreadPage() {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="message-center-thread-shell" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div
+        className="message-center-thread-header"
         style={{
           padding: '12px 16px',
           borderBottom: '1px solid #f0f0f0',
@@ -287,7 +295,7 @@ export default function ThreadPage() {
       </div>
 
       {showWeComConversation ? (
-        <div style={{ flex: 1, minHeight: 0, minWidth: 0, width: '100%', display: 'flex' }}>
+        <div className="message-center-thread-timeline-pane" style={{ flex: 4, minHeight: 0, minWidth: 0, width: '100%', display: 'flex' }}>
           <WeComConversationPanel
             contactPointId={weComContactPointId}
             items={weComItems}
@@ -301,11 +309,12 @@ export default function ThreadPage() {
         </div>
       ) : (
       <div
+        className="message-center-thread-timeline"
         data-testid="thread-timeline"
         ref={containerRef}
         onScroll={handleScroll}
         style={{
-          flex: 1,
+          flex: 4,
           overflow: 'auto',
           padding: '12px 16px',
         }}
@@ -402,7 +411,7 @@ export default function ThreadPage() {
       )}
 
       {!showWeComConversation && !isPhoneTimeline && (
-        <div style={{ borderTop: '1px solid #f0f0f0', padding: 12, maxHeight: 260, overflow: 'auto' }}>
+        <div className="message-center-thread-composer">
           <SendForm
             contact={contact}
             onCallRecordCreated={refreshCallRecords}

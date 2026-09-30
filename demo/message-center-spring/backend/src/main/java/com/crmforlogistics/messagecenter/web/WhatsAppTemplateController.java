@@ -15,7 +15,6 @@ import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppProvi
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppSharedTemplateCatalogService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateApplicationService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateChangeRequestService;
-import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.MediaAssetView;
 import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateMediaUploadService.UploadResult;
@@ -42,7 +41,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -297,14 +295,27 @@ public class WhatsAppTemplateController {
         return providerScopeService.requireScopeAccount(actorUserId, requestedScopeId);
     }
 
+    /**
+     * 写动作落在<b>调用者自己账号所在的那个空间</b> —— 这正是 {@code requireOwnedActive} 做的事：
+     * 它解密账号凭证、取出 CAMS 的 {@code custSpaceId}、把空间写回账号（{@code bind}）。
+     *
+     * <h2>为什么不再和迁移门比对（2026-09-29）</h2>
+     * 这里以前是「{@code scopeGate.requireReady()} 的空间 == 账号的空间，否则
+     * {@code WHATSAPP_PROVIDER_SCOPE_MISMATCH}」。那个等式把<b>已经算出来的答案</b>丢掉了：
+     * 空间本来就由账号凭证决定，而迁移门记的是迁移当时的那<b>一个</b>空间。
+     * 于是「一个在本系统里有 chatapp 账号、凭证也齐备的用户」只要所属空间不是迁移门那一个，
+     * 就在登录之后连一张图都传不上去 —— 而错误信息里没有一个字提示这一点。
+     *
+     * <p>这同时回答了「非管理员不带 {@code scopeId} 时怎么确定是哪个 CAMS 空间的模板」：
+     * 不需要猜，也不需要迁移门批准 —— 账号绑的是哪个空间，写就落在哪个空间。
+     * 只有「没有 chatapp 账号」（{@code WHATSAPP_ACCOUNT_REQUIRED}）与
+     * 「多个账号跨空间、无从取舍」（{@code WHATSAPP_ACCOUNT_AMBIGUOUS}）才仍然需要
+     * 调用方给出 {@code scopeId}，而那是管理员的路径。
+     *
+     * <p>迁移门仍在读路径上用（默认读哪个空间的那份清单），本路径不再需要它。
+     */
     private WhatsAppProviderScopeService.ScopeAccount requireCurrentScopeAccount(UUID actorUserId) {
-        UUID readyScopeId = scopeGate.requireReady();
-        WhatsAppProviderScopeService.ScopeAccount scopeAccount = providerScopeService.requireOwnedActive(actorUserId);
-        if (!readyScopeId.equals(scopeAccount.scope().getId())) {
-            throw new WhatsAppTemplateException("WHATSAPP_PROVIDER_SCOPE_MISMATCH", HttpStatus.CONFLICT,
-                    "WhatsApp account does not belong to the shared template scope", Map.of(), null, false);
-        }
-        return scopeAccount;
+        return providerScopeService.requireOwnedActive(actorUserId);
     }
 
     private static HttpStatus uploadStatus(UploadResult result) {

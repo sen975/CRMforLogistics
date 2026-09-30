@@ -1,6 +1,7 @@
 package com.crmforlogistics.messagecenter.service.assistant;
 
 import com.crmforlogistics.messagecenter.entity.AssistantConversationMessageEntity;
+import com.crmforlogistics.messagecenter.entity.AssistantConversationSummaryEntity;
 import com.crmforlogistics.messagecenter.mapper.AssistantConversationMessageMapper;
 import com.crmforlogistics.messagecenter.mapper.AssistantConversationSummaryMapper;
 import org.junit.jupiter.api.Test;
@@ -196,6 +197,43 @@ class AssistantConversationContextServiceTest {
         assertThat(result.droppedMessages()).isEqualTo(2);
         assertThat(service.withinBudget(prompt.buildMessages(
                 assistantContext, result.summary(), result.recentHistory(), "now"))).isTrue();
+    }
+
+    @Test
+    void recentRawHistoryUsesTokenBudgetAndOversizedSummaryIsOmitted() {
+        UUID user = UUID.randomUUID();
+        UUID conversation = UUID.randomUUID();
+        AssistantConversationSummaryMapper summaries = mock(AssistantConversationSummaryMapper.class);
+        AssistantConversationMessageMapper messages = mock(AssistantConversationMessageMapper.class);
+        AssistantConversationSummarizer summarizer = mock(AssistantConversationSummarizer.class);
+        when(summaries.find(user, conversation)).thenReturn(existingSummary("x ".repeat(2_100), 2));
+        when(messages.countBefore(eq(user), eq(conversation), any(Instant.class), any(UUID.class))).thenReturn(2);
+
+        AssistantConversationContextService service = new AssistantConversationContextService(
+                summaries, messages, summarizer, new AssistantTokenEstimator("o200k_base"),
+                null, 8_192, 2_048, 100, 1, 256, Integer.MAX_VALUE);
+
+        List<AssistantConversationMessageEntity> rows = List.of(
+                row("raw one", 1), row("raw two", 2), row("raw three", 3));
+        AssistantConversationContextService.PreparedContext result = service.prepare(
+                user, conversation, rows,
+                rows.stream().map(row -> new AssistantMessage(
+                        AssistantMessage.Role.fromWire(row.getRole()), row.getText())).toList(),
+                "now", null);
+
+        assertThat(result.summary()).isNull();
+        assertThat(result.recentHistory()).extracting(AssistantMessage::text)
+                .containsExactly("raw one", "raw two", "raw three");
+    }
+
+    private static AssistantConversationSummaryEntity existingSummary(String text, int coveredCount) {
+        AssistantConversationSummaryEntity summary = new AssistantConversationSummaryEntity();
+        summary.setSummary(text);
+        summary.setCoveredMessageCount(coveredCount);
+        summary.setThroughCreatedAt(Instant.parse("2026-09-23T00:00:02Z"));
+        summary.setThroughMessageId(new UUID(0, 2));
+        summary.setVersion(1L);
+        return summary;
     }
 
     private static AssistantConversationMessageEntity row(String text, int second) {

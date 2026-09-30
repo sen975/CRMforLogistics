@@ -95,6 +95,21 @@ public class AssistantModelClient {
     private static final String SSE_DATA_PREFIX = "data:";
     private static final String SSE_DONE = "[DONE]";
 
+    /**
+     * 内核/OS 层「读超时」（{@code ETIMEDOUT}）的固定串。
+     *
+     * <p><b>为什么不能只按类型判</b>：读超时在类型层面就是一个<b>裸 {@code java.io.IOException}</b>，
+     * 既不是 {@link HttpTimeoutException} 也不是 {@link SocketTimeoutException} —— 见
+     * {@code SocketDispatcher.read0}。本类注释开头那段「生产上那条
+     * {@code java.io.IOException: Operation timed out}」说的就是它。只按类型判，这类失败会掉进
+     * 兜底的 {@code CLIENT_ERROR}，把「下游停摆」记成「我们的请求有问题」，排障直接走错方向。
+     *
+     * <p><b>为什么破例认这一条消息</b>：类型层面表达不了「socket 读超时」。这里只认<b>由 JDK/内核
+     * 产出的固定串</b>（下面这一个），不认供应商返回的任意文本；分类结果也永远只输出枚举值、
+     * 不外带消息本身（消息可能含地址、TLS 细节）。
+     */
+    private static final String NATIVE_TIMEOUT_MESSAGE = "Operation timed out";
+
     private final AssistantConfig config;
     private final ObjectMapper mapper;
     private final RestClient client;
@@ -323,6 +338,10 @@ public class AssistantModelClient {
             if (current instanceof HttpTimeoutException || current instanceof SocketTimeoutException) return "TIMEOUT";
             if (current instanceof ConnectException) return "CONNECT_ERROR";
             if (current instanceof SSLException) return "TLS_ERROR";
+            // 放在最后：上面几个都是 IOException 的子类，必须先被更具体的类型拦下。
+            if (current instanceof IOException && NATIVE_TIMEOUT_MESSAGE.equals(current.getMessage())) {
+                return "TIMEOUT";
+            }
             current = current.getCause();
         }
         return "CLIENT_ERROR";

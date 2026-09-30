@@ -27,6 +27,7 @@ import WeComGroupDetailPanel from './WeComGroupDetailPanel';
 import { AccountPanel } from './AccountPanel';
 import { AccountAvatar } from './AccountAvatar';
 import { AssistantLauncher } from './assistant/AssistantLauncher';
+import './messageCenterTheme.css';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -48,8 +49,11 @@ function AppLayoutInner() {
   );
   const [contactsOpen, setContactsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [openNavigation, setOpenNavigation] = useState<string | null>(null);
 
   const isThreadPage = location.pathname.startsWith('/thread/') || location.pathname.startsWith('/conversations/contact/');
+  // 消息工作台（会话页）自己就是一张卡，其余页面统一由 .mc-page-surface 包住。
+  const isConversationWorkspace = location.pathname.startsWith('/conversations/');
   const isWeComGroupPage = location.pathname.startsWith('/conversations/wecom-group/');
   const isPhoneRepositoryPage = location.pathname === '/phone-repository';
   const supportsDetailPanel = isThreadPage || isWeComGroupPage || isPhoneRepositoryPage;
@@ -100,6 +104,7 @@ function AppLayoutInner() {
       <Button
         aria-label={label}
         aria-haspopup="menu"
+        className={openNavigation === label ? 'is-open' : undefined}
         icon={icon}
       >
         {isMobile ? null : label}
@@ -109,6 +114,7 @@ function AppLayoutInner() {
       <Dropdown
         menu={{ items }}
         trigger={isMobile ? ['click'] : ['hover', 'click']}
+        onOpenChange={(open) => setOpenNavigation(open ? label : null)}
       >
         {isMobile ? <Tooltip title={label}>{button}</Tooltip> : button}
       </Dropdown>
@@ -205,13 +211,12 @@ function AppLayoutInner() {
   return (
     <Layout style={{ height: '100vh' }}>
       <Header
+        className="message-center-header"
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 16px',
-          background: token.colorBgContainer,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
         }}
       >
         <Space size={isMobile ? 4 : 8}>
@@ -249,13 +254,12 @@ function AppLayoutInner() {
           </Space> : !isMobile ? <Text type="secondary">{username}</Text> : null}
         </Space>
       </Header>
-      <Layout style={{ flex: 1, overflow: 'hidden' }}>
+      <Layout className="message-center-body" style={{ flex: 1, overflow: 'hidden' }}>
         {!isMobile && (
           <Sider
+            className="message-center-sidebar"
             width={320}
             style={{
-              background: token.colorBgContainer,
-              borderRight: `1px solid ${token.colorBorderSecondary}`,
               overflow: 'hidden',
             }}
           >
@@ -263,24 +267,27 @@ function AppLayoutInner() {
           </Sider>
         )}
         <Content
+          className="message-center-content"
           style={{
             overflow: 'auto',
-            padding: isMobile ? 0 : 16,
             minWidth: 0,
-            background: token.colorBgContainer,
           }}
         >
-          <Outlet />
+          {isConversationWorkspace ? <Outlet /> : (
+            <div className="mc-page-surface">
+              <Outlet />
+            </div>
+          )}
         </Content>
         {supportsDetailPanel && !isMobile && (
           <Sider
+            className="message-center-detail"
             width={selectedCallRecordId ? 560 : 360}
             collapsedWidth={0}
             collapsed={!detailPanelOpen}
             trigger={null}
             style={{
               background: token.colorBgContainer,
-              borderLeft: `1px solid ${token.colorBorderSecondary}`,
               overflow: 'auto',
               transition: 'all 0.24s ease',
             }}
@@ -305,9 +312,11 @@ function AppLayoutInner() {
       </Drawer>
       <Drawer
         title="账号"
+        rootClassName="mc-account-drawer"
         width="min(420px, 100vw)"
         open={accountOpen}
         onClose={() => setAccountOpen(false)}
+        styles={{ body: { padding: 0 } }}
       >
         <AccountPanel />
       </Drawer>

@@ -7,6 +7,7 @@ import com.crmforlogistics.messagecenter.entity.TodoItemEntity;
 import com.crmforlogistics.messagecenter.mapper.AssistantPendingActionMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.TodoItemMapper;
+import com.crmforlogistics.messagecenter.service.assistant.mcp.ChatAppTemplateAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.MessageSendAssistantTools;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolDefinition;
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolExecutionException;
@@ -14,6 +15,7 @@ import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolInputValidato
 import com.crmforlogistics.messagecenter.service.assistant.mcp.ToolRegistry;
 import com.crmforlogistics.messagecenter.service.channel.OutboundMessageService;
 import com.crmforlogistics.messagecenter.service.todo.TodoItemService;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateValidator;
 import com.crmforlogistics.messagecentertest.assistant.AssistantFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -192,14 +195,14 @@ class AssistantPendingActionServiceTest {
         AssistantTurnResult result = service.confirm(AssistantFixtures.USER, PENDING_ID);
 
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ERROR);
-        assertThat(result.errorCode()).isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+        assertThat(result.errorCode()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
         verify(todoMapper, never()).setCompleted(any(), any(), anyBoolean());
 
         ArgumentCaptor<AssistantAuditService.Entry> entry =
                 ArgumentCaptor.forClass(AssistantAuditService.Entry.class);
         verify(audit).record(entry.capture());
         assertThat(entry.getValue().outcome()).isEqualTo("FAILED");
-        assertThat(entry.getValue().errorCode()).isEqualTo(ToolExecutionException.TODO_NOT_FOUND);
+        assertThat(entry.getValue().errorCode()).isEqualTo(ToolExecutionException.FORBIDDEN_OR_NOT_FOUND);
     }
 
     /**
@@ -602,6 +605,131 @@ class AssistantPendingActionServiceTest {
                         List.of(new ContactCandidates.Item(AssistantFixtures.CONTACT_ZHOU_REF, name, null)))));
     }
 
+    // ---------- 模板申请的卡片（提交给外部平台，这边改不掉也撤不回） ----------
+
+    /**
+     * 模板卡片与发送卡片同规格：用户复核的是<b>全文</b>，不是「改哪个字段」。
+     *
+     * <p>理由与发送那边不同：那两张卡片拦的是「发错人/发错话」，这张拦的是「提交错了」——
+     * 内容一进 Meta 的审核队列，这边既改不掉也撤不回；「类别选错」还是最常见的拒因之一。
+     * 所以标题/正文/页脚/按钮一个都不能少，而且顺序必须与平台上的顺序一致，
+     * 用户才拿得到一张能和后台对着看的卡片。
+     *
+     * <p>页脚与按钮还各带一个 ［页脚］/［按钮］ 标记：它们在客户手机上本来就不是正文的一部分，
+     * 卡片上不加标记就会和正文连成一句，被读成「内容里怎么多写了这个」。
+     */
+    @Test
+    void aTemplateCardShowsEveryPartThatWillBeSubmitted() {
+        AssistantPendingActionService.Card card = service.card(AssistantFixtures.USER,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_APPLY, templateArguments(),
+                AssistantFixtures.context());
+
+        assertThat(card.summary())
+                .contains("quote_follow_up").contains("MARKETING").contains("pt_BR")
+                .contains("报价跟进").contains("$(customer_name)，您好").contains("回复 TD 退订")
+                .contains("查看报价").contains("https://example.com/quote/123")
+                .contains("查看舱位").contains("https://example.com/schedule/456");
+        assertThat(card.summary())
+                .as("顺序即平台上的顺序：标题 → 正文 → 页脚 → 按钮 1 → 按钮 2")
+                .contains("报价跟进\n$(customer_name)，您好")
+                .contains("已备好\n［页脚］回复 TD 退订")
+                .contains("［页脚］回复 TD 退订\n［按钮］查看报价 → https://example.com/quote/123"
+                        + "\n［按钮］查看舱位 → https://example.com/schedule/456");
+        assertThat(card.summary().split("［按钮］", -1))
+                .as("两个按钮一个都不能少")
+                .hasSize(ChatAppTemplateAssistantTools.MAX_URL_BUTTONS + 1);
+        assertThat(card.changes())
+                .as("提交没有「改前」；硬造一条 before=null 的行会被渲染成一次修改")
+                .isEmpty();
+    }
+
+    @Test
+    void aTemplateCardLeavesTheLanguageOffWhenTheModelDidNotPickOne() {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("name", "order_update");
+        arguments.put("category", "UTILITY");
+        arguments.put("body", "您的订单已发出");
+
+        AssistantPendingActionService.Card card = service.card(AssistantFixtures.USER,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_APPLY, arguments, AssistantFixtures.context());
+
+        assertThat(card.summary())
+                .as("模型没传语言时它会落在一个服务端默认值上（zh_CN）；写上去会让用户以为那是自己选的")
+                .isEqualTo("申请 WhatsApp 模板「order_update」（UTILITY），提交给平台的内容：\n您的订单已发出");
+    }
+
+    /**
+     * 最坏情况下的长度：把声明里的每个 {@code maxLength} 都用满。
+     *
+     * <p>这个用例是**为将来改上限的人写的**：卡片正文是裸截断（不带标记），
+     * 一旦超预算，用户会对着一个只显示了一部分的模板按下确认，而这次提交撤不回。
+     * 所以「卡片一定显示得全」这条保证必须有人守着 —— 任一上限被调大，这里就会红。
+     * （同 {@code anOutboundCardAlwaysFitsInTheSummaryBudgetSoTheBodyIsNeverSilentlyCut}。）
+     */
+    @Test
+    void aTemplateCardAlwaysFitsInTheSummaryBudgetSoNoLineIsSilentlyCut() {
+        String name = "n".repeat(ChatAppTemplateAssistantTools.NAME_MAX_CHARS);
+        String language = "l".repeat(ChatAppTemplateAssistantTools.LANGUAGE_MAX_CHARS);
+        String header = "头".repeat(WhatsAppTemplateValidator.MAX_HEADER_OR_FOOTER_LENGTH);
+        String body = "正".repeat(WhatsAppTemplateValidator.MAX_BODY_LENGTH);
+        String footer = "尾".repeat(WhatsAppTemplateValidator.MAX_HEADER_OR_FOOTER_LENGTH);
+        String buttonText = "按".repeat(WhatsAppTemplateValidator.MAX_HEADER_OR_FOOTER_LENGTH);
+
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("name", name);
+        arguments.put("category", "MARKETING");
+        arguments.put("language", language);
+        arguments.put("headerText", header);
+        arguments.put("body", body);
+        arguments.put("footerText", footer);
+        // 按钮槽位全部用满，且每个 URL 的收尾各不相同 —— 探针必须能分辨出是哪一个被截了。
+        // （末尾那几个字符就是探针：卡片是裸截断，不留标记，超预算时最先消失。）
+        for (int index = 1; index <= ChatAppTemplateAssistantTools.MAX_URL_BUTTONS; index++) {
+            String probe = "END" + index + "!";
+            String url = "https://example.com/"
+                    + "u".repeat(ChatAppTemplateAssistantTools.BUTTON_URL_MAX_CHARS - 20 - probe.length())
+                    + probe;
+            assertThat(url).as("第 %d 个链接要用满上限", index)
+                    .hasSize(ChatAppTemplateAssistantTools.BUTTON_URL_MAX_CHARS);
+            arguments.put(ChatAppTemplateAssistantTools.buttonTextKey(index), buttonText);
+            arguments.put(ChatAppTemplateAssistantTools.buttonUrlKey(index), url);
+        }
+
+        AssistantPendingActionService.Card card = service.card(AssistantFixtures.USER,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_APPLY, arguments, AssistantFixtures.context());
+
+        // 4000 是 AssistantPendingActionService.SUMMARY_MAX（私有，故此处写死；同上面那条发送用例）。
+        assertThat(card.summary().length()).isLessThanOrEqualTo(4000);
+        assertThat(card.summary())
+                .as("卡片是裸截断：这里少一个字，用户就少看一个字")
+                .contains(header).contains(body).contains(footer).contains(buttonText);
+        for (int index = 1; index <= ChatAppTemplateAssistantTools.MAX_URL_BUTTONS; index++) {
+            assertThat(card.summary())
+                    .as("第 %d 个链接被截断了（它的探针不见了）—— 按钮槽位填满时"
+                            + "这个预算就不再宽松，要么调小上限，要么让卡片多显示一点", index)
+                    .contains("END" + index + "!");
+        }
+        assertThat(card.summary().split("［按钮］", -1))
+                .hasSize(ChatAppTemplateAssistantTools.MAX_URL_BUTTONS + 1);
+    }
+
+    /** 一份「每个可选项都给了」的模板参数 —— 工具侧会把它组装成 HEADER/BODY/FOOTER/BUTTONS。 */
+    private static Map<String, Object> templateArguments() {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("accountRef", "CHATAPP_ACCOUNT:11111111-1111-4111-8111-111111111111");
+        arguments.put("name", "quote_follow_up");
+        arguments.put("category", "MARKETING");
+        arguments.put("language", "pt_BR");
+        arguments.put("headerText", "报价跟进");
+        arguments.put("body", "$(customer_name)，您好，关于贵司的报价我们已备好");
+        arguments.put("footerText", "回复 TD 退订");
+        arguments.put("buttonText", "查看报价");
+        arguments.put("buttonUrl", "https://example.com/quote/123");
+        arguments.put("button2Text", "查看舱位");
+        arguments.put("button2Url", "https://example.com/schedule/456");
+        return arguments;
+    }
+
     // ---------- 夹具 ----------
 
     private static AssistantPendingActionEntity pending(String tool, Map<String, Object> arguments, Instant expiresAt) {
@@ -633,5 +761,62 @@ class AssistantPendingActionServiceTest {
         item.setDueTime(time);
         item.setTitle(title);
         return item;
+    }
+
+    // ---------- 素材入库卡片 ----------
+
+    /**
+     * 素材入库卡片：地址必须完整显示，账号名要说出来。
+     *
+     * <p>这张卡片回答的是「从哪儿抓这张图」。用户这一条消息里可能有几个链接，
+     * 模型挑错了只有在这里才看得出来 —— 所以地址不摘要、不省略。
+     * 断言里排除 {@code TEMPLATE_MEDIA_LINK:} 这个前缀：它对用户是噪声，
+     * 他要核对的是那张图，不是候选 id 的形状。
+     */
+    @Test
+    void aMediaUploadCardShowsTheAddressThatWillBeFetched() {
+        UUID account = UUID.randomUUID();
+        String url = "https://cdn.example.com/quote.png";
+        AssistantContext context = AssistantFixtures.context().withCandidateSet(
+                new ChatAppAccountCandidates(ChatAppAccountCandidates.LIMIT,
+                        List.of(new ChatAppAccountCandidates.Item(
+                                ChatAppAccountCandidates.idOf(account), "悦为", true))));
+
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("accountRef", ChatAppAccountCandidates.idOf(account));
+        arguments.put(ChatAppTemplateAssistantTools.LINK_REF, TemplateMediaLinkCandidates.idOf(url));
+
+        AssistantPendingActionService.Card card = service.card(AssistantFixtures.USER,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_MEDIA_UPLOAD, arguments, context);
+
+        assertThat(card.summary())
+                .contains("素材库")
+                .contains(url)
+                .doesNotContain(TemplateMediaLinkCandidates.TYPE);
+        assertThat(card.changes())
+                .as("存素材没有「改前」；硬造一条 before=null 会被渲染成一次修改")
+                .isEmpty();
+    }
+
+    /**
+     * 拿不到账号名时退回 {@code accountRef}，<b>不编一个名字</b>。
+     *
+     * <p>编出来的名字会让用户在一张给他核对用的卡片上核对一个不存在的账号
+     * （同工具层 {@code accountTarget} 的口径）。账号候选缺席是真实情形：
+     * 那一组候选只在调过 {@code chatapp.template_list} 的轮次里才有。
+     */
+    @Test
+    void aMediaUploadCardFallsBackToTheReferenceWhenTheCandidateIsGone() {
+        UUID account = UUID.randomUUID();
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("accountRef", ChatAppAccountCandidates.idOf(account));
+        arguments.put(ChatAppTemplateAssistantTools.LINK_REF,
+                TemplateMediaLinkCandidates.idOf("https://cdn.example.com/quote.png"));
+
+        AssistantPendingActionService.Card card = service.card(AssistantFixtures.USER,
+                ChatAppTemplateAssistantTools.TOOL_TEMPLATE_MEDIA_UPLOAD, arguments,
+                AssistantFixtures.context());
+
+        assertThat(card.summary()).contains(ChatAppAccountCandidates.idOf(account));
     }
 }

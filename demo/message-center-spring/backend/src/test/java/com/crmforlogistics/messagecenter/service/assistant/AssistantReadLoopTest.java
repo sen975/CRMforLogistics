@@ -228,6 +228,12 @@ class AssistantReadLoopTest {
         assertThat(result.kind()).isEqualTo(AssistantTurnResult.Kind.ERROR);
         assertThat(result.errorCode()).isEqualTo(AssistantConversationService.READ_TURNS_EXHAUSTED);
         assertThat(result.message()).contains("没能").contains("2");
+        // 2026-09-28：这句话会被写进会话历史、下一轮原样回放给模型，模型会照抄自己的措辞。
+        // 所以它必须显式说清「每一条消息重新计满」——否则模型会把这一次的用尽当成会话级的。
+        assertThat(result.message()).contains("每一条消息的检索步骤都是重新计满的")
+                .as("用尽只是这一条消息的事，必须写出来，避免下一轮被读成「会话额度没了」");
+        assertThat(result.message()).doesNotContain("额度")
+                .as("「额度」是内部机制的名字，不给模型一个可以照抄的词");
         // 上限 2：两轮检索都执行了，第三次请求不再问模型 —— 直接终止。
         verify(modelClient, times(3)).complete(any(), any(), any());
         verify(conversations, times(2)).search(any(), any());

@@ -1,0 +1,19 @@
+== 1/4 解析前端声明面 ==
+   函数声明 202 条 → 接口 199 条；未解析 3 条；别名 2 条
+== 2/4 解析后端路由表 ==
+   controller 文件 45 个 → 路由 227 条（去重 224）
+== 3/4 活体探针（OPTIONS × 170 条唯一路径 + GET） ==
+   … 40/170
+   … 80/170
+   … 120/170
+   … 160/170
+   OPTIONS 完成：190 条，404（未注册）34 条，探针异常 0 条
+== 4/4 对账与报告 ==
+   通过 158 / 需要修 8 / 按配置未启用 33
+     SOURCE_MISSING       2
+     VERB_MISMATCH        3
+     LIVE_UNREGISTERED    2
+     LIVE_VERB_MISMATCH   3
+     READ_5XX             3
+     LIVE_GATED           33
+   写出 /Users/z/workItem/CRMforLogistics-message-center-presplit-runtime/docs/api-tests/{REPORT.md,REPORT.html,sweep.json,endpoints-frontend.json,routes-backend.json}

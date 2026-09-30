@@ -54,9 +54,17 @@ public class AssistantConversationLogService {
     private static final int TEXT_MAX = 8000;
 
     private final AssistantConversationMessageMapper mapper;
+    private final AssistantConversationLifecycleService lifecycle;
 
     public AssistantConversationLogService(AssistantConversationMessageMapper mapper) {
+        this(mapper, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AssistantConversationLogService(AssistantConversationMessageMapper mapper,
+                                           AssistantConversationLifecycleService lifecycle) {
         this.mapper = mapper;
+        this.lifecycle = lifecycle;
     }
 
     /** 记一条用户原话。 */
@@ -77,6 +85,9 @@ public class AssistantConversationLogService {
             // 空白回话不写：它在界面上是一个空气泡，在回放里是一条无信息的记录。
             return;
         }
+        if (lifecycle != null) {
+            lifecycle.requireActive(userId, conversationId);
+        }
         try {
             AssistantConversationMessageEntity entity = new AssistantConversationMessageEntity();
             entity.setConversationId(conversationId);
@@ -85,6 +96,9 @@ public class AssistantConversationLogService {
             entity.setKind(kind);
             entity.setText(Texts.truncate(text, TEXT_MAX));
             mapper.insert(entity);
+            if (lifecycle != null) {
+                lifecycle.touch(userId, conversationId);
+            }
         } catch (RuntimeException e) {
             log.error("event=assistant.conversation_log_write_failed userId={} conversationId={} role={} kind={}",
                     userId, conversationId, role, kind, e);
@@ -99,6 +113,9 @@ public class AssistantConversationLogService {
     public List<Message> replay(UUID userId, UUID conversationId, int limit) {
         if (userId == null || conversationId == null) {
             return List.of();
+        }
+        if (lifecycle != null) {
+            lifecycle.requireReadable(userId, conversationId);
         }
         int bounded = Math.max(1, Math.min(limit, MAX_REPLAY));
         return mapper.listByConversation(userId, conversationId, bounded).stream()
@@ -170,6 +187,9 @@ public class AssistantConversationLogService {
     public UUID latestConversationId(UUID userId) {
         if (userId == null) {
             return null;
+        }
+        if (lifecycle != null) {
+            return lifecycle.latestVisibleId(userId);
         }
         return mapper.latestConversationId(userId);
     }

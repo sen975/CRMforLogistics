@@ -263,6 +263,9 @@ public class MessageSendAssistantTools {
     private static ToolExecutionException translate(OutboundException e, String what,
                                                     String addressNoun, String channelNoun) {
         return switch (e.code()) {
+            case "EMAIL_RECIPIENT_NOT_FOUND" -> new ToolExecutionException(
+                    "EMAIL_RECIPIENT_NOT_FOUND",
+                    "这次要发的邮箱地址不合法：系统只支持单一邮箱地址，不支持收件人列表或邮件组", e);
             case OutboundException.RECIPIENT_MISSING -> new ToolExecutionException(
                     ToolExecutionException.INVALID_ARGUMENT,
                     "这个联系人的档案里没有可用的" + addressNoun + "，换个人也没用 —— "

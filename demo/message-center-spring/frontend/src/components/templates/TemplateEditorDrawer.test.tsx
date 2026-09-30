@@ -55,6 +55,18 @@ async function choose(label: string, option: string) {
   await userEvent.setup().click(await screen.findByText(option, { selector: '.ant-select-item-option-content' }));
 }
 
+/**
+ * 把正文改成「变量不在首尾」的合规形态。
+ *
+ * 公共模板库那条基础模板（account_creation_confirmation_3）的原文是
+ * 「$(text)，您好：您的新帐号已成功创建。」—— 变量开头，正是平台会拒审的形态
+ * （拒审原话 Variables can't be at the start or end of the template），编辑器也会因此拦住提交。
+ * 所以凡是走到「能不能提交」这一步的用例，都得先像真实用户那样把它改掉。
+ */
+function makeBodySubmittable() {
+  fireEvent.change(screen.getByLabelText('正文'), { target: { value: '您好，$(text)，您的新帐号已成功创建。' } });
+}
+
 describe('TemplateEditorDrawer public-template drafts', () => {
   it('initializes the existing editor from a public-template draft', () => {
     renderEditor();
@@ -83,6 +95,8 @@ describe('TemplateEditorDrawer public-template drafts', () => {
     const control = screen.getAllByRole('combobox', { name: '源按钮 unknown_button 处理方式' });
     fireEvent.mouseDown(control[control.length - 1]);
     await user.click(await screen.findByText('不添加', { selector: '.ant-select-item-option-content' }));
+    makeBodySubmittable();
+
     expect(screen.getByRole('button', { name: '提交创建' })).toBeEnabled();
   });
 
@@ -99,6 +113,7 @@ describe('TemplateEditorDrawer public-template drafts', () => {
     await choose('语言', '简体中文');
     expect(screen.getByRole('button', { name: '提交创建' })).toBeDisabled();
     await choose('模板类别', '工具');
+    makeBodySubmittable();
 
     expect(screen.getByRole('button', { name: '提交创建' })).toBeEnabled();
     expect(draft.issues).toEqual(originalIssues);
@@ -111,6 +126,7 @@ describe('TemplateEditorDrawer public-template drafts', () => {
       content: { ...publicTemplate.content, languageCode: 'fr' },
     };
     renderEditor(frenchTemplate);
+    makeBodySubmittable();
 
     expect(screen.getByRole('button', { name: '提交创建' })).toBeEnabled();
     expect(screen.getByRole('combobox', { name: '语言' }).closest('.ant-select')).toHaveTextContent('法语');
@@ -122,6 +138,37 @@ describe('TemplateEditorDrawer public-template drafts', () => {
     fireEvent.change(screen.getByLabelText('正文'), { target: { value: '您好 ${text}' } });
 
     expect(screen.getByText('变量只能使用 $(name) 格式')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '提交创建' })).toBeDisabled();
+  });
+
+  /**
+   * 这条钉的是改动的动机本身：公共模板库里的真实内容就可能违规。
+   *
+   * 平台那条基础模板的正文是「$(text)，您好：您的新帐号已成功创建。」—— 变量开头。
+   * 照原样提交，平台必然拒审：用户白等一轮审核，还要换个模板名重走。
+   * 编辑器在本地就拦住，并把原因写出来，用户才知道该改哪儿。
+   */
+  it('blocks a public-template body that starts with a variable', () => {
+    renderEditor();
+
+    expect(screen.getByLabelText('正文')).toHaveValue('$(text)，您好：您的新帐号已成功创建。');
+    expect(screen.getByText('变量不能出现在正文的开头或结尾')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '提交创建' })).toBeDisabled();
+
+    makeBodySubmittable();
+
+    expect(screen.queryByText('变量不能出现在正文的开头或结尾')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '提交创建' })).toBeEnabled();
+  });
+
+  /** 页脚一个变量都不能有 —— 平台 FOOTER 组件不支持参数，与正文那条判据不同。 */
+  it('blocks a footer that carries a variable', () => {
+    renderEditor();
+    makeBodySubmittable();
+
+    fireEvent.change(screen.getByLabelText('Footer'), { target: { value: '退订请回 $(text)' } });
+
+    expect(screen.getByText('页脚不能包含变量')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '提交创建' })).toBeDisabled();
   });
 });

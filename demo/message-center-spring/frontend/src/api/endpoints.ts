@@ -76,6 +76,7 @@ import type {
   AdminWhatsAppPhoneCallbackRequest,
   AdminWhatsAppAccountCallbackRequest,
   AssistantConversationMessage,
+  AssistantConversationSummary,
   AssistantMessageRequest,
   AssistantTurnResult,
 } from './types';
@@ -1511,4 +1512,25 @@ export async function fetchLatestAssistantConversation(): Promise<
     `${assistantBase}/conversations/latest`,
   );
   return res.data;
+}
+
+export async function fetchAssistantConversations(): Promise<AssistantConversationSummary[]> {
+  const res = await client.get<AssistantConversationSummary[]>(`${assistantBase}/conversations`);
+  return res.data;
+}
+
+export async function createAssistantConversation(conversationId: string): Promise<AssistantConversationSummary> {
+  const res = await client.post<AssistantConversationSummary>(`${assistantBase}/conversations`, { conversationId });
+  return res.data;
+}
+
+export async function openAssistantConversation(conversationId: string): Promise<AssistantConversationSummary> {
+  const res = await client.post<AssistantConversationSummary>(
+    `${assistantBase}/conversations/${encodeURIComponent(conversationId)}/open`,
+  );
+  return res.data;
+}
+
+export async function deleteAssistantConversation(conversationId: string): Promise<void> {
+  await client.delete(`${assistantBase}/conversations/${encodeURIComponent(conversationId)}`);
 }

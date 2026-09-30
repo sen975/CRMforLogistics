@@ -1,0 +1,1395 @@
+[
+ {
+  "fn": "login",
+  "method": "POST",
+  "path": "/auth/login",
+  "full": "/api/auth/login",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "register",
+  "method": "POST",
+  "path": "/auth/register",
+  "full": "/api/auth/register",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAccountProfile",
+  "method": "GET",
+  "path": "/account/profile",
+  "full": "/api/account/profile",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAccountProfile",
+  "method": "PATCH",
+  "path": "/account/profile",
+  "full": "/api/account/profile",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "uploadAccountAvatar",
+  "method": "POST",
+  "path": "/account/avatar",
+  "full": "/api/account/avatar",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deleteAccountAvatar",
+  "method": "DELETE",
+  "path": "/account/avatar",
+  "full": "/api/account/avatar",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAccountAvatarBlob",
+  "method": "GET",
+  "path": "/account/avatar/content",
+  "full": "/api/account/avatar/content",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "changeAccountPassword",
+  "method": "PUT",
+  "path": "/account/password",
+  "full": "/api/account/password",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminUsers",
+  "method": "GET",
+  "path": "/admin/users",
+  "full": "/api/admin/users",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAccountRoles",
+  "method": "GET",
+  "path": "/admin/roles",
+  "full": "/api/admin/roles",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "replaceAdminUserRoles",
+  "method": "PUT",
+  "path": "/admin/users/{userId}/roles",
+  "full": "/api/admin/users/{userId}/roles",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "resetAdminUserPassword",
+  "method": "PUT",
+  "path": "/admin/users/{userId}/password",
+  "full": "/api/admin/users/{userId}/password",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "logout",
+  "method": "POST",
+  "path": "/auth/logout",
+  "full": "/api/auth/logout",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "exchangeWeComLogin",
+  "method": "POST",
+  "path": "/auth/wecom/exchange",
+  "full": "/api/auth/wecom/exchange",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComBinding",
+  "method": "GET",
+  "path": "/account/wecom-binding",
+  "full": "/api/account/wecom-binding",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "exchangeWeComBinding",
+  "method": "POST",
+  "path": "/account/wecom-binding/exchange",
+  "full": "/api/account/wecom-binding/exchange",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "unbindWeCom",
+  "method": "DELETE",
+  "path": "/account/wecom-binding",
+  "full": "/api/account/wecom-binding",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createWeComAvatarAuthorization",
+  "method": "POST",
+  "path": "/account/wecom-avatar/authorizations",
+  "full": "/api/account/wecom-avatar/authorizations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComAvatarAuthorization",
+  "method": "GET",
+  "path": "/account/wecom-avatar/authorizations/{authorizationId}",
+  "full": "/api/account/wecom-avatar/authorizations/{authorizationId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "toggleConversationPinned",
+  "method": "POST",
+  "path": "/conversations/preferences/pin",
+  "full": "/api/conversations/preferences/pin",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "hideConversation",
+  "method": "POST",
+  "path": "/conversations/preferences/delete",
+  "full": "/api/conversations/preferences/delete",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "restoreConversation",
+  "method": "POST",
+  "path": "/conversations/preferences/restore",
+  "full": "/api/conversations/preferences/restore",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "reorderConversations",
+  "method": "POST",
+  "path": "/conversations/preferences/order",
+  "full": "/api/conversations/preferences/order",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "bootstrapWeComViewer",
+  "method": "POST",
+  "path": "/v1/wecom/conversation-view/bootstrap",
+  "full": "/api/v1/wecom/conversation-view/bootstrap",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComJsSdkConfig",
+  "method": "GET",
+  "path": "/v1/wecom/js-sdk-config",
+  "full": "/api/v1/wecom/js-sdk-config",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createWeComViewerSession",
+  "method": "POST",
+  "path": "/v1/wecom/conversation-view/sessions",
+  "full": "/api/v1/wecom/conversation-view/sessions",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createWeComViewerTargetSession",
+  "method": "POST",
+  "path": "/v1/wecom/conversation-view/sessions",
+  "full": "/api/v1/wecom/conversation-view/sessions",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComViewerSession",
+  "method": "GET",
+  "path": "/v1/wecom/conversation-view/sessions/{viewerSessionId}",
+  "full": "/api/v1/wecom/conversation-view/sessions/{viewerSessionId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "recordWeComViewerEvent",
+  "method": "POST",
+  "path": "/v1/wecom/conversation-view/events",
+  "full": "/api/v1/wecom/conversation-view/events",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComInstallations",
+  "method": "GET",
+  "path": "/v1/wecom/installations",
+  "full": "/api/v1/wecom/installations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComContactEvents",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/contact-events",
+  "full": "/api/v1/wecom/installations/{authCorpId}/contact-events",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createWeComAppChat",
+  "method": "POST",
+  "path": "/v1/wecom/installations/{authCorpId}/app-chats",
+  "full": "/api/v1/wecom/installations/{authCorpId}/app-chats",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComAppChat",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateWeComAppChat",
+  "method": "PATCH",
+  "path": "/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendWeComAppChatMessage",
+  "method": "POST",
+  "path": "/v1/wecom/installations/{authCorpId}/app-chats/{chatId}/messages",
+  "full": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}/messages",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComExternalContacts",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/external-contacts",
+  "full": "/api/v1/wecom/installations/{authCorpId}/external-contacts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComExternalContactLinks",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/external-contacts/contact-links",
+  "full": "/api/v1/wecom/installations/{authCorpId}/external-contacts/contact-links",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "getWeComExternalContact",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "batchGetWeComExternalContacts",
+  "method": "POST",
+  "path": "/v1/wecom/installations/{authCorpId}/external-contacts:batchGet",
+  "full": "/api/v1/wecom/installations/{authCorpId}/external-contacts:batchGet",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateWeComExternalContactRemark",
+  "method": "PATCH",
+  "path": "/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}/remark",
+  "full": "/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}/remark",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "searchWeComCustomerGroups",
+  "method": "POST",
+  "path": "/v1/wecom/installations/{authCorpId}/customer-groups:search",
+  "full": "/api/v1/wecom/installations/{authCorpId}/customer-groups:search",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComCustomerGroup",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/customer-groups/{chatId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/customer-groups/{chatId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComDirectoryMember",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/members/{userId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/members/{userId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComDirectoryMembers",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/members",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/members",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComDepartments",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/departments",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/departments",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listWeComTags",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/tags",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/tags",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncWeComDirectoryProfiles",
+  "method": "POST",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/profile-sync",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/profile-sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComTag",
+  "method": "GET",
+  "path": "/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}",
+  "full": "/api/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchContacts",
+  "method": "GET",
+  "path": "/contacts",
+  "full": "/api/contacts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChannelAddressBook",
+  "method": "GET",
+  "path": "/channel-address-books/{channel}",
+  "full": "/api/channel-address-books/{channel}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createManualChannelContact",
+  "method": "POST",
+  "path": "/channel-address-books/{channel}",
+  "full": "/api/channel-address-books/{channel}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deleteManualChannelContact",
+  "method": "DELETE",
+  "path": "/channel-address-books/{channel}/{contactId}",
+  "full": "/api/channel-address-books/{channel}/{contactId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "listConversations",
+  "method": "GET",
+  "path": "/conversations",
+  "full": "/api/conversations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchContact",
+  "method": "GET",
+  "path": "/contacts/{id}",
+  "full": "/api/contacts/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchContactMemory",
+  "method": "GET",
+  "path": "/contacts/{id}/memory",
+  "full": "/api/contacts/{id}/memory",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "markContactRead",
+  "method": "POST",
+  "path": "/contacts/{id}/mark-read",
+  "full": "/api/contacts/{id}/mark-read",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateContactRemark",
+  "method": "POST",
+  "path": "/contacts/{id}/remark",
+  "full": "/api/contacts/{id}/remark",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateContactTags",
+  "method": "PUT",
+  "path": "/contacts/{id}/tags",
+  "full": "/api/contacts/{id}/tags",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateContactProfile",
+  "method": "POST",
+  "path": "/contacts/{id}/profile",
+  "full": "/api/contacts/{id}/profile",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "mergeContacts",
+  "method": "POST",
+  "path": "/contact-groups/merge",
+  "full": "/api/contact-groups/merge",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "splitContact",
+  "method": "POST",
+  "path": "/contact-groups/split",
+  "full": "/api/contact-groups/split",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchThread",
+  "method": "GET",
+  "path": "/threads",
+  "full": "/api/threads",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComContactThread",
+  "method": "GET",
+  "path": "/threads/wecom/contact/{contactId}",
+  "full": "/api/threads/wecom/contact/{contactId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComGroupThread",
+  "method": "GET",
+  "path": "/threads/wecom/group/{sourceConversationId}",
+  "full": "/api/threads/wecom/group/{sourceConversationId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWeComGroupTopics",
+  "method": "GET",
+  "path": "/v1/wecom/groups/{sourceConversationId}/topics",
+  "full": "/api/v1/wecom/groups/{sourceConversationId}/topics",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "retryWeComGroupTopicGeneration",
+  "method": "POST",
+  "path": "/v1/wecom/groups/{sourceConversationId}/topics/retry",
+  "full": "/api/v1/wecom/groups/{sourceConversationId}/topics/retry",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "refreshWeComGroupName",
+  "method": "POST",
+  "path": "/v1/wecom/groups/{sourceConversationId}/name-refresh",
+  "full": "/api/v1/wecom/groups/{sourceConversationId}/name-refresh",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchMessage",
+  "method": "GET",
+  "path": "/messages/{id}",
+  "full": "/api/messages/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendEmail",
+  "method": "POST",
+  "path": "/send/email",
+  "full": "/api/send/email",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendEmail",
+  "method": "POST",
+  "path": "/send/email",
+  "full": "/api/send/email",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendChatApp",
+  "method": "POST",
+  "path": "/chatapp/send/template",
+  "full": "/api/chatapp/send/template",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendChatApp",
+  "method": "POST",
+  "path": "/chatapp/send/text",
+  "full": "/api/chatapp/send/text",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTemplates",
+  "method": "GET",
+  "path": "/templates",
+  "full": "/api/templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChannelCapabilities",
+  "method": "GET",
+  "path": "/channel-capabilities",
+  "full": "/api/channel-capabilities",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChatAppBroadcasts",
+  "method": "GET",
+  "path": "/v1/chatapp/broadcasts",
+  "full": "/api/v1/chatapp/broadcasts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChatAppSendableTemplates",
+  "method": "GET",
+  "path": "/v1/chatapp/broadcasts/sendable-templates",
+  "full": "/api/v1/chatapp/broadcasts/sendable-templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChatAppBroadcastFailures",
+  "method": "GET",
+  "path": "/v1/chatapp/broadcasts/{broadcastId}/failures",
+  "full": "/api/v1/chatapp/broadcasts/{broadcastId}/failures",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChatAppBroadcastDetail",
+  "method": "GET",
+  "path": "/v1/chatapp/broadcasts/{broadcastId}",
+  "full": "/api/v1/chatapp/broadcasts/{broadcastId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "requestChatAppBroadcastReconciliation",
+  "method": "POST",
+  "path": "/v1/chatapp/broadcasts/{broadcastId}/reconcile",
+  "full": "/api/v1/chatapp/broadcasts/{broadcastId}/reconcile",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createChatAppBroadcast",
+  "method": "POST",
+  "path": "/v1/chatapp/broadcasts",
+  "full": "/api/v1/chatapp/broadcasts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "retryChatAppBroadcastFailures",
+  "method": "POST",
+  "path": "/v1/chatapp/broadcasts/{broadcastId}/retry-failures",
+  "full": "/api/v1/chatapp/broadcasts/{broadcastId}/retry-failures",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchMediaUrl",
+  "method": "GET",
+  "path": "/media/{id}",
+  "full": "/api/media/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchMediaBlob",
+  "method": "GET",
+  "path": "/media/{id}",
+  "full": "/api/media/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "downloadAttachment",
+  "method": "GET",
+  "path": "/media/{id}/download",
+  "full": "/api/media/{id}/download",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendWeCom",
+  "method": "POST",
+  "path": "/wecom/send",
+  "full": "/api/wecom/send",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTodos",
+  "method": "GET",
+  "path": "/todos",
+  "full": "/api/todos",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createTodoApi",
+  "method": "POST",
+  "path": "/todos",
+  "full": "/api/todos",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateTodoApi",
+  "method": "PATCH",
+  "path": "/todos/{id}",
+  "full": "/api/todos/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deleteTodoApi",
+  "method": "DELETE",
+  "path": "/todos/{id}",
+  "full": "/api/todos/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendChatAppMedia",
+  "method": "POST",
+  "path": "/send/chatapp-media",
+  "full": "/api/send/chatapp-media",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChannelAccounts",
+  "method": "GET",
+  "path": "/channel-accounts",
+  "full": "/api/channel-accounts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createChannelAccount",
+  "method": "POST",
+  "path": "/channel-accounts",
+  "full": "/api/channel-accounts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateChannelAccount",
+  "method": "PUT",
+  "path": "/channel-accounts/{id}",
+  "full": "/api/channel-accounts/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "triggerChannelSync",
+  "method": "POST",
+  "path": "/channel-accounts/{id}/sync",
+  "full": "/api/channel-accounts/{id}/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchChannelCredentials",
+  "method": "GET",
+  "path": "/channel-accounts/{id}/credentials",
+  "full": "/api/channel-accounts/{id}/credentials",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateChannelCredentials",
+  "method": "PUT",
+  "path": "/channel-accounts/{id}/credentials",
+  "full": "/api/channel-accounts/{id}/credentials",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "unbindChannelAccount",
+  "method": "POST",
+  "path": "/channel-accounts/{id}/unbind",
+  "full": "/api/channel-accounts/{id}/unbind",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createWhatsAppAuthorizationAttempt",
+  "method": "POST",
+  "path": "/whatsapp/authorization/attempts",
+  "full": "/api/whatsapp/authorization/attempts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWhatsAppCapability",
+  "method": "GET",
+  "path": "/whatsapp/capability",
+  "full": "/api/whatsapp/capability",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "completeWhatsAppAuthorization",
+  "method": "POST",
+  "path": "/whatsapp/authorization/complete",
+  "full": "/api/whatsapp/authorization/complete",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWhatsAppPhoneOperations",
+  "method": "GET",
+  "path": "/whatsapp/api-phone-operations",
+  "full": "/api/whatsapp/api-phone-operations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "addWhatsAppPhoneNumber",
+  "method": "POST",
+  "path": "/whatsapp/api-phone-operations",
+  "full": "/api/whatsapp/api-phone-operations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendWhatsAppVerificationCode",
+  "method": "POST",
+  "path": "/whatsapp/api-phone-operations/{operationId}/verification-code",
+  "full": "/api/whatsapp/api-phone-operations/{operationId}/verification-code",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "verifyWhatsAppPhoneNumber",
+  "method": "POST",
+  "path": "/whatsapp/api-phone-operations/{operationId}/verify",
+  "full": "/api/whatsapp/api-phone-operations/{operationId}/verify",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWhatsAppAccounts",
+  "method": "GET",
+  "path": "/whatsapp/accounts/me",
+  "full": "/api/whatsapp/accounts/me",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "unlinkWhatsAppAccount",
+  "method": "DELETE",
+  "path": "/whatsapp/accounts/{accountId}",
+  "full": "/api/whatsapp/accounts/{accountId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "requestWhatsAppHistorySync",
+  "method": "POST",
+  "path": "/whatsapp/accounts/{accountId}/history-sync",
+  "full": "/api/whatsapp/accounts/{accountId}/history-sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminWhatsAppAccounts",
+  "method": "GET",
+  "path": "/admin/whatsapp/accounts",
+  "full": "/api/admin/whatsapp/accounts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminCams",
+  "method": "GET",
+  "path": "/admin/whatsapp/cams",
+  "full": "/api/admin/whatsapp/cams",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminWhatsAppOverview",
+  "method": "GET",
+  "path": "/admin/whatsapp/overview",
+  "full": "/api/admin/whatsapp/overview",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createAdminCams",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams",
+  "full": "/api/admin/whatsapp/cams",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAdminCams",
+  "method": "PUT",
+  "path": "/admin/whatsapp/cams/{scopeId}",
+  "full": "/api/admin/whatsapp/cams/{scopeId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "blockAdminCams",
+  "method": "DELETE",
+  "path": "/admin/whatsapp/cams/{scopeId}",
+  "full": "/api/admin/whatsapp/cams/{scopeId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "testAdminCams",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/{scopeId}/test",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/test",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncAdminCams",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/{scopeId}/sync",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminScopedWhatsAppAccounts",
+  "method": "GET",
+  "path": "/admin/whatsapp/cams/{scopeId}/accounts",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminWhatsAppCallbacks",
+  "method": "GET",
+  "path": "/admin/whatsapp/cams/{scopeId}/callbacks",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/callbacks",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAdminWhatsAppPhoneCallback",
+  "method": "PUT",
+  "path": "/admin/whatsapp/cams/{scopeId}/callbacks/phones/{accountId}",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{accountId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAdminWhatsAppAccountCallback",
+  "method": "PUT",
+  "path": "/admin/whatsapp/cams/{scopeId}/callbacks/account",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/callbacks/account",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "assignAdminScopedWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assign",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assign",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "reclaimAdminScopedWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/reclaim",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/reclaim",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "transferAdminScopedWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/transfer",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/transfer",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminScopedAssignmentHistory",
+  "method": "GET",
+  "path": "/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assignment-history",
+  "full": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assignment-history",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncAdminWhatsAppAccounts",
+  "method": "POST",
+  "path": "/admin/whatsapp/accounts/sync",
+  "full": "/api/admin/whatsapp/accounts/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchWhatsAppCamsConfig",
+  "method": "GET",
+  "path": "/admin/whatsapp/cams",
+  "full": "/api/admin/whatsapp/cams",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "saveWhatsAppCamsConfig",
+  "method": "PUT",
+  "path": "/admin/whatsapp/cams",
+  "full": "/api/admin/whatsapp/cams",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "testWhatsAppCamsConfig",
+  "method": "POST",
+  "path": "/admin/whatsapp/cams/test",
+  "full": "/api/admin/whatsapp/cams/test",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "assignAdminWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/accounts/{accountId}/assign",
+  "full": "/api/admin/whatsapp/accounts/{accountId}/assign",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "reclaimAdminWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/accounts/{accountId}/reclaim",
+  "full": "/api/admin/whatsapp/accounts/{accountId}/reclaim",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "transferAdminWhatsAppAccount",
+  "method": "POST",
+  "path": "/admin/whatsapp/accounts/{accountId}/transfer",
+  "full": "/api/admin/whatsapp/accounts/{accountId}/transfer",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminWhatsAppAssignmentHistory",
+  "method": "GET",
+  "path": "/admin/whatsapp/accounts/{accountId}/assignment-history",
+  "full": "/api/admin/whatsapp/accounts/{accountId}/assignment-history",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTimeline",
+  "method": "GET",
+  "path": "/v1/contacts/{contactId}/timeline",
+  "full": "/api/v1/contacts/{contactId}/timeline",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchContactTopics",
+  "method": "GET",
+  "path": "/v1/contacts/{contactId}/topics",
+  "full": "/api/v1/contacts/{contactId}/topics",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchManualReviewSources",
+  "method": "GET",
+  "path": "/v1/contacts/{contactId}/topic-review/sources",
+  "full": "/api/v1/contacts/{contactId}/topic-review/sources",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchManualReviewPending",
+  "method": "GET",
+  "path": "/v1/contacts/{contactId}/topic-review/pending",
+  "full": "/api/v1/contacts/{contactId}/topic-review/pending",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "previewManualReview",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/topic-review/preview",
+  "full": "/api/v1/contacts/{contactId}/topic-review/preview",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "applyManualReview",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/topic-review/{previewId}/apply",
+  "full": "/api/v1/contacts/{contactId}/topic-review/{previewId}/apply",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "keepPendingTopic",
+  "method": "POST",
+  "path": "/v1/topics/{topicId}/keep",
+  "full": "/api/v1/topics/{topicId}/keep",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "previewTopicFusion",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/topic-fusion/preview",
+  "full": "/api/v1/contacts/{contactId}/topic-fusion/preview",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "applyTopicFusion",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/topic-fusion/{previewId}/apply",
+  "full": "/api/v1/contacts/{contactId}/topic-fusion/{previewId}/apply",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateTopic",
+  "method": "PATCH",
+  "path": "/v1/topics/{topicId}",
+  "full": "/api/v1/topics/{topicId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "mergeTopics",
+  "method": "POST",
+  "path": "/v1/topics/merge",
+  "full": "/api/v1/topics/merge",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "storeTopic",
+  "method": "POST",
+  "path": "/v1/topics/{topicId}/store",
+  "full": "/api/v1/topics/{topicId}/store",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "restoreTopic",
+  "method": "POST",
+  "path": "/v1/topics/{topicId}/restore",
+  "full": "/api/v1/topics/{topicId}/restore",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTopicRepository",
+  "method": "GET",
+  "path": "/v1/topic-repository",
+  "full": "/api/v1/topic-repository",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTopicInboxRequests",
+  "method": "GET",
+  "path": "/v1/topic-inbox/requests",
+  "full": "/api/v1/topic-inbox/requests",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "approveTopicStore",
+  "method": "POST",
+  "path": "/v1/topic-inbox/{requestId}/approve",
+  "full": "/api/v1/topic-inbox/{requestId}/approve",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "rejectTopicStore",
+  "method": "POST",
+  "path": "/v1/topic-inbox/{requestId}/reject",
+  "full": "/api/v1/topic-inbox/{requestId}/reject",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "retryTopicGeneration",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/topics/retry",
+  "full": "/api/v1/contacts/{contactId}/topics/retry",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createCallRecord",
+  "method": "POST",
+  "path": "/v1/contacts/{contactId}/call-records",
+  "full": "/api/v1/contacts/{contactId}/call-records",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createCallRecord",
+  "method": "POST",
+  "path": "/v1/call-records",
+  "full": "/api/v1/call-records",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchCallRecord",
+  "method": "GET",
+  "path": "/v1/call-records/{id}",
+  "full": "/api/v1/call-records/{id}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createAudioSession",
+  "method": "POST",
+  "path": "/v1/call-records/{id}/audio-sessions",
+  "full": "/api/v1/call-records/{id}/audio-sessions",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "retryCallRecord",
+  "method": "POST",
+  "path": "/v1/call-records/{id}/retry",
+  "full": "/api/v1/call-records/{id}/retry",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "reviseTranscript",
+  "method": "PATCH",
+  "path": "/v1/call-records/{id}/transcript",
+  "full": "/api/v1/call-records/{id}/transcript",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "reviseNote",
+  "method": "PATCH",
+  "path": "/v1/call-records/{id}/note",
+  "full": "/api/v1/call-records/{id}/note",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "bindPhoneContact",
+  "method": "POST",
+  "path": "/v1/phone-contacts",
+  "full": "/api/v1/phone-contacts",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchPhoneRepository",
+  "method": "GET",
+  "path": "/v1/phone-repository",
+  "full": "/api/v1/phone-repository",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchSharedTemplates",
+  "method": "GET",
+  "path": "/v1/whatsapp/templates",
+  "full": "/api/v1/whatsapp/templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchSharedTemplate",
+  "method": "GET",
+  "path": "/v1/whatsapp/templates/{templateId}",
+  "full": "/api/v1/whatsapp/templates/{templateId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createSharedTemplate",
+  "method": "POST",
+  "path": "/v1/whatsapp/templates/applications",
+  "full": "/api/v1/whatsapp/templates/applications",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createTemplateChangeRequest",
+  "method": "POST",
+  "path": "/v1/whatsapp/templates/{templateId}/change-requests",
+  "full": "/api/v1/whatsapp/templates/{templateId}/change-requests",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchMyTemplateChangeRequests",
+  "method": "GET",
+  "path": "/v1/whatsapp/template-change-requests/mine",
+  "full": "/api/v1/whatsapp/template-change-requests/mine",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTemplateChangeRequestsForReview",
+  "method": "GET",
+  "path": "/v1/admin/whatsapp/template-change-requests",
+  "full": "/api/v1/admin/whatsapp/template-change-requests",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "approveTemplateChangeRequest",
+  "method": "POST",
+  "path": "/v1/admin/whatsapp/template-change-requests/{requestId}/approve",
+  "full": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/approve",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "rejectTemplateChangeRequest",
+  "method": "POST",
+  "path": "/v1/admin/whatsapp/template-change-requests/{requestId}/reject",
+  "full": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/reject",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "retryTemplateChangeRequest",
+  "method": "POST",
+  "path": "/v1/admin/whatsapp/template-change-requests/{requestId}/retry",
+  "full": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/retry",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncSharedTemplates",
+  "method": "POST",
+  "path": "/v1/whatsapp/templates/sync",
+  "full": "/api/v1/whatsapp/templates/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchPrivateTemplates",
+  "method": "GET",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchPrivateTemplate",
+  "method": "GET",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createPrivateTemplate",
+  "method": "POST",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/applications",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/applications",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updatePrivateTemplate",
+  "method": "PUT",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "setPrivateTemplateSendPermission",
+  "method": "PATCH",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/send-permission",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/send-permission",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deletePrivateTemplate",
+  "method": "DELETE",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncPrivateTemplates",
+  "method": "POST",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/sync",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchPrivateTemplateOperations",
+  "method": "GET",
+  "path": "/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/operations",
+  "full": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/operations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminTemplates",
+  "method": "GET",
+  "path": "/v1/whatsapp/templates",
+  "full": "/api/v1/whatsapp/templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAdminTemplate",
+  "method": "GET",
+  "path": "/v1/whatsapp/templates/{templateCode}",
+  "full": "/api/v1/whatsapp/templates/{templateCode}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createAdminTemplate",
+  "method": "POST",
+  "path": "/v1/whatsapp/templates",
+  "full": "/api/v1/whatsapp/templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAdminTemplate",
+  "method": "PUT",
+  "path": "/v1/whatsapp/templates/{templateCode}",
+  "full": "/api/v1/whatsapp/templates/{templateCode}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "updateAdminTemplateRemark",
+  "method": "PUT",
+  "path": "/v1/whatsapp/templates/{templateCode}/remark",
+  "full": "/api/v1/whatsapp/templates/{templateCode}/remark",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "setAdminTemplateSendPermission",
+  "method": "PUT",
+  "path": "/v1/whatsapp/templates/{templateCode}/send-permission",
+  "full": "/api/v1/whatsapp/templates/{templateCode}/send-permission",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deleteAdminTemplate",
+  "method": "DELETE",
+  "path": "/v1/whatsapp/templates/{templateCode}",
+  "full": "/api/v1/whatsapp/templates/{templateCode}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "syncAdminTemplates",
+  "method": "POST",
+  "path": "/v1/whatsapp/templates/sync",
+  "full": "/api/v1/whatsapp/templates/sync",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "uploadTemplateMedia",
+  "method": "POST",
+  "path": "/v1/whatsapp/template-media",
+  "full": "/api/v1/whatsapp/template-media",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "uploadTemplateMedia",
+  "method": "POST",
+  "path": "/v1/whatsapp/template-media",
+  "full": "/api/v1/whatsapp/template-media",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTemplateMediaUpload",
+  "method": "GET",
+  "path": "/v1/whatsapp/template-media/uploads/{encoded}",
+  "full": "/api/v1/whatsapp/template-media/uploads/{encoded}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTemplateMediaUpload",
+  "method": "GET",
+  "path": "/v1/whatsapp/template-media/uploads/{encoded}",
+  "full": "/api/v1/whatsapp/template-media/uploads/{encoded}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchTemplateOperations",
+  "method": "GET",
+  "path": "/v1/whatsapp/templates/{templateId}/operations",
+  "full": "/api/v1/whatsapp/templates/{templateId}/operations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchPublicTemplates",
+  "method": "GET",
+  "path": "/v1/whatsapp/public-templates",
+  "full": "/api/v1/whatsapp/public-templates",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "confirmAssistantAction",
+  "method": "POST",
+  "path": "/assistant/actions/{pendingActionId}/confirm",
+  "full": "/api/assistant/actions/{pendingActionId}/confirm",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "cancelAssistantAction",
+  "method": "POST",
+  "path": "/assistant/actions/{pendingActionId}/cancel",
+  "full": "/api/assistant/actions/{pendingActionId}/cancel",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAssistantConversation",
+  "method": "GET",
+  "path": "/assistant/conversations/{conversationId}/messages",
+  "full": "/api/assistant/conversations/{conversationId}/messages",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchLatestAssistantConversation",
+  "method": "GET",
+  "path": "/assistant/conversations/latest",
+  "full": "/api/assistant/conversations/latest",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "fetchAssistantConversations",
+  "method": "GET",
+  "path": "/assistant/conversations",
+  "full": "/api/assistant/conversations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "createAssistantConversation",
+  "method": "POST",
+  "path": "/assistant/conversations",
+  "full": "/api/assistant/conversations",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "openAssistantConversation",
+  "method": "POST",
+  "path": "/assistant/conversations/{conversationId}/open",
+  "full": "/api/assistant/conversations/{conversationId}/open",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "deleteAssistantConversation",
+  "method": "DELETE",
+  "path": "/assistant/conversations/{conversationId}",
+  "full": "/api/assistant/conversations/{conversationId}",
+  "origin": "endpoints.ts"
+ },
+ {
+  "fn": "sendAssistantMessage",
+  "method": "POST",
+  "path": "/assistant/messages",
+  "full": "/api/assistant/messages",
+  "origin": "assistantStream.ts"
+ }
+]

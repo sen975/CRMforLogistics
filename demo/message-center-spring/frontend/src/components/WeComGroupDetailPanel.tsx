@@ -43,7 +43,7 @@ export default function WeComGroupDetailPanel() {
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="mc-detail-panel" style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <Tabs
         className="wecom-group-detail-tabs"
         activeKey={activeTab}
@@ -63,8 +63,8 @@ export default function WeComGroupDetailPanel() {
           key: 'members',
           label: '群成员',
           children: (
-            <div style={{ padding: '0 16px 16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <div className="cd-body" style={{ padding: '0 16px 16px' }}>
+              <div className="cd-toolbar" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
                 <Button
                   type="text"
                   size="small"

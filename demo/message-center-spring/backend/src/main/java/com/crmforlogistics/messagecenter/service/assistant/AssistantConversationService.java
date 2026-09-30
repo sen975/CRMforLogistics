@@ -114,6 +114,8 @@ public class AssistantConversationService {
     private final AssistantConfig config;
     private final AssistantConversationContextService conversationContext;
     private final AssistantContactCandidateWindowStore contactWindows;
+    private final TemplateMediaProvider mediaProvider;
+    private final AssistantConversationLifecycleService lifecycle;
 
     @Autowired
     public AssistantConversationService(AssistantContextBuilder contextBuilder,
@@ -128,7 +130,9 @@ public class AssistantConversationService {
                                         ToolRegistry registry,
                                         AssistantConfig config,
                                         AssistantConversationContextService conversationContext,
-                                        AssistantContactCandidateWindowStore contactWindows) {
+                                        AssistantContactCandidateWindowStore contactWindows,
+                                        TemplateMediaProvider mediaProvider,
+                                        AssistantConversationLifecycleService lifecycle) {
         this.contextBuilder = contextBuilder;
         this.promptBuilder = promptBuilder;
         this.modelClient = modelClient;
@@ -142,6 +146,8 @@ public class AssistantConversationService {
         this.config = config;
         this.conversationContext = conversationContext;
         this.contactWindows = contactWindows;
+        this.mediaProvider = mediaProvider;
+        this.lifecycle = lifecycle;
     }
 
     /** Constructor for context-compaction tests without a persistent contact window. */
@@ -158,7 +164,7 @@ public class AssistantConversationService {
                                         AssistantConfig config,
                                         AssistantConversationContextService conversationContext) {
         this(contextBuilder, promptBuilder, modelClient, parser, policy, pendingActions, audit,
-                conversationLog, guard, registry, config, conversationContext, null);
+                conversationLog, guard, registry, config, conversationContext, null, null, null);
     }
 
     /** Constructor retained for isolated orchestration tests that exercise the pre-compaction path. */
@@ -174,13 +180,33 @@ public class AssistantConversationService {
                                         ToolRegistry registry,
                                         AssistantConfig config) {
         this(contextBuilder, promptBuilder, modelClient, parser, policy, pendingActions, audit,
-                conversationLog, guard, registry, config, null, null);
+                conversationLog, guard, registry, config, null, null, null, null);
+    }
+
+    /** Compatibility constructor for isolated tests that provide media candidates but no lifecycle. */
+    public AssistantConversationService(AssistantContextBuilder contextBuilder,
+                                        AssistantPromptBuilder promptBuilder,
+                                        AssistantModelClient modelClient,
+                                        AssistantDecisionParser parser,
+                                        AssistantActionPolicy policy,
+                                        AssistantPendingActionService pendingActions,
+                                        AssistantAuditService audit,
+                                        AssistantConversationLogService conversationLog,
+                                        AssistantRequestGuard guard,
+                                        ToolRegistry registry,
+                                        AssistantConfig config,
+                                        AssistantConversationContextService conversationContext,
+                                        AssistantContactCandidateWindowStore contactWindows,
+                                        TemplateMediaProvider mediaProvider) {
+        this(contextBuilder, promptBuilder, modelClient, parser, policy, pendingActions, audit,
+                conversationLog, guard, registry, config, conversationContext, contactWindows,
+                mediaProvider, null);
     }
 
     /** 不带旁路通知的一轮。内部调用与既有测试用它，行为与引入 {@link AssistantTurnSink} 之前一致。 */
     public AssistantTurnResult respond(UUID userId, UUID conversationId,
                                        List<AssistantMessage> providedHistory, String text) {
-        return respond(userId, conversationId, providedHistory, text, AssistantTurnSink.NONE);
+        return respond(userId, conversationId, providedHistory, text, List.of(), AssistantTurnSink.NONE);
     }
 
     /**
@@ -196,12 +222,33 @@ public class AssistantConversationService {
     public AssistantTurnResult respond(UUID userId, UUID conversationId,
                                        List<AssistantMessage> providedHistory, String text,
                                        AssistantTurnSink sink) {
+        return respond(userId, conversationId, providedHistory, text, List.of(), sink);
+    }
+
+    /**
+     * 跑一轮，并带上用户这一轮发来的素材。
+     *
+     * <p>{@code attachmentAssetIds} 是**用户指定**的素材 id，不是检索结果：它会先被
+     * {@link TemplateMediaProvider} 复核归属与状态，再作为第七组候选交给模型
+     * （见 {@link TemplateMediaCandidates}）。不在候选里的 id，模型引用不了 ——
+     * 工具的 {@code x-candidateSet} 声明会把它们拦在调用之前。
+     *
+     * <p>一个附件不可用**不会**让这一轮失败：它被丢弃并记一条 warn，那句话照常回答 ——
+     * 用户说的是话，图是附加物，因为附加物坏掉就整轮不答等于连那句话一起丢了。
+     */
+    public AssistantTurnResult respond(UUID userId, UUID conversationId,
+                                       List<AssistantMessage> providedHistory, String text,
+                                       List<UUID> attachmentAssetIds, AssistantTurnSink sink) {
         if (userId == null) {
             // 与 InProcessToolAdapter 同一原则：取不到身份是「拒绝」，不是「降级成匿名」。
             throw new SecurityException("Not authenticated");
         }
+        if (lifecycle != null) {
+            lifecycle.requireActive(userId, conversationId);
+        }
         List<AssistantConversationMessageEntity> persistedRows = conversationContext == null || conversationId == null
-                ? List.of() : conversationLog.recentRowsForPrompt(userId, conversationId, config.maxHistoryTurns());
+                // The log layer applies its hard page cap; semantic selection belongs to the token-budget owner.
+                ? List.of() : conversationLog.recentRowsForPrompt(userId, conversationId, Integer.MAX_VALUE);
         List<AssistantMessage> sourceHistory = conversationContext == null
                 ? authoritativeHistory(userId, conversationId, providedHistory)
                 : persistedRows.isEmpty()
@@ -213,7 +260,7 @@ public class AssistantConversationService {
                 ? List.of()
                 : persistedRows.subList(Math.max(0, persistedRows.size() - normalised.history().size()), persistedRows.size());
         TurnExecution execution = runTurn(userId, conversationId, effectiveRows,
-                normalised.history(), normalised.text(), sink);
+                normalised.history(), normalised.text(), attachmentAssetIds, sink);
         // 裁剪是 guard 做的，但 guard 不认识响应体；把「丢了」这件事带上响应是这里的活 ——
         // 只有这里同时握着「选中的那份历史」与「裁剪结果」，也才说得清那个数字算的是谁。
         AssistantTurnResult decorated = execution.result().withTrimmedHistory(normalised.droppedHistoryMessages());
@@ -238,11 +285,43 @@ public class AssistantConversationService {
     private TurnExecution runTurn(UUID userId, UUID conversationId,
                                         List<AssistantConversationMessageEntity> persistedRows,
                                         List<AssistantMessage> history, String text,
-                                        AssistantTurnSink sink) {
+                                        List<UUID> attachmentAssetIds, AssistantTurnSink sink) {
         AssistantContext context = contextBuilder.build();
         if (contactWindows != null) {
             ContactCandidates restored = contactWindows.restore(userId, conversationId);
             if (restored != null) context = context.withCandidateSet(restored);
+        }
+        /*
+         * 附件候选**每轮重建**，刻意不做任何记忆。
+         *
+         * 「这一轮带了哪张图」是请求体上的事实，不是会话状态 —— 前端每轮都重发同一批 id，
+         * 直到用户自己点掉。所以这里不像 contactWindows 那样从服务端恢复：
+         * 恢复反而会造出「用户已经移除了附件、服务端还记得」这种对不上的状态。
+         */
+        if (mediaProvider != null && attachmentAssetIds != null && !attachmentAssetIds.isEmpty()) {
+            context = context.withCandidateSet(mediaProvider.candidatesFor(userId, attachmentAssetIds));
+        }
+        /*
+         * 用户这一轮原话里写下的图片地址（第八组候选）。
+         *
+         * 与附件那段同一套理由：它是**用户这条消息里的事实**，不是会话状态 ——
+         * 所以每轮从原话重新抽一遍，不做任何记忆。抽不到时这一组压根不进 context，
+         * 于是「没有这组候选」与「这组候选是空的」在解析器那里指向同一个结果：引用不了任何地址
+         * （见 AssistantContext#candidateSet：「未知集合不给放行」）。
+         *
+         * 为什么地址要收紧成候选、而不是给工具一个自由的 imageUrl 参数：
+         * 上传由服务端主动去下载那个地址，模型若能给任意地址，它就能指向任意位置
+         * （见 TemplateMediaLinkCandidates 的类注释）。
+         */
+        if (mediaProvider != null) {
+            TemplateMediaLinkCandidates links = mediaProvider.linksIn(text);
+            // 显式处理 null，与 accountTarget 里那条候选兜底同一个理由：
+            // provider 的契约是「永远给一个集合（可能是空的）」，而这里要读它的 items()。
+            // 真出现 null 时，正确的后果是「这一轮没有链接候选、那句话照常回答」，
+            // 而不是让一次候选故障以 NPE 的形式变成整轮 500。
+            if (links != null && !links.items().isEmpty()) {
+                context = context.withCandidateSet(links);
+            }
         }
         AssistantConversationContextService.PreparedContext prepared;
         try {
@@ -321,7 +400,8 @@ public class AssistantConversationService {
                 log.info("assistant read round ok: tool={}", call.tool());
                 if (toolResult.candidates() != null) {
                     // 只读结果替换候选集：这是「只读检索突破候选集边界」的落点，下一轮才引用得到。
-                    context = context.withCandidateSet(toolResult.candidates());
+                    // 素材那一组是唯一例外（合并而非替换），理由见 mergeMediaCandidates。
+                    context = context.withCandidateSet(mergeMediaCandidates(context, toolResult.candidates()));
                     if (contactWindows != null && toolResult.candidates() instanceof ContactCandidates found) {
                         contactWindows.remember(userId, conversationId, found);
                     }
@@ -342,6 +422,32 @@ public class AssistantConversationService {
                                  AssistantConversationContextService.PreparedContext context) {}
 
     /**
+     * 工具回灌的候选如何进 context：素材那组合并，其余原样替换。
+     *
+     * <h2>为什么只有素材这一组要例外</h2>
+     * 素材候选在同一轮里有<b>两个互不相干的来源</b>：用户贴的那张图（请求体里的附件）、
+     * 以及工具刚从库里翻出来的那一批（{@code chatapp.template_media_list}）。
+     * 「替换」语义会让前一张在模型手上突然失效，而它不会得到「引用已失效」，
+     * 只会得到「这个 id 不在候选里」—— 于是把一句它自己也无法解释的话转述给用户。
+     * 合并保住的正是这条链。
+     *
+     * <h2>为什么不去改那个通用方法</h2>
+     * {@link AssistantContext#withCandidateSet} 的「替换」对其余各组是<b>对的</b>：
+     * 追加会让候选随轮次无限增长，把「有界」这条前提悄悄破坏掉（那个方法的注释写的就是这件事）。
+     * 所以例外只做在本域、只做在素材这一组，而且例外本身也有上界
+     * （合并后的容量是两条来源之和，见 {@link TemplateMediaCandidates#mergedWith}）。
+     */
+    private static CandidateSet mergeMediaCandidates(AssistantContext context, CandidateSet incoming) {
+        if (!TemplateMediaCandidates.NAME.equals(incoming.name())) {
+            return incoming;
+        }
+        CandidateSet existing = context.candidateSet(TemplateMediaCandidates.NAME);
+        return existing instanceof TemplateMediaCandidates current && incoming instanceof TemplateMediaCandidates fresh
+                ? current.mergedWith(fresh)
+                : incoming;
+    }
+
+    /**
      * 只读额度用尽。<b>不再问模型</b>，直接给一个诚实的「未完成」终态。
      *
      * <p>为什么不「再问一轮让它自己收尾」：那正是本轮改造要避免的东西 —— 模型在被强制收尾时
@@ -352,10 +458,15 @@ public class AssistantConversationService {
                                           AssistantModelClient.ModelReply reply, int latencyMs, int round) {
         audit.record(new AssistantAuditService.Entry(userId, conversationId, text, "call", call.tool(),
                 call.arguments(), "READ", "REJECTED", READ_TURNS_EXHAUSTED, reply.model(), latencyMs, round));
+        // 2026-09-28：这句话是「额度」说法的另一条传播途径 —— 它会被写进会话历史、
+        // 下一次请求原样回放给模型，而模型照抄自己的措辞。所以这里刻意：
+        //   ①把「这次」的主语写清楚是「这一条消息」，并显式给出「下一条重新计满」；
+        //   ②不出现「额度」二字（那是内部机制的名字，与提示词硬规则 12 同一口径）。
         String message = config.maxReadTurns() <= 0
                 ? "只读检索当前是关闭的，所以这次我没能完成。你可以直接告诉我想要的结果。"
                 : "我没能在限定的 " + config.maxReadTurns() + " 步只读检索内查清楚，所以这次没能完成。"
-                        + "可以把问题缩小一些，或者直接告诉我你想要的结果。";
+                        + "你可以把问题缩小一些再发一条消息（每一条消息的检索步骤都是重新计满的），"
+                        + "或者直接告诉我你想要的结果。";
         return AssistantTurnResult.error(READ_TURNS_EXHAUSTED, message);
     }
 
@@ -419,6 +530,9 @@ public class AssistantConversationService {
                                        AssistantTurnResult result) {
         conversationLog.appendUser(userId, conversationId, text);
         conversationLog.appendAssistant(userId, conversationId, result.kind(), result.message());
+        if (lifecycle != null) {
+            lifecycle.touch(userId, conversationId);
+        }
         return result;
     }
 

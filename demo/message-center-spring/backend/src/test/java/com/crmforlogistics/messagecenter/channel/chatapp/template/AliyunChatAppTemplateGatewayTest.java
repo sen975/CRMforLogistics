@@ -392,6 +392,30 @@ class AliyunChatAppTemplateGatewayTest {
                 });
     }
 
+    /**
+     * CAMS 的 {@code ERR-COMMON-001} 原样抛出去是一串英文加 UUID（用户 2026-09-29 报障时看到的就是它）。
+     * 翻译成能行动的中文，但<b>请求 ID 必须留下</b>：那是唯一能拿去阿里云工单里定位的东西。
+     */
+    @Test
+    void reportsCamsSystemErrorsInActionableChineseWhileKeepingTheRequestId() {
+        PopClientException provider = new PopClientException(
+                "(Code: ERR-COMMON-001 Message: code: 400, System error. request id: "
+                        + "01A0EC0C-F7A2-32B8-85D8-4BFC296C3CBB Request ID: "
+                        + "01A0EC0C-F7A2-32B8-85D8-4BFC296C3CBB Description: null)");
+        provider.setErrCode("ERR-COMMON-001");
+        provider.setRequestId("01A0EC0C-F7A2-32B8-85D8-4BFC296C3CBB");
+        when(client.modifyChatappTemplateProperties(any())).thenReturn(CompletableFuture.failedFuture(provider));
+
+        assertThatThrownBy(() -> gateway.setSendPermission(SOURCE, "tpl-1", "en_US", false))
+                .isInstanceOf(WhatsAppTemplateException.class).satisfies(error -> {
+                    var e = (WhatsAppTemplateException) error;
+                    assertThat(e.code()).isEqualTo("TEMPLATE_PROVIDER_ERROR");
+                    assertThat(e.providerRequestId()).isEqualTo("01A0EC0C-F7A2-32B8-85D8-4BFC296C3CBB");
+                    assertThat(e.getMessage()).contains("CAMS 返回系统异常（ERR-COMMON-001）");
+                    assertThat(e.getMessage()).doesNotStartWith("setSendPermission failed:");
+                });
+    }
+
     @Test
     void reportsATakenNameAsADefinitiveConflictRatherThanAnUnknownOutcome() {
         PopClientException provider = new PopClientException(

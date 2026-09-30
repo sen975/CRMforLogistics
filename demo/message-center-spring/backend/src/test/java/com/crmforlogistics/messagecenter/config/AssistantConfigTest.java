@@ -40,6 +40,8 @@ class AssistantConfigTest {
             assertThat(config.maxMessageChars()).isEqualTo(2000);
             assertThat(config.maxHistoryTurns()).isEqualTo(8);
             assertThat(config.maxHistoryChars()).isEqualTo(8000);
+            assertThat(config.recentMemoryTokenBudget()).isEqualTo(8192);
+            assertThat(config.summaryMemoryTokenBudget()).isEqualTo(2048);
             assertThat(config.pendingTtlSeconds()).isEqualTo(600);
             assertThat(config.maxReadTurns()).as("默认 3：够一次检索加一次追问，又不至于让单轮成本失控")
                     .isEqualTo(3);
@@ -57,6 +59,8 @@ class AssistantConfigTest {
                         "assistant.max-message-chars=500",
                         "assistant.max-history-turns=4",
                         "assistant.max-history-chars=2000",
+                        "assistant.recent-memory-token-budget=12000",
+                        "assistant.summary-memory-token-budget=3000",
                         "assistant.pending-ttl-seconds=300")
                 .run(application -> {
                     AssistantConfig config = application.getBean(AssistantConfig.class);
@@ -65,6 +69,8 @@ class AssistantConfigTest {
                     assertThat(config.baseUrl()).isEqualTo("https://api.deepseek.com");
                     assertThat(config.model()).isEqualTo("deepseek-chat");
                     assertThat(config.timeoutSeconds()).isEqualTo(15);
+                    assertThat(config.recentMemoryTokenBudget()).isEqualTo(12000);
+                    assertThat(config.summaryMemoryTokenBudget()).isEqualTo(3000);
                     assertThat(config.pendingTtlSeconds()).isEqualTo(300);
                 });
     }
@@ -81,6 +87,14 @@ class AssistantConfigTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxHistoryTurns");
         assertThatThrownBy(() -> config(30, 2000, 8, 100_001, 600))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxHistoryChars");
+        assertThatThrownBy(() -> configWithBudgets(1023, 2048))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("recentMemoryTokenBudget");
+        assertThatThrownBy(() -> configWithBudgets(16_385, 2048))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("recentMemoryTokenBudget");
+        assertThatThrownBy(() -> configWithBudgets(8192, 255))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("summaryMemoryTokenBudget");
+        assertThatThrownBy(() -> configWithBudgets(8192, 8193))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("summaryMemoryTokenBudget");
         assertThatThrownBy(() -> config(30, 2000, 8, 8000, 86401))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("pendingTtlSeconds");
     }
@@ -123,5 +137,10 @@ class AssistantConfigTest {
 
     private static AssistantConfig configWithReadTurns(int maxReadTurns) {
         return new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 2000, 8, 8000, 600, maxReadTurns);
+    }
+
+    private static AssistantConfig configWithBudgets(int recent, int summary) {
+        return new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 2000, 8, 8000,
+                600, 3, recent, summary);
     }
 }

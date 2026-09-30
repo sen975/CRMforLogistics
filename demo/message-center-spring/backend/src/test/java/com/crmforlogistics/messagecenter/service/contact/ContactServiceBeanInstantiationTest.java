@@ -1,5 +1,6 @@
 package com.crmforlogistics.messagecenter.service.contact;
 
+import com.crmforlogistics.messagecenter.mapper.ChannelAccountMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactIdentityMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactMapper;
 import com.crmforlogistics.messagecenter.mapper.ContactTagMapper;
@@ -34,6 +35,7 @@ class ContactServiceBeanInstantiationTest {
         factory.registerSingleton("contactTagMapper", mock(ContactTagMapper.class));
         factory.registerSingleton("contactMemoryQueryService", mock(ContactMemoryQueryService.class));
         factory.registerSingleton("contactTagMatchResolver", new ContactTagMatchResolver(mock(ContactTagMapper.class)));
+        factory.registerSingleton("channelAccountMapper", mock(ChannelAccountMapper.class));
         factory.registerBeanDefinition("contactService", new RootBeanDefinition(ContactService.class));
 
         ContactService service = factory.getBean(ContactService.class);

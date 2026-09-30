@@ -36,7 +36,7 @@ class AssistantRequestGuardTest {
     }
 
     @Test
-    void historyKeepsTheMostRecentTurnsFirst() {
+    void historyKeepsAllMessagesThatFitTheTokenBudget() {
         List<AssistantMessage> history = List.of(
                 AssistantMessage.user("第一轮"),
                 AssistantMessage.assistant("第二轮"),
@@ -45,13 +45,13 @@ class AssistantRequestGuardTest {
 
         List<AssistantMessage> kept = guard.normalise(history, "现在这句").history();
 
-        assertThat(kept).hasSize(3);
+        assertThat(kept).hasSize(4);
         assertThat(kept).extracting(AssistantMessage::text)
-                .containsExactly("第二轮", "第三轮", "第四轮");
+                .containsExactly("第一轮", "第二轮", "第三轮", "第四轮");
     }
 
     @Test
-    void historyIsAlsoBoundedByCharacters() {
+    void historyCharacterLimitDoesNotDefineTheSemanticWindow() {
         AssistantRequestGuard narrow = new AssistantRequestGuard(
                 new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 600, 3));
 
@@ -59,8 +59,8 @@ class AssistantRequestGuardTest {
                 AssistantMessage.user("12345678"),
                 AssistantMessage.assistant("abcdefgh")), "现在这句").history();
 
-        assertThat(kept).hasSize(1);
-        assertThat(kept.get(0).text()).isEqualTo("abcdefgh");
+        assertThat(kept).extracting(AssistantMessage::text)
+                .containsExactly("12345678", "abcdefgh");
     }
 
     @Test
@@ -100,8 +100,8 @@ class AssistantRequestGuardTest {
 
         AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(history, "现在这句");
 
-        assertThat(normalised.history()).hasSize(3);
-        assertThat(normalised.droppedHistoryMessages()).isEqualTo(1);
+        assertThat(normalised.history()).hasSize(4);
+        assertThat(normalised.droppedHistoryMessages()).isZero();
     }
 
     @Test
@@ -129,9 +129,9 @@ class AssistantRequestGuardTest {
         assertThat(normalised.droppedHistoryMessages()).isZero();
     }
 
-    /** 字符预算也会导致丢弃，那条路径同样要计数（两条 break 是分开写的，容易只改一处）。 */
+    /** 旧字符预算不再决定语义窗口；两条短消息均在 token 预算内。 */
     @Test
-    void aHistoryDroppedByTheCharacterBudgetIsAlsoCounted() {
+    void aHistoryWithinTokenBudgetIsNotDroppedByCharacterLimit() {
         AssistantRequestGuard narrow = new AssistantRequestGuard(
                 new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 600, 3));
 
@@ -139,7 +139,36 @@ class AssistantRequestGuardTest {
                 AssistantMessage.user("12345678"),
                 AssistantMessage.assistant("abcdefgh")), "现在这句");
 
-        assertThat(normalised.history()).hasSize(1);
-        assertThat(normalised.droppedHistoryMessages()).isEqualTo(1);
+        assertThat(normalised.history()).hasSize(2);
+        assertThat(normalised.droppedHistoryMessages()).isZero();
+    }
+
+    @Test
+    void historyUsesTokenBudgetInsteadOfConfiguredCharacterBudget() {
+        AssistantRequestGuard narrowCharacters = new AssistantRequestGuard(
+                new AssistantConfig(false, "", "", "gpt-4o-mini", 30, 100, 8, 10, 600, 3));
+
+        AssistantRequestGuard.NormalisedRequest normalised = narrowCharacters.normalise(List.of(
+                AssistantMessage.user("中文消息一"),
+                AssistantMessage.assistant("中文消息二")), "现在这句");
+
+        assertThat(normalised.history()).extracting(AssistantMessage::text)
+                .containsExactly("中文消息一", "中文消息二");
+        assertThat(normalised.droppedHistoryMessages()).isZero();
+    }
+
+    @Test
+    void historyDoesNotUseTurnCountAsSemanticWindow() {
+        List<AssistantMessage> history = List.of(
+                AssistantMessage.user("一"), AssistantMessage.assistant("二"),
+                AssistantMessage.user("三"), AssistantMessage.assistant("四"),
+                AssistantMessage.user("五"), AssistantMessage.assistant("六"),
+                AssistantMessage.user("七"), AssistantMessage.assistant("八"),
+                AssistantMessage.user("九"));
+
+        AssistantRequestGuard.NormalisedRequest normalised = guard.normalise(history, "现在这句");
+
+        assertThat(normalised.history()).hasSize(9);
+        assertThat(normalised.droppedHistoryMessages()).isZero();
     }
 }
