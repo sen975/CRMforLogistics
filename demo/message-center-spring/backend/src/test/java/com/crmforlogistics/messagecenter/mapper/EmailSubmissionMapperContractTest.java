@@ -45,6 +45,7 @@ class EmailSubmissionMapperContractTest {
 
         assertThat(sql).contains("#{status}='SMTP_SENT' and status='PENDING'")
                 .contains("#{status}='SENT' and status='SMTP_SENT'")
+                .contains("#{status}='FAILED' and status='PENDING'")
                 .contains("#{status}='UNKNOWN' and status in ('PENDING','SMTP_SENT')");
     }
 

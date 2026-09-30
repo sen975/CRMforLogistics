@@ -4,6 +4,8 @@ import com.crmforlogistics.messagecenter.entity.AttachmentEntity;
 import com.crmforlogistics.messagecenter.infrastructure.MinioStorage;
 import com.crmforlogistics.messagecenter.mapper.AttachmentMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -67,5 +69,25 @@ class EmailAttachmentStoreTest {
                 existing.getId().equals(entity.getId()) && "renamed.png".equals(entity.getOriginalName())));
         verify(storage).store(argThat(key -> key.startsWith("email/" + messageId + "/")),
                 org.mockito.ArgumentMatchers.eq(new byte[]{2}), org.mockito.ArgumentMatchers.eq("image/png"));
+    }
+
+    @Test
+    void removesUploadedObjectsIfAttachmentMetadataTransactionRollsBackAfterStoreReturns() throws Exception {
+        MinioStorage storage = mock(MinioStorage.class);
+        AttachmentMapper mapper = mock(AttachmentMapper.class);
+        UUID messageId = UUID.randomUUID();
+        EmailAttachmentPayload payload = new EmailAttachmentPayload(
+                "file.txt", "text/plain", "document", new byte[]{1}, "sha");
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            new EmailAttachmentStore(storage, mapper).store(messageId, List.of(payload), true);
+            for (TransactionSynchronization synchronization :
+                    TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(storage).remove(argThat(key -> key.startsWith("email/" + messageId + "/")));
     }
 }

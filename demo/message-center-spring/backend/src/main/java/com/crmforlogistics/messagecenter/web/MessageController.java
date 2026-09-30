@@ -56,10 +56,7 @@ public class MessageController {
             String to = (String) body.get("to");
             String subject = (String) body.getOrDefault("subject", "");
             String text = (String) body.getOrDefault("body", "");
-            var ownerId = currentUserIdOrNull();
-            EmailSendService.SendResult result = ownerId == null
-                    ? emailSendService.send(to, subject, text)
-                    : emailSendService.send(ownerId, to, subject, text);
+            EmailSendService.SendResult result = emailSendService.send(requireEmailOwner(), to, subject, text);
             return ResponseEntity.ok(result);
         } catch (EmailException exception) {
             throw exception;
@@ -81,15 +78,14 @@ public class MessageController {
                                 file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename(),
                                 file.getContentType(), file.getSize(), file::getInputStream))
                         .toList();
-        var ownerId = currentUserIdOrNull();
-        return ResponseEntity.ok(ownerId == null
-                ? emailSendService.send(to, subject, body, inputs)
-                : emailSendService.send(ownerId, to, subject, body, inputs));
+        return ResponseEntity.ok(emailSendService.send(requireEmailOwner(), to, subject, body, inputs));
     }
 
-    private UUID currentUserIdOrNull() {
+    private UUID requireEmailOwner() {
         var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) return null;
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
+        }
         return SecurityUtil.currentUserId();
     }
 

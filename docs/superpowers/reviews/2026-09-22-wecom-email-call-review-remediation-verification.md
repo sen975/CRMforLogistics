@@ -33,6 +33,14 @@
 - V96 增加 NOT NULL lease 字段；部署前停止旧版本邮件发送实例，再由新版本执行迁移并启动，避免旧实例以不含 lease token 的 SQL 写入。
 - SMTP/IMAP、MinIO、FunASR 网络与凭据仍需部署环境验收；SMTP 本身不提供远端 exactly-once 语义，UNKNOWN 不会自动重发。
 
+## 2026-09-28 续验：已有联系人邮箱发送边界
+
+- 专项命令：`mvn -q -f /private/tmp/email-recipient-verification.fHqNbL/pom.xml -Dtest=EmailRecipientBoundaryTest,EmailRecipientDatabaseTest,EmailSendHttpBoundaryTest,AuthControllerSecurityTest,EmailSendServiceTest,EmailControllerTest,EmailAttachmentStoreTest,EmailOwnerIsolationTest,EmailSubmissionMapperContractTest,EmailSubmissionMapperSqlTest,MessageSendAssistantToolsTest,OutboundMessageServiceTest test`，沙箱外访问 Docker 后退出码 0；12 个测试类合计 102 tests、0 failures、0 errors、0 skipped。沙箱内同命令因 Docker socket `Operation not permitted` 失败，不计为测试断言失败。`mvn -q -f /private/tmp/email-recipient-verification.fHqNbL/pom.xml -Dmaven.test.skip=true compile` 退出码 0；`git diff --check` 退出码 0。
+- 使用取消原仓库源码与测试过滤的临时 Maven 配置 `/private/tmp/email-recipient-verification.fHqNbL/pom.xml`，从 `demo/message-center-spring/backend` 执行 `mvn -q -f /private/tmp/email-recipient-verification.fHqNbL/pom.xml clean test`。真实 PostgreSQL 的 `EmailRecipientDatabaseTest` 3/3，覆盖 owner/账号/渠道/孤立与删除、合并身份筛选；已有联系人成功发送时，SMTP 回调内从已提交数据库读到 `PENDING` submission、`pending` 消息正文、主题、相同 Message-ID、未读标志为 false，回调后核对 `SENT`/`sent` 且身份总数不变。SMTP 在测试中为计数回调，不是提供商侧投递。
+- `EmailRecipientBoundaryTest` 8/8、`EmailSendHttpBoundaryTest` 12/12、`AuthControllerSecurityTest` 11/11、`EmailSendServiceTest` 17/17，均无失败或跳过。拒绝路径覆盖未知、他人、孤立、其他账号、非 email 身份、无认证上下文及多/组收件地址；数据库拒绝路径确认 submission、conversation、message、attachment 和 SMTP 零新增/调用，附件输入不读取。HTTP JSON/multipart 与 AI 均通过同一发送服务；安全过滤链对三个发送 POST 路由的无认证请求返回 `AUTHENTICATION_REQUIRED`。
+- 同一次独占全量运行共 2195 tests、3 failures、1 error、2 skipped，退出码 1，**未通过**。失败项为 `AssistantPendingActionServiceTest.aVanishedTargetIsRefusedByTheActionItselfNotByTheCandidateWindow`（错误码期望不符）、`MessageSendApplicationServiceTest.duplicateClientRequestCreatesOnePendingMessageAndOutbox`（断言失败）、`ContactMemoryEndToEndTest.lateInboundMessageBehindSuccessCursorIsStillSentToTheModel`（模型调用缺失）；错误项为 `ContactServiceBeanInstantiationTest.beanFactoryUsesTheAutowiredConstructorWhenOptionalTagMapperIsPresent`（测试 Bean 缺 `ChannelAccountMapper`）。这些不在本轮邮件链路，保持原状，不能据此声称全量通过。
+- 尚未以真实 SMTP 提供商及 MinIO 验证发送和附件链路；需在具备授权凭据的部署环境，用当前用户已有联系人绑定邮箱完成可控发送，核对提交/消息/附件、提供商投递结果和界面状态。原有先落库后发送 WIP 与本轮变更重叠，未整体暂存或回滚。
+
 ## 剩余风险
 
 - 未对真实 WeCom 企业回调做生产签名/加密样本回放；需使用正式脱敏 payload 或测试企业验证 provider 字段差异。

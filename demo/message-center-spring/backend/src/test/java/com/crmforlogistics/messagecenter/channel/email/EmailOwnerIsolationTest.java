@@ -107,11 +107,14 @@ class EmailOwnerIsolationTest {
         ChannelAccountEntity account = account(accountId, ownerId, "owner@example.test", "{}");
         ContactIdentityEntity identity = new ContactIdentityEntity();
         identity.setId(UUID.randomUUID());
+        identity.setContactId(UUID.randomUUID());
         ConversationEntity conversation = new ConversationEntity();
         conversation.setId(UUID.randomUUID());
         when(channelAccountMapper.findByIdAndOwner(accountId, ownerId)).thenReturn(account);
-        when(contactIdentityMapper.selectList(any())).thenReturn(List.of(identity));
+        when(contactIdentityMapper.findSendableEmailRecipient(accountId, "customer@example.test"))
+                .thenReturn(java.util.Optional.of(identity));
         when(conversationMapper.selectList(any())).thenReturn(List.of(conversation));
+        when(messageMapper.insertWithSequence(any())).thenReturn(1);
 
         EmailSendService service = sendService();
         service.persistOutbound(ownerId, accountId, "customer@example.test", "subject", "body", "<m@example.test>");

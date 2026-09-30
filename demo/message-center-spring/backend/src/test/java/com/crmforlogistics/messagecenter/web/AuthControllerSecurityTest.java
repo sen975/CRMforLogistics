@@ -5,6 +5,8 @@ import com.crmforlogistics.messagecenter.config.CorsConfig;
 import com.crmforlogistics.messagecenter.service.auth.AuthSessionService;
 import com.crmforlogistics.messagecenter.service.account.AccountService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -28,6 +30,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -139,6 +142,18 @@ class AuthControllerSecurityTest {
     void logoutWithoutBearerSessionIsUnauthorized() throws Exception {
         mvc.perform(post("/api/auth/logout"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/api/email/send", "/api/send/email", "/api/v1/email/messages"})
+    void anonymousEmailSendReturnsAuthenticationRequiredAtSecurityBoundary(String route) throws Exception {
+        mvc.perform(post(route).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"to\":\"person@example.test\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
+        mvc.perform(multipart(route).file("file", new byte[]{1}).param("to", "person@example.test"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));
     }
 
     @Test

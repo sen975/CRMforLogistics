@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -51,14 +53,29 @@ public class EmailAttachmentStore {
                 saved.add(entity);
             }
             if (ready && !saved.isEmpty()) mapper.markReadyByMessageId(messageId, Instant.now());
+            if (!keys.isEmpty() && TransactionSynchronizationManager.isSynchronizationActive()) {
+                List<String> uploadedKeys = List.copyOf(keys);
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        if (status == STATUS_ROLLED_BACK) {
+                            removeUploadedObjects(messageId, uploadedKeys);
+                        }
+                    }
+                });
+            }
             return List.copyOf(saved);
         } catch (Exception ex) {
-            for (int i = keys.size() - 1; i >= 0; i--) {
-                try { storage.remove(keys.get(i)); } catch (Exception compensation) {
-                    log.warn("Attachment compensation failed messageId={} stage=store", messageId);
-                }
-            }
+            removeUploadedObjects(messageId, keys);
             throw ex;
+        }
+    }
+
+    private void removeUploadedObjects(UUID messageId, List<String> keys) {
+        for (int i = keys.size() - 1; i >= 0; i--) {
+            try { storage.remove(keys.get(i)); } catch (Exception compensation) {
+                log.warn("Attachment compensation failed messageId={} stage=store", messageId);
+            }
         }
     }
 

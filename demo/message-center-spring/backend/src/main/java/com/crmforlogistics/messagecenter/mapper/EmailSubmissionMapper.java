@@ -24,6 +24,7 @@ public interface EmailSubmissionMapper {
             "where id=#{id}::uuid and lease_token=#{leaseToken}::uuid and lease_expires_at > now() and " +
             "((#{status}='SMTP_SENT' and status='PENDING') or " +
             "(#{status}='SENT' and status='SMTP_SENT') or " +
+            "(#{status}='FAILED' and status='PENDING') or " +
             "(#{status}='UNKNOWN' and status in ('PENDING','SMTP_SENT'))) ")
     int update(EmailSubmissionEntity entity);
 

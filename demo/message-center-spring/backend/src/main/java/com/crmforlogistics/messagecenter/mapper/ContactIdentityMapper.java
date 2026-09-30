@@ -17,6 +17,39 @@ import java.util.UUID;
 @Mapper
 public interface ContactIdentityMapper extends BaseMapper<ContactIdentityEntity> {
 
+    /**
+     * 找一个可复用的邮件收件身份。<b>刻意不校验归属</b>。
+     *
+     * <p>发送侧的契约是「只要有一个邮箱地址就能发」，所以这里只回答「这个地址在库里
+     * 有没有可以挂会话的身份」。匹配不到时由调用方新建一条孤立身份，而不是拒绝发送。
+     *
+     * <p>不看 {@code contacts.owner_user_id}，也不看 {@code created_by}：前者是本项目
+     * <b>从未接线</b>的字段（全项目 0 处 {@code contact.setOwnerUserId(...)}，实测 53 行里
+     * 41 行为 NULL），后者是「谁建的」而不是「谁能发」。用它们过滤会让任何收件人都发不出去。
+     *
+     * <p>scope 命中三种形态：本邮箱账号 id（新口径）、{@code 'email'}（历史口径，
+     * 老版本 {@code EmailSyncService} 硬编码）、{@code 'global'}（建表默认值）。
+     * 指向<b>其他</b>邮箱账号的身份不命中 —— 免得复用别人的往来身份，这种情况会退化成
+     * 新建一条属于当前账号的孤立身份。
+     */
+    @Select("""
+            select ci.* from contact_identities ci
+            left join contacts c on c.id = ci.contact_id
+            where ci.channel_type = 'email'
+              and ci.normalized_value = #{normalizedEmail}
+              and ci.deleted_at is null
+              and (ci.identity_scope = #{channelAccountId}::text
+                   or ci.identity_scope = 'email'
+                   or ci.identity_scope = 'global')
+              and (ci.contact_id is null
+                   or (c.deleted_at is null and c.status <> 'merged' and c.merged_to_id is null))
+            order by case when ci.identity_scope = #{channelAccountId}::text then 0 else 1 end,
+                     ci.created_at, ci.id
+            limit 1
+            """)
+    Optional<ContactIdentityEntity> findSendableEmailRecipient(@Param("channelAccountId") UUID channelAccountId,
+                                                              @Param("normalizedEmail") String normalizedEmail);
+
     @Insert("insert into contact_identities (id, contact_id, channel_type, identity_scope, " +
             "identity_value, normalized_value, display_name, is_primary, verify_status, source, " +
             "created_at, updated_at, version) values (#{id}::uuid, #{contactId}::uuid, #{channelType}, " +

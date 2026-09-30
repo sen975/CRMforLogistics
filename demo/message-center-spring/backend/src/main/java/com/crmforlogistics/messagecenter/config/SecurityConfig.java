@@ -34,8 +34,14 @@ public class SecurityConfig {
                     .authenticationEntryPoint((request, response, cause) -> {
                         response.setStatus(HttpStatus.UNAUTHORIZED.value());
                         response.setContentType("application/json");
+                        String path = request.getRequestURI().substring(request.getContextPath().length());
+                        boolean emailSend = "POST".equals(request.getMethod()) && switch (path) {
+                            case "/api/email/send", "/api/send/email", "/api/v1/email/messages" -> true;
+                            default -> false;
+                        };
                         objectMapper.writeValue(response.getOutputStream(), new ApiError(
-                                "UNAUTHORIZED", "AUTHENTICATION_REQUIRED", UUID.randomUUID().toString(), Map.of()));
+                                emailSend ? "AUTHENTICATION_REQUIRED" : "UNAUTHORIZED",
+                                "AUTHENTICATION_REQUIRED", UUID.randomUUID().toString(), Map.of()));
                     })
                     .accessDeniedHandler((request, response, cause) -> {
                         response.setStatus(HttpStatus.FORBIDDEN.value());

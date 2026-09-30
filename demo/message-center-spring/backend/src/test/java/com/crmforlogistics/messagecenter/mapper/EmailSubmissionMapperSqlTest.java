@@ -88,6 +88,19 @@ class EmailSubmissionMapperSqlTest {
     }
 
     @Test
+    void failedPreflightIsTerminalAndCannotBecomeSmtpSent() {
+        EmailSubmissionEntity unsent = createSubmission(owner);
+        assertThat(mapper.insert(unsent)).isEqualTo(1);
+        unsent.setStatus("FAILED");
+        assertThat(mapper.update(unsent)).isEqualTo(1);
+        assertThat(statusOf(unsent.getId())).isEqualTo("FAILED");
+
+        unsent.setStatus("SMTP_SENT");
+        assertThat(mapper.update(unsent)).isZero();
+        assertThat(mapper.markStaleSubmissionsUnknown(owner, 100)).isZero();
+    }
+
+    @Test
     void abandonedSubmissionsAreRecoveredPerOwnerAndInBoundedBatches() {
         EmailSubmissionEntity pending = createSubmission(owner);
         EmailSubmissionEntity secondPending = createSubmission(owner);

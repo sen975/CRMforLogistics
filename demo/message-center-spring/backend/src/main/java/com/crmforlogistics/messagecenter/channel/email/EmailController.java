@@ -37,9 +37,7 @@ public class EmailController {
             String to = body.get("to");
             String subject = body.getOrDefault("subject", "");
             String emailBody = body.getOrDefault("body", "");
-            EmailSendService.SendResult result = currentUserIdOrNull() == null
-                    ? sendService.send(to, subject, emailBody)
-                    : sendService.send(SecurityUtil.currentUserId(), to, subject, emailBody);
+            EmailSendService.SendResult result = sendService.send(requireEmailOwner(), to, subject, emailBody);
             return ResponseEntity.ok(result);
         } catch (EmailException exception) {
             throw exception;
@@ -59,10 +57,7 @@ public class EmailController {
                         file.getOriginalFilename() == null ? "attachment" : file.getOriginalFilename(),
                         file.getContentType(), file.getSize(), file::getInputStream))
                 .toList();
-        var ownerId = currentUserIdOrNull();
-        return ResponseEntity.ok(ownerId == null
-                ? sendService.send(to, subject, body, inputs)
-                : sendService.send(ownerId, to, subject, body, inputs));
+        return ResponseEntity.ok(sendService.send(requireEmailOwner(), to, subject, body, inputs));
     }
 
     @PostMapping("/sync")
@@ -82,9 +77,11 @@ public class EmailController {
         }
     }
 
-    private java.util.UUID currentUserIdOrNull() {
+    private java.util.UUID requireEmailOwner() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) return null;
+        if (auth == null || !auth.isAuthenticated() || "anonymousUser".equals(auth.getName())) {
+            throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
+        }
         return SecurityUtil.currentUserId();
     }
 

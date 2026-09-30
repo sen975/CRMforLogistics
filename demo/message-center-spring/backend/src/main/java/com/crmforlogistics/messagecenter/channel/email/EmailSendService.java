@@ -25,6 +25,8 @@ import jakarta.mail.internet.MimeMultipart;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLParameters;
@@ -38,6 +40,7 @@ import java.net.Socket;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +62,7 @@ public class EmailSendService {
     private final EmailSubmissionMapper submissionMapper;
     private final SmtpSender smtpSender;
     private final EmailSubmissionLeaseKeeper leaseKeeper;
+    private final TransactionTemplate transactionTemplate;
 
     @FunctionalInterface
     interface SmtpSender {
@@ -115,10 +119,11 @@ public class EmailSendService {
                             AiTopicActivityRecorder topicActivityRecorder,
                             CredentialCipher credentialCipher,
                             EmailSubmissionMapper submissionMapper,
-                            EmailSubmissionLeaseKeeper leaseKeeper) {
+                            EmailSubmissionLeaseKeeper leaseKeeper,
+                            PlatformTransactionManager transactionManager) {
         this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
                 attachmentStore, topicActivityRecorder, credentialCipher, submissionMapper,
-                EmailSendService::sendSmtp, leaseKeeper);
+                EmailSendService::sendSmtp, leaseKeeper, new TransactionTemplate(transactionManager));
     }
 
     EmailSendService(AppConfig config, MessageMapper messageMapper,
@@ -144,6 +149,22 @@ public class EmailSendService {
                      EmailSubmissionMapper submissionMapper,
                      SmtpSender smtpSender,
                      EmailSubmissionLeaseKeeper leaseKeeper) {
+        this(config, messageMapper, conversationMapper, channelAccountMapper, contactIdentityMapper,
+                attachmentStore, topicActivityRecorder, credentialCipher, submissionMapper,
+                smtpSender, leaseKeeper, null);
+    }
+
+    EmailSendService(AppConfig config, MessageMapper messageMapper,
+                     ConversationMapper conversationMapper,
+                     ChannelAccountMapper channelAccountMapper,
+                     ContactIdentityMapper contactIdentityMapper,
+                     EmailAttachmentStore attachmentStore,
+                     AiTopicActivityRecorder topicActivityRecorder,
+                     CredentialCipher credentialCipher,
+                     EmailSubmissionMapper submissionMapper,
+                     SmtpSender smtpSender,
+                     EmailSubmissionLeaseKeeper leaseKeeper,
+                     TransactionTemplate transactionTemplate) {
         this.config = config;
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
@@ -158,6 +179,7 @@ public class EmailSendService {
         this.submissionMapper = submissionMapper;
         this.smtpSender = smtpSender;
         this.leaseKeeper = leaseKeeper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     public EmailSendService(AppConfig config, MessageMapper messageMapper,
@@ -187,11 +209,11 @@ public class EmailSendService {
     }
 
     public SendResult send(String to, String subject, String body) throws Exception {
-        return sendInternal(null, null, Map.of(), to, subject, body, List.of());
+        throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
     }
 
     public SendResult send(String to, String subject, String body, List<EmailAttachmentInput> attachmentInputs) throws Exception {
-        return sendInternal(null, null, Map.of(), to, subject, body, attachmentInputs);
+        throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
     }
 
     public SendResult send(UUID ownerId, String to, String subject, String body) throws Exception {
@@ -201,11 +223,13 @@ public class EmailSendService {
     public SendResult send(UUID ownerId, String to, String subject, String body,
                            List<EmailAttachmentInput> attachmentInputs) throws Exception {
         ChannelAccountEntity account = requireOwnedEmailAccount(ownerId);
+        String normalizedEmail = recipientEmail(to);
+        ContactIdentityEntity identity = resolveRecipient(account.getId(), normalizedEmail);
         Map<String, String> saved = decrypt(account);
-        return sendInternal(ownerId, account, saved, to, subject, body, attachmentInputs);
+        return sendInternal(ownerId, account, identity, saved, normalizedEmail, subject, body, attachmentInputs);
     }
 
-    private SendResult sendInternal(UUID ownerId, ChannelAccountEntity account,
+    private SendResult sendInternal(UUID ownerId, ChannelAccountEntity account, ContactIdentityEntity identity,
                                     Map<String, String> saved,
                                     String to, String subject, String body,
                                     List<EmailAttachmentInput> attachmentInputs) throws Exception {
@@ -225,7 +249,7 @@ public class EmailSendService {
         } catch (UnsupportedEncodingException ex) {
             throw new MessagingException("Failed to encode sender name", ex);
         }
-        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(cleanTo, false));
+        message.setRecipient(Message.RecipientType.TO, new InternetAddress(cleanTo));
         message.setSubject(subject == null ? "" : subject, "UTF-8");
         if (attachments.isEmpty()) {
             message.setText(body == null ? "" : body, "UTF-8");
@@ -245,7 +269,10 @@ public class EmailSendService {
         }
         message.saveChanges();
         message.setHeader("Message-ID", messageIdHeader(settings.from(), endpoint.serverName()));
-        EmailSubmissionEntity submission = beginSubmission(ownerId, account, cleanTo, subject);
+        String providerMessageId = message.getMessageID();
+        PreparedSend prepared = prepareOutbound(ownerId, account, identity, cleanTo, subject, body,
+                providerMessageId, attachments);
+        EmailSubmissionEntity submission = prepared.submission();
         EmailSubmissionLeaseKeeper.Registration leaseRegistration = submission == null || leaseKeeper == null
                 ? () -> { }
                 : leaseKeeper.track(submission.getId(), submission.getLeaseToken());
@@ -255,37 +282,103 @@ public class EmailSendService {
                 smtpSender.send(session, endpoint.connectHost(), settings.port(),
                         settings.user(), settings.password(), message);
             } catch (Exception e) {
-                markSubmissionUnknown(submission, message.getMessageID(), "SMTP submission result is unknown");
+                markSubmissionUnknown(submission, providerMessageId, "SMTP submission result is unknown");
+                markMessageUnknown(prepared.messageId());
                 throw new EmailException("EMAIL_SEND_OUTCOME_UNKNOWN",
                         "SMTP submission result is unknown; do not retry until delivery is checked", e);
             }
 
-            if (!updateSubmission(submission, message.getMessageID(), "SMTP_SENT", null)) {
-                markSubmissionUnknown(submission, message.getMessageID(), "SMTP succeeded but submission state could not be recorded");
-                return unknownResult(message.getMessageID());
+            if (!updateSubmission(submission, providerMessageId, "SMTP_SENT", null)) {
+                markSubmissionUnknown(submission, providerMessageId, "SMTP succeeded but submission state could not be recorded");
+                markMessageUnknown(prepared.messageId());
+                return unknownResult(providerMessageId);
             }
 
-            String messageId = message.getMessageID() == null ? "" : message.getMessageID();
-            UUID dbId = account == null
-                    ? persistOutbound(cleanTo, subject, body, messageId)
-                    : persistOutbound(ownerId, account.getId(), cleanTo, subject, body, messageId);
-            if (dbId == null) {
-                markSubmissionUnknown(submission, messageId, "SMTP succeeded but local message persistence failed");
-                return unknownResult(messageId);
-            }
             try {
-                if (attachmentStore != null && !attachments.isEmpty()) {
-                    attachmentStore.store(dbId, attachments, true);
+                if (messageMapper.updateDeliveryStatus(prepared.messageId(), providerMessageId,
+                        "sent", Instant.now()) != 1) {
+                    throw new IllegalStateException("Email message status update did not affect one row");
                 }
             } catch (Exception e) {
-                markSubmissionUnknown(submission, messageId, "SMTP succeeded but local attachment persistence failed");
-                return unknownResult(messageId);
+                log.error("event=email_message_sent_state_persist_failed messageId={}", prepared.messageId(), e);
+                markSubmissionUnknown(submission, providerMessageId, "SMTP succeeded but message state could not be recorded");
+                markMessageUnknown(prepared.messageId());
+                return unknownResult(providerMessageId);
             }
-            if (!updateSubmission(submission, messageId, "SENT", null)) {
-                markSubmissionUnknown(submission, messageId, "SMTP succeeded but final submission state could not be recorded");
-                return unknownResult(messageId);
+            if (!updateSubmission(submission, providerMessageId, "SENT", null)) {
+                markSubmissionUnknown(submission, providerMessageId, "SMTP succeeded but final submission state could not be recorded");
+                return unknownResult(providerMessageId);
             }
-            return new SendResult(dbId.toString(), settings.from(), cleanTo, subject, "sent");
+            return new SendResult(prepared.messageId().toString(), settings.from(), cleanTo, subject, "sent");
+        }
+    }
+
+    private record PreparedSend(UUID messageId, EmailSubmissionEntity submission) {}
+
+    private PreparedSend prepareOutbound(UUID ownerId, ChannelAccountEntity account, ContactIdentityEntity identity,
+                                         String to, String subject, String body, String providerMessageId,
+                                         List<EmailAttachmentPayload> attachments) {
+        PreparedSend prepared;
+        try {
+            prepared = transactionTemplate == null
+                    ? persistBeforeSend(ownerId, account, identity, to, subject, body, providerMessageId)
+                    : transactionTemplate.execute(status -> persistBeforeSend(
+                            ownerId, account, identity, to, subject, body, providerMessageId));
+            if (prepared == null) {
+                throw new IllegalStateException("Email persistence transaction returned no message");
+            }
+        } catch (Exception e) {
+            if (e instanceof EmailException emailException) throw emailException;
+            throw new EmailException("EMAIL_SUBMISSION_PERSIST_FAILED", "Unable to persist email before sending", e);
+        }
+        if (!attachments.isEmpty()) {
+            try {
+                if (attachmentStore == null) {
+                    throw new IllegalStateException("Email attachment store is unavailable");
+                }
+                attachmentStore.store(prepared.messageId(), attachments, true);
+            } catch (Exception e) {
+                markUnsentFailed(prepared, providerMessageId);
+                throw new EmailException("EMAIL_SUBMISSION_PERSIST_FAILED",
+                        "Unable to persist email attachments before sending", e);
+            }
+        }
+        return prepared;
+    }
+
+    private PreparedSend persistBeforeSend(UUID ownerId, ChannelAccountEntity account, ContactIdentityEntity identity,
+                                           String to, String subject, String body, String providerMessageId) {
+        EmailSubmissionEntity submission = beginSubmission(ownerId, account, to, subject);
+        UUID messageId = persistOutboundForAccount(account, identity, subject, body, providerMessageId);
+        if (messageId == null) {
+            throw new EmailException("EMAIL_SUBMISSION_PERSIST_FAILED", "Unable to persist email message before sending");
+        }
+        return new PreparedSend(messageId, submission);
+    }
+
+    private void markUnsentFailed(PreparedSend prepared, String providerMessageId) {
+        if (!updateSubmission(prepared.submission(), providerMessageId,
+                "FAILED", "Email attachment persistence failed before SMTP submission")) {
+            log.error("event=email_unsent_submission_state_persist_failed submissionId={}",
+                    prepared.submission() == null ? null : prepared.submission().getId());
+        }
+        try {
+            if (messageMapper.updateDeliveryStatus(prepared.messageId(), providerMessageId,
+                    "failed", Instant.now()) != 1) {
+                log.error("event=email_unsent_message_state_persist_failed messageId={}", prepared.messageId());
+            }
+        } catch (Exception e) {
+            log.error("event=email_unsent_message_state_persist_failed messageId={}", prepared.messageId(), e);
+        }
+    }
+
+    private void markMessageUnknown(UUID messageId) {
+        try {
+            if (messageMapper.markSubmissionUnknownIfUnresolved(messageId, Instant.now()) != 1) {
+                log.warn("event=email_message_unknown_state_not_applied messageId={}", messageId);
+            }
+        } catch (Exception e) {
+            log.error("event=email_message_unknown_state_persist_failed messageId={}", messageId, e);
         }
     }
 
@@ -346,35 +439,28 @@ public class EmailSendService {
     }
 
     UUID persistOutbound(String to, String subject, String body, String messageId) {
-        ChannelAccountEntity account = resolveEmailAccount();
-        // Legacy callers already resolved the account from the compatibility query;
-        // preserve that mocked/legacy path while owner-scoped callers re-validate ownership below.
-        return persistOutboundForAccount(account, to, subject, body, messageId);
+        throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
     }
 
     UUID persistOutbound(UUID ownerId, UUID accountId, String to, String subject,
                          String body, String messageId) {
-        try {
-            ChannelAccountEntity account = accountId == null ? null
-                    : ownerId == null
-                    ? channelAccountMapper.selectById(accountId)
-                    : channelAccountMapper.findByIdAndOwner(accountId, ownerId);
-            return persistOutboundForAccount(account, to, subject, body, messageId);
-        } catch (Exception e) {
-            log.error("Failed to persist outbound email to DB", e);
-            return null;
+        requireOwner(ownerId);
+        ChannelAccountEntity account = accountId == null ? null
+                : channelAccountMapper.findByIdAndOwner(accountId, ownerId);
+        if (account == null || !"email".equals(account.getChannelType())) {
+            throw new EmailException("CHANNEL_ACCOUNT_REQUIRED", "An owned email channel account is required");
         }
+        ContactIdentityEntity identity = resolveRecipient(accountId, recipientEmail(to));
+        return persistOutboundForAccount(account, identity, subject, body, messageId);
     }
 
-    private UUID persistOutboundForAccount(ChannelAccountEntity account, String to,
+    private UUID persistOutboundForAccount(ChannelAccountEntity account, ContactIdentityEntity identity,
                                             String subject, String body, String messageId) {
         try {
             if (account == null) {
                 log.warn("No email channel account found, skipping DB persist");
                 return null;
             }
-            ContactIdentityEntity identity = resolveOrCreateIdentity(to,
-                    account.getId().toString());
             ConversationEntity conversation = resolveOrCreateConversation(identity.getId(), account.getId());
             MessageEntity entity = new MessageEntity();
             entity.setId(UUID.randomUUID());
@@ -385,9 +471,14 @@ public class EmailSendService {
             entity.setSubject(subject);
             entity.setBodyText(body);
             entity.setOccurredAt(Instant.now());
-            entity.setCurrentStatus("sent");
-            messageMapper.insertWithSequence(entity);
-            if (topicActivityRecorder != null) {
+            entity.setProviderMessageId(messageId);
+            entity.setCountsAsUnread(false);
+            entity.setCurrentStatus("pending");
+            entity.setCurrentStatusAt(entity.getOccurredAt());
+            if (messageMapper.insertWithSequence(entity) != 1) {
+                throw new IllegalStateException("Email message insert did not affect one row");
+            }
+            if (topicActivityRecorder != null && identity.getContactId() != null) {
                 topicActivityRecorder.recordContact(identity.getContactId(), entity.getOccurredAt());
             }
             return entity.getId();
@@ -397,38 +488,54 @@ public class EmailSendService {
         }
     }
 
-    private ChannelAccountEntity resolveEmailAccount() {
-        List<ChannelAccountEntity> accounts = channelAccountMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ChannelAccountEntity>()
-                        .eq(ChannelAccountEntity::getChannelType, "email")
-                        .isNull(ChannelAccountEntity::getDeletedAt));
-        return accounts.isEmpty() ? null : accounts.get(0);
-    }
-
-    private ContactIdentityEntity resolveOrCreateIdentity(String email) {
-        return resolveOrCreateIdentity(email, "email");
-    }
-
-    private ContactIdentityEntity resolveOrCreateIdentity(String email, String identityScope) {
-        String normalized = ContactPointUtil.extractEmail(email);
-        List<ContactIdentityEntity> existing = contactIdentityMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ContactIdentityEntity>()
-                        .eq(ContactIdentityEntity::getChannelType, "email")
-                        .eq(ContactIdentityEntity::getIdentityScope, identityScope)
-                        .eq(ContactIdentityEntity::getIdentityValue, normalized));
-        if (!existing.isEmpty()) {
-            return existing.get(0);
+    /**
+     * 解析收件身份。<b>刻意不校验收件人归属</b>：发送侧的契约是「只要有一个邮箱地址就能发」。
+     *
+     * <p>先尽量复用已有身份，这样消息能挂到已存在的会话上；没有就新建一条<b>孤立身份</b>
+     * （{@code contact_id} 为空）。刻意<b>不</b>顺手创建联系人 —— 发一封信不该在通讯录里
+     * 凭空多出一个人。这个地址将来真被同步或手工加为联系人时，{@code EmailSyncService}
+     * 的既有认领逻辑（{@code linkToNewContact}）会把这条孤立身份挂上去，不会重复建档。
+     */
+    private ContactIdentityEntity resolveRecipient(UUID accountId, String normalizedEmail) {
+        ContactIdentityEntity existing = contactIdentityMapper
+                .findSendableEmailRecipient(accountId, normalizedEmail)
+                .orElse(null);
+        if (existing != null) {
+            return existing;
         }
-        ContactIdentityEntity identity = new ContactIdentityEntity();
-        identity.setId(UUID.randomUUID());
-        identity.setChannelType("email");
-        identity.setIdentityScope(identityScope);
-        identity.setIdentityValue(normalized);
-        identity.setDisplayName(ContactPointUtil.extractName(email, normalized));
-        identity.setCreatedAt(Instant.now());
-        identity.setUpdatedAt(Instant.now());
-        contactIdentityMapper.insert(identity);
-        return identity;
+        ContactIdentityEntity orphan = new ContactIdentityEntity();
+        orphan.setId(UUID.randomUUID());
+        orphan.setChannelType("email");
+        orphan.setIdentityScope(accountId.toString());
+        orphan.setIdentityValue(normalizedEmail);
+        orphan.setNormalizedValue(normalizedEmail);
+        orphan.setIsPrimary(false);
+        orphan.setVerifyStatus("unverified");
+        // source 有 CHECK 约束（manual/synced/imported），出站新建只能落在 manual。
+        orphan.setSource("manual");
+        orphan.setCreatedAt(Instant.now());
+        orphan.setUpdatedAt(Instant.now());
+        orphan.setVersion(1L);
+        // upsert：并发下另一个请求可能刚插过同一条，on conflict do nothing 之后重查即可。
+        contactIdentityMapper.insertIfAbsent(orphan);
+        return contactIdentityMapper
+                .findByNormalizedValueInScope("email", accountId.toString(), normalizedEmail)
+                .orElseThrow(() -> new EmailException("EMAIL_SUBMISSION_PERSIST_FAILED",
+                        "Unable to persist the email recipient identity"));
+    }
+
+    private static String recipientEmail(String to) {
+        try {
+            InternetAddress[] recipients = InternetAddress.parse(required(to, "to"), false);
+            if (recipients.length == 1 && !recipients[0].isGroup()) {
+                return recipients[0].getAddress().trim().toLowerCase(Locale.ROOT);
+            }
+        } catch (jakarta.mail.internet.AddressException | IllegalArgumentException e) {
+            throw new EmailException("EMAIL_RECIPIENT_NOT_FOUND",
+                    "Email recipient must be a single valid mailbox address", e);
+        }
+        throw new EmailException("EMAIL_RECIPIENT_NOT_FOUND",
+                "Email recipient must be a single mailbox address (recipient lists and groups are not supported)");
     }
 
     private ConversationEntity resolveOrCreateConversation(UUID identityId, UUID accountId) {
@@ -445,7 +552,9 @@ public class EmailSendService {
         conversation.setChannelAccountId(accountId);
         conversation.setCreatedAt(Instant.now());
         conversation.setUpdatedAt(Instant.now());
-        conversationMapper.insert(conversation);
+        if (conversationMapper.insert(conversation) != 1) {
+            throw new IllegalStateException("Email conversation insert did not affect one row");
+        }
         return conversation;
     }
 
@@ -501,11 +610,16 @@ public class EmailSendService {
     }
 
     private ChannelAccountEntity requireOwnedEmailAccount(UUID ownerId) {
+        requireOwner(ownerId);
         List<ChannelAccountEntity> accounts = channelAccountMapper.findByOwnerAndChannelType(ownerId, "email");
         if (accounts.size() != 1) {
             throw new EmailException("CHANNEL_ACCOUNT_REQUIRED", "Exactly one active email channel account is required");
         }
         return accounts.get(0);
+    }
+
+    private static void requireOwner(UUID ownerId) {
+        if (ownerId == null) throw new EmailException("AUTHENTICATION_REQUIRED", "Authentication is required");
     }
 
     private Map<String, String> decrypt(ChannelAccountEntity account) {

@@ -11,8 +11,9 @@
 ## Global Constraints
 
 - 保留用户现有未提交改动，不重写 `EmailSendService` 的现有提交/租约逻辑。
-- 不新增公开 API、表结构或自动重试；旧的已发邮件不重发。
-- 无 owner 的既有入口也必须先解析邮件账号，找不到则 SMTP 零调用。
+- 不新增公开路由、表结构或自动重试；发送错误码合同按本轮边界调整，旧的已发邮件不重发。
+- 无 owner 的既有入口直接返回 `AUTHENTICATION_REQUIRED`，不得查询匿名账号或发送。
+- 收件人允许任意单一合法邮箱；陌生地址可使用账号范围内的孤立 identity，但不得因此创建联系人。
 - `messages.counts_as_unread=false`、`current_status_at` 非空，发送前状态为 `pending`。
 - 附件对象和元数据全部完成持久化后才允许 SMTP；失败时尽力补偿，禁止发送。
 

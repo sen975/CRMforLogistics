@@ -31,8 +31,9 @@ class EmailControllerTest {
     @MockitoBean EmailSyncService syncService;
 
     @Test
+    @WithMockUser(username = "8f4d4703-b805-48f4-9dc2-4cf646754c0a")
     void shouldSendEmail() throws Exception {
-        when(sendService.send(eq("to@example.com"), eq("subject"), eq("body")))
+        when(sendService.send(eq(UUID.fromString("8f4d4703-b805-48f4-9dc2-4cf646754c0a")), eq("to@example.com"), eq("subject"), eq("body")))
                 .thenReturn(new EmailSendService.SendResult("msg-1", "from@ex.com",
                         "to@example.com", "subject", "sent"));
 
@@ -69,8 +70,9 @@ class EmailControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "8f4d4703-b805-48f4-9dc2-4cf646754c0a")
     void shouldReturnBadRequestOnSendError() throws Exception {
-        when(sendService.send(any(), any(), any()))
+        when(sendService.send(any(UUID.class), any(String.class), any(String.class), any(String.class)))
                 .thenThrow(new RuntimeException("SMTP connection failed"));
 
         mvc.perform(post("/api/email/send")
@@ -82,8 +84,9 @@ class EmailControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "8f4d4703-b805-48f4-9dc2-4cf646754c0a")
     void unknownSmtpOutcomeUsesRetryCautiousServiceUnavailableResponse() throws Exception {
-        when(sendService.send(any(), any(), any())).thenThrow(new EmailException(
+        when(sendService.send(any(UUID.class), any(String.class), any(String.class), any(String.class))).thenThrow(new EmailException(
                 "EMAIL_SEND_OUTCOME_UNKNOWN", "Check delivery before retrying"));
 
         mvc.perform(post("/api/email/send")
