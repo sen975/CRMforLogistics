@@ -33,6 +33,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -238,6 +239,26 @@ public class GlobalExceptionHandler {
         return new ApiError(accountAvatar ? "AVATAR_INVALID" : "TEMPLATE_MEDIA_INVALID",
                 accountAvatar ? "AVATAR_INVALID" : "Uploaded file exceeds allowed size",
                 traceId(request), Map.of("file", "exceeds the maximum request size"));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiError> handleResponseStatus(ResponseStatusException e, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.resolve(e.getStatusCode().value());
+        if (status == null) {
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        String code = switch (status) {
+            case BAD_REQUEST -> "BAD_REQUEST";
+            case UNAUTHORIZED -> "UNAUTHORIZED";
+            case FORBIDDEN -> "FORBIDDEN";
+            case NOT_FOUND -> "NOT_FOUND";
+            case CONFLICT -> "CONFLICT";
+            case GONE -> "GONE";
+            default -> status.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_FAILED";
+        };
+        String message = status == HttpStatus.NOT_FOUND ? "RESOURCE_NOT_FOUND" : code;
+        return ResponseEntity.status(e.getStatusCode()).contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiError(code, message, traceId(request), Map.of()));
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

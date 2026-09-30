@@ -98,6 +98,27 @@ public class AppIntegrationTest {
     }
 
     @Test
+    void missingMediaAttachmentReturnsNotFoundThroughAuthenticatedHttpRequests() throws Exception {
+        bootstrapService.bootstrap();
+        ResponseEntity<String> login = rest.postForEntity("/api/auth/login",
+                Map.of("username", "admin", "password", "admin"), String.class);
+        assertThat(login.getStatusCode()).isEqualTo(HttpStatus.OK);
+        String token = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(login.getBody()).get("token").asText();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        HttpEntity<Void> request = new HttpEntity<>(headers);
+        String mediaId = "11111111-1111-4111-8111-111111111111";
+
+        ResponseEntity<String> inline = rest.exchange("/api/media/" + mediaId, HttpMethod.GET, request, String.class);
+        ResponseEntity<String> download = rest.exchange(
+                "/api/media/" + mediaId + "/download", HttpMethod.GET, request, String.class);
+
+        assertThat(inline.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(download.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void integrationContextDoesNotStartChatAppBackgroundWorkers() {
         assertThat(applicationContext.getBeansOfType(ChatAppSyncScheduler.class)).isEmpty();
         assertThat(applicationContext.getBeansOfType(ChatAppWebhookRetryWorker.class)).isEmpty();
