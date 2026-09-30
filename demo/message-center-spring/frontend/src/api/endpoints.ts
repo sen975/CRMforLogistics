@@ -16,10 +16,7 @@ import type {
   ThreadResponse,
   MessageResponse,
   ChannelCapability,
-  TemplateAdmin,
   TemplateCommand,
-  TemplateListFilters,
-  TemplateListPage,
   TemplateMediaAsset,
   TemplateMediaFormat,
   TemplateOperation,
@@ -1232,10 +1229,6 @@ export async function fetchPhoneRepository(params?: {
   return res.data;
 }
 
-function whatsappManagementBase(_accountId: string): string {
-  return '/v1/whatsapp';
-}
-
 const sharedWhatsAppBase = '/v1/whatsapp';
 
 export async function fetchSharedTemplates(params?: SharedTemplateListFilters): Promise<SharedTemplateListPage> {
@@ -1353,91 +1346,6 @@ export async function syncPrivateTemplates(accountId: string): Promise<TemplateS
 
 export async function fetchPrivateTemplateOperations(accountId: string, templateId: string): Promise<TemplateOperation[]> {
   const res = await client.get<TemplateOperation[]>(`/v1/whatsapp/business-app/accounts/${encodeURIComponent(accountId)}/templates/${encodeURIComponent(templateId)}/operations`);
-  return res.data;
-}
-
-export async function fetchAdminTemplates(
-  accountId: string,
-  params?: TemplateListFilters,
-): Promise<TemplateListPage> {
-  const res = await client.get<TemplateListPage>(`${whatsappManagementBase(accountId)}/templates`, { params });
-  return res.data;
-}
-
-export async function fetchAdminTemplate(
-  accountId: string,
-  templateCode: string,
-  language: string,
-): Promise<TemplateAdmin> {
-  const res = await client.get<TemplateAdmin>(`${whatsappManagementBase(accountId)}/templates/${templateCode}`, {
-    params: { language },
-  });
-  return res.data;
-}
-
-export async function createAdminTemplate(
-  accountId: string,
-  command: TemplateCommand,
-): Promise<TemplateOperation> {
-  const res = await client.post<TemplateOperation>(`${whatsappManagementBase(accountId)}/templates`, command);
-  return res.data;
-}
-
-export async function updateAdminTemplate(
-  accountId: string,
-  templateCode: string,
-  language: string,
-  command: TemplateUpdateCommand,
-): Promise<TemplateOperation> {
-  const res = await client.put<TemplateOperation>(`${whatsappManagementBase(accountId)}/templates/${templateCode}`, command, {
-    params: { language },
-  });
-  return res.data;
-}
-
-export async function updateAdminTemplateRemark(
-  accountId: string,
-  templateCode: string,
-  language: string,
-  remark: string,
-): Promise<TemplateAdmin> {
-  const res = await client.put<TemplateAdmin>(
-    `${whatsappManagementBase(accountId)}/templates/${templateCode}/remark`,
-    { remark },
-    { params: { language } },
-  );
-  return res.data;
-}
-
-export async function setAdminTemplateSendPermission(
-  accountId: string,
-  templateCode: string,
-  language: string,
-  allowSend: boolean,
-  clientRequestId: string,
-): Promise<TemplateOperation> {
-  const res = await client.put<TemplateOperation>(
-    `${whatsappManagementBase(accountId)}/templates/${templateCode}/send-permission`,
-    { allowSend, clientRequestId },
-    { params: { language } },
-  );
-  return res.data;
-}
-
-export async function deleteAdminTemplate(
-  accountId: string,
-  templateCode: string,
-  language: string,
-  clientRequestId: string,
-): Promise<TemplateOperation> {
-  const res = await client.delete<TemplateOperation>(`${whatsappManagementBase(accountId)}/templates/${templateCode}`, {
-    params: { language, clientRequestId },
-  });
-  return res.data;
-}
-
-export async function syncAdminTemplates(accountId: string): Promise<TemplateSyncResult> {
-  const res = await client.post<TemplateSyncResult>(`${whatsappManagementBase(accountId)}/templates/sync`);
   return res.data;
 }
 

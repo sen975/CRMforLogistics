@@ -1,29 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import TemplateRemarkModal from './TemplateRemarkModal';
-import { updateAdminTemplateRemark } from '../../api/endpoints';
-
-const client = vi.hoisted(() => ({ put: vi.fn() }));
-
-vi.mock('../../api/client', () => ({ default: client }));
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  client.put.mockResolvedValue({ data: { templateCode: 'tpl-1' } });
-});
 
 describe('TemplateRemarkModal', () => {
-  it('uses the shared WhatsApp remark endpoint contract', async () => {
-    await updateAdminTemplateRemark('account-1', 'tpl-1', 'zh_CN', '发货提醒');
-
-    expect(client.put).toHaveBeenCalledWith(
-      '/v1/whatsapp/templates/tpl-1/remark',
-      { remark: '发货提醒' },
-      { params: { language: 'zh_CN' } },
-    );
-  });
-
   it('keeps the official name read-only and saves only the bounded local remark', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
