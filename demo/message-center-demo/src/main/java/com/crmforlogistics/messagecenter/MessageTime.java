@@ -5,7 +5,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.Locale;
 
-final class MessageTime {
+public final class MessageTime {
     private MessageTime() {}
 
     static String timestampString(String value) {
@@ -13,7 +13,7 @@ final class MessageTime {
         return instant.equals(Instant.EPOCH) ? ContactPointUtil.firstNonBlank(value, Instant.EPOCH.toString()) : instant.toString();
     }
 
-    static Instant parseInstant(String value) {
+    public static Instant parseInstant(String value) {
         if (value == null || value.isBlank()) return Instant.EPOCH;
         String trimmed = value.trim();
         try {

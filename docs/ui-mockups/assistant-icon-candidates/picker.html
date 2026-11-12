@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 助手悬浮球 · 图标候选</title>
+<style>
+  :root {
+    --canvas: #ededed;
+    --card: #ffffff;
+    --ink: #0f1419;
+    --ink-2: #5b6472;
+    --line: #e5e8ec;
+    --blue: #1677ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 28px 96px;
+    background: var(--canvas);
+    color: var(--ink);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header { max-width: 1180px; margin: 0 auto 22px; }
+  h1 { margin: 0 0 6px; font-size: 21px; letter-spacing: .2px; }
+  .lede { margin: 0; max-width: 760px; color: var(--ink-2); }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .grid {
+    max-width: 1180px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    position: relative;
+    display: block;
+    padding: 18px 18px 16px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--card);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 8px 20px rgba(16, 24, 40, .05);
+    cursor: pointer;
+    transition: border-color .16s, box-shadow .16s, transform .16s;
+  }
+  .card:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(16, 24, 40, .06), 0 12px 26px rgba(16, 24, 40, .09); }
+  .card:has(input:checked) { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(22, 119, 255, .18), 0 10px 24px rgba(16, 24, 40, .1); }
+  .card input { position: absolute; opacity: 0; pointer-events: none; }
+
+  .stage {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 12px;
+    background: var(--canvas);
+  }
+  .big { width: 104px; height: 104px; border-radius: 50%; display: block; }
+  .real-wrap { text-align: center; }
+  .real {
+    width: 56px; height: 56px; border-radius: 50%; display: block;
+    box-shadow: 0 6px 16px rgba(16, 24, 40, .18), 0 1px 2px rgba(16, 24, 40, .12);
+  }
+  .real-cap { margin-top: 7px; font-size: 11px; color: var(--ink-2); }
+  .badge {
+    position: absolute; top: 14px; right: 14px;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 12px; font-weight: 700; color: var(--ink-2);
+    background: var(--canvas);
+  }
+  .card:has(input:checked) .badge { color: #fff; background: var(--blue); }
+
+  h2 { margin: 14px 0 4px; font-size: 14.5px; }
+  .note { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+  .note em { font-style: normal; color: var(--ink); }
+
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 28px;
+    border-top: 1px solid var(--line);
+    background: rgba(255, 255, 255, .92);
+    backdrop-filter: saturate(180%) blur(8px);
+    font-size: 13px;
+  }
+  .bar strong { color: var(--blue); }
+  .bar span { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI 助手悬浮球 · 图标候选</h1>
+  <p class="lede">
+    每张卡里左边是放大图，右边是<b>真实尺寸 56px</b> —— 它最终就那么小，放大好看不算数。
+    选中后回我编号（A–E）即可，也可以直接说「C 那张但换成蓝色」。
+  </p>
+</header>
+
+<div class="grid">
+  <label class="card">
+    <input type="radio" name="icon" value="A">
+    <span class="badge">A</span>
+    <div class="stage">
+      <img class="big" src="./A-robot-line.png" alt="">
+      <div class="real-wrap"><img class="real" src="./A-robot-line.png" alt=""><div class="real-cap">56px</div></div>
+    </div>
+    <h2>A · 蓝底白线机器人</h2>
+    <p class="note">最接近现在的那个球，只是线更粗、更规整。<em>改动最小、风险最低</em>。</p>
+  </label>
+
+  <label class="card">
+    <input type="radio" name="icon" value="B">
+    <span class="badge">B</span>
+    <div class="stage">
+      <img class="big" src="./B-robot-cute.png" alt="">
+      <div class="real-wrap"><img class="real" src="./B-robot-cute.png" alt=""><div class="real-cap">56px</div></div>
+    </div>
+    <h2>B · 白描边圆头机器人</h2>
+    <p class="note">圆角方块脸 + 天线，眼睛大、有笑意。<em>最"有表情"</em>，缩到 56px 也认得出。</p>
+  </label>
+
+  <label class="card">
+    <input type="radio" name="icon" value="C">
+    <span class="badge">C</span>
+    <div class="stage">
+      <img class="big" src="./E-light-badge.png" alt="">
+      <div class="real-wrap"><img class="real" src="./E-light-badge.png" alt=""><div class="real-cap">56px</div></div>
+    </div>
+    <h2>C · 白底深蓝线条</h2>
+    <p class="note">白球 + 深蓝线稿，只有右上角一点星芒。<em>和现在的浅灰界面最贴</em>，不像一个外来按钮。</p>
+  </label>
+
+  <label class="card">
+    <input type="radio" name="icon" value="D">
+    <span class="badge">D</span>
+    <div class="stage">
+      <img class="big" src="./D-robot-3d.png" alt="">
+      <div class="real-wrap"><img class="real" src="./D-robot-3d.png" alt=""><div class="real-cap">56px</div></div>
+    </div>
+    <h2>D · 3D 软胶机器人</h2>
+    <p class="note">有体积和光的球，面罩里两只眼睛发亮。<em>最"重"、最抓眼</em>，也最不像扁平的系统 UI。</p>
+  </label>
+
+  <label class="card">
+    <input type="radio" name="icon" value="E">
+    <span class="badge">E</span>
+    <div class="stage">
+      <img class="big" src="./F-bubble-gradient.png" alt="">
+      <div class="real-wrap"><img class="real" src="./F-bubble-gradient.png" alt=""><div class="real-cap">56px</div></div>
+    </div>
+    <h2>E · 蓝紫渐变 + 对话气泡</h2>
+    <p class="note">表达的是"能对话"，不是"我是机器人"。<em>最偏产品吉祥物</em>的一版。</p>
+  </label>
+</div>
+
+<div class="bar">
+  <strong id="picked">还没选</strong>
+  <span id="hint">点一张卡片选中，然后把编号告诉我。</span>
+</div>
+
+<script>
+  const picked = document.getElementById('picked');
+  const hint = document.getElementById('hint');
+  const names = { A: 'A · 蓝底白线机器人', B: 'B · 白描边圆头机器人', C: 'C · 白底深蓝线条', D: 'D · 3D 软胶机器人', E: 'E · 蓝紫渐变 + 对话气泡' };
+  document.querySelectorAll('input[name="icon"]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      picked.textContent = '已选：' + names[input.value];
+      hint.textContent = '回我「' + input.value + '」就行。';
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,339 @@
+package com.crmforlogistics.messagecenter.web;
+
+import com.crmforlogistics.messagecenter.dto.response.ApiError;
+import com.crmforlogistics.messagecenter.service.callrecord.CallRecordException;
+import com.crmforlogistics.messagecenter.service.chatapp.ChatAppWebhookAuthenticationException;
+import com.crmforlogistics.messagecenter.service.chatapp.broadcast.ChatAppBroadcastException;
+import com.crmforlogistics.messagecenter.service.whatsapp.template.WhatsAppTemplateException;
+import com.crmforlogistics.messagecenter.service.aitopic.AiTopicException;
+import com.crmforlogistics.messagecenter.service.assistant.AssistantException;
+import com.crmforlogistics.messagecenter.channel.email.EmailException;
+import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.service.account.AccountException;
+import com.crmforlogistics.messagecenter.service.channel.ChannelAccountException;
+import com.crmforlogistics.messagecenter.service.contact.ChannelAddressBookException;
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.bind.ServletRequestBindingException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.sql.SQLException;
+import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final int MAX_DIAGNOSTIC_FRAMES = 8;
+
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleAsyncClientDisconnect(AsyncRequestNotUsableException e) {
+        // The response is already committed or disconnected; writing an ApiError would fail again.
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public ApiError handleAuthentication(AuthenticationException e) {
+        return new ApiError("UNAUTHORIZED", "INVALID_CREDENTIALS",
+                UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(SecurityException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public ApiError handleSecurity(SecurityException e) {
+        return new ApiError("FORBIDDEN", e.getMessage(), UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiError handleBadRequest(IllegalArgumentException e) {
+        return new ApiError("BAD_REQUEST", e.getMessage(), UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(AccountException.class)
+    public ResponseEntity<ApiError> handleAccount(AccountException e, HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(ChannelAccountException.class)
+    public ResponseEntity<ApiError> handleChannelAccount(ChannelAccountException e,
+                                                          HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(ChannelAddressBookException.class)
+    public ResponseEntity<ApiError> handleChannelAddressBook(ChannelAddressBookException e,
+                                                              HttpServletRequest request) {
+        return ResponseEntity.status(e.status()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(AiTopicException.class)
+    public ResponseEntity<ApiError> handleAiTopic(AiTopicException e, HttpServletRequest request) {
+        HttpStatus status = switch (e.code()) {
+            case "TOPIC_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            case "TOPIC_FORBIDDEN", "TOPIC_ADMIN_REQUIRED" -> HttpStatus.FORBIDDEN;
+            case "TOPIC_VERSION_CONFLICT", "TOPIC_STORE_NOT_READY", "TOPIC_RESTORE_NOT_READY",
+                    "TOPIC_OPERATION_CONFLICT", "TOPIC_STORE_REQUEST_CONFLICT" -> HttpStatus.CONFLICT;
+            case "AI_PROVIDER_UNAVAILABLE" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return ResponseEntity.status(status).body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(EmailException.class)
+    public ResponseEntity<ApiError> handleEmail(EmailException e, HttpServletRequest request) {
+        HttpStatus status = switch (e.code()) {
+            case "AUTHENTICATION_REQUIRED" -> HttpStatus.UNAUTHORIZED;
+            case "EMAIL_SEND_OUTCOME_UNKNOWN" -> HttpStatus.SERVICE_UNAVAILABLE;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        return ResponseEntity.status(status).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(WeComException.class)
+    public ResponseEntity<ApiError> handleWeCom(WeComException e, HttpServletRequest request) {
+        return ResponseEntity.status(e.httpStatus()).body(new ApiError(
+                e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    /**
+     * 助手链路的错误码 → 状态映射，集中在这一处。
+     *
+     * <p>三档刻意分开，因为前端要给三种完全不同的提示：
+     * {@code 503} 是「功能没开 / 服务不可用」（别重试，改配置或稍后再说）、
+     * {@code 404} 是「这条待确认动作不是你的」（不泄露存在性）、
+     * {@code 410} 是「你想确认的事已经过期了」（提示重新说一遍，而不是重试）。
+     * 混成一档会让前端只能显示一句含糊的「操作失败」。
+     */
+    @ExceptionHandler(AssistantException.class)
+    public ResponseEntity<ApiError> handleAssistant(AssistantException e, HttpServletRequest request) {
+        HttpStatus status = switch (e.code()) {
+            case AssistantException.DISABLED, AssistantException.PROVIDER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case AssistantException.PENDING_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case AssistantException.PENDING_EXPIRED -> HttpStatus.GONE;
+            case AssistantException.PENDING_ALREADY_DECIDED -> HttpStatus.CONFLICT;
+            case AssistantException.CONVERSATION_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case AssistantException.CONVERSATION_EXPIRED -> HttpStatus.GONE;
+            case AssistantException.CONVERSATION_DELETED, AssistantException.CONVERSATION_NOT_ACTIVE,
+                    AssistantException.CONVERSATION_ALREADY_EXISTS -> HttpStatus.CONFLICT;
+            default -> HttpStatus.BAD_REQUEST;
+        };
+        // 内容类型**显式**给出，不交给内容协商。`/api/assistant/messages` 是唯一一条
+        // 客户端可能声明 `Accept: text/event-stream` 的端点，而它的失败答复恰恰不是 SSE
+        // 而是这份 JSON —— 交给协商，那个 Accept 会把 503 变成 406 加一个空响应体
+        // （Jackson 转换器不产出 text/event-stream），于是「功能没开」看起来像「请求写错了」。
+        // 错误响应的类型是我们已知的事实，本来也不该由请求头投票决定。
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiError(e.code(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(ChatAppWebhookAuthenticationException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public ApiError handleWebhookAuthentication(ChatAppWebhookAuthenticationException e) {
+        return new ApiError("CHATAPP_WEBHOOK_UNAUTHORIZED", e.getMessage(),
+                UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(CallRecordException.class)
+    public ResponseEntity<ApiError> handleCallRecord(CallRecordException e) {
+        return ResponseEntity.status(e.httpStatus())
+                .body(new ApiError(e.code(), e.getMessage(), UUID.randomUUID().toString(), Map.of()));
+    }
+
+    @ExceptionHandler(WhatsAppTemplateException.class)
+    public ResponseEntity<ApiError> handleWhatsAppTemplate(WhatsAppTemplateException e,
+                                                           HttpServletRequest request) {
+        return ResponseEntity.status(e.statusCode())
+                .body(new ApiError(e.code(), e.getMessage(), traceId(request), e.fieldErrors()));
+    }
+
+    @ExceptionHandler(ChatAppBroadcastException.class)
+    public ResponseEntity<ApiError> handleChatAppBroadcast(
+            ChatAppBroadcastException e, HttpServletRequest request) {
+        return ResponseEntity.status(e.status())
+                .body(new ApiError(e.getMessage(), e.getMessage(), traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler({MethodArgumentTypeMismatchException.class, HttpMessageNotReadableException.class,
+            ServletRequestBindingException.class, MissingServletRequestPartException.class})
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiError handleRequestBinding(Exception e, HttpServletRequest request) {
+        String traceId = traceId(request);
+        LOG.warn("event=http.request_binding_failed traceId={} method={} path={} diagnostic={}",
+                traceId, request.getMethod(), request.getRequestURI(), requestBindingDiagnostic(e));
+        return new ApiError("BAD_REQUEST", "INVALID_REQUEST", traceId, Map.of());
+    }
+
+    static String requestBindingDiagnostic(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof InvalidFormatException invalid) {
+                String path = jsonPath(invalid);
+                String target = invalid.getTargetType() == null ? "unknown" : invalid.getTargetType().getSimpleName();
+                return "invalid_format path=" + path + " targetType=" + target;
+            }
+            if (current instanceof JsonMappingException mapping) {
+                return "json_mapping path=" + jsonPath(mapping);
+            }
+            if (current instanceof JsonProcessingException) {
+                return "json_processing";
+            }
+            current = current.getCause();
+        }
+        return failure == null ? "unknown" : failure.getClass().getSimpleName();
+    }
+
+    private static String jsonPath(JsonMappingException failure) {
+        String path = failure.getPath().stream()
+                .map(reference -> reference.getFieldName() != null
+                        ? reference.getFieldName() : "[" + reference.getIndex() + "]")
+                .filter(value -> !value.equals("[-1]"))
+                .reduce((left, right) -> left + "." + right)
+                .orElse("unknown");
+        return path.length() > 120 ? path.substring(0, 120) : path;
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public ApiError handleRequestValidation(MethodArgumentNotValidException e, HttpServletRequest request) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        e.getBindingResult().getFieldErrors().forEach(error -> fieldErrors.putIfAbsent(
+                error.getField(), error.getDefaultMessage() == null ? "is invalid" : error.getDefaultMessage()));
+        boolean addressBookRequest = request.getRequestURI().startsWith("/api/channel-address-books/");
+        if (addressBookRequest) {
+            return new ApiError("CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED",
+                    "CHANNEL_ADDRESS_BOOK_VALIDATION_FAILED", traceId(request), fieldErrors);
+        }
+        boolean accountRequest = request.getRequestURI().startsWith("/api/account/")
+                || request.getRequestURI().startsWith("/api/admin/")
+                || request.getRequestURI().equals("/api/auth/register");
+        return new ApiError(accountRequest ? "ACCOUNT_VALIDATION_FAILED" : "TEMPLATE_VALIDATION_FAILED",
+                accountRequest ? "ACCOUNT_VALIDATION_FAILED" : "WhatsApp template validation failed",
+                traceId(request), fieldErrors);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    public ApiError handleUploadTooLarge(MaxUploadSizeExceededException e, HttpServletRequest request) {
+        boolean accountAvatar = request.getRequestURI().equals("/api/account/avatar");
+        return new ApiError(accountAvatar ? "AVATAR_INVALID" : "TEMPLATE_MEDIA_INVALID",
+                accountAvatar ? "AVATAR_INVALID" : "Uploaded file exceeds allowed size",
+                traceId(request), Map.of("file", "exceeds the maximum request size"));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiError> handleResponseStatus(ResponseStatusException e, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.resolve(e.getStatusCode().value());
+        if (status == null) {
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+        String code = switch (status) {
+            case BAD_REQUEST -> "BAD_REQUEST";
+            case UNAUTHORIZED -> "UNAUTHORIZED";
+            case FORBIDDEN -> "FORBIDDEN";
+            case NOT_FOUND -> "NOT_FOUND";
+            case CONFLICT -> "CONFLICT";
+            case GONE -> "GONE";
+            default -> status.is5xxServerError() ? "INTERNAL_ERROR" : "REQUEST_FAILED";
+        };
+        String message = status == HttpStatus.NOT_FOUND ? "RESOURCE_NOT_FOUND" : code;
+        return ResponseEntity.status(e.getStatusCode()).contentType(MediaType.APPLICATION_JSON)
+                .body(new ApiError(code, message, traceId(request), Map.of()));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiError handleMissingResource(NoResourceFoundException e) {
+        return new ApiError("NOT_FOUND", "RESOURCE_NOT_FOUND",
+                UUID.randomUUID().toString(), Map.of());
+    }
+
+    @ExceptionHandler(Exception.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ApiError handleGeneral(Exception e, HttpServletRequest request) {
+        String traceId = traceId(request);
+        SafeDiagnostic diagnostic = safeDiagnostic(e);
+        LOG.error("event=http.unhandled_exception traceId={} method={} path={} "
+                        + "errorType={} rootErrorType={} sqlState={} sqlErrorCode={} applicationFrames={}",
+                traceId, request.getMethod(), request.getRequestURI(), diagnostic.errorType(),
+                diagnostic.rootErrorType(), diagnostic.sqlState(), diagnostic.sqlErrorCode(),
+                diagnostic.applicationFrames());
+        return new ApiError("INTERNAL_ERROR", "Internal server error", traceId, Map.of());
+    }
+
+    static SafeDiagnostic safeDiagnostic(Throwable failure) {
+        String errorType = failure == null ? "unknown" : failure.getClass().getName();
+        Throwable root = failure;
+        Set<Throwable> visited = new HashSet<>();
+        while (root != null && root.getCause() != null && visited.add(root)) {
+            root = root.getCause();
+        }
+        String rootErrorType = root == null ? "unknown" : root.getClass().getName();
+        String sqlState = "none";
+        int sqlErrorCode = 0;
+        Throwable current = failure;
+        visited.clear();
+        while (current != null && visited.add(current)) {
+            if (current instanceof SQLException sqlException) {
+                String candidate = sqlException.getSQLState();
+                sqlState = candidate != null && candidate.matches("[0-9A-Z]{5}")
+                        ? candidate : "unknown";
+                sqlErrorCode = sqlException.getErrorCode();
+                break;
+            }
+            current = current.getCause();
+        }
+
+        List<String> frames = new ArrayList<>();
+        current = failure;
+        visited.clear();
+        while (current != null && visited.add(current) && frames.size() < MAX_DIAGNOSTIC_FRAMES) {
+            for (StackTraceElement frame : current.getStackTrace()) {
+                if (frame.getClassName().startsWith("com.crmforlogistics.messagecenter.")) {
+                    frames.add(frame.getClassName() + "." + frame.getMethodName()
+                            + ":" + frame.getLineNumber());
+                    if (frames.size() == MAX_DIAGNOSTIC_FRAMES) break;
+                }
+            }
+            current = current.getCause();
+        }
+        return new SafeDiagnostic(errorType, rootErrorType, sqlState, sqlErrorCode,
+                List.copyOf(frames));
+    }
+
+    record SafeDiagnostic(String errorType, String rootErrorType, String sqlState, int sqlErrorCode,
+                          List<String> applicationFrames) {}
+
+    private static String traceId(HttpServletRequest request) {
+        Object existing = request.getAttribute(WhatsAppTemplateController.TRACE_ID_ATTRIBUTE);
+        return existing instanceof String value && !value.isBlank()
+                ? value : UUID.randomUUID().toString();
+    }
+}

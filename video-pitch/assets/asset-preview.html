@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>口播视频 · 素材总览</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --line:#e4e7ec; --ink:#1a1d24;
+    --dim:#5b6270; --faint:#9aa1ae; --accent:#2E7CF6; --warn:#c2410c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 28px 64px;background:var(--bg);color:var(--ink);
+       font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--dim);font-size:13px;margin:0 0 28px}
+  h2{font-size:16px;margin:36px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h2 .n{color:var(--faint);font-weight:400;margin-right:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .grid{display:grid;gap:14px}
+  .g-brand{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+  .g-ui{grid-template-columns:repeat(auto-fill,minmax(78px,1fr))}
+  .item{display:flex;flex-direction:column;align-items:center;gap:8px;
+        padding:14px 8px;border:1px solid var(--line);border-radius:10px;background:#fcfcfd}
+  .item img{width:32px;height:32px;display:block}
+  .item .nm{font-size:11px;color:var(--dim);text-align:center;word-break:break-all}
+  .chips{display:flex;flex-wrap:wrap;gap:14px;margin-top:6px}
+  .chip{width:64px;height:64px;border-radius:16px;display:flex;align-items:center;
+        justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.14)}
+  .chip img{width:32px;height:32px;filter:brightness(0) invert(1)}
+  .chip span{font-size:11px;color:#fff;font-weight:600}
+  .aud{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px dashed var(--line)}
+  .aud:last-child{border-bottom:none}
+  .aud .lb{flex:0 0 210px;font-size:13px}
+  .aud .lb small{display:block;color:var(--faint);font-size:11px}
+  audio{flex:1;height:34px;min-width:200px}
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--panel);
+        border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{background:#f1f3f7;font-weight:600;font-size:12px;color:var(--dim)}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef1f6;padding:1px 5px;border-radius:4px;font-size:12px;
+       font-family:ui-monospace,Menlo,monospace}
+  .ok{color:#046c3a;font-weight:600}.no{color:var(--warn);font-weight:600}
+  .note{font-size:12.5px;color:var(--dim);margin:10px 0 0}
+  .note b{color:var(--ink)}
+  .warnbox{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;
+           padding:12px 14px;font-size:13px;color:#7c2d12;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>口播视频 · 素材总览</h1>
+  <p class="sub">除真实截图之外能拿到的全部素材 ｜ 每一项都已实际下载/生成并验证 ｜ 2026-09-28</p>
+
+  <h2><span class="n">01</span>渠道品牌图标</h2>
+  <div class="card">
+    <div class="chips">
+      <div class="chip" style="background:#07C160"><img src="icons/brand/wechat.svg" alt="微信"></div>
+      <div class="chip" style="background:#25D366"><img src="icons/brand/whatsapp.svg" alt="WhatsApp"></div>
+      <div class="chip" style="background:#EA4335"><img src="icons/brand/gmail.svg" alt="Gmail"></div>
+      <div class="chip" style="background:#2E7CF6"><img src="icons/brand/wecom-generic.svg" alt="企业微信"></div>
+      <div class="chip" style="background:#26A5E4"><img src="icons/brand/telegram.svg" alt="Telegram"></div>
+      <div class="chip" style="background:#3A76F0"><img src="icons/brand/signal.svg" alt="Signal"></div>
+      <div class="chip" style="background:#111111"><img src="icons/brand/x.svg" alt="X"></div>
+    </div>
+    <p class="note">
+      <b>来源</b> simple-icons（CC0，可商用，无需署名）。色块为品牌色，图标用
+      <code>filter: brightness(0) invert(1)</code> 反白 —— 这就是视频里「五个 App 图标依次亮起」那个镜头的直接可用素材。
+    </p>
+    <div class="warnbox">
+      <b>企业微信要单独注意</b>：simple-icons 里 <code>wechatwork</code> / <code>wecom</code> 均已下架（实测 404）。
+      我自绘了一个<strong>示意标识</strong>（<code>wecom-generic.svg</code>，双气泡 + 品牌蓝），<strong>不是官方 logo 的复刻</strong>。
+      对外投放前要么换成官方素材（须遵守腾讯品牌规范），要么在片中用「企业微信」文字 + 通用气泡符号表述。
+    </div>
+  </div>
+
+  <h2><span class="n">02</span>UI 功能图标（30 个）</h2>
+  <div class="card">
+    <div class="grid g-ui" id="uigrid"></div>
+    <p class="note">
+      <b>来源</b> lucide-static（ISC，可商用，无需署名）。全部为线性描边风格，颜色用 CSS <code>color</code> 控制、粗细统一 24×24，
+      适合叠在联系人列表、待办卡片、确认卡片的假 UI 上。
+    </p>
+  </div>
+
+  <h2><span class="n">03</span>音频素材</h2>
+  <div class="card">
+    <div class="aud">
+      <div class="lb">配音 Demo ①　开场<small>Tingting · 14.4s · 语速 200 字/分</small></div>
+      <audio controls preload="none" src="audio/tts-demo-1.mp3"></audio>
+    </div>
+    <div class="aud">
+      <div class="lb">配音 Demo ②　态度金句<small>Tingting · 6.0s · 放慢到 185</small></div>
+      <audio controls preload="none" src="audio/tts-demo-2.mp3"></audio>
+    </div>
+    <div class="aud">
+      <div class="lb">配音 Demo ③　结尾<small>Tingting · 11.3s · 语速 190</small></div>
+      <audio controls preload="none" src="audio/tts-demo-3.mp3"></audio>
+    </div>
+    <div class="aud">
+      <div class="lb">BGM　低频悬念垫底<small>纯合成 · 32s · 用于 00:00–01:15</small></div>
+      <audio controls preload="none" src="audio/bgm-01-pad-suspense.mp3"></audio>
+    </div>
+    <div class="aud">
+      <div class="lb">音效　Ping / Tink<small>系统音效 · 用于确认卡片弹出、消息到达</small></div>
+      <audio controls preload="none" src="audio/sfx-Ping.mp3"></audio>
+    </div>
+    <div class="aud">
+      <div class="lb">音效　Pop / Glass<small>系统音效 · 用于要点上屏、切镜</small></div>
+      <audio controls preload="none" src="audio/sfx-Pop.mp3"></audio>
+    </div>
+    <p class="note">
+      <b>配音</b>用 macOS 内置 <code>say -v Tingting</code> 生成，本机有 <b>9 套中文语音</b>（Tingting / Sandy / Shelley / Flo / Eddy / Reed / Rocko / Grandpa / Grandma），
+      可换音色重出。<b>BGM</b> 是用 numpy 合成的不解决和弦（A 小调 + 0.07Hz 呼吸 LFO），<strong>零版权风险</strong>，
+      但只有"垫底"功能；正式片建议换真人配乐。音效来自 macOS 系统音效库，可自由使用。
+    </p>
+  </div>
+
+  <h2><span class="n">04</span>素材源可达性（本机实测）</h2>
+  <table>
+    <thead><tr><th>来源</th><th>状态</th><th>能拿什么</th><th>授权</th></tr></thead>
+    <tbody>
+      <tr><td>unpkg · simple-icons</td><td class="ok">200 可用</td><td>渠道品牌图标 SVG</td><td>CC0</td></tr>
+      <tr><td>unpkg · lucide-static</td><td class="ok">200 可用</td><td>UI 图标 SVG</td><td>ISC</td></tr>
+      <tr><td>registry.npmmirror.com</td><td class="ok">200 可用</td><td>npm 包 / 字体包</td><td>—</td></tr>
+      <tr><td>macOS <code>say</code></td><td class="ok">本机可用</td><td>中文配音草稿</td><td>系统授权</td></tr>
+      <tr><td>ffmpeg 8.1.2</td><td class="ok">本机可用</td><td>合成 / 转码 / 混音</td><td>—</td></tr>
+      <tr><td>Wikimedia upload</td><td class="ok">200 可下</td><td>CC 音效 / 音频</td><td>CC / PD</td></tr>
+      <tr><td>mixkit.co</td><td class="no">403 防盗链</td><td>视频空镜、音效</td><td>需官网手下</td></tr>
+      <tr><td>cdn.coverr.co</td><td class="no">直链被拦</td><td>视频空镜</td><td>需官网手下</td></tr>
+      <tr><td>pixabay / cdn.pixabay</td><td class="no">403</td><td>图 / 视频 / 音乐</td><td>需官网手下</td></tr>
+      <tr><td>archive.org</td><td class="no">不通</td><td>公有领域素材</td><td>—</td></tr>
+      <tr><td>fonts.google.com</td><td class="no">不通</td><td>字体</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    <b>结论</b>：图标、配音、音效、BGM 四类<strong>不需要外部下载</strong>，本机就能全部产出。
+    视频空镜（B-roll）那类需要人工到官网下载，直链抓不下来。
+  </p>
+
+</div>
+<script>
+  const ui = ["users","building-2","message-square","messages-square","clipboard-list","bell",
+    "search","send","check","x","circle-check","refresh-cw","sparkles","shield-check","paperclip",
+    "mic","file-text","chevron-right","arrow-right","phone","mail","inbox","clock","filter",
+    "star","globe","database","lock","zap","layout-list"];
+  document.getElementById("uigrid").innerHTML = ui.map(n =>
+    `<div class="item"><img src="icons/ui/${n}.svg" alt="${n}"><span class="nm">${n}</span></div>`
+  ).join("");
+</script>
+</body>
+</html>

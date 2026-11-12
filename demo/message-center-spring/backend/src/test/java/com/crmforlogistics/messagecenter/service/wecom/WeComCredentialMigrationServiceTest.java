@@ -1,0 +1,195 @@
+package com.crmforlogistics.messagecenter.service.wecom;
+
+import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class WeComCredentialMigrationServiceTest {
+    private static final UUID INSTALLATION_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID MESSAGE_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final UUID JSON_OBJECT_ID = UUID.fromString("00000000-0000-0000-0000-000000000003");
+    private static final UUID JSON_ARRAY_ID = UUID.fromString("00000000-0000-0000-0000-000000000004");
+
+    private WeComCredentialMigrationMapper mapper;
+    private WeComCredentialProtector protector;
+    private WeComCredentialMigrationService service;
+
+    @BeforeEach
+    void setUp() {
+        mapper = mock(WeComCredentialMigrationMapper.class);
+        protector = mock(WeComCredentialProtector.class);
+        service = new WeComCredentialMigrationService(mapper, protector);
+    }
+
+    @Test
+    void migratesAtMostTwoHundredRowsPerBatchAndMarksCompletion() {
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, "plain")));
+        when(mapper.nextInstallations(INSTALLATION_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(MESSAGE_ID, "secret")));
+        when(mapper.nextChatDataMessages(MESSAGE_ID, 200)).thenReturn(List.of());
+        when(protector.protectPermanentCode("plain")).thenReturn("encrypted-permanent");
+        when(protector.protectSecretKey("secret")).thenReturn("encrypted-secret");
+        when(mapper.replaceInstallation(INSTALLATION_ID, "plain", "encrypted-permanent")).thenReturn(1);
+        when(mapper.replaceChatDataMessage(MESSAGE_ID, "secret", "encrypted-secret")).thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(mapper).nextInstallations(null, 200);
+        verify(mapper).replaceInstallation(INSTALLATION_ID, "plain", "encrypted-permanent");
+        verify(mapper).nextInstallations(INSTALLATION_ID, 200);
+        verify(mapper).nextChatDataMessages(null, 200);
+        verify(mapper).replaceChatDataMessage(MESSAGE_ID, "secret", "encrypted-secret");
+        verify(mapper).nextChatDataMessages(MESSAGE_ID, 200);
+        verify(mapper).insertMarker("wecom-credentials-v1");
+    }
+
+    @Test
+    void skipsAlreadyEncryptedRowsWithoutReplacingThem() {
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, "envelope")))
+                .thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.isEnvelope("envelope")).thenReturn(true);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(mapper, never()).replaceInstallation(eq(INSTALLATION_ID), any(), any());
+        verify(mapper).insertMarker("wecom-credentials-v1");
+    }
+
+    @Test
+    void failsWhenAMigrationPageIsNull() {
+        when(mapper.nextInstallations(null, 200)).thenReturn(null);
+
+        assertMigrationFailure(service::migrateAll);
+    }
+
+    @Test
+    void failsWhenAChatDataMigrationPageIsNull() {
+        when(mapper.nextInstallations(null, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(null);
+
+        assertMigrationFailure(service::migrateAll);
+    }
+
+    @Test
+    void failsWhenCompletionMarkerWasNotInserted() {
+        when(mapper.nextInstallations(null, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(0);
+
+        assertMigrationFailure(service::migrateAll);
+    }
+
+    @Test
+    void migratesJsonWithoutEnvelopeFieldsAsOpaquePlaintext() {
+        String emptyObject = "{}";
+        String ordinaryObject = "{\"version\":1}";
+        String emptyArray = "[]";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(
+                        new WeComCredentialRow(INSTALLATION_ID, emptyObject),
+                        new WeComCredentialRow(JSON_OBJECT_ID, ordinaryObject),
+                        new WeComCredentialRow(JSON_ARRAY_ID, emptyArray)));
+        when(mapper.nextInstallations(JSON_ARRAY_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.protectPermanentCode(emptyObject)).thenReturn("encrypted-empty-object");
+        when(protector.protectPermanentCode(ordinaryObject)).thenReturn("encrypted-object");
+        when(protector.protectPermanentCode(emptyArray)).thenReturn("encrypted-array");
+        when(mapper.replaceInstallation(INSTALLATION_ID, emptyObject, "encrypted-empty-object")).thenReturn(1);
+        when(mapper.replaceInstallation(JSON_OBJECT_ID, ordinaryObject, "encrypted-object")).thenReturn(1);
+        when(mapper.replaceInstallation(JSON_ARRAY_ID, emptyArray, "encrypted-array")).thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(emptyObject);
+        verify(protector).protectPermanentCode(ordinaryObject);
+        verify(protector).protectPermanentCode(emptyArray);
+        verify(mapper).nextInstallations(JSON_ARRAY_ID, 200);
+    }
+
+    @Test
+    void failsForJsonObjectWithEnvelopeFieldThatIsNotAValidEnvelope() {
+        String invalidEnvelope = "{\"algorithm\":\"invalid\"}";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, invalidEnvelope)));
+        when(protector.isEnvelope(invalidEnvelope)).thenReturn(false);
+
+        assertMigrationFailure(service::migrateAll);
+        verify(protector, never()).protectPermanentCode(invalidEnvelope);
+    }
+
+    @Test
+    void failsForTruncatedJsonThatCouldBeAnEnvelope() {
+        String truncatedEnvelope = "{\"algorithm\":\"AES/GCM/NoPadding\"";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, truncatedEnvelope)));
+        when(protector.isEnvelope(truncatedEnvelope)).thenReturn(false);
+
+        assertMigrationFailure(service::migrateAll);
+        verify(protector, never()).protectPermanentCode(truncatedEnvelope);
+    }
+
+    @Test
+    void encryptsRootArrayWhenEnvelopeFieldAppearsOnlyInsideArray() {
+        String opaqueArray = "[{\"algorithm\":\"ordinary-metadata\"}]";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, opaqueArray)));
+        when(mapper.nextInstallations(INSTALLATION_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.isEnvelope(opaqueArray)).thenReturn(false);
+        when(protector.protectPermanentCode(opaqueArray)).thenReturn("encrypted-array-metadata");
+        when(mapper.replaceInstallation(INSTALLATION_ID, opaqueArray, "encrypted-array-metadata"))
+                .thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(opaqueArray);
+        verify(mapper).replaceInstallation(INSTALLATION_ID, opaqueArray, "encrypted-array-metadata");
+    }
+
+    @Test
+    void encryptsNestedMetadataWhenEnvelopeFieldAppearsBelowRootObject() {
+        String opaqueObject = "{\"metadata\":{\"nonce\":\"x\"}}";
+        when(mapper.nextInstallations(null, 200))
+                .thenReturn(List.of(new WeComCredentialRow(INSTALLATION_ID, opaqueObject)));
+        when(mapper.nextInstallations(INSTALLATION_ID, 200)).thenReturn(List.of());
+        when(mapper.nextChatDataMessages(null, 200)).thenReturn(List.of());
+        when(protector.isEnvelope(opaqueObject)).thenReturn(false);
+        when(protector.protectPermanentCode(opaqueObject)).thenReturn("encrypted-nested-metadata");
+        when(mapper.replaceInstallation(INSTALLATION_ID, opaqueObject, "encrypted-nested-metadata"))
+                .thenReturn(1);
+        when(mapper.insertMarker("wecom-credentials-v1")).thenReturn(1);
+
+        service.migrateAll();
+
+        verify(protector).protectPermanentCode(opaqueObject);
+        verify(mapper).replaceInstallation(INSTALLATION_ID, opaqueObject, "encrypted-nested-metadata");
+    }
+
+    private static void assertMigrationFailure(org.junit.jupiter.api.function.Executable action) {
+        assertThatThrownBy(() -> action.execute())
+                .isInstanceOf(com.crmforlogistics.messagecenter.channel.wecom.WeComException.class)
+                .extracting(error -> ((com.crmforlogistics.messagecenter.channel.wecom.WeComException) error).code())
+                .isEqualTo("WECOM_CREDENTIAL_MIGRATION_FAILED");
+    }
+}

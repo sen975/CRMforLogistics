@@ -1,0 +1,2634 @@
+[
+ {
+  "verb": "GET",
+  "path": "/api/contacts/{contactId}/memory",
+  "controller": "ContactMemoryController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactMemoryController.java",
+  "line": 24,
+  "base": "/api/contacts",
+  "sub": "/{contactId}/memory",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/contact-groups",
+  "controller": "ContactGroupController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactGroupController.java",
+  "line": 29,
+  "base": "/api/contact-groups",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/contact-groups/merge",
+  "controller": "ContactGroupController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactGroupController.java",
+  "line": 35,
+  "base": "/api/contact-groups",
+  "sub": "/merge",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/contact-groups/split",
+  "controller": "ContactGroupController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactGroupController.java",
+  "line": 43,
+  "base": "/api/contact-groups",
+  "sub": "/split",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/cams",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 37,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 44,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/whatsapp/cams/{scopeId}",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 51,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "/{scopeId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/admin/whatsapp/cams/{scopeId}",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 58,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "/{scopeId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/test",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 65,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "/{scopeId}/test",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/sync",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 72,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "/{scopeId}/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/whatsapp/cams",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 80,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/test",
+  "controller": "WhatsAppCamsConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCamsConfigController.java",
+  "line": 88,
+  "base": "/api/admin/whatsapp/cams",
+  "sub": "/test",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 37,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts/sync",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 44,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assign",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 51,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "/{accountId}/assign",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/reclaim",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 60,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "/{accountId}/reclaim",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/transfer",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 69,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "/{accountId}/transfer",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assignment-history",
+  "controller": "AdminWhatsAppScopedPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppScopedPhoneNumberController.java",
+  "line": 78,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/accounts",
+  "sub": "/{accountId}/assignment-history",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/contacts/{contactId}/topics",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 37,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topics",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/contacts/{contactId}/topic-review/sources",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 42,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-review/sources",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/topic-review/preview",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 51,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-review/preview",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/contacts/{contactId}/topic-review/pending",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 57,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-review/pending",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topics/{topicId}/keep",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 62,
+  "base": "/api/v1",
+  "sub": "/topics/{topicId}/keep",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/topic-review/{previewId}/apply",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 68,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-review/{previewId}/apply",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/topic-fusion/preview",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 76,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-fusion/preview",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/topic-fusion/{previewId}/apply",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 82,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topic-fusion/{previewId}/apply",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/groups/{sourceConversationId}/topics",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 88,
+  "base": "/api/v1",
+  "sub": "/wecom/groups/{sourceConversationId}/topics",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/groups/{sourceConversationId}/topics/retry",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 93,
+  "base": "/api/v1",
+  "sub": "/wecom/groups/{sourceConversationId}/topics/retry",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/topics/{topicId}",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 98,
+  "base": "/api/v1",
+  "sub": "/topics/{topicId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topics/merge",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 105,
+  "base": "/api/v1",
+  "sub": "/topics/merge",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topics/{topicId}/store",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 116,
+  "base": "/api/v1",
+  "sub": "/topics/{topicId}/store",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topics/{topicId}/restore",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 122,
+  "base": "/api/v1",
+  "sub": "/topics/{topicId}/restore",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topic-inbox/{requestId}/approve",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 128,
+  "base": "/api/v1",
+  "sub": "/topic-inbox/{requestId}/approve",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/topic-inbox/{requestId}/reject",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 134,
+  "base": "/api/v1",
+  "sub": "/topic-inbox/{requestId}/reject",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/topic-inbox/requests",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 142,
+  "base": "/api/v1",
+  "sub": "/topic-inbox/requests",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/topic-repository",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 147,
+  "base": "/api/v1",
+  "sub": "/topic-repository",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/topics/retry",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 155,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topics/retry",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/contacts/{contactId}/topics/attempts",
+  "controller": "AiTopicController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AiTopicController.java",
+  "line": 160,
+  "base": "/api/v1",
+  "sub": "/contacts/{contactId}/topics/attempts",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/authorization/attempts",
+  "controller": "WhatsAppAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAuthorizationController.java",
+  "line": 27,
+  "base": "/api/whatsapp/authorization",
+  "sub": "/attempts",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/authorization/complete",
+  "controller": "WhatsAppAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAuthorizationController.java",
+  "line": 33,
+  "base": "/api/whatsapp/authorization",
+  "sub": "/complete",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/authorization/complete/{attemptId}/phone",
+  "controller": "WhatsAppAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAuthorizationController.java",
+  "line": 39,
+  "base": "/api/whatsapp/authorization",
+  "sub": "/complete/{attemptId}/phone",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/conversations",
+  "controller": "ConversationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ConversationController.java",
+  "line": 33,
+  "base": "/api/conversations",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/conversations/preferences/pin",
+  "controller": "ConversationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ConversationController.java",
+  "line": 43,
+  "base": "/api/conversations",
+  "sub": "/preferences/pin",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/conversations/preferences/delete",
+  "controller": "ConversationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ConversationController.java",
+  "line": 48,
+  "base": "/api/conversations",
+  "sub": "/preferences/delete",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/conversations/preferences/restore",
+  "controller": "ConversationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ConversationController.java",
+  "line": 55,
+  "base": "/api/conversations",
+  "sub": "/preferences/restore",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/conversations/preferences/order",
+  "controller": "ConversationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ConversationController.java",
+  "line": 60,
+  "base": "/api/conversations",
+  "sub": "/preferences/order",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/assistant/messages",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 54,
+  "base": "/api/assistant",
+  "sub": "/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/assistant/actions/{id}/confirm",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 70,
+  "base": "/api/assistant",
+  "sub": "/actions/{id}/confirm",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/assistant/actions/{id}/cancel",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 77,
+  "base": "/api/assistant",
+  "sub": "/actions/{id}/cancel",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/assistant/conversations/{id}/messages",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 84,
+  "base": "/api/assistant",
+  "sub": "/conversations/{id}/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/assistant/conversations/latest",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 91,
+  "base": "/api/assistant",
+  "sub": "/conversations/latest",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/assistant/conversations",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 98,
+  "base": "/api/assistant",
+  "sub": "/conversations",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/assistant/conversations",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 107,
+  "base": "/api/assistant",
+  "sub": "/conversations",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/assistant/conversations/{id}/open",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 116,
+  "base": "/api/assistant",
+  "sub": "/conversations/{id}/open",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/assistant/conversations/{id}",
+  "controller": "AssistantController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AssistantController.java",
+  "line": 126,
+  "base": "/api/assistant",
+  "sub": "/conversations/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/threads",
+  "controller": "ThreadController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java",
+  "line": 21,
+  "base": "/api",
+  "sub": "/threads",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/threads/wecom/contact/{contactId}",
+  "controller": "ThreadController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java",
+  "line": 31,
+  "base": "/api",
+  "sub": "/threads/wecom/contact/{contactId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/threads/wecom/group/{sourceConversationId}",
+  "controller": "ThreadController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ThreadController.java",
+  "line": 40,
+  "base": "/api",
+  "sub": "/threads/wecom/group/{sourceConversationId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 76,
+  "base": "/api/v1/wecom",
+  "sub": "/installations",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/app-chats",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 81,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/app-chats",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 90,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/app-chats/{chatId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 96,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/app-chats/{chatId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}/messages",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 106,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/app-chats/{chatId}/messages",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/external-contacts",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 115,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/external-contacts",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/external-contacts/contact-links",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 127,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/external-contacts/contact-links",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/contact-events",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 141,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/contact-events",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 165,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/external-contacts/{externalUserId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/external-contacts:batchGet",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 172,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/external-contacts:batchGet",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}/remark",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 181,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/external-contacts/{externalUserId}/remark",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/customer-groups:search",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 193,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/customer-groups:search",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/customer-groups/{chatId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 203,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/customer-groups/{chatId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/members/{userId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 210,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/members/{userId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/members",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 216,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/members",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/departments",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 224,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/departments",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/profile-sync",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 231,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/profile-sync",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/installations/{authCorpId}/profile-backfill",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 237,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/profile-backfill",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/tags",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 245,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/tags",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}",
+  "controller": "WeComP0Controller",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComP0Controller.java",
+  "line": 250,
+  "base": "/api/v1/wecom",
+  "sub": "/installations/{authCorpId}/directory/tags/{tagId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/whatsapp/capability",
+  "controller": "WhatsAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCapabilityController.java",
+  "line": 17,
+  "base": "/api/whatsapp/capability",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/api-phone-operations",
+  "controller": "WhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppPhoneNumberController.java",
+  "line": 25,
+  "base": "/api/whatsapp/api-phone-operations",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/api-phone-operations/{operationId}/verification-code",
+  "controller": "WhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppPhoneNumberController.java",
+  "line": 30,
+  "base": "/api/whatsapp/api-phone-operations",
+  "sub": "/{operationId}/verification-code",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/api-phone-operations/{operationId}/verify",
+  "controller": "WhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppPhoneNumberController.java",
+  "line": 36,
+  "base": "/api/whatsapp/api-phone-operations",
+  "sub": "/{operationId}/verify",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/whatsapp/api-phone-operations",
+  "controller": "WhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppPhoneNumberController.java",
+  "line": 42,
+  "base": "/api/whatsapp/api-phone-operations",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/callbacks",
+  "controller": "WhatsAppCallbackConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCallbackConfigController.java",
+  "line": 28,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/callbacks",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{channelAccountId}",
+  "controller": "WhatsAppCallbackConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCallbackConfigController.java",
+  "line": 34,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/callbacks",
+  "sub": "/phones/{channelAccountId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/whatsapp/cams/{scopeId}/callbacks/account",
+  "controller": "WhatsAppCallbackConfigController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppCallbackConfigController.java",
+  "line": 45,
+  "base": "/api/admin/whatsapp/cams/{scopeId}/callbacks",
+  "sub": "/account",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/templates",
+  "controller": "TemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/TemplateController.java",
+  "line": 21,
+  "base": "/api",
+  "sub": "/templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/contacts/{contactId}/timeline",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 82,
+  "base": "",
+  "sub": "/api/v1/contacts/{contactId}/timeline",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/contacts/{contactId}/call-records",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 91,
+  "base": "",
+  "sub": "/api/v1/contacts/{contactId}/call-records",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/call-records",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 91,
+  "base": "",
+  "sub": "/api/v1/call-records",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/call-records/{callRecordId}",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 116,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/call-records/{callRecordId}/audio-sessions",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 122,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}/audio-sessions",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/call-records/{callRecordId}/audio",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 134,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}/audio",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/call-records/{callRecordId}/retry",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 218,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}/retry",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/call-records/{callRecordId}/transcript",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 228,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}/transcript",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/call-records/{callRecordId}/note",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 238,
+  "base": "",
+  "sub": "/api/v1/call-records/{callRecordId}/note",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/phone-contacts",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 247,
+  "base": "",
+  "sub": "/api/v1/phone-contacts",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/phone-repository",
+  "controller": "CallRecordController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/CallRecordController.java",
+  "line": 258,
+  "base": "",
+  "sub": "/api/v1/phone-repository",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/media/{id}",
+  "controller": "MediaController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MediaController.java",
+  "line": 28,
+  "base": "/api",
+  "sub": "/media/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/media/{id}/download",
+  "controller": "MediaController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MediaController.java",
+  "line": 33,
+  "base": "/api",
+  "sub": "/media/{id}/download",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/chatapp/capabilities",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 33,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/chatapp/capabilities/read-only",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 38,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "/read-only",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/chatapp/capabilities/add-number",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 43,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "/add-number",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/chatapp/capabilities/send-code",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 52,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "/send-code",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/chatapp/capabilities/verify",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 61,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "/verify",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/chatapp/capabilities/migration-review",
+  "controller": "AdminChatAppCapabilityController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminChatAppCapabilityController.java",
+  "line": 70,
+  "base": "/api/admin/chatapp/capabilities",
+  "sub": "/migration-review",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/message-summaries/{msgid}",
+  "controller": "WeComMessageSummaryController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComMessageSummaryController.java",
+  "line": 36,
+  "base": "/api/v1/wecom/message-summaries",
+  "sub": "/{msgid}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/message-summaries",
+  "controller": "WeComMessageSummaryController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComMessageSummaryController.java",
+  "line": 45,
+  "base": "/api/v1/wecom/message-summaries",
+  "sub": "",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/webhooks/chatapp",
+  "controller": "ChatAppWebhookController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppWebhookController.java",
+  "line": 22,
+  "base": "",
+  "sub": "/api/v1/webhooks/chatapp",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/admin/call-records/contact-backfill",
+  "controller": "AdminCallRecordBackfillController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminCallRecordBackfillController.java",
+  "line": 18,
+  "base": "/api/v1/admin/call-records",
+  "sub": "/contact-backfill",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/accounts",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 33,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/accounts/sync",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 38,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/accounts/{accountId}/assign",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 43,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "/{accountId}/assign",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/accounts/{accountId}/reclaim",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 50,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "/{accountId}/reclaim",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/admin/whatsapp/accounts/{accountId}/transfer",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 57,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "/{accountId}/transfer",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/accounts/{accountId}/assignment-history",
+  "controller": "AdminWhatsAppPhoneNumberController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppPhoneNumberController.java",
+  "line": 64,
+  "base": "/api/admin/whatsapp/accounts",
+  "sub": "/{accountId}/assignment-history",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/messages",
+  "controller": "WhatsAppMessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppMessageController.java",
+  "line": 23,
+  "base": "",
+  "sub": "/api/v1/whatsapp/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/channel-accounts",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 34,
+  "base": "/api/channel-accounts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/channel-accounts",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 39,
+  "base": "/api/channel-accounts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/channel-accounts/{id}",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 46,
+  "base": "/api/channel-accounts",
+  "sub": "/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/channel-accounts/{id}/unbind",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 51,
+  "base": "/api/channel-accounts",
+  "sub": "/{id}/unbind",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/channel-accounts/{id}/sync",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 57,
+  "base": "/api/channel-accounts",
+  "sub": "/{id}/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/channel-accounts/{id}/credentials",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 66,
+  "base": "/api/channel-accounts",
+  "sub": "/{id}/credentials",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/channel-accounts/{id}/credentials",
+  "controller": "ChannelSettingsController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelSettingsController.java",
+  "line": 71,
+  "base": "/api/channel-accounts",
+  "sub": "/{id}/credentials",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/messages/{id}",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 44,
+  "base": "/api",
+  "sub": "/messages/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/send/email",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 53,
+  "base": "/api",
+  "sub": "/send/email",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/email/messages",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 53,
+  "base": "/api",
+  "sub": "/v1/email/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/send/email",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 68,
+  "base": "/api",
+  "sub": "/send/email",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/email/messages",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 68,
+  "base": "/api",
+  "sub": "/v1/email/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/send/chatapp-media",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 92,
+  "base": "/api",
+  "sub": "/send/chatapp-media",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/send/chatapp",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 110,
+  "base": "/api",
+  "sub": "/send/chatapp",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/channel-capabilities",
+  "controller": "MessageController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/MessageController.java",
+  "line": 143,
+  "base": "/api",
+  "sub": "/channel-capabilities",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/conversation-view/bootstrap",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 77,
+  "base": "/api/v1/wecom",
+  "sub": "/conversation-view/bootstrap",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/conversation-view/sync",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 86,
+  "base": "/api/v1/wecom",
+  "sub": "/conversation-view/sync",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/js-sdk-config",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 98,
+  "base": "/api/v1/wecom",
+  "sub": "/js-sdk-config",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/conversation-view/sessions",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 106,
+  "base": "/api/v1/wecom",
+  "sub": "/conversation-view/sessions",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/conversation-view/sessions/{viewerSessionId}",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 129,
+  "base": "/api/v1/wecom",
+  "sub": "/conversation-view/sessions/{viewerSessionId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/conversation-view/events",
+  "controller": "WeComViewerController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComViewerController.java",
+  "line": 138,
+  "base": "/api/v1/wecom",
+  "sub": "/conversation-view/events",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/auth/wecom/attempts",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 45,
+  "base": "/api",
+  "sub": "/auth/wecom/attempts",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/auth/wecom/exchange",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 50,
+  "base": "/api",
+  "sub": "/auth/wecom/exchange",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/account/wecom-binding",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 58,
+  "base": "/api",
+  "sub": "/account/wecom-binding",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/account/wecom-binding/attempts",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 63,
+  "base": "/api",
+  "sub": "/account/wecom-binding/attempts",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/account/wecom-binding/exchange",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 68,
+  "base": "/api",
+  "sub": "/account/wecom-binding/exchange",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/account/wecom-binding",
+  "controller": "WeComAuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAuthController.java",
+  "line": 78,
+  "base": "/api",
+  "sub": "/account/wecom-binding",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/auth/register",
+  "controller": "AuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AuthController.java",
+  "line": 40,
+  "base": "/api/auth",
+  "sub": "/register",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/auth/login",
+  "controller": "AuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AuthController.java",
+  "line": 49,
+  "base": "/api/auth",
+  "sub": "/login",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/auth/logout",
+  "controller": "AuthController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AuthController.java",
+  "line": 65,
+  "base": "/api/auth",
+  "sub": "/logout",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/todos",
+  "controller": "TodoItemController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/TodoItemController.java",
+  "line": 17,
+  "base": "/api/todos",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/todos",
+  "controller": "TodoItemController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/TodoItemController.java",
+  "line": 18,
+  "base": "/api/todos",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/todos/{id}",
+  "controller": "TodoItemController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/TodoItemController.java",
+  "line": 19,
+  "base": "/api/todos",
+  "sub": "/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/todos/{id}",
+  "controller": "TodoItemController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/TodoItemController.java",
+  "line": 20,
+  "base": "/api/todos",
+  "sub": "/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/groups/{sourceConversationId}/name-refresh",
+  "controller": "WeComGroupNameRefreshController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComGroupNameRefreshController.java",
+  "line": 27,
+  "base": "/api/v1/wecom/groups",
+  "sub": "/{sourceConversationId}/name-refresh",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/events",
+  "controller": "SseController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/SseController.java",
+  "line": 18,
+  "base": "/api",
+  "sub": "/events",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/account/profile",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 37,
+  "base": "/api/account",
+  "sub": "/profile",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/account/profile",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 42,
+  "base": "/api/account",
+  "sub": "/profile",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/account/avatar",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 48,
+  "base": "/api/account",
+  "sub": "/avatar",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/account/avatar/content",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 56,
+  "base": "/api/account",
+  "sub": "/avatar/content",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/account/avatar",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 65,
+  "base": "/api/account",
+  "sub": "/avatar",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/account/password",
+  "controller": "AccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AccountController.java",
+  "line": 72,
+  "base": "/api/account",
+  "sub": "/password",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/whatsapp/accounts/me",
+  "controller": "WhatsAppAccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAccountController.java",
+  "line": 27,
+  "base": "/api/whatsapp/accounts",
+  "sub": "/me",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/whatsapp/accounts/{accountId}",
+  "controller": "WhatsAppAccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAccountController.java",
+  "line": 32,
+  "base": "/api/whatsapp/accounts",
+  "sub": "/{accountId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/whatsapp/accounts/{accountId}/history-sync",
+  "controller": "WhatsAppAccountController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppAccountController.java",
+  "line": 37,
+  "base": "/api/whatsapp/accounts",
+  "sub": "/{accountId}/history-sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/chatapp/broadcasts",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 35,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/chatapp/broadcasts",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 41,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/chatapp/broadcasts/sendable-templates",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 49,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "/sendable-templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/chatapp/broadcasts/{id}",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 54,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/chatapp/broadcasts/{id}/failures",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 59,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "/{id}/failures",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/chatapp/broadcasts/{id}/reconcile",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 67,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "/{id}/reconcile",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/chatapp/broadcasts/{id}/retry-failures",
+  "controller": "ChatAppBroadcastController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChatAppBroadcastController.java",
+  "line": 73,
+  "base": "/api/v1/chatapp/broadcasts",
+  "sub": "/{id}/retry-failures",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/contacts",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 39,
+  "base": "/api/contacts",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/contacts/{id}",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 55,
+  "base": "/api/contacts",
+  "sub": "/{id}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/contacts/{id}/remark",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 62,
+  "base": "/api/contacts",
+  "sub": "/{id}/remark",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/contacts/{id}/profile",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 70,
+  "base": "/api/contacts",
+  "sub": "/{id}/profile",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/contacts/{id}/tags",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 78,
+  "base": "/api/contacts",
+  "sub": "/{id}/tags",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/contacts/{id}/mark-read",
+  "controller": "ContactController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ContactController.java",
+  "line": 86,
+  "base": "/api/contacts",
+  "sub": "/{id}/mark-read",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/admin/whatsapp/template-change-requests",
+  "controller": "AdminWhatsAppTemplateChangeRequestController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppTemplateChangeRequestController.java",
+  "line": 27,
+  "base": "/api/v1/admin/whatsapp/template-change-requests",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/approve",
+  "controller": "AdminWhatsAppTemplateChangeRequestController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppTemplateChangeRequestController.java",
+  "line": 35,
+  "base": "/api/v1/admin/whatsapp/template-change-requests",
+  "sub": "/{requestId}/approve",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/reject",
+  "controller": "AdminWhatsAppTemplateChangeRequestController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppTemplateChangeRequestController.java",
+  "line": 42,
+  "base": "/api/v1/admin/whatsapp/template-change-requests",
+  "sub": "/{requestId}/reject",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/admin/whatsapp/template-change-requests/{requestId}/retry",
+  "controller": "AdminWhatsAppTemplateChangeRequestController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppTemplateChangeRequestController.java",
+  "line": 48,
+  "base": "/api/v1/admin/whatsapp/template-change-requests",
+  "sub": "/{requestId}/retry",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/account/wecom-avatar/authorizations",
+  "controller": "WeComAvatarAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAvatarAuthorizationController.java",
+  "line": 39,
+  "base": "/api",
+  "sub": "/account/wecom-avatar/authorizations",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/account/wecom-avatar/authorizations/{authorizationId}",
+  "controller": "WeComAvatarAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAvatarAuthorizationController.java",
+  "line": 44,
+  "base": "/api",
+  "sub": "/account/wecom-avatar/authorizations/{authorizationId}",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api",
+  "controller": "WeComAvatarAuthorizationController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WeComAvatarAuthorizationController.java",
+  "line": 50,
+  "base": "/api",
+  "sub": "",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/channel-address-books/{channelType}",
+  "controller": "ChannelAddressBookController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelAddressBookController.java",
+  "line": 32,
+  "base": "/api/channel-address-books/{channelType}",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/channel-address-books/{channelType}",
+  "controller": "ChannelAddressBookController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelAddressBookController.java",
+  "line": 43,
+  "base": "/api/channel-address-books/{channelType}",
+  "sub": "",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/channel-address-books/{channelType}/{contactId}",
+  "controller": "ChannelAddressBookController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/ChannelAddressBookController.java",
+  "line": 52,
+  "base": "/api/channel-address-books/{channelType}",
+  "sub": "/{contactId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/templates",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 81,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/templates/{templateId}",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 97,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates/{templateId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/templates/applications",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 103,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates/applications",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/templates/sync",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 115,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 122,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 139,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/{templateId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/applications",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 146,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/applications",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 157,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/{templateId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PATCH",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/send-permission",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 167,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/{templateId}/send-permission",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "DELETE",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 179,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/{templateId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/sync",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 189,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/sync",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/operations",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 196,
+  "base": "/api/v1/whatsapp",
+  "sub": "/business-app/accounts/{accountId}/templates/{templateId}/operations",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/templates/{templateId}/change-requests",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 205,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates/{templateId}/change-requests",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/template-change-requests/mine",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 216,
+  "base": "/api/v1/whatsapp",
+  "sub": "/template-change-requests/mine",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/templates/{templateId}/operations",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 223,
+  "base": "/api/v1/whatsapp",
+  "sub": "/templates/{templateId}/operations",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/public-templates",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 231,
+  "base": "/api/v1/whatsapp",
+  "sub": "/public-templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/whatsapp/template-media",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 246,
+  "base": "/api/v1/whatsapp",
+  "sub": "/template-media",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/whatsapp/template-media/uploads/{clientRequestId}",
+  "controller": "WhatsAppTemplateController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/WhatsAppTemplateController.java",
+  "line": 263,
+  "base": "/api/v1/whatsapp",
+  "sub": "/template-media/uploads/{clientRequestId}",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/users",
+  "controller": "AdminUserController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminUserController.java",
+  "line": 33,
+  "base": "/api/admin",
+  "sub": "/users",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/roles",
+  "controller": "AdminUserController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminUserController.java",
+  "line": 40,
+  "base": "/api/admin",
+  "sub": "/roles",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/users/{targetId}/roles",
+  "controller": "AdminUserController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminUserController.java",
+  "line": 45,
+  "base": "/api/admin",
+  "sub": "/users/{targetId}/roles",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "PUT",
+  "path": "/api/admin/users/{targetId}/password",
+  "controller": "AdminUserController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminUserController.java",
+  "line": 52,
+  "base": "/api/admin",
+  "sub": "/users/{targetId}/password",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/admin/whatsapp/overview",
+  "controller": "AdminWhatsAppWorkbenchController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/web/AdminWhatsAppWorkbenchController.java",
+  "line": 25,
+  "base": "/api/admin/whatsapp",
+  "sub": "/overview",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/wecom/callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 51,
+  "base": "",
+  "sub": "/api/wecom/callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/authorization/callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 51,
+  "base": "",
+  "sub": "/api/v1/wecom/authorization/callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/hook_path",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 51,
+  "base": "",
+  "sub": "/hook_path",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/wecom/callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 74,
+  "base": "",
+  "sub": "/api/wecom/callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/authorization/callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 74,
+  "base": "",
+  "sub": "/api/v1/wecom/authorization/callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/hook_path",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 74,
+  "base": "",
+  "sub": "/hook_path",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/wecom/send",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 95,
+  "base": "",
+  "sub": "/api/wecom/send",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/v1/wecom/app-callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 111,
+  "base": "",
+  "sub": "/api/v1/wecom/app-callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/wecom/app-callback",
+  "controller": "WeComController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/wecom/WeComController.java",
+  "line": 168,
+  "base": "",
+  "sub": "/api/v1/wecom/app-callback",
+  "gated": true,
+  "gates": [
+   "ConditionalOnWeComEnabled",
+   "ConditionalOnExpression"
+  ]
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/send/text",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 43,
+  "base": "/api/chatapp",
+  "sub": "/send/text",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/send/template",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 52,
+  "base": "/api/chatapp",
+  "sub": "/send/template",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/sync/messages",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 79,
+  "base": "/api/chatapp",
+  "sub": "/sync/messages",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/sync/messages/reconcile",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 86,
+  "base": "/api/chatapp",
+  "sub": "/sync/messages/reconcile",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/sync/templates",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 94,
+  "base": "/api/chatapp",
+  "sub": "/sync/templates",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/chatapp/webhook",
+  "controller": "ChatAppController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/chatapp/ChatAppController.java",
+  "line": 106,
+  "base": "/api/chatapp",
+  "sub": "/webhook",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "GET",
+  "path": "/api/v1/email/submissions/unknown",
+  "controller": "EmailSubmissionController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/email/EmailSubmissionController.java",
+  "line": 23,
+  "base": "/api/v1/email/submissions",
+  "sub": "/unknown",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/email/send",
+  "controller": "EmailController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/email/EmailController.java",
+  "line": 34,
+  "base": "/api/email",
+  "sub": "/send",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/email/send",
+  "controller": "EmailController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/email/EmailController.java",
+  "line": 50,
+  "base": "/api/email",
+  "sub": "/send",
+  "gated": false,
+  "gates": []
+ },
+ {
+  "verb": "POST",
+  "path": "/api/email/sync",
+  "controller": "EmailController",
+  "file": "src/main/java/com/crmforlogistics/messagecenter/channel/email/EmailController.java",
+  "line": 63,
+  "base": "/api/email",
+  "sub": "/sync",
+  "gated": false,
+  "gates": []
+ }
+]

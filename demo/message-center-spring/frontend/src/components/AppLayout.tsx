@@ -1,0 +1,347 @@
+import { useEffect, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Layout, Button, Drawer, Typography, Space, Tooltip, Dropdown, theme, type MenuProps } from 'antd';
+import {
+  ContactsOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  SendOutlined,
+  FileTextOutlined,
+  SettingOutlined,
+  PhoneOutlined,
+  NotificationOutlined,
+  UserOutlined,
+  WechatOutlined,
+  FileSearchOutlined,
+  WhatsAppOutlined,
+  MailOutlined,
+  CalendarOutlined,
+} from '@ant-design/icons';
+import { useAuth } from '../hooks/useAuth';
+import { DetailPanelProvider, useDetailPanel } from '../hooks/useDetailPanel';
+import ContactsPage from '../pages/ContactsPage';
+import ContactDetailPanel from './ContactDetailPanel';
+import CallRecordDetail from './CallRecordDetail';
+import WeComGroupDetailPanel from './WeComGroupDetailPanel';
+import { AccountPanel } from './AccountPanel';
+import { AccountAvatar } from './AccountAvatar';
+import { AssistantLauncher } from './assistant/AssistantLauncher';
+import './messageCenterTheme.css';
+
+const { Header, Sider, Content } = Layout;
+const { Text } = Typography;
+
+function AppLayoutInner() {
+  const { username, profile, logout, isAdmin, canBroadcast } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const {
+    selectedDetail,
+    clearSelection,
+    detailPanelOpen,
+    toggleDetailPanel,
+    setDetailPanelOpen,
+  } = useDetailPanel();
+  const { token } = theme.useToken();
+  const [isMobile, setIsMobile] = useState(
+    () => window.matchMedia('(max-width: 767px)').matches,
+  );
+  const [contactsOpen, setContactsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [openNavigation, setOpenNavigation] = useState<string | null>(null);
+
+  const isThreadPage = location.pathname.startsWith('/thread/') || location.pathname.startsWith('/conversations/contact/');
+  // 消息工作台（会话页）自己就是一张卡，其余页面统一由 .mc-page-surface 包住。
+  const isConversationWorkspace = location.pathname.startsWith('/conversations/');
+  const isWeComGroupPage = location.pathname.startsWith('/conversations/wecom-group/');
+  const isPhoneRepositoryPage = location.pathname === '/phone-repository';
+  const supportsDetailPanel = isThreadPage || isWeComGroupPage || isPhoneRepositoryPage;
+  const detailScope = isThreadPage ? 'thread' : isWeComGroupPage ? 'wecom-group' : isPhoneRepositoryPage ? 'phone-repository' : 'none';
+  const selectedCallRecordId = selectedDetail?.kind === 'callRecord' ? selectedDetail.id : null;
+  const detailPanelTitle = selectedCallRecordId ? '电话详情' : isWeComGroupPage ? '群 Topic' : '联系人详情';
+
+  useEffect(() => {
+    clearSelection();
+    setDetailPanelOpen(false);
+  }, [detailScope, clearSelection, setDetailPanelOpen]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const handleChange = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    setIsMobile(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    setContactsOpen(false);
+  }, [location.pathname]);
+
+  const navigationButton = (
+    label: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+  ) => {
+    const button = (
+      <Button
+        aria-label={isMobile ? label : undefined}
+        icon={icon}
+        onClick={onClick}
+      >
+        {isMobile ? null : label}
+      </Button>
+    );
+    return isMobile ? <Tooltip title={label}>{button}</Tooltip> : button;
+  };
+
+  const navigationDropdown = (
+    label: string,
+    icon: React.ReactNode,
+    items: MenuProps['items'],
+  ) => {
+    const button = (
+      <Button
+        aria-label={label}
+        aria-haspopup="menu"
+        className={openNavigation === label ? 'is-open' : undefined}
+        icon={icon}
+      >
+        {isMobile ? null : label}
+      </Button>
+    );
+    return (
+      <Dropdown
+        menu={{ items }}
+        trigger={isMobile ? ['click'] : ['hover', 'click']}
+        onOpenChange={(open) => setOpenNavigation(open ? label : null)}
+      >
+        {isMobile ? <Tooltip title={label}>{button}</Tooltip> : button}
+      </Dropdown>
+    );
+  };
+
+  const whatsappItems: MenuProps['items'] = [
+    {
+      key: 'chatapp-address-book',
+      icon: <ContactsOutlined aria-hidden="true" />,
+      label: '通讯录',
+      onClick: () => navigate('/address-book/chatapp'),
+    },
+    {
+      key: 'templates',
+      icon: <FileTextOutlined aria-hidden="true" />,
+      label: '模板',
+      onClick: () => navigate('/templates'),
+    },
+    canBroadcast
+      ? {
+          key: 'broadcasts',
+          icon: <NotificationOutlined aria-hidden="true" />,
+          label: '群发',
+          onClick: () => navigate('/broadcasts'),
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const phoneItems: MenuProps['items'] = [
+    {
+      key: 'phone-address-book',
+      icon: <ContactsOutlined aria-hidden="true" />,
+      label: '通讯录',
+      onClick: () => navigate('/address-book/phone'),
+    },
+    {
+      key: 'phone-repository',
+      icon: <PhoneOutlined aria-hidden="true" />,
+      label: '电话仓库',
+      onClick: () => navigate('/phone-repository'),
+    },
+  ];
+
+  const systemItems: MenuProps['items'] = [
+    {
+      key: 'send',
+      icon: <SendOutlined aria-hidden="true" />,
+      label: '发送',
+      onClick: () => navigate('/send'),
+    },
+    {
+      key: 'topic-repository',
+      icon: <FileSearchOutlined aria-hidden="true" />,
+      label: 'Topic 仓库',
+      onClick: () => navigate('/topic-repository'),
+    },
+    {
+          key: 'channel-settings',
+          icon: <SettingOutlined aria-hidden="true" />,
+          label: '渠道设置',
+          onClick: () => navigate('/settings/channels'),
+        },
+    isAdmin
+      ? {
+          key: 'users',
+          icon: <UserOutlined aria-hidden="true" />,
+          label: '用户管理',
+          onClick: () => navigate('/settings/users'),
+        }
+      : null,
+    { type: 'divider' as const },
+    {
+      key: 'account',
+      icon: <UserOutlined aria-hidden="true" />,
+      label: '账号',
+      onClick: () => setAccountOpen(true),
+    },
+    {
+      key: 'logout',
+      icon: <LogoutOutlined aria-hidden="true" />,
+      label: '退出登录',
+      onClick: logout,
+    },
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const adminItems: MenuProps['items'] = [
+    { key: 'admin-home', icon: <SettingOutlined aria-hidden="true" />, label: '管理员工作台', onClick: () => navigate('/admin') },
+    { key: 'admin-platforms', icon: <SettingOutlined aria-hidden="true" />, label: '平台接入', onClick: () => navigate('/admin/platforms') },
+    { key: 'admin-accounts', icon: <WhatsAppOutlined aria-hidden="true" />, label: 'WhatsApp 账号', onClick: () => navigate('/admin/whatsapp/accounts') },
+    { key: 'admin-approvals', icon: <FileTextOutlined aria-hidden="true" />, label: '模板审批', onClick: () => navigate('/admin/whatsapp/template-approvals') },
+  ];
+
+  return (
+    <Layout style={{ height: '100vh' }}>
+      <Header
+        className="message-center-header"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 16px',
+        }}
+      >
+        <Space size={isMobile ? 4 : 8}>
+          {isMobile && (
+            <Tooltip title="联系人">
+              <Button
+                aria-label="联系人"
+                icon={<ContactsOutlined />}
+                onClick={() => setContactsOpen(true)}
+              />
+            </Tooltip>
+          )}
+          <Text strong style={{ fontSize: 16, whiteSpace: 'nowrap' }}>
+            {isMobile ? '消息中心' : '统一消息中心'}
+          </Text>
+        </Space>
+        <Space size={isMobile ? 4 : 8}>
+          {navigationDropdown('WhatsApp', <WhatsAppOutlined />, whatsappItems)}
+          {navigationDropdown('邮件', <MailOutlined />, [{ key: 'email-address-book', icon: <ContactsOutlined aria-hidden="true" />, label: '通讯录', onClick: () => navigate('/address-book/email') }])}
+          {isAdmin && navigationButton('企业微信', <WechatOutlined />, () => navigate('/settings/wecom'))}
+          {isAdmin && navigationDropdown('管理员', <SettingOutlined />, adminItems)}
+          {navigationDropdown('电话', <PhoneOutlined />, phoneItems)}
+          {navigationDropdown('系统设置', <SettingOutlined />, systemItems)}
+          {navigationButton('待办日历', <CalendarOutlined />, () => navigate('/todo-calendar'))}
+          {supportsDetailPanel && (
+            <Button
+              aria-label={detailPanelOpen ? '收起右侧栏' : '展开右侧栏'}
+              icon={detailPanelOpen ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+              onClick={toggleDetailPanel}
+            />
+          )}
+          {!isMobile && profile ? <Space size={6}>
+            <AccountAvatar avatar={profile.avatar} size={28} />
+            <Text type="secondary">{profile.displayName}</Text>
+          </Space> : !isMobile ? <Text type="secondary">{username}</Text> : null}
+        </Space>
+      </Header>
+      <Layout className="message-center-body" style={{ flex: 1, overflow: 'hidden' }}>
+        {!isMobile && (
+          <Sider
+            className="message-center-sidebar"
+            width={320}
+            style={{
+              overflow: 'hidden',
+            }}
+          >
+            <ContactsPage />
+          </Sider>
+        )}
+        <Content
+          className="message-center-content"
+          style={{
+            overflow: 'auto',
+            minWidth: 0,
+          }}
+        >
+          {isConversationWorkspace ? <Outlet /> : (
+            <div className="mc-page-surface">
+              <Outlet />
+            </div>
+          )}
+        </Content>
+        {supportsDetailPanel && !isMobile && (
+          <Sider
+            className="message-center-detail"
+            width={selectedCallRecordId ? 560 : 360}
+            collapsedWidth={0}
+            collapsed={!detailPanelOpen}
+            trigger={null}
+            style={{
+              background: token.colorBgContainer,
+              overflow: 'auto',
+              transition: 'all 0.24s ease',
+            }}
+          >
+            {selectedCallRecordId
+              ? <CallRecordDetail callRecordId={selectedCallRecordId} />
+              : isWeComGroupPage
+                ? <WeComGroupDetailPanel />
+                : <ContactDetailPanel />}
+          </Sider>
+        )}
+      </Layout>
+      <Drawer
+        title="联系人"
+        placement="left"
+        width="min(320px, 100vw)"
+        open={isMobile && contactsOpen}
+        onClose={() => setContactsOpen(false)}
+        styles={{ body: { padding: 0 } }}
+      >
+        <ContactsPage />
+      </Drawer>
+      <Drawer
+        title="账号"
+        rootClassName="mc-account-drawer"
+        width="min(420px, 100vw)"
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        styles={{ body: { padding: 0 } }}
+      >
+        <AccountPanel />
+      </Drawer>
+      <Drawer
+        title={detailPanelTitle}
+        width="min(560px, 100vw)"
+        open={isMobile && supportsDetailPanel && detailPanelOpen}
+        onClose={() => setDetailPanelOpen(false)}
+        styles={{ body: { padding: 0 } }}
+      >
+        {selectedCallRecordId
+          ? <CallRecordDetail callRecordId={selectedCallRecordId} />
+          : isWeComGroupPage
+            ? <WeComGroupDetailPanel />
+            : <ContactDetailPanel />}
+      </Drawer>
+      <AssistantLauncher />
+    </Layout>
+  );
+}
+
+export default function AppLayout() {
+  return (
+    <DetailPanelProvider>
+      <AppLayoutInner />
+    </DetailPanelProvider>
+  );
+}

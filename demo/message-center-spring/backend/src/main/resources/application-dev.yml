@@ -1,0 +1,109 @@
+server:
+  port: 8107
+
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/message_center}
+    username: ${SPRING_DATASOURCE_USERNAME:message_center}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:}
+  secret-key: ${MINIO_SECRET_KEY:}
+  bucket: ${MINIO_BUCKET:message-center}
+
+funasr:
+  base-url: ${FUNASR_BASE_URL:http://127.0.0.1:8000}
+
+ai-topic:
+  base-url: ${AI_BASE_URL:}
+  api-key: ${AI_API_KEY:}
+  model: ${AI_MODEL:gpt-4o-mini}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
+  max-input-records: ${AI_MAX_INPUT_RECORDS:200}
+  max-input-bytes: ${AI_MAX_INPUT_BYTES:262144}
+  match-threshold: ${AI_TOPIC_MATCH_THRESHOLD:0.65}
+  worker-concurrency: ${AI_TOPIC_WORKER_CONCURRENCY:1}
+  max-attempts: ${AI_TOPIC_MAX_ATTEMPTS:3}
+  lease-seconds: ${AI_TOPIC_LEASE_SECONDS:120}
+  poll-interval-seconds: ${AI_TOPIC_POLL_INTERVAL_SECONDS:30}
+  audit-max-request-bytes: ${AI_TOPIC_AUDIT_MAX_REQUEST_BYTES:262144}
+  audit-max-response-bytes: ${AI_TOPIC_AUDIT_MAX_RESPONSE_BYTES:524288}
+
+contact-memory:
+  max-inbound-messages: ${CONTACT_MEMORY_MAX_INBOUND_MESSAGES:50}
+  max-message-chars: ${CONTACT_MEMORY_MAX_MESSAGE_CHARS:4000}
+  max-total-chars: ${CONTACT_MEMORY_MAX_TOTAL_CHARS:50000}
+  max-topics: ${CONTACT_MEMORY_MAX_TOPICS:20}
+  max-topic-chars: ${CONTACT_MEMORY_MAX_TOPIC_CHARS:1000}
+  max-call-transcripts: ${CONTACT_MEMORY_MAX_CALL_TRANSCRIPTS:10}
+  max-transcript-chars: ${CONTACT_MEMORY_MAX_TRANSCRIPT_CHARS:4000}
+  max-facts: ${CONTACT_MEMORY_MAX_FACTS:100}
+  max-labels: ${CONTACT_MEMORY_MAX_LABELS:100}
+  max-observations: ${CONTACT_MEMORY_MAX_OBSERVATIONS:100}
+  max-observation-chars: ${CONTACT_MEMORY_MAX_OBSERVATION_CHARS:500}
+  observation-ttl-days: ${CONTACT_MEMORY_OBSERVATION_TTL_DAYS:30}
+  batch-size: ${CONTACT_MEMORY_BATCH_SIZE:50}
+  poll-interval-seconds: ${CONTACT_MEMORY_POLL_INTERVAL_SECONDS:600}
+  max-attempts: ${CONTACT_MEMORY_MAX_ATTEMPTS:3}
+  lease-seconds: ${CONTACT_MEMORY_LEASE_SECONDS:60}
+  max-backoff-seconds: ${CONTACT_MEMORY_MAX_BACKOFF_SECONDS:900}
+  start-hour: ${CONTACT_MEMORY_START_HOUR:0}
+  start-minute: ${CONTACT_MEMORY_START_MINUTE:0}
+  time-zone: ${CONTACT_MEMORY_TIME_ZONE:Asia/Shanghai}
+
+app:
+  data-dir: ${APP_DATA_DIR:data-local}
+  local-dev-mode: ${APP_LOCAL_DEV_MODE:true}
+  web-bind-address: 127.0.0.1
+
+  cust-space-id: ${CAMS_CUST_SPACE_ID:cams-9dou6dubx2ww}
+  chatapp-from: ${CHATAPP_FROM:}
+  chatapp-sync-enabled: true
+
+  aliyun-access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
+  aliyun-access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
+  cams-region: ${CAMS_REGION:ap-southeast-1}
+  cams-endpoint: ${CAMS_ENDPOINT:cams.ap-southeast-1.aliyuncs.com}
+
+  email-sync-enabled: ${APP_EMAIL_SYNC_ENABLED:false}
+
+  smtp-host: ${SMTP_HOST:smtp.139.com}
+  smtp-port: "${SMTP_PORT:465}"
+  smtp-user: ${SMTP_USER:}
+  smtp-password: ${SMTP_PASSWORD:}
+  smtp-ssl: true
+  smtp-start-tls: false
+  smtp-resolve-ipv4: true
+  mail-from: ${MAIL_FROM:}
+  mail-from-name: ${MAIL_FROM_NAME:}
+
+  imap-host: ${IMAP_HOST:imap.139.com}
+  imap-port: "${IMAP_PORT:993}"
+  imap-user: ${IMAP_USER:}
+  imap-password: ${IMAP_PASSWORD:}
+  imap-ssl: true
+  receive-limit: 10
+  mail-provider: "139"
+  imap-139-use-openssl: true
+  inbox-folder: INBOX
+  sent-folder: Sent
+
+  # 本地开发默认不轮询真实企业微信专区；生产默认值由 application.yml 统一拥有。
+  wecom-message-summary-poll-interval-seconds: ${WECOM_MESSAGE_SUMMARY_POLL_INTERVAL_SECONDS:1}
+  wecom-message-summary-batch-size: ${WECOM_MESSAGE_SUMMARY_BATCH_SIZE:20}
+  wecom-message-summary-max-concurrency: ${WECOM_MESSAGE_SUMMARY_MAX_CONCURRENCY:2}
+  wecom-message-summary-max-transient-attempts: ${WECOM_MESSAGE_SUMMARY_MAX_TRANSIENT_ATTEMPTS:20}
+  wecom-message-summary-max-backoff-seconds: ${WECOM_MESSAGE_SUMMARY_MAX_BACKOFF_SECONDS:900}
+  wecom-message-summary-backfill-batch-size: ${WECOM_MESSAGE_SUMMARY_BACKFILL_BATCH_SIZE:200}
+  wecom-chatdata-auto-sync-enabled: ${WECOM_CHATDATA_AUTO_SYNC_ENABLED:false}

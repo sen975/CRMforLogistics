@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v3 反扫：八条规则逐条对账</title>
+<style>
+  :root{
+    --chrome:#141a22; --chrome-2:#11161c;
+    --c-ink:#fff; --c-ink2:rgba(255,255,255,.72); --c-ink3:rgba(255,255,255,.54); --c-ink4:rgba(255,255,255,.42);
+    --c-line:rgba(255,255,255,.09);
+    --canvas:#f1f2f4; --surface:#fff;
+    --ink:#0f1419; --ink2:#5b6675; --ink3:#98a1ad;
+    --hair:#eceef1; --hair2:#e2e5e9;
+    --btn:#14181f;
+    --ok:#12724a;   --ok-bg:#e8f5ee;
+    --warn:#8a4b08; --warn-bg:#fdf3e4;
+    --bad:#b42318;  --bad-bg:#fef3f2;
+    --skip:#5b6675; --skip-bg:#f1f2f4;
+    --mail:#2f7ae5; --wecom:#5b5bd6; --wa:#22a06b; --phone:#d1851c;
+    --r:16px; --rm:10px; --rs:8px;
+    --sh:0 1px 2px rgba(16,24,40,.04), 0 8px 22px -14px rgba(16,24,40,.16);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--canvas);color:var(--ink);font-size:13.5px;line-height:1.55;
+    font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 26px}
+
+  /* ---------- 深色头 ---------- */
+  header{background:var(--chrome);color:var(--c-ink);padding:26px 0 24px}
+  header .kick{font-size:11.5px;font-weight:600;letter-spacing:.1em;color:var(--c-ink4)}
+  header h1{margin:9px 0 0;font-size:25px;font-weight:660;letter-spacing:-.03em;line-height:1.22}
+  header .lede{margin:11px 0 0;font-size:13.5px;color:var(--c-ink2);max-width:760px}
+  header .lede b{color:#fff;font-weight:620}
+  .tally{display:flex;gap:26px;margin-top:20px;padding-top:18px;border-top:1px solid var(--c-line);flex-wrap:wrap}
+  .tally div b{display:block;font-size:23px;font-weight:680;letter-spacing:-.03em;line-height:1.1}
+  .tally div span{display:block;font-size:11.5px;color:var(--c-ink4);margin-top:3px}
+  .t-ok b{color:#5fdca0} .t-warn b{color:#ffc271} .t-bad b{color:#ff8177} .t-skip b{color:var(--c-ink3)}
+
+  main{padding:24px 0 56px}
+  h2{font-size:15px;font-weight:650;letter-spacing:-.015em;margin:0 0 4px}
+  .h2sub{margin:0 0 14px;font-size:12.5px;color:var(--ink2)}
+
+  /* ---------- 矩阵 ---------- */
+  .panel{background:var(--surface);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden}
+  .mwrap{overflow-x:auto}
+  table.mx{width:100%;border-collapse:collapse;min-width:820px}
+  table.mx th{
+    text-align:left;font-size:11px;font-weight:600;letter-spacing:.05em;color:var(--ink3);
+    padding:12px 16px;border-bottom:1px solid var(--hair2);white-space:nowrap;
+  }
+  table.mx td{padding:11px 16px;border-bottom:1px solid var(--hair);font-size:12.5px;vertical-align:top}
+  table.mx tr:last-child td{border-bottom:0}
+  table.mx td.n{font-weight:650;color:var(--ink)}
+  table.mx td.ev{color:var(--ink2)}
+  table.mx code{font:500 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f4f5f7;border-radius:4px;padding:1px 5px;color:#3c4657}
+  .st{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 9px;border-radius:6px;font-size:11px;font-weight:650;white-space:nowrap}
+  .st.ok{background:var(--ok-bg);color:var(--ok)}
+  .st.warn{background:var(--warn-bg);color:var(--warn)}
+  .st.bad{background:var(--bad-bg);color:var(--bad)}
+  .st.skip{background:var(--skip-bg);color:var(--skip)}
+
+  /* ---------- 逐条 ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  .card{background:var(--surface);border-radius:var(--r);box-shadow:var(--sh);padding:0 0 16px;display:flex;flex-direction:column;overflow:hidden}
+  .card .ch{display:flex;align-items:center;gap:10px;padding:14px 18px 12px}
+  .card .num{
+    width:23px;height:23px;flex:none;border-radius:7px;display:grid;place-items:center;
+    font-size:11px;font-weight:700;background:#f4f5f7;color:var(--ink2);
+  }
+  .card .ch h3{margin:0;font-size:13.5px;font-weight:640;letter-spacing:-.012em;flex:1}
+  .card .quote{
+    margin:0 18px;padding:10px 13px;border-radius:var(--rs);background:#f7f8fa;
+    border-left:2.5px solid var(--hair2);font-size:12.5px;color:var(--ink2);
+  }
+  .card .body{padding:13px 18px 0;flex:1}
+  .card .row{display:flex;gap:11px;padding:7px 0;border-top:1px solid var(--hair)}
+  .card .row:first-child{border-top:0;padding-top:2px}
+  .card .row .k{flex:none;width:62px;font-size:11.5px;font-weight:600;color:var(--ink3);padding-top:1px}
+  .card .row .v{flex:1;min-width:0;font-size:12.5px;color:var(--ink)}
+  .card .row .v b{font-weight:650}
+  .card .row .v em{font-style:normal;color:var(--ink2)}
+  .card .row .v code{font:500 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f4f5f7;border-radius:4px;padding:1px 5px;color:#3c4657}
+  .card .fix{
+    margin:13px 18px 0;padding:11px 13px;border-radius:var(--rs);background:#f7f8fa;
+    font-size:12.5px;color:var(--ink);line-height:1.6;
+  }
+  .card .fix .lb{display:block;font-size:11px;font-weight:650;letter-spacing:.05em;color:var(--ink3);margin-bottom:5px}
+
+  /* ---------- 漏网 ---------- */
+  .leak{background:var(--bad-bg);border-radius:var(--r);padding:18px 20px;margin-top:14px}
+  .leak.warn{background:var(--warn-bg)}
+  .leak h3{margin:0 0 3px;font-size:14px;font-weight:660;color:var(--bad);letter-spacing:-.012em}
+  .leak.warn h3{color:var(--warn)}
+  .leak p{margin:8px 0 0;font-size:12.5px;color:#5c2b26;line-height:1.62}
+  .leak.warn p{color:#5c3b12}
+  .leak b{font-weight:660}
+  .leak code{font:500 11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,.66);border-radius:4px;padding:1px 5px}
+
+  /* ---------- 下一步 ---------- */
+  .steps{display:flex;flex-direction:column;gap:0;margin-top:6px}
+  .step{display:flex;gap:14px;padding:13px 18px;border-top:1px solid var(--hair);align-items:flex-start}
+  .step:first-child{border-top:0}
+  .step .lv{flex:none;width:74px;padding-top:1px}
+  .step .lv span{display:inline-flex;height:20px;padding:0 8px;align-items:center;border-radius:6px;font-size:10.5px;font-weight:650}
+  .lv-a span{background:var(--bad-bg);color:var(--bad)}
+  .lv-b span{background:var(--warn-bg);color:var(--warn)}
+  .lv-c span{background:var(--skip-bg);color:var(--skip)}
+  .step .sb{flex:1;min-width:0}
+  .step .sb b{font-size:13px;font-weight:640;display:block;letter-spacing:-.01em}
+  .step .sb p{margin:4px 0 0;font-size:12.5px;color:var(--ink2);line-height:1.6}
+
+  footer{border-top:1px solid var(--hair2);margin-top:26px;padding-top:16px;font-size:12px;color:var(--ink3)}
+
+  @media (max-width:980px){
+    .grid{grid-template-columns:1fr}
+    .step{flex-direction:column;gap:7px}
+    .step .lv{width:auto}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="kick">v3 · 反 扫 审 计</div>
+    <h1>把八条规则反过来扫 v3：3 条做到、1 条选多、3 条没落地</h1>
+    <p class="lede">
+      规则是我自己在案例墙里写的，所以这次<b>只算 v3 欠了多少</b>，不算它做对了多少。
+      第 05 条（归属用边框）按小森要求跳过。
+    </p>
+    <div class="tally">
+      <div class="t-ok"><b>3</b><span>达成（01 / 02 / 06）</span></div>
+      <div class="t-warn"><b>1</b><span>选多了（03）</span></div>
+      <div class="t-bad"><b>3</b><span>未落地（04 半 / 07 / 08）</span></div>
+      <div class="t-skip"><b>1</b><span>按要求跳过（05）</span></div>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+
+  <!-- ============ 矩阵 ============ -->
+  <h2>一屏对账</h2>
+  <p class="h2sub">「证据」列全部是 v3 源码里的实际数字，不是我对着图看出来的。</p>
+  <div class="panel mwrap">
+    <table class="mx">
+      <thead>
+        <tr><th style="width:196px">规则</th><th style="width:104px">判定</th><th>证据（v3 源码实测）</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="n">01 一格只放两行文字</td>
+          <td><span class="st ok">达成</span></td>
+          <td class="ev">13 行会话，每行 <b>4 个文字元素</b>（名字 / 预览 / 时间 / 未读数字）—— 比 WhatsApp 的 5 个还少一个。<code>itemH=58px</code></td>
+        </tr>
+        <tr>
+          <td class="n">02 第三行的价码</td>
+          <td><span class="st ok">达成</span></td>
+          <td class="ev">第三行<b>整行不存在</b>，代价 0。渠道改由头像角上的色点承担（转给规则 04）</td>
+        </tr>
+        <tr>
+          <td class="n">03 未读三选一</td>
+          <td><span class="st warn">选多了</span></td>
+          <td class="ev">同时用了<b>两种</b>：数字 pill（<code>17px / 10.5px 字</code>）<b>+</b> 字重提亮（<code>font-weight:660;color:#fff</code>）</td>
+        </tr>
+        <tr>
+          <td class="n">04 状态用图形</td>
+          <td><span class="st bad">半落地</span></td>
+          <td class="ev">会话行 13/13 有图形 ✓，左栏 5 行有图形 ✓；<b>但「需要你处理」6 个 tag 全是纯文字</b>，统计条 4 个徽标里 3 个是纯文字状态</td>
+        </tr>
+        <tr>
+          <td class="n">05 归属用边框</td>
+          <td><span class="st skip">跳过</span></td>
+          <td class="ev">按小森要求不做。理由记一笔：v3 的会话行没有「归属」这个维度，硬加边框只会多一个要解释的记号</td>
+        </tr>
+        <tr>
+          <td class="n">06 分隔线缩进，不用卡片框</td>
+          <td><span class="st ok">达成</span></td>
+          <td class="ev">会话行<b>分隔线 0 条</b>；待处理卡用缩进 hairline（<code>left:12px;right:12px</code>）；白面板从 v2 的 8 个降到 <b>4 个</b></td>
+        </tr>
+        <tr>
+          <td class="n">07 按状态组织，不按对象</td>
+          <td><span class="st bad">未落地</span></td>
+          <td class="ev">顶栏 5 项<b>全是对象</b>（工作台 / 收件箱 / 联系人 / 模板 / 渠道）；左栏 5 行是<b>渠道筛选</b> —— 而渠道已经画在 13 行的色点上了</td>
+        </tr>
+        <tr>
+          <td class="n">08 密度让人选，窄屏收入口</td>
+          <td><span class="st bad">未落地</span></td>
+          <td class="ev"><code>@media</code> 出现 <b>0 次</b>；左栏 <code>width:290px</code> 写死；没有第二档密度</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============ 逐条 ============ -->
+  <h2 style="margin-top:30px">逐条说清</h2>
+  <p class="h2sub">每张卡：规则原文 → v3 里的事实 → 判定 → 该动什么。</p>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="ch"><span class="num">01</span><h3>一格只放两行文字</h3><span class="st ok">达成</span></div>
+      <p class="quote">七家的行高都在 60–76px，全部是「名称 + 预览」两行。</p>
+      <div class="body">
+        <div class="row"><span class="k">元素</span><span class="v">4 个 / 行 —— 名字、预览、时间、未读数字（13 行无一例外）</span></div>
+        <div class="row"><span class="k">行高</span><span class="v"><b>58px</b>，比七家的下限 60px 还低 2px</span></div>
+        <div class="row"><span class="k">头像</span><span class="v"><b>36px</b>，参照里是 46–48px</span></div>
+      </div>
+      <div class="fix"><span class="lb">判定</span>
+        做到，而且<b>走得比七家都远</b>。代价要说清：36px 头像 + 58px 行是<b>没有先例背书</b>的一档 ——
+        七家没人这么做，可能是他们试过觉得挤。要留着，就得拿真数据验一次「点击热区够不够、13px 名字会不会看不清」，
+        不能只凭截图好看。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">02</span><h3>第三行的价码：+10px、10px 字</h3><span class="st ok">达成</span></div>
+      <p class="quote">Telegram 源码里唯一带第三行的形态是 <code>taggedDialogRow</code>：62 → 72px，标签 10px，且只在必要时出现。</p>
+      <div class="body">
+        <div class="row"><span class="k">现状</span><span class="v">第三行<b>整行不存在</b> —— 不是付了 10px，是不付</span></div>
+        <div class="row"><span class="k">替代</span><span class="v">渠道改成头像角上的色点（<code>.av .ch</code>，13 处全有）</span></div>
+        <div class="row"><span class="k">回收</span><span class="v">v2 付的 20px 行高 + 11.5px 字号，<b>全部退回</b></span></div>
+      </div>
+      <div class="fix"><span class="lb">判定</span>
+        这是八条里兑现得最干净的一条。唯一要盯的是它的<b>前置</b>：色点这套要在真项目里成立，
+        前提是「一个联系人可能有两个渠道」这件事在数据上真的常见 —— 否则角上那个点会有一半是空的。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">03</span><h3>未读三选一，不写「N 条未读」</h3><span class="st warn">选多了</span></div>
+      <p class="quote">数字 pill / 圆点 / 只说字重。没有一家用句子解释未读。</p>
+      <div class="body">
+        <div class="row"><span class="k">v3 用了</span><span class="v"><b>数字 pill</b> <em>+</em> <b>字重提亮</b> —— 两条同时上</span></div>
+        <div class="row"><span class="k">理由</span><span class="v">数字已经说清「有几条」，加粗是把同一件事说第二遍</span></div>
+        <div class="row"><span class="k">对照</span><span class="v">Telegram 是 <code>12px bold / 19px 高</code>；v3 是 <code>10.5px / 17px</code>，<b>偏小</b></span></div>
+      </div>
+      <div class="fix"><span class="lb">该动什么（二选一）</span>
+        <b>要么</b>去掉字重提亮（只留数字 pill，Slack 那一路）；
+        <b>要么</b>去掉数字、改成圆点（iMessage 那一路）。
+        我倾向留数字去字重 —— 但顺带把 pill 字号从 10.5 抬到 <b>11.5</b>：10.5px 是 Telegram 给「第三行标签」的字号，
+        用在未读计数上太小。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">04</span><h3>状态用图形，不用文字</h3><span class="st bad">半落地</span></div>
+      <p class="quote">4 家独立撞到同一做法：色条 / 色点 / 边框承担状态，文字只用来写内容。</p>
+      <div class="body">
+        <div class="row"><span class="k">做到的</span><span class="v">会话行 13/13 有渠道色点；左栏 5 行 + 统计条 + 图例都是小色块；选中项是 2.5px 白条</span></div>
+        <div class="row"><span class="k">没做到</span><span class="v">「需要你处理」里 <b>6 个 tag 全是文字</b>（邮件 / 企业微信 / 电话 / 等 14 小时 / 来电未接…）</span></div>
+        <div class="row"><span class="k">没做到</span><span class="v">同一个「渠道」维度，左栏用纯色点、卡片里退回「色点 + 文字」</span></div>
+      </div>
+      <div class="fix"><span class="lb">该动什么</span>
+        卡片里「渠道」不必带文字 —— 上面那条色点已经教过用户了（<b>同一屏不需要教两遍</b>）。
+        「紧迫度」（等 14 小时 / 今天 / 逾期）目前<b>一个图形都没有</b>，全是文字：
+        可以只留颜色（琥珀 / 红）+ 时长数字，把「等」字去掉。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">05</span><h3>归属用边框，不用句子</h3><span class="st skip">按要求跳过</span></div>
+      <p class="quote">Missive 用一条 3px 左边框说「这是团队共享的」，一行字都没写。</p>
+      <div class="body">
+        <div class="row"><span class="k">处理</span><span class="v">小森明确说<b>不需要</b>，不落</span></div>
+        <div class="row"><span class="k">记一笔</span><span class="v">v3 的会话行本来就没有「归属」这一维，硬加边框等于多一个要解释的记号 —— 跳过是对的</span></div>
+      </div>
+      <div class="fix"><span class="lb">什么时候再想它</span>
+        等真项目里出现「这条会话是同事在处理」的诉求时再回来。
+        Missive 那条的价值不在边框本身，而在<b>「共享」这件事不需要一行字</b>这个思路。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">06</span><h3>分隔线缩进，不用卡片框</h3><span class="st ok">达成</span></div>
+      <p class="quote">微信 / Telegram 的分隔线都从文字起始处开始。一屏能少掉十条横线。</p>
+      <div class="body">
+        <div class="row"><span class="k">会话行</span><span class="v">分隔线 <b>0 条</b>，靠 hover 底色 + 圆角分区</span></div>
+        <div class="row"><span class="k">待处理</span><span class="v">用缩进 hairline：<code>left:12px;right:12px</code></span></div>
+        <div class="row"><span class="k">白面板</span><span class="v">v2 的 <b>8 个</b> → v3 <b>4 个</b></span></div>
+      </div>
+      <div class="fix"><span class="lb">判定</span>
+        达成，是八条里效果最直接的一条。一处遗留：统计条用的是<b>全高贯穿的竖线</b>
+        （<code>border-left</code>），不是缩进线 —— 规则只谈了横线，竖线这里没规矩，先记着。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">07</span><h3>按「状态」组织，不按「对象」</h3><span class="st bad">未落地</span></div>
+      <p class="quote">Front 的 Open / Later / Done、Slack 的模式 tab —— 两家独立产品给出同一答案。</p>
+      <div class="body">
+        <div class="row"><span class="k">顶栏</span><span class="v">5 项全是<b>对象</b>：工作台 / 收件箱 / 联系人 / 模板 / 渠道</span></div>
+        <div class="row"><span class="k">左栏</span><span class="v">5 行是<b>渠道筛选</b>（全部 / 邮件 / 企微 / WhatsApp / 电话）</span></div>
+        <div class="row"><span class="k">冲突</span><span class="v">渠道<b>已经</b>画在 13 行的角上了 —— 筛选维度又占着左栏最贵的位置</span></div>
+      </div>
+      <div class="fix"><span class="lb">该动什么（本批最大改动）</span>
+        左栏从「渠道筛选」换成<b>状态分组</b>：<b>待我回复 / 等对方 / 已归档</b>（Front 三段直译）。
+        渠道不删，降级成「挂在列表头上的一排 chips」，或者直接靠色点 —— 因为色点已经是筛选维度了。
+        顶栏把右上的「待办日历」提上来成一个 tab，让<b>待回复</b>成为一等入口。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch"><span class="num">08</span><h3>密度让人选，窄屏收入口不缩字</h3><span class="st bad">未落地</span></div>
+      <p class="quote">Intercom 给了「列表 ↔ 表格」两档；Slack 窗口变窄是把低频 tab 收进 More。缩字号是最差的那种响应式。</p>
+      <div class="body">
+        <div class="row"><span class="k">断点</span><span class="v"><code>@media</code> <b>0 次</b> —— 一个都没有</span></div>
+        <div class="row"><span class="k">布局</span><span class="v">左栏 <code>width:290px</code> 写死，内容区吃剩下的</span></div>
+        <div class="row"><span class="k">密度</span><span class="v">只有一档，没有紧凑 / 舒适切换</span></div>
+      </div>
+      <div class="fix"><span class="lb">该动什么</span>
+        先补两个断点就够：<b>≤1280</b> 左栏收到 250px；<b>≤1080</b> 把左栏收成抽屉（按钮展开），内容区优先。
+        密度切换属于加分项，<b>放后面</b> —— 一件真在用之前，多一档密度只是多一个没人点的开关。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ 漏网 ============ -->
+  <h2 style="margin-top:30px">顺带抓到的两处漏网</h2>
+  <p class="h2sub">这两条不在八条规则里，是这次反扫时撞出来的。</p>
+
+  <div class="leak">
+    <h3>A. 上一轮「13 处小字全清」—— 漏了统计条那 4 个徽标里的 3 个</h3>
+    <p>
+      上一轮我宣称 13 处解释性小字全清（<code>statSub=0</code> 等五组指标全 0）。但那次只审了统计条的<b>第三行</b> ——
+      第二行那 4 个 <code>&lt;em&gt;</code> 徽标被我整批当成「环比」放过了。逐个看：
+      <b>只有「+2 本周」真是环比</b>，其余三个是解释或自证 ——
+      「需今天处理」<b>与卡片标题的「3」和卡内三条重复</b>（同一件事说了三遍）、
+      「全部健康」是页面自证、「已完成 2」下方待办列表里本来就能数出来。
+    </p>
+    <p><b>这四条里该留 1 条、改 1 条、删 2 条。</b></p>
+  </div>
+
+  <div class="leak warn">
+    <h3>B. 同一个「渠道」，v3 教了两遍</h3>
+    <p>
+      v3 把渠道降成色点（规则 04），<b>同时又保留了左栏 5 行渠道筛选</b>（规则 07 的对象组织）。
+      结果是同一个维度在左栏上方被文字点名一次、在 13 行里被色点画一次。
+      规则 04 和 07 合起来推的结论是同一个：<b>左栏那五行该让位给状态分组</b>。
+    </p>
+    <p>这也解释了为什么现在左栏看着"有点空又有点杂"—— 它占着最贵的位置，做的是已经做过的事。</p>
+  </div>
+
+  <!-- ============ 下一步 ============ -->
+  <h2 style="margin-top:30px">按代价排序，我建议这么动</h2>
+  <p class="h2sub">A 档改完不会动结构；B 档是结构决策，得你先点头。</p>
+  <div class="panel steps" style="margin-top:6px">
+    <div class="step">
+      <div class="lv lv-a"><span>A · 低风险</span></div>
+      <div class="sb"><b>三条纯删改：未读去字重、pill 字号 10.5 → 11.5、统计条删 2 改 1 个徽标</b>
+        <p>都不动布局，改完更干净；规则 03、04 的欠账能还掉一半。</p></div>
+    </div>
+    <div class="step">
+      <div class="lv lv-a"><span>A · 低风险</span></div>
+      <div class="sb"><b>补两个响应式断点（≤1280 收左栏、≤1080 收抽屉）</b>
+        <p><code>@media</code> 现在是 0 次，这是纯粹的欠账，没有取舍问题。</p></div>
+    </div>
+    <div class="step">
+      <div class="lv lv-b"><span>B · 结构</span></div>
+      <div class="sb"><b>左栏从「渠道筛选」换成「状态分组」（待我回复 / 等对方 / 已归档）</b>
+        <p>规则 07 的落地，也是这批最有价值的一改。渠道降级成列表头上的 chips。
+        代价：筛选能力的动线变了，用户得重新学一次。</p></div>
+    </div>
+    <div class="step">
+      <div class="lv lv-c"><span>C · 待定</span></div>
+      <div class="sb"><b>36px 头像 / 58px 行高要不要留</b>
+        <p>七家没人这么做。留着更紧凑但没先例，建议拿真数据量一次点击热区再定。</p></div>
+    </div>
+  </div>
+
+  <footer>
+    扫的是 <code>2026-09-29-workbench-v3.html</code>（703 行）；规则原文取自 <code>2026-09-29-chat-app-cases.html</code>「九个案例收敛成八条」。
+    <b>本轮只审计，没有改 v3</b>。未碰 <code>frontend/src</code>。
+  </footer>
+
+</div>
+</main>
+</body>
+</html>

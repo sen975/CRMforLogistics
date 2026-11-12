@@ -1,0 +1,230 @@
+/* 账号抽屉（2026-09-30）：收进工作台同一套视觉语言。
+   抽屉本体是一张浮在灰底上的白卡（10px 缝 / 16px 圆角 / 1px 描边 / 同款投影），
+   与 `.mc-assistant-drawer`、`.message-center-thread-shell` 同款；抽屉内部是浅灰画布
+   （与内容区、左栏同一层灰），上面压若干张白卡分区。
+   命名空间挂在 `rootClassName` 上 —— Drawer 是 portal 到 body 的，`.message-center-*`
+   前缀选不中它。类名用 `mc-account-*`：`.md-*`/`as-*` 已分别被详情面板与助手面板占用。 */
+
+.mc-account-drawer .ant-drawer-content-wrapper {
+  padding: 10px;
+  box-shadow: none !important;
+}
+
+.mc-account-drawer .ant-drawer-content {
+  overflow: hidden;
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 12px 28px rgba(16, 24, 40, .10);
+}
+
+/* 头部：与消息区标题栏同款（白底 + 一条极浅分隔线），标题字号对齐工作台。 */
+.mc-account-drawer .ant-drawer-header {
+  padding: 13px 16px;
+  border-bottom: 1px solid #eceef1;
+  background: #ffffff;
+}
+
+.mc-account-drawer .ant-drawer-header .ant-drawer-title {
+  color: #0f1419;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.mc-account-drawer .ant-drawer-close {
+  margin-inline-end: 10px;
+  border-radius: 8px;
+  color: #5b6572;
+}
+
+.mc-account-drawer .ant-drawer-close:hover { color: #111827; background: rgba(15, 23, 42, .06); }
+
+/* 内容区：浅灰画布。内边距交给 .mc-account 自己给，否则会和卡片间距叠成两层。 */
+.mc-account-drawer .ant-drawer-body { display: flex; padding: 0; }
+
+.mc-account {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  overflow: auto;
+  background: #f4f4f4;
+}
+
+.mc-account--empty { align-items: flex-start; }
+
+.mc-account--empty .mc-account-hint { margin: 0; }
+
+/* —— 身份卡：头像 / 昵称 / 登录名 / 头像来源 —— */
+.mc-account-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e5e8ec;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+
+.mc-account-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mc-account-hero-name {
+  color: #0f1419;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.mc-account-hero-username {
+  color: #8a9199;
+  font-size: 12px;
+  line-height: 1.3;
+  word-break: break-all;
+}
+
+.mc-account-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.mc-account-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-size: 11.5px;
+  line-height: 20px;
+}
+
+/* —— 分区卡 —— */
+.mc-account-section {
+  padding: 14px;
+  border: 1px solid #e5e8ec;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+
+.mc-account-section-title {
+  margin: 0 0 10px;
+  color: rgba(15, 23, 42, .45);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+
+/* —— 「标签 · 控件 · 动作」行：标签灰、定宽；控件占满剩余宽度。
+   标签宽度固定 40px 是为了「昵称 / 头像」两个二字词纵向对齐，别改成 fit-content。 —— */
+.mc-account-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mc-account-field + .mc-account-field { margin-top: 10px; }
+
+.mc-account-field-label {
+  flex: none;
+  width: 40px;
+  padding-top: 6px;
+  color: #98a1ad;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.mc-account-field-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+/* 表单校验失败时 antd 会插入 .ant-form-item-explain，这一行会变高；
+   按钮 `flex: none` + 行 `align-items: flex-start` ⇒ 按钮始终与输入框顶对齐，不会跟着跑。 */
+.mc-account-field > .ant-btn { flex: none; }
+
+.mc-account-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mc-account-hint {
+  margin: 10px 0 0;
+  color: #98a1ad;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* —— 设置项行：左文字（标题 + 说明），右动作 —— */
+.mc-account-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mc-account-action-text { min-width: 0; }
+
+.mc-account-action-title {
+  color: #0f1419;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mc-account-action-hint {
+  margin-top: 2px;
+  color: #98a1ad;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mc-account-action-row > .ant-btn { flex: none; }
+
+/* 密码弹窗也拉进工作台：圆角与字号对齐抽屉头部（antd 默认 8px 圆角 + 16px 标题，
+   和它弹出的那张 16px 圆角抽屉并排时显得是两套东西）。作用域只挂在账号弹窗上，
+   不动全局 `.ant-modal` —— 别的页面还有在途改动。 */
+.mc-account-modal .ant-modal-content { border-radius: 12px; }
+
+.mc-account-modal .ant-modal-title {
+  color: #0f1419;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+@media (max-width: 767px) {
+  .mc-account-drawer .ant-drawer-content-wrapper { padding: 0; }
+
+  .mc-account-drawer .ant-drawer-content {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .mc-account { padding: 10px; }
+
+  .mc-account-hero,
+  .mc-account-section { border-radius: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-account-drawer *,
+  .mc-account * { transition: none !important; }
+}

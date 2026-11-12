@@ -26,6 +26,11 @@ wechat-decrypt/
 **/data/inbox.jsonl
 **/data/contact-groups.jsonl
 **/data/media/
+demo/message-center-spring/data/
+demo/message-center-spring/backend/data/
+**/data-local/
+**/media-cache/
+**/*.lock
 **/result.txt
 **/*.log
 
@@ -45,6 +50,18 @@ demo/outputs/
 **/*.class
 **/.verify/edge-profile-*/
 
+# 视频任务的渲染产物与便携包：单是 out/ 就有 115MB（5 个 mp4），便携包 101MB。
+# 都能从 src/ 重新渲染，入库只会让 .git 永久膨胀，故刻意排除。
+video-pitch/out/
+video-pitch-portable*.tar.gz
+
+# 本地打包产物：message-center.jar 单个就有 69MB，frontend.zip 0.9MB。
+# 都能由 mvn package / npm run build 重建，入库只会让 .git 永久膨胀，故刻意排除。
+release/
+
+# Local agent memory and session state
+.workbuddy/
+
 # IDE and operating-system state
 **/.idea/
 **/.vs/
@@ -59,4 +76,3 @@ Thumbs.db
 # Vendor SDK binaries are installed locally from the official package
 wecom-archive-app/sdk_win_v3/**/*.dll
 wecom-archive-app/sdk_win_v3/**/*.lib
-

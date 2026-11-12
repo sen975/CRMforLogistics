@@ -1,0 +1,136 @@
+package com.crmforlogistics.messagecenter.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
+
+@ConfigurationProperties(prefix = "app")
+public record AppConfig(
+        @DefaultValue("8099") int port,
+        @DefaultValue("${user.dir}/data") String dataDir,
+        String webBindAddress,
+        String databaseUrl,
+        String databaseUser,
+        String databasePasswordFile,
+        boolean localDevMode,
+        String custSpaceId,
+        String chatappFrom,
+        String chatappTo,
+        String chatappChannelType,
+        @DefaultValue("true") boolean chatappSyncEnabled,
+        @DefaultValue("true") boolean chatappTemplateReconcileEnabled,
+        @DefaultValue("300000") long chatappTemplateReconcileIntervalMs,
+        String aliyunAccessKeyId,
+        String aliyunAccessKeySecret,
+        String camsRegion,
+        String camsEndpoint,
+        String smtpHost,
+        String smtpPort,
+        String smtpUser,
+        String smtpPasswordFile,
+        String smtpPassword,
+        @DefaultValue("true") boolean smtpSsl,
+        @DefaultValue("false") boolean smtpStartTls,
+        @DefaultValue("true") boolean smtpResolveIpv4,
+        String smtpLocalhost,
+        String mailFrom,
+        String mailFromName,
+        String imapHost,
+        String imapPort,
+        String imapUser,
+        String imapPasswordFile,
+        String imapPassword,
+        @DefaultValue("true") boolean imapSsl,
+        @DefaultValue("10") int receiveLimit,
+        @DefaultValue("auto") String mailProvider,
+        @DefaultValue("true") boolean imap139UseOpenssl,
+        @DefaultValue("/usr/bin/openssl") String opensslBin,
+        @DefaultValue("false") boolean emailSyncEnabled,
+        @DefaultValue("INBOX") String inboxFolder,
+        @DefaultValue("Sent") String sentFolder,
+        @DefaultValue("16") int emailAttachmentMaxCount,
+        @DefaultValue("20971520") long emailAttachmentMaxTotalBytes,
+        // WeCom
+        String wecomSuiteId,
+        String wecomSuiteSecret,
+        String wecomToken,
+        String wecomEncodingAesKey,
+        @DefaultValue("") String wecomCallbackReceiveId,
+        // 应用级回调通道（客户联系事件）：与应用级 Token/AESKey 配套，与模板级那套相互独立
+        @DefaultValue("") String wecomAppToken,
+        @DefaultValue("") String wecomAppEncodingAesKey,
+        @DefaultValue("false") boolean wecomContactEventEnabled,
+        @DefaultValue("https://qyapi.weixin.qq.com") String wecomApiBaseUrl,
+        @DefaultValue("10") int wecomApiTimeoutSeconds,
+        @DefaultValue("300") int wecomTokenRefreshSkewSeconds,
+        @DefaultValue("") String wecomCorpId,
+        @DefaultValue("") String wecomAgentId,
+        @DefaultValue("") String wecomSecret,
+        @DefaultValue("") String wecomLoginAuthCorpId,
+        @DefaultValue("http://localhost:8099/") String wecomLoginRedirectUri,
+        @DefaultValue("300") int wecomLoginAttemptTtlSeconds,
+        @DefaultValue("256") int wecomLoginMaxPending,
+        @DefaultValue("20") int wecomLoginAttemptRateLimitPerMinute,
+        @DefaultValue("") String wecomAllowedJsapiOrigins,
+        @DefaultValue("28800") int wecomViewerAuthTtlSeconds,
+        @DefaultValue("300") int wecomViewerSessionTtlSeconds,
+        @DefaultValue("15") int wecomViewerMaxMessages,
+        @DefaultValue("10") int wecomViewerSessionRateLimit,
+        @DefaultValue("64") int wecomAuthorizationQueueCapacity,
+        @DefaultValue("") String wecomChatDataProgramId,
+        @DefaultValue("") String wecomChatDataAbilityId,
+        @DefaultValue("false") boolean wecomChatDataDiagnostics,
+        @DefaultValue("") String wecomChatDataPrivateKeyFile,
+        @DefaultValue("1") int wecomChatDataPublicKeyVersion,
+        @DefaultValue("false") boolean wecomChatDataPublicKeyAutoRegister,
+        @DefaultValue("200") int wecomChatDataSyncLimit,
+        @DefaultValue("100") int wecomChatDataSyncMaxPages,
+        @DefaultValue("15") int wecomChatDataSyncTimeoutSeconds,
+        @DefaultValue("true") boolean wecomChatDataAutoSyncEnabled,
+        @DefaultValue("60") int wecomChatDataAutoSyncIntervalSeconds,
+        @DefaultValue("5000") int wecomChatDataStoreMaxMessages,
+        @DefaultValue("8388608") long wecomChatDataStoreMaxBytes,
+        @DefaultValue("7") int wecomAuditRetentionDays,
+        @DefaultValue("3600") int wecomAuditCleanupIntervalSeconds,
+        @DefaultValue("500") int wecomAuditCleanupBatchSize,
+        @DefaultValue("32") int wecomAuditCleanupMaxBatches,
+        @DefaultValue("false") boolean wecomMessageSummaryEnabled,
+        @DefaultValue("conversation_daily_summary") String wecomMessageSummaryAbilityId,
+        @DefaultValue("1") int wecomMessageSummaryPollIntervalSeconds,
+        @DefaultValue("20") int wecomMessageSummaryBatchSize,
+        @DefaultValue("2") int wecomMessageSummaryMaxConcurrency,
+        @DefaultValue("20") int wecomMessageSummaryMaxTransientAttempts,
+        @DefaultValue("900") int wecomMessageSummaryMaxBackoffSeconds,
+        @DefaultValue("200") int wecomMessageSummaryBackfillBatchSize,
+        @DefaultValue("fixture") String localWeComDataSource,
+        @DefaultValue("local-wecom-source.jsonl") String localWeComDataFile,
+        @DefaultValue("") String chatappWebhookSecret,
+        @DefaultValue("300") int chatappWebhookMaxSkewSeconds,
+        // CAMS 开放接口单次调用超时：AsyncClient 的 connect/response timeout 与 get() 等待上限共用此值
+        @DefaultValue("30") int chatappApiTimeoutSeconds,
+        // 非企业微信渠道入站消息的企微应用消息提醒
+        @DefaultValue("false") boolean wecomUserNotificationEnabled,
+        @DefaultValue("90000") long wecomUserNotificationWindowMs,
+        @DefaultValue("1000") long wecomUserNotificationWorkerIntervalMs,
+        @DefaultValue("1000") long wecomUserNotificationWorkerInitialDelayMs,
+        // 待办提醒：当天汇总（默认 0 点起）+ 事项开始前 N 小时，均由服务端调度，前端不再手动触发
+        @DefaultValue("true") boolean todoReminderEnabled,
+        @DefaultValue("Asia/Shanghai") String todoReminderZone,
+        @DefaultValue("3") int todoReminderLeadHours,
+        @DefaultValue("0") int todoReminderDailyHour,
+        @DefaultValue("60000") long todoReminderIntervalMs,
+        @DefaultValue("5") int todoReminderMaxAttempts,
+        @DefaultValue("300") int todoReminderClaimLeaseSeconds
+) {
+    public AppConfig {
+        if (chatappApiTimeoutSeconds < 1 || chatappApiTimeoutSeconds > 120) {
+            throw new IllegalArgumentException("app.chatapp-api-timeout-seconds must be between 1 and 120");
+        }
+        imapHost = defaultIfBlank(imapHost, "imap.139.com");
+        imapPort = defaultIfBlank(imapPort, "993");
+        mailProvider = defaultIfBlank(mailProvider, "139");
+    }
+
+    private static String defaultIfBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+}

@@ -1,0 +1,338 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全量前端接口测试报告</title><style>
+
+*{box-sizing:border-box}
+body{margin:0;background:#f4f5f7;color:#1f2933;
+ font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+h1{font-size:24px;margin:0 0 6px}
+h2{font-size:17px;margin:34px 0 12px;padding-left:10px;border-left:3px solid #2f7bf6}
+.sub{color:#667085;font-size:12.5px;margin:0 0 18px}
+.card{background:#fff;border:1px solid #e5e8ec;border-radius:14px;
+ box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px rgba(16,24,40,.05);padding:18px 20px;margin:14px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{background:#fff;border:1px solid #e5e8ec;border-radius:14px;padding:16px 18px}
+.kpi .n{font-size:26px;font-weight:650;letter-spacing:-.5px}
+.kpi .l{font-size:12.5px;color:#667085;margin-top:2px}
+.ok .n{color:#067647}.bad .n{color:#b42318}.gray .n{color:#667085}.blue .n{color:#2f7bf6}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef1f4;vertical-align:top}
+th{font-size:12px;color:#667085;font-weight:600;background:#fafbfc;position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#f4f6f8;
+ padding:1px 5px;border-radius:5px;color:#334155;word-break:break-all}
+.fn{color:#667085;font-size:12px}
+.m{display:inline-block;min-width:54px;text-align:center;font-size:11.5px;padding:1px 6px;border-radius:5px}
+.m-get{background:#e8f2ff;color:#1a56d6}.m-post{background:#e7f7ee;color:#067647}
+.m-put{background:#fff5e5;color:#b54708}.m-patch{background:#f3ecff;color:#6941c6}
+.m-delete{background:#fdeceb;color:#b42318}
+.dim{color:#98a2b3}.bad{color:#b42318;font-weight:600}
+.note{background:#fff8e6;border:1px solid #f5d99b;border-radius:10px;padding:12px 16px;
+ font-size:13px;color:#7a4d00;margin:12px 0}
+.note b{color:#5c3a00}
+.fix{background:#fdeceb;border-color:#f5b5ae;color:#7a1f16}
+.fix b{color:#5c1510}
+details{margin:10px 0}summary{cursor:pointer;color:#2f7bf6;font-size:13px}
+ul.tight{margin:8px 0 0 18px;padding:0}ul.tight li{margin:2px 0}
+.pass td{color:#475467}
+
+</style></head><body><div class="wrap">
+<h1>全量前端接口测试报告</h1>
+<p class="sub">生成 2026-09-30 13:54:51　·　活体目标 http://127.0.0.1:8107　·　前端源 <code>src/api/endpoints.ts</code>（1629 行）　·　后端源 <code>src/main/java</code>（45 个 controller 文件）</p>
+<div class="kpis">
+<div class="kpi blue"><div class="n">170</div><div class="l">前端声明（路径去重）</div></div>
+<div class="kpi blue"><div class="n">199</div><div class="l">前端声明（路径×动词）</div></div>
+<div class="kpi blue"><div class="n">224</div><div class="l">后端路由（路径×动词）</div></div>
+<div class="kpi blue"><div class="n">190</div><div class="l">活体 OPTIONS 实发</div></div>
+<div class="kpi ok"><div class="n">158</div><div class="l">通过</div></div>
+<div class="kpi bad"><div class="n">8</div><div class="l">需要修</div></div>
+<div class="kpi gray"><div class="n">33</div><div class="l">按配置未启用</div></div>
+</div>
+<h2>一、口径（三层账，缺一层就有盲区）</h2>
+<div class="card"><table><tr><th>层</th><th>怎么取</th><th>能抓什么</th><th>抓不到什么</th></tr><tr><td>前端声明面</td><td>解析 <code>endpoints.ts</code> 的 <code>client.&lt;verb&gt;(path)</code></td><td><b>写接口也能覆盖</b>（不需要真发出去）</td><td>服务端到底有没有</td></tr><tr><td>后端路由表</td><td>解析 <code>@RestController</code> 上全部 Mapping 注解</td><td>源码真值</td><td>跑着的进程是不是这份</td></tr><tr><td>活体 OPTIONS</td><td>对每条路径发 <code>OPTIONS</code>，读状态码 + <code>Allow</code></td><td>进程陈旧 / 路径未注册 / 动词不匹配</td><td>业务逻辑对不对</td></tr></table>
+<div class="note"><b>为什么用 OPTIONS 当探针：</b>Spring 的 <code>FrameworkServlet.doOptions</code> 只查 handler mapping，<b>不会进入任何 <code>@RequestMapping</code> 方法</b> —— 所以它能安全地探到每一条路径（包括写接口）而不产生任何副作用：未注册路径返 404，已注册返 200 且带 <code>Allow</code> 动词表。</div>
+<div class="note" style="background:#f7f9fb;border-color:#e5e8ec;color:#475467"><b>活体状态码分布</b>（「通过」不等于「全 200」）：<br><code>OPTIONS</code>（190 行）：200 × 156、404 × 34<br>只读实测（72 条）：200 × 26、400 × 9、404 × 34、410 × 1、500 × 2<br>只读 <b>4xx</b> 是业务 / 参数 / 权限拒绝，<b>说明路由是通的</b>（样本 id 是随机 UUID，查不到很正常）；只有 <b>5xx</b> 才是真故障。</div>
+</div>
+<h2>二、需要修（8 条）</h2>
+<div class="note fix" style="margin-top:0">同一条接口可能同时命中多档（例如 <code>/api/v1/whatsapp/templates</code> 既是 <code>VERB_MISMATCH</code>、也被活体的 <code>Allow</code> 判为 <code>LIVE_VERB_MISMATCH</code>）—— 所以下面各档条数之和会大于 8，<b>按接口看以 8 条为准</b>。</div>
+<div class="card"><b>SOURCE_MISSING</b> · 2 条　<span class="fn">后端源码里没有这条路由 —— 前端在调一个不存在的接口</span>
+<table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>源码动词</th><th>活体</th></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}/remark</code></td><td><span class="fn">updateAdminTemplateRemark</span></td><td><span class="dim">—</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}/send-permission</code></td><td><span class="fn">setAdminTemplateSendPermission</span></td><td><span class="dim">—</span></td><td><span class="bad">404</span></td></tr>
+</table></div>
+<div class="card"><b>VERB_MISMATCH</b> · 3 条　<span class="fn">路径在，但动词不对（后端用的是别的 HTTP 方法）</span>
+<table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>源码动词</th><th>活体</th></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates</code></td><td><span class="fn">createAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}</code></td><td><span class="fn">updateAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}</code></td><td><span class="fn">deleteAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+</table></div>
+<div class="card"><b>LIVE_UNREGISTERED</b> · 2 条　<span class="fn">源码里也没有、活体也 404</span>
+<table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>源码动词</th><th>活体</th></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}/remark</code></td><td><span class="fn">updateAdminTemplateRemark</span></td><td><span class="dim">—</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}/send-permission</code></td><td><span class="fn">setAdminTemplateSendPermission</span></td><td><span class="dim">—</span></td><td><span class="bad">404</span></td></tr>
+</table></div>
+<div class="card"><b>LIVE_VERB_MISMATCH</b> · 3 条　<span class="fn">活体 Allow 头里没有声明动词</span>
+<table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>源码动词</th><th>活体</th></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates</code></td><td><span class="fn">createAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}</code></td><td><span class="fn">updateAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}</code></td><td><span class="fn">deleteAdminTemplate</span></td><td>GET</td><td>200</td></tr>
+</table></div>
+<div class="card"><b>READ_5XX</b> · 3 条　<span class="fn">只读接口实测 5xx</span>
+<table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>源码动词</th><th>活体</th></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/media/{id}</code></td><td><span class="fn">fetchMediaUrl</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/media/{id}</code></td><td><span class="fn">fetchMediaBlob</span></td><td>GET</td><td>200</td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/media/{id}/download</code></td><td><span class="fn">downloadAttachment</span></td><td>GET</td><td>200</td></tr>
+</table></div>
+<h2>三、按部署配置未启用（33 条，不是缺陷）</h2>
+<div class="note"><b>判据是三条同时成立：</b>源码里有这条路由 + 所属 controller 的类上带条件装配注解（<code>@ConditionalOnExpression</code>、<code>@ConditionalOnWeComEnabled</code>）+ 活体探针返 404 ⇒ 进程启动时就没注册它们。<br>本轮命中的是<b>企微整面</b>：<code>@ConditionalOnWeComEnabled</code> 与 <code>@ConditionalOnExpression("not '${app.wecom-suite-id:}'.isBlank()")</code>，而 <code>WECOM_SUITE_ID</code> 为空 ⇒ 企微的控制器 / 网关 / 配置全部不装配。这不是「接口坏了」，是「这套部署没开企微」。</div>
+<div class="card"><table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>门禁</th><th>活体</th></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/auth/wecom/exchange</code></td><td><span class="fn">exchangeWeComLogin</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/account/wecom-binding</code></td><td><span class="fn">fetchWeComBinding</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/account/wecom-binding/exchange</code></td><td><span class="fn">exchangeWeComBinding</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/account/wecom-binding</code></td><td><span class="fn">unbindWeCom</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/account/wecom-avatar/authorizations</code></td><td><span class="fn">createWeComAvatarAuthorization</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/account/wecom-avatar/authorizations/{authorizationId}</code></td><td><span class="fn">fetchWeComAvatarAuthorization</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/conversation-view/bootstrap</code></td><td><span class="fn">bootstrapWeComViewer</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/js-sdk-config</code></td><td><span class="fn">fetchWeComJsSdkConfig</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/conversation-view/sessions</code></td><td><span class="fn">createWeComViewerSession</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/conversation-view/sessions</code></td><td><span class="fn">createWeComViewerTargetSession</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/conversation-view/sessions/{viewerSessionId}</code></td><td><span class="fn">fetchWeComViewerSession</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/conversation-view/events</code></td><td><span class="fn">recordWeComViewerEvent</span></td><td><span class="fn">@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations</code></td><td><span class="fn">fetchWeComInstallations</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/contact-events</code></td><td><span class="fn">listWeComContactEvents</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/app-chats</code></td><td><span class="fn">createWeComAppChat</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}</code></td><td><span class="fn">fetchWeComAppChat</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}</code></td><td><span class="fn">updateWeComAppChat</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/app-chats/{chatId}/messages</code></td><td><span class="fn">sendWeComAppChatMessage</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/external-contacts</code></td><td><span class="fn">listWeComExternalContacts</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/external-contacts/contact-links</code></td><td><span class="fn">listWeComExternalContactLinks</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}</code></td><td><span class="fn">getWeComExternalContact</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/external-contacts:batchGet</code></td><td><span class="fn">batchGetWeComExternalContacts</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/external-contacts/{externalUserId}/remark</code></td><td><span class="fn">updateWeComExternalContactRemark</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/customer-groups:search</code></td><td><span class="fn">searchWeComCustomerGroups</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/customer-groups/{chatId}</code></td><td><span class="fn">fetchWeComCustomerGroup</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/members/{userId}</code></td><td><span class="fn">fetchWeComDirectoryMember</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/members</code></td><td><span class="fn">listWeComDirectoryMembers</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/departments</code></td><td><span class="fn">listWeComDepartments</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/tags</code></td><td><span class="fn">listWeComTags</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/profile-sync</code></td><td><span class="fn">syncWeComDirectoryProfiles</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/installations/{authCorpId}/directory/tags/{tagId}</code></td><td><span class="fn">fetchWeComTag</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/groups/{sourceConversationId}/name-refresh</code></td><td><span class="fn">refreshWeComGroupName</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/wecom/send</code></td><td><span class="fn">sendWeCom</span></td><td><span class="fn">@ConditionalOnExpression,@ConditionalOnWeComEnabled</span></td><td><span class="bad">404</span></td></tr>
+</table></div>
+<h2>四、通过清单（158 条）</h2>
+<div class="card pass"><details><summary>展开 158 条</summary><table><tr><th>动词</th><th>路径</th><th>前端函数</th><th>活体</th><th>Allow</th><th>只读实测</th></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/auth/login</code></td><td><span class="fn">login</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/auth/register</code></td><td><span class="fn">register</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/account/profile</code></td><td><span class="fn">fetchAccountProfile</span></td><td>200</td><td><span class="fn">PATCH,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/account/profile</code></td><td><span class="fn">updateAccountProfile</span></td><td>200</td><td><span class="fn">PATCH,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/account/avatar</code></td><td><span class="fn">uploadAccountAvatar</span></td><td>200</td><td><span class="fn">POST,DELETE,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/account/avatar</code></td><td><span class="fn">deleteAccountAvatar</span></td><td>200</td><td><span class="fn">POST,DELETE,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/account/avatar/content</code></td><td><span class="fn">fetchAccountAvatarBlob</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/account/password</code></td><td><span class="fn">changeAccountPassword</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/users</code></td><td><span class="fn">fetchAdminUsers</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/roles</code></td><td><span class="fn">fetchAccountRoles</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/users/{userId}/roles</code></td><td><span class="fn">replaceAdminUserRoles</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/users/{userId}/password</code></td><td><span class="fn">resetAdminUserPassword</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/auth/logout</code></td><td><span class="fn">logout</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/conversations/preferences/pin</code></td><td><span class="fn">toggleConversationPinned</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/conversations/preferences/delete</code></td><td><span class="fn">hideConversation</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/conversations/preferences/restore</code></td><td><span class="fn">restoreConversation</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/conversations/preferences/order</code></td><td><span class="fn">reorderConversations</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/contacts</code></td><td><span class="fn">fetchContacts</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/channel-address-books/{channel}</code></td><td><span class="fn">fetchChannelAddressBook</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/channel-address-books/{channel}</code></td><td><span class="fn">createManualChannelContact</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/channel-address-books/{channel}/{contactId}</code></td><td><span class="fn">deleteManualChannelContact</span></td><td>200</td><td><span class="fn">DELETE,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/conversations</code></td><td><span class="fn">listConversations</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/contacts/{id}</code></td><td><span class="fn">fetchContact</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/contacts/{id}/memory</code></td><td><span class="fn">fetchContactMemory</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/contacts/{id}/mark-read</code></td><td><span class="fn">markContactRead</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/contacts/{id}/remark</code></td><td><span class="fn">updateContactRemark</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/contacts/{id}/tags</code></td><td><span class="fn">updateContactTags</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/contacts/{id}/profile</code></td><td><span class="fn">updateContactProfile</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/contact-groups/merge</code></td><td><span class="fn">mergeContacts</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/contact-groups/split</code></td><td><span class="fn">splitContact</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/threads</code></td><td><span class="fn">fetchThread</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/threads/wecom/contact/{contactId}</code></td><td><span class="fn">fetchWeComContactThread</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/threads/wecom/group/{sourceConversationId}</code></td><td><span class="fn">fetchWeComGroupThread</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/wecom/groups/{sourceConversationId}/topics</code></td><td><span class="fn">fetchWeComGroupTopics</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/wecom/groups/{sourceConversationId}/topics/retry</code></td><td><span class="fn">retryWeComGroupTopicGeneration</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/messages/{id}</code></td><td><span class="fn">fetchMessage</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/send/email</code></td><td><span class="fn">sendEmail</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/send/email</code></td><td><span class="fn">sendEmail</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/chatapp/send/template</code></td><td><span class="fn">sendChatApp</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/chatapp/send/text</code></td><td><span class="fn">sendChatApp</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/templates</code></td><td><span class="fn">fetchTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/channel-capabilities</code></td><td><span class="fn">fetchChannelCapabilities</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/chatapp/broadcasts</code></td><td><span class="fn">fetchChatAppBroadcasts</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/chatapp/broadcasts/sendable-templates</code></td><td><span class="fn">fetchChatAppSendableTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/chatapp/broadcasts/{broadcastId}/failures</code></td><td><span class="fn">fetchChatAppBroadcastFailures</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/chatapp/broadcasts/{broadcastId}</code></td><td><span class="fn">fetchChatAppBroadcastDetail</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/chatapp/broadcasts/{broadcastId}/reconcile</code></td><td><span class="fn">requestChatAppBroadcastReconciliation</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/chatapp/broadcasts</code></td><td><span class="fn">createChatAppBroadcast</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/chatapp/broadcasts/{broadcastId}/retry-failures</code></td><td><span class="fn">retryChatAppBroadcastFailures</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/todos</code></td><td><span class="fn">fetchTodos</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/todos</code></td><td><span class="fn">createTodoApi</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/todos/{id}</code></td><td><span class="fn">updateTodoApi</span></td><td>200</td><td><span class="fn">DELETE,PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/todos/{id}</code></td><td><span class="fn">deleteTodoApi</span></td><td>200</td><td><span class="fn">DELETE,PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/send/chatapp-media</code></td><td><span class="fn">sendChatAppMedia</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/channel-accounts</code></td><td><span class="fn">fetchChannelAccounts</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/channel-accounts</code></td><td><span class="fn">createChannelAccount</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/channel-accounts/{id}</code></td><td><span class="fn">updateChannelAccount</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/channel-accounts/{id}/sync</code></td><td><span class="fn">triggerChannelSync</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/channel-accounts/{id}/credentials</code></td><td><span class="fn">fetchChannelCredentials</span></td><td>200</td><td><span class="fn">GET,HEAD,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/channel-accounts/{id}/credentials</code></td><td><span class="fn">updateChannelCredentials</span></td><td>200</td><td><span class="fn">GET,HEAD,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/channel-accounts/{id}/unbind</code></td><td><span class="fn">unbindChannelAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/authorization/attempts</code></td><td><span class="fn">createWhatsAppAuthorizationAttempt</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/whatsapp/capability</code></td><td><span class="fn">fetchWhatsAppCapability</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/authorization/complete</code></td><td><span class="fn">completeWhatsAppAuthorization</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/whatsapp/api-phone-operations</code></td><td><span class="fn">fetchWhatsAppPhoneOperations</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/api-phone-operations</code></td><td><span class="fn">addWhatsAppPhoneNumber</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/api-phone-operations/{operationId}/verification-code</code></td><td><span class="fn">sendWhatsAppVerificationCode</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/api-phone-operations/{operationId}/verify</code></td><td><span class="fn">verifyWhatsAppPhoneNumber</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/whatsapp/accounts/me</code></td><td><span class="fn">fetchWhatsAppAccounts</span></td><td>200</td><td><span class="fn">DELETE,GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/whatsapp/accounts/{accountId}</code></td><td><span class="fn">unlinkWhatsAppAccount</span></td><td>200</td><td><span class="fn">DELETE,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/whatsapp/accounts/{accountId}/history-sync</code></td><td><span class="fn">requestWhatsAppHistorySync</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/accounts</code></td><td><span class="fn">fetchAdminWhatsAppAccounts</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/cams</code></td><td><span class="fn">fetchAdminCams</span></td><td>200</td><td><span class="fn">POST,PUT,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/overview</code></td><td><span class="fn">fetchAdminWhatsAppOverview</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams</code></td><td><span class="fn">createAdminCams</span></td><td>200</td><td><span class="fn">POST,PUT,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}</code></td><td><span class="fn">updateAdminCams</span></td><td>200</td><td><span class="fn">DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}</code></td><td><span class="fn">blockAdminCams</span></td><td>200</td><td><span class="fn">DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/test</code></td><td><span class="fn">testAdminCams</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/sync</code></td><td><span class="fn">syncAdminCams</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/accounts</code></td><td><span class="fn">fetchAdminScopedWhatsAppAccounts</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/callbacks</code></td><td><span class="fn">fetchAdminWhatsAppCallbacks</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/callbacks/phones/{accountId}</code></td><td><span class="fn">updateAdminWhatsAppPhoneCallback</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/callbacks/account</code></td><td><span class="fn">updateAdminWhatsAppAccountCallback</span></td><td>200</td><td><span class="fn">PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assign</code></td><td><span class="fn">assignAdminScopedWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/reclaim</code></td><td><span class="fn">reclaimAdminScopedWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/transfer</code></td><td><span class="fn">transferAdminScopedWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/cams/{scopeId}/accounts/{accountId}/assignment-history</code></td><td><span class="fn">fetchAdminScopedAssignmentHistory</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/accounts/sync</code></td><td><span class="fn">syncAdminWhatsAppAccounts</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/cams</code></td><td><span class="fn">fetchWhatsAppCamsConfig</span></td><td>200</td><td><span class="fn">POST,PUT,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/admin/whatsapp/cams</code></td><td><span class="fn">saveWhatsAppCamsConfig</span></td><td>200</td><td><span class="fn">POST,PUT,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/cams/test</code></td><td><span class="fn">testWhatsAppCamsConfig</span></td><td>200</td><td><span class="fn">DELETE,PUT,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/accounts/{accountId}/assign</code></td><td><span class="fn">assignAdminWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/accounts/{accountId}/reclaim</code></td><td><span class="fn">reclaimAdminWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/admin/whatsapp/accounts/{accountId}/transfer</code></td><td><span class="fn">transferAdminWhatsAppAccount</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/admin/whatsapp/accounts/{accountId}/assignment-history</code></td><td><span class="fn">fetchAdminWhatsAppAssignmentHistory</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/contacts/{contactId}/timeline</code></td><td><span class="fn">fetchTimeline</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/contacts/{contactId}/topics</code></td><td><span class="fn">fetchContactTopics</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/contacts/{contactId}/topic-review/sources</code></td><td><span class="fn">fetchManualReviewSources</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/contacts/{contactId}/topic-review/pending</code></td><td><span class="fn">fetchManualReviewPending</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>400</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/topic-review/preview</code></td><td><span class="fn">previewManualReview</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/topic-review/{previewId}/apply</code></td><td><span class="fn">applyManualReview</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topics/{topicId}/keep</code></td><td><span class="fn">keepPendingTopic</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/topic-fusion/preview</code></td><td><span class="fn">previewTopicFusion</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/topic-fusion/{previewId}/apply</code></td><td><span class="fn">applyTopicFusion</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/topics/{topicId}</code></td><td><span class="fn">updateTopic</span></td><td>200</td><td><span class="fn">PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topics/merge</code></td><td><span class="fn">mergeTopics</span></td><td>200</td><td><span class="fn">PATCH,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topics/{topicId}/store</code></td><td><span class="fn">storeTopic</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topics/{topicId}/restore</code></td><td><span class="fn">restoreTopic</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/topic-repository</code></td><td><span class="fn">fetchTopicRepository</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/topic-inbox/requests</code></td><td><span class="fn">fetchTopicInboxRequests</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topic-inbox/{requestId}/approve</code></td><td><span class="fn">approveTopicStore</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/topic-inbox/{requestId}/reject</code></td><td><span class="fn">rejectTopicStore</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/topics/retry</code></td><td><span class="fn">retryTopicGeneration</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/contacts/{contactId}/call-records</code></td><td><span class="fn">createCallRecord</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/call-records</code></td><td><span class="fn">createCallRecord</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/call-records/{id}</code></td><td><span class="fn">fetchCallRecord</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/call-records/{id}/audio-sessions</code></td><td><span class="fn">createAudioSession</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/call-records/{id}/retry</code></td><td><span class="fn">retryCallRecord</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/call-records/{id}/transcript</code></td><td><span class="fn">reviseTranscript</span></td><td>200</td><td><span class="fn">PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/call-records/{id}/note</code></td><td><span class="fn">reviseNote</span></td><td>200</td><td><span class="fn">PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/phone-contacts</code></td><td><span class="fn">bindPhoneContact</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/phone-repository</code></td><td><span class="fn">fetchPhoneRepository</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/templates</code></td><td><span class="fn">fetchSharedTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/templates/{templateId}</code></td><td><span class="fn">fetchSharedTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates/applications</code></td><td><span class="fn">createSharedTemplate</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates/{templateId}/change-requests</code></td><td><span class="fn">createTemplateChangeRequest</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/template-change-requests/mine</code></td><td><span class="fn">fetchMyTemplateChangeRequests</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/admin/whatsapp/template-change-requests</code></td><td><span class="fn">fetchTemplateChangeRequestsForReview</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/admin/whatsapp/template-change-requests/{requestId}/approve</code></td><td><span class="fn">approveTemplateChangeRequest</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/admin/whatsapp/template-change-requests/{requestId}/reject</code></td><td><span class="fn">rejectTemplateChangeRequest</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/admin/whatsapp/template-change-requests/{requestId}/retry</code></td><td><span class="fn">retryTemplateChangeRequest</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates/sync</code></td><td><span class="fn">syncSharedTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates</code></td><td><span class="fn">fetchPrivateTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}</code></td><td><span class="fn">fetchPrivateTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/applications</code></td><td><span class="fn">createPrivateTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-put">PUT</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}</code></td><td><span class="fn">updatePrivateTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-patch">PATCH</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/send-permission</code></td><td><span class="fn">setPrivateTemplateSendPermission</span></td><td>200</td><td><span class="fn">PATCH,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}</code></td><td><span class="fn">deletePrivateTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/sync</code></td><td><span class="fn">syncPrivateTemplates</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,DELETE,PUT,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/business-app/accounts/{accountId}/templates/{templateId}/operations</code></td><td><span class="fn">fetchPrivateTemplateOperations</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/templates</code></td><td><span class="fn">fetchAdminTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/templates/{templateCode}</code></td><td><span class="fn">fetchAdminTemplate</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/templates/sync</code></td><td><span class="fn">syncAdminTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/template-media</code></td><td><span class="fn">uploadTemplateMedia</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/v1/whatsapp/template-media</code></td><td><span class="fn">uploadTemplateMedia</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/template-media/uploads/{encoded}</code></td><td><span class="fn">fetchTemplateMediaUpload</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/template-media/uploads/{encoded}</code></td><td><span class="fn">fetchTemplateMediaUpload</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/templates/{templateId}/operations</code></td><td><span class="fn">fetchTemplateOperations</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/v1/whatsapp/public-templates</code></td><td><span class="fn">fetchPublicTemplates</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/assistant/actions/{pendingActionId}/confirm</code></td><td><span class="fn">confirmAssistantAction</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/assistant/actions/{pendingActionId}/cancel</code></td><td><span class="fn">cancelAssistantAction</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/assistant/conversations/{conversationId}/messages</code></td><td><span class="fn">fetchAssistantConversation</span></td><td>200</td><td><span class="fn">GET,HEAD,OPTIONS</span></td><td><b>404</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/assistant/conversations/latest</code></td><td><span class="fn">fetchLatestAssistantConversation</span></td><td>200</td><td><span class="fn">DELETE,GET,HEAD,OPTIONS</span></td><td><b>200</b></td></tr>
+<tr><td><b class="m m-get">GET</b></td><td><code>/api/assistant/conversations</code></td><td><span class="fn">fetchAssistantConversations</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/assistant/conversations</code></td><td><span class="fn">createAssistantConversation</span></td><td>200</td><td><span class="fn">POST,GET,HEAD,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/assistant/conversations/{conversationId}/open</code></td><td><span class="fn">openAssistantConversation</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-delete">DELETE</b></td><td><code>/api/assistant/conversations/{conversationId}</code></td><td><span class="fn">deleteAssistantConversation</span></td><td>200</td><td><span class="fn">DELETE,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+<tr><td><b class="m m-post">POST</b></td><td><code>/api/assistant/messages</code></td><td><span class="fn">sendAssistantMessage</span></td><td>200</td><td><span class="fn">POST,OPTIONS</span></td><td><span class="dim">—</span></td></tr>
+</table></details></div>
+<h2>五、后端有、前端没调（39 条，信息性）</h2>
+<div class="card"><p class="sub" style="margin:0 0 8px">webhook、回调、或以 curl / 第三方调用的路由。</p><details><summary>展开</summary><ul class="tight">
+<li><code>GET /api</code></li>
+<li><code>GET /api/admin/chatapp/capabilities</code></li>
+<li><code>GET /api/contact-groups</code></li>
+<li><code>GET /api/events</code></li>
+<li><code>GET /api/v1/call-records/{}/audio</code></li>
+<li><code>GET /api/v1/contacts/{}/topics/attempts</code></li>
+<li><code>GET /api/v1/email/submissions/unknown</code></li>
+<li><code>GET /api/v1/wecom/app-callback</code></li>
+<li><code>GET /api/v1/wecom/authorization/callback</code></li>
+<li><code>GET /api/v1/wecom/message-summaries</code></li>
+<li><code>GET /api/v1/wecom/message-summaries/{}</code></li>
+<li><code>GET /api/wecom/callback</code></li>
+<li><code>GET /hook_path</code></li>
+<li><code>POST /api/account/wecom-binding/attempts</code></li>
+<li><code>POST /api/admin/chatapp/capabilities/add-number</code></li>
+<li><code>POST /api/admin/chatapp/capabilities/migration-review</code></li>
+<li><code>POST /api/admin/chatapp/capabilities/read-only</code></li>
+<li><code>POST /api/admin/chatapp/capabilities/send-code</code></li>
+<li><code>POST /api/admin/chatapp/capabilities/verify</code></li>
+<li><code>POST /api/admin/whatsapp/cams/{}/accounts/sync</code></li>
+<li><code>POST /api/auth/wecom/attempts</code></li>
+<li><code>POST /api/chatapp/sync/messages</code></li>
+<li><code>POST /api/chatapp/sync/messages/reconcile</code></li>
+<li><code>POST /api/chatapp/sync/templates</code></li>
+<li><code>POST /api/chatapp/webhook</code></li>
+<li><code>POST /api/email/send</code></li>
+<li><code>POST /api/email/sync</code></li>
+<li><code>POST /api/send/chatapp</code></li>
+<li><code>POST /api/v1/admin/call-records/contact-backfill</code></li>
+<li><code>POST /api/v1/email/messages</code></li>
+<li><code>POST /api/v1/webhooks/chatapp</code></li>
+<li><code>POST /api/v1/wecom/app-callback</code></li>
+<li><code>POST /api/v1/wecom/authorization/callback</code></li>
+<li><code>POST /api/v1/wecom/conversation-view/sync</code></li>
+<li><code>POST /api/v1/wecom/installations/{}/profile-backfill</code></li>
+<li><code>POST /api/v1/whatsapp/messages</code></li>
+<li><code>POST /api/wecom/callback</code></li>
+<li><code>POST /api/whatsapp/authorization/complete/{}/phone</code></li>
+<li><code>POST /hook_path</code></li>
+</ul></details></div>
+<h2>六、没能静态解析的前端导出（3 条）</h2>
+<div class="card"><ul class="tight">
+<li><code>createWeComAttempt</code> — 路径表达式没还原出来: path</li>
+<li><code>fetchChatAppBroadcastTemplates</code> — 非 client.* 调用（fetch/SSE/别名）</li>
+<li><code>sendAssistantMessage</code> — 非 client.* 调用（fetch/SSE/别名）</li>
+</ul></div>
+<h2>七、怎么复现</h2><div class="card"><pre style="margin:0;font-size:12.5px"># 静态对账（只读源码，不碰服务）
+python scripts/mc-api-full-sweep.py --no-live
+
+# 全量（需 8107 在跑；OPTIONS 不触发任何业务方法）
+python scripts/mc-api-full-sweep.py</pre></div>
+</div></body></html>

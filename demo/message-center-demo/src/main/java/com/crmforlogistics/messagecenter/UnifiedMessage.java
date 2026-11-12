@@ -1,5 +1,7 @@
 package com.crmforlogistics.messagecenter;
 
+import java.util.List;
+
 public class UnifiedMessage {
     public String id;
     public String sourceId;
@@ -17,6 +19,12 @@ public class UnifiedMessage {
     public String statusTimestamp;
     public String mediaType;
     public String mediaUrl;
+    public String objectKey;
+    public String mimeType;
     public String fileName;
     public String raw;
+    public List<EmailAttachment> attachments = List.of();
+    public boolean countsAsUnread;
+    public long ingestSequence;
+    public boolean unread;
 }

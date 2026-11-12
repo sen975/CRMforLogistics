@@ -1,0 +1,110 @@
+package com.crmforlogistics.messagecenter.service.wecom;
+
+import com.crmforlogistics.messagecenter.channel.wecom.WeComException;
+import com.crmforlogistics.messagecenter.config.ConditionalOnWeComEnabled;
+import com.crmforlogistics.messagecenter.mapper.WeComCredentialMigrationMapper;
+import com.crmforlogistics.messagecenter.mapper.WeComCredentialRow;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.stereotype.Service;
+
+@Service
+@ConditionalOnWeComEnabled
+public final class WeComCredentialMigrationService {
+    private static final int BATCH_SIZE = 200;
+    private static final String MARKER = "wecom-credentials-v1";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final Set<String> ENVELOPE_FIELDS = Set.of(
+            "algorithm", "keyVersion", "nonce", "ciphertext");
+
+    private final WeComCredentialMigrationMapper mapper;
+    private final WeComCredentialProtector protector;
+
+    public WeComCredentialMigrationService(WeComCredentialMigrationMapper mapper,
+                                           WeComCredentialProtector protector) {
+        this.mapper = mapper;
+        this.protector = protector;
+    }
+
+    public void migrateAll() {
+        try {
+            if (mapper.markerExists(MARKER)) return;
+            migrateInstallations();
+            migrateChatDataMessages();
+            if (mapper.insertMarker(MARKER) != 1) throw failed();
+        } catch (WeComException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw failed(exception);
+        }
+    }
+
+    private void migrateInstallations() {
+        UUID afterId = null;
+        while (true) {
+            List<WeComCredentialRow> rows = mapper.nextInstallations(afterId, BATCH_SIZE);
+            if (rows == null) throw failed();
+            if (rows.isEmpty()) return;
+            if (rows.size() > BATCH_SIZE) throw failed();
+            for (WeComCredentialRow row : rows) {
+                migrate(row, true);
+                afterId = row.id();
+            }
+        }
+    }
+
+    private void migrateChatDataMessages() {
+        UUID afterId = null;
+        while (true) {
+            List<WeComCredentialRow> rows = mapper.nextChatDataMessages(afterId, BATCH_SIZE);
+            if (rows == null) throw failed();
+            if (rows.isEmpty()) return;
+            if (rows.size() > BATCH_SIZE) throw failed();
+            for (WeComCredentialRow row : rows) {
+                migrate(row, false);
+                afterId = row.id();
+            }
+        }
+    }
+
+    private void migrate(WeComCredentialRow row, boolean installation) {
+        if (row == null || row.id() == null || row.value() == null || row.value().isBlank()
+                || row.value().length() > 512) throw failed();
+        if (protector.isEnvelope(row.value())) return;
+        if (!isNonEnvelopePlaintext(row.value())) throw failed();
+        String encrypted = installation ? protector.protectPermanentCode(row.value())
+                : protector.protectSecretKey(row.value());
+        int changed = installation
+                ? mapper.replaceInstallation(row.id(), row.value(), encrypted)
+                : mapper.replaceChatDataMessage(row.id(), row.value(), encrypted);
+        if (changed != 1) throw failed();
+    }
+
+    private static boolean isNonEnvelopePlaintext(String value) {
+        String trimmed = value.trim();
+        try {
+            var root = MAPPER.readTree(trimmed);
+            if (root != null && root.isObject()) {
+                var fields = root.fieldNames();
+                while (fields.hasNext()) {
+                    if (ENVELOPE_FIELDS.contains(fields.next())) return false;
+                }
+            }
+            return true;
+        } catch (IOException exception) {
+            return !(trimmed.startsWith("{") || trimmed.startsWith("["));
+        }
+    }
+
+    private static WeComException failed() {
+        return failed(null);
+    }
+
+    private static WeComException failed(Throwable cause) {
+        return new WeComException("WECOM_CREDENTIAL_MIGRATION_FAILED", 500,
+                "企业微信凭据迁移失败", cause);
+    }
+}

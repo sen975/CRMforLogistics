@@ -1,0 +1,8 @@
+.env
+.env.*
+secrets/
+data/
+target/
+**/media-cache/
+.git/
+.DS_Store

@@ -1,0 +1,77 @@
+package com.crmforlogistics.messagecenter.service.aitopic;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class TopicAiResponseParserTest {
+    @Test
+    void rejectsUnknownSourceIds() {
+        UUID allowed = UUID.randomUUID();
+        UUID unknown = UUID.randomUUID();
+        String json = "{\"topics\":[{\"topicKey\":\"a\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + unknown + "\"]}]}";
+        assertThatThrownBy(() -> new TopicAiResponseParser().parse(json, Set.of(allowed)))
+                .isInstanceOf(AiTopicException.class)
+                .hasMessage("AI_RESPONSE_INVALID");
+    }
+
+    @Test
+    void parsesContentWrappedInMarkdownCodeFence() {
+        UUID source = UUID.randomUUID();
+        String json = "```json\n" +
+                "{\"topics\":[{\"topicKey\":\"topic-1\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + source + "\"]}]}\n" +
+                "```";
+        var output = new TopicAiResponseParser().parse(json, Set.of(source));
+        assertThat(output.assignments()).hasSize(1);
+        assertThat(output.assignments().get(0).sourceIds()).containsExactly(source);
+    }
+
+    @Test
+    void normalizesNamedRelevanceReturnedByCompatibleProviders() {
+        UUID source = UUID.fromString("c2349acc-0581-48f1-8b8c-546cb5032c23");
+        String json = "{\"topics\":[{\"topicKey\":\"topic-20260825-wecom-messages\",\"title\":\"企业微信群消息汇总\",\"summary\":\"三条群消息\",\"relevance\":\"high\",\"sourceIds\":[\"" + source + "\"]}]}";
+
+        var output = new TopicAiResponseParser().parse(json, Set.of(source));
+
+        assertThat(output.assignments()).singleElement()
+                .extracting(AiTopicModels.TopicAssignment::relevance)
+                .isEqualTo(0.9d);
+    }
+
+    @Test
+    void rejectsAssignmentsThatDoNotCoverEveryAllowedSource() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        String json = "{\"topics\":[{\"topicKey\":\"a\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + first + "\"]}]}";
+        assertThatThrownBy(() -> new TopicAiResponseParser().parse(json, Set.of(first, second)))
+                .isInstanceOf(AiTopicException.class)
+                .hasMessage("AI_RESPONSE_INVALID");
+    }
+
+    @Test
+    void rejectsRepeatedTopicKeysToPreventDuplicateTopicWrites() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        String json = "{\"topics\":[{\"topicKey\":\"same-topic\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + first + "\"]},"
+                + "{\"topicKey\":\"same-topic\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + second + "\"]}]}";
+
+        assertThatThrownBy(() -> new TopicAiResponseParser().parse(json, Set.of(first, second)))
+                .isInstanceOf(AiTopicException.class)
+                .hasMessage("AI_RESPONSE_INVALID");
+    }
+
+    @Test
+    void rejectsAnEmptyTopicEvenWhenOtherAssignmentsCoverAllSources() {
+        UUID source = UUID.randomUUID();
+        String json = "{\"topics\":[{\"topicKey\":\"valid\",\"title\":\"报价\",\"summary\":\"摘要\",\"relevance\":0.9,\"sourceIds\":[\"" + source + "\"]},"
+                + "{\"topicKey\":\"empty\",\"title\":\"空主题\",\"summary\":\"不应接受\",\"relevance\":0.1,\"sourceIds\":[]}] }";
+
+        assertThatThrownBy(() -> new TopicAiResponseParser().parse(json, Set.of(source)))
+                .isInstanceOf(AiTopicException.class)
+                .hasMessage("AI_RESPONSE_INVALID");
+    }
+}

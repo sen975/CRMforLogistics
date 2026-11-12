@@ -1,0 +1,1418 @@
+.message-center-header {
+  background: #ededed;
+  border-bottom: 1px solid transparent;
+  color: #1f2429;
+}
+
+.message-center-header .ant-typography { color: #1f2429; }
+
+.message-center-header .ant-typography-secondary { color: #6b7280 !important; }
+
+.message-center-header .ant-btn {
+  border-color: transparent;
+  border-radius: 8px;
+  color: #3f4753;
+  background: transparent;
+}
+
+.message-center-header .ant-btn:hover,
+.message-center-header .ant-btn:focus-visible {
+  color: #111827;
+  background: rgba(15, 23, 42, .06);
+}
+
+.message-center-header .ant-btn.is-open,
+.message-center-header .ant-btn[aria-expanded='true'],
+.message-center-header .ant-dropdown-open .ant-btn {
+  border-color: #c6d5ea;
+  color: #1677ff;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .08);
+}
+
+.message-center-sidebar {
+  background: #f4f4f4;
+  border-right: 0;
+  color: #1f2429;
+}
+
+.message-center-conversations,
+.message-center-conversation-search,
+.message-center-conversation-list,
+.message-center-conversation-footer { background: #f4f4f4; }
+
+.message-center-conversation-search { padding: 12px 12px 10px; }
+
+.message-center-conversation-search .ant-input-affix-wrapper,
+.message-center-conversation-search .ant-input-group-addon,
+.message-center-conversation-search .ant-input {
+  border-color: #e6e6e6;
+  border-radius: 10px;
+  color: #1f2429;
+  background: #ffffff;
+}
+
+.message-center-conversation-search .ant-input::placeholder { color: #9aa1a9; }
+
+.message-center-conversation-search .ant-input-prefix,
+.message-center-conversation-search .ant-input-clear-icon { color: #8a9199; }
+
+.message-center-conversation-search .ant-input-group-addon { padding: 0; }
+
+.message-center-conversation-search .ant-btn {
+  border-color: transparent;
+  border-radius: 8px;
+  color: #5b6572;
+  background: #e9e9e9;
+}
+
+.message-center-conversation-search .ant-btn:hover,
+.message-center-conversation-search .ant-btn:focus-visible {
+  color: #111827;
+  background: #dedede;
+}
+
+.message-center-conversations .ant-empty-description,
+.message-center-conversations .ant-typography-secondary,
+.message-center-conversations .ant-list-empty-text { color: #8a9199; }
+
+.conversation-contact,
+.conversation-group {
+  border-bottom: 1px solid transparent;
+  border-radius: 10px;
+  color: #1f2429;
+  background: transparent;
+}
+
+.conversation-contact { border-left: 3px solid transparent; }
+
+.conversation-contact .ant-typography,
+.conversation-group .ant-typography { color: #1f2429; }
+
+.conversation-contact .ant-typography-secondary,
+.conversation-group .ant-typography-secondary { color: #8a9199 !important; }
+
+.conversation-contact .ant-tag {
+  border-color: transparent;
+  border-radius: 7px;
+  color: #5b6572;
+  background: #e9e9e9;
+}
+
+.conversation-contact.is-active,
+.conversation-group.is-active { background: #ffffff; }
+
+.conversation-contact.is-active .ant-typography { color: #111827; }
+
+.conversation-group.is-active { box-shadow: inset 3px 0 0 #1677ff; }
+
+.message-center-conversation-footer { border-top: 1px solid #e6e6e6; }
+
+.message-center-conversation-footer .ant-typography { color: #8a9199 !important; }
+
+/* v4 工作台侧栏：浅灰 chrome、紧凑会话行和头像角标。 */
+.message-center-header { background: #ededed; border-bottom-color: transparent; }
+.message-center-sidebar,
+.message-center-conversations,
+.message-center-conversation-search,
+.message-center-conversation-list,
+.message-center-conversation-footer { background: #f4f4f4; }
+
+.message-center-conversation-search { padding: 12px 12px 8px; }
+.message-center-conversation-search .ant-input-affix-wrapper,
+.message-center-conversation-search .ant-input-group-addon,
+.message-center-conversation-search .ant-input { background: #ffffff; border-color: #e6e6e6; }
+
+.conversation-filter-panel { flex: none; padding: 4px 8px 10px; }
+.conversation-section-title { padding: 6px 9px 5px; color: rgba(15, 23, 42, .45); font-size: 11px; font-weight: 600; letter-spacing: .08em; }
+.conversation-filter-row { position: relative; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border-radius: 7px; color: rgba(15, 23, 42, .72); font-size: 13px; font-weight: 500; }
+.conversation-filter-row.is-active { color: #111827; font-weight: 620; background: rgba(15, 23, 42, .07); }
+.conversation-filter-row.is-active::before { content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2.5px; border-radius: 0 3px 3px 0; background: #1677ff; }
+.conversation-filter-row b { margin-left: auto; color: rgba(15, 23, 42, .42); font-size: 12px; }
+.conversation-filter-dot { display: inline-block; width: 7px; height: 7px; flex: none; border-radius: 2px; }
+.conversation-filter-dot.all { background: #64748b; }
+.conversation-filter-dot.unread { background: #ef4444; }
+.conversation-filter-dot.mail { background: #3b82f6; }
+.conversation-filter-dot.wecom { background: #6366f1; }
+.conversation-filter-dot.wa { background: #10b981; }
+.conversation-filter-dot.phone { background: #f59e0b; }
+.conversation-channel-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 0 0; }
+.conversation-channel-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; color: #4b5563; background: #ececec; font-size: 12px; }
+.conversation-channel-chip b { color: rgba(15, 23, 42, .5); font-size: 11px; }
+
+.conversation-contact,
+.conversation-group {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  margin: 3px 8px;
+}
+
+.conversation-contact { width: calc(100% - 16px) !important; }
+
+.conversation-contact:hover,
+.conversation-group:hover { background: rgba(15, 23, 42, .05); }
+
+.conversation-contact.is-active,
+.conversation-group.is-active { background: #ffffff; }
+
+.conversation-contact.is-active,
+.conversation-group.is-active { box-shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 20px -12px rgba(16, 24, 40, .28); }
+
+.conversation-contact.is-active::before,
+.conversation-group.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2.5px;
+  border-radius: 0 3px 3px 0;
+  background: #1677ff;
+}
+
+.contact-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.contact-avatar-color-blue { background: rgba(47, 122, 229, .13); color: #2f6fd0; }
+.contact-avatar-color-green { background: rgba(34, 160, 107, .13); color: #1f8a5b; }
+.contact-avatar-color-indigo { background: rgba(91, 91, 214, .13); color: #5454c4; }
+.contact-avatar-color-amber { background: rgba(209, 133, 28, .16); color: #a86a12; }
+.contact-avatar-color-red { background: rgba(217, 45, 32, .13); color: #c23b32; }
+.contact-avatar-color-teal { background: rgba(31, 111, 133, .13); color: #1f6f85; }
+.contact-avatar-color-slate { background: rgba(15, 23, 42, .07); color: #4b5563; }
+
+.contact-channel-dot {
+  position: absolute;
+  right: -3px;
+  width: 11px;
+  height: 11px;
+  border: 2.5px solid #f4f4f4;
+  border-radius: 50%;
+}
+
+.contact-channel-dot.is-top { top: -3px; }
+.contact-channel-dot.is-bottom { bottom: -3px; }
+.contact-channel-dot-mail { background: #84b1ff; }
+.contact-channel-dot-wa { background: #4ee0a3; }
+.contact-channel-dot-wecom { background: #aaaaff; }
+.contact-channel-dot-phone { background: #ffbb66; }
+.contact-channel-dot-other { background: #cdd3da; }
+
+.contact-copy { min-width: 0; flex: 1; padding-top: 1px; }
+.contact-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.contact-name { min-width: 0; flex: 1; font-size: 14px; font-weight: 520; color: rgba(15, 23, 42, .88) !important; }
+.contact-time { flex: none; font-size: 11px; color: rgba(15, 23, 42, .42) !important; white-space: nowrap; }
+.contact-preview { overflow: hidden; margin-top: 3px; color: rgba(15, 23, 42, .45); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.contact-tags { display: flex; gap: 4px; margin-top: 3px; }
+.contact-tags .ant-tag { margin: 0; border: 0; border-radius: 5px; color: rgba(15, 23, 42, .6); background: rgba(15, 23, 42, .06); font-size: 10px; line-height: 16px; }
+.contact-actions { display: flex; flex: none; flex-direction: column; align-items: flex-end; gap: 6px; padding-top: 1px; color: rgba(15, 23, 42, .42); }
+.contact-actions .anticon { font-size: 12px; color: #3b82f6; }
+.contact-actions .ant-badge-count { min-width: 20px; height: 20px; border-radius: 999px; background: #e5484d; box-shadow: none; font-size: 12px; line-height: 20px; }
+
+/* v4 工作台内容区：浅灰画布承托白色圆角面板，内部模块保持独立留白。 */
+.message-center-content { padding: var(--mc-gap); background: #ededed; }
+
+/* 悬浮侧块（2026-09-30）：左右两侧整块做成圆角卡片 —— 与中间消息区、与顶部导航栏
+   各留一条 --mc-gap 的浅色缝。缝隙色与内容区同色 ⇒ 是一条干净的浅色线，不会出现接缝。 */
+.message-center-body { --mc-gap: 10px; background: #ededed; }
+
+.message-center-body > .message-center-sidebar {
+  margin: var(--mc-gap) 0 var(--mc-gap) var(--mc-gap);
+  border: 1px solid #e3e3e3;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 24px -18px rgba(16, 24, 40, .22);
+}
+
+.message-center-body > .message-center-detail {
+  margin: var(--mc-gap) var(--mc-gap) var(--mc-gap) 0;
+  border: 1px solid #e5e8ec;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -20px rgba(16, 24, 40, .3);
+}
+
+/* 收起右侧栏时不再占位：margin 清掉，否则右侧多一条 10px 空缝；
+   边框/投影也要清，width:0 的元素加上 1px 边框会在右边缘留一条 2px 白线。 */
+.message-center-body > .ant-layout-sider-collapsed {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 767px) {
+  .message-center-content { padding: 0; }
+}
+
+/* 功能页容器（2026-09-30）：上方导航栏展开后进入的所有功能页（admin / 系统设置 /
+   通讯录 / 模板 / 群发 / Topic 仓库 / 电话仓库 / 待办日历 …）统一包一层白卡，
+   与消息区 .message-center-thread-shell 同款：16px 圆角 + 1px 描边 + 同一层投影。
+   卡片撑满内容区 ⇒ 与左侧栏、与顶部导航栏各留一条 --mc-gap 的浅色缝。 */
+.mc-page-surface {
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 22px -14px rgba(16, 24, 40, .16);
+}
+
+/* 页面自带的内边距交给外卡统一提供，否则「卡内 24 + 页面 24」叠成 48。
+   待办日历是自带整幅纸张皮肤的页面（.todo-page 有灰底与纸面），保留它自己的 padding。 */
+.mc-page-surface > *:first-child:not(.todo-page) { padding: 0 !important; }
+
+@media (max-width: 767px) {
+  .mc-page-surface { padding: 16px; border-radius: 12px; }
+}
+
+.message-center-thread-shell {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 22px -14px rgba(16, 24, 40, .16);
+}
+
+.message-center-thread-header {
+  flex: none;
+  border-bottom-color: #edf0f2 !important;
+  background: #ffffff;
+}
+
+.message-center-thread-timeline,
+.message-center-thread-timeline-pane {
+  min-height: 0;
+  width: auto !important;
+  margin: 12px 16px;
+  border: 1px solid #edf0f2;
+  border-radius: 12px;
+  background: #f7f8fa;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+
+.message-center-thread-timeline {
+  /* 消息区 : 发送区 = 4 : 1（发送区 flex:1）。basis 用 0 ⇒ 比例由 flex-grow 严格决定。 */
+  flex: 4 1 0;
+  overflow: auto;
+  padding: 16px 18px !important;
+}
+
+.message-center-thread-timeline-pane {
+  overflow: hidden;
+}
+
+.message-center-thread-composer {
+  flex: 1 1 0;
+  margin: 0 16px 16px;
+  border: 1px solid #edf0f2 !important;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .03);
+}
+
+@media (max-width: 767px) {
+  .message-center-thread-shell { border-radius: 12px; }
+  .message-center-thread-timeline,
+  .message-center-thread-timeline-pane { margin: 8px; }
+  .message-center-thread-timeline { padding: 12px !important; }
+  .message-center-thread-composer { margin: 0 8px 8px; }
+}
+
+
+/* v4 工作台 · 发送区（聊天式输入框改造）：渠道 chips 在顶、元数据并排一行、
+   正文为无边框浅灰输入区、工具栏沉底（左图标组 / 右实心发送按钮）。 */
+.message-center-thread-composer {
+  /* 定高 ⇒ 邮件 / ChatApp / 电话记录 三个渠道来回切时发送区不再跳高；
+     高度差由正文输入区吸收，工具栏恒贴底；内容超高（如模板参数多）时内部滚动兜底。 */
+  /* 4:1 里的「1 份」——与消息区 flex:4 配对；min-height 是内容能塞下的地板，
+     窗口过矮时不再压缩（此时比例会让位于可用性），内部滚动兜底。 */
+  min-height: 189px;
+  padding: 8px 14px 6px;
+  overflow: auto;
+  /* 给下面「模式切换 nav 贴右上角」那条规则当定位上下文。 */
+  position: relative;
+}
+
+/* 渠道 / 消息模式切换：替掉 antd 下划线 tab，与工作台顶部 chips 同一套视觉语言。
+   用 `> .ant-tabs-nav` 限定作用域 —— ChatApp 的模式 tab 嵌在渠道 tab 内部，
+   后代选择器会误伤。 */
+.send-channel-tabs > .ant-tabs-nav,
+.send-mode-tabs > .ant-tabs-nav { margin-bottom: 6px; }
+
+/* ChatApp 的模式切换（文本 / 模板 / 图片 / 视频 / 文件）与渠道 pill 并排一行。
+   它本来独占一行（25px + 6px 间距），而发送区总高是定死的 —— 那 31px 只能从
+   唯一有弹性的正文输入区里扣，于是 Form.Item 被压到它的 min-height 42px，
+   里面的 textarea（自身最小 32px）从 Form.Item 底边冒出来 14px，压住下面的工具栏
+   与「发送」按钮（1512 / 1440 / 1280 三档实测都是 8px 重叠）。
+   提到同一行之后，ChatApp 的正文区与邮件 / 电话记录完全一致。 */
+/* 模式 Tabs 必须自己撑满渠道 tabpane —— 它是普通 block，不在 .send-composer 的那条
+   flex 链上；不撑满的话 nav 脱离流省下来的空间没人接收，正文区还是 42px。 */
+.message-center-thread-composer .send-mode-tabs {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  min-height: 0;
+  /* 自己当定位上下文。不写这一行，nav 会去认 antd 的 .ant-tabs-content（它也是 relative），
+     位置凑巧一样，但那是别人的内部结构 —— 换成我们自己的类才不会被 antd 升级挪走。 */
+  position: relative;
+}
+.message-center-thread-composer .send-mode-tabs > .ant-tabs-nav {
+  position: absolute;
+  /* -32px = 渠道 pill 行高 26px + 它到内容的 6px 间距（.send-channel-tabs > .ant-tabs-nav
+     的 margin-bottom）—— 两个数都在本文件里，改一个记得改另一个。 */
+  top: -32px;
+  right: 0;
+  margin: 0;
+}
+/* 窄屏一行放不下两组 pill（渠道 ≈200px + 模式 262px > composer 内容宽）⇒ 实测两组直接叠上。
+   这时让模式切换回到文档流第二行，并把发送区地板抬高同样的量，正文框才不会被压扁。 */
+@media (max-width: 767px) {
+  .message-center-thread-composer .send-mode-tabs > .ant-tabs-nav {
+    position: static;
+    margin-bottom: 6px;
+  }
+  .message-center-thread-composer { min-height: 220px; }
+}
+.send-channel-tabs > .ant-tabs-nav::before,
+.send-mode-tabs > .ant-tabs-nav::before { border-bottom: 0 !important; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-ink-bar,
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-ink-bar { display: none; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-nav-list,
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-nav-list { gap: 6px; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-tab,
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: #f2f3f5;
+  transition: background .15s ease, color .15s ease;
+}
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn { color: #4b5563; font-size: 13px; }
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn { color: #5b6572; font-size: 12px; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-tab:hover,
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-tab:hover { background: #e7eaee; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-tab-active { background: #1677ff; }
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-tab-active { background: #e6f0ff; }
+.send-channel-tabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #ffffff !important;
+  font-weight: 600;
+}
+.send-mode-tabs > .ant-tabs-nav .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1677ff !important;
+  font-weight: 600;
+}
+
+/* 元数据行：收件人 / 主题并排，不再各占一整行。
+   列数随容器宽自适应（auto-fit）：会话页 composer（~1100px）三列并排、
+   电话仓库 Modal（内容宽 ~472px）自动折行 —— 原来写死三列时 Modal 里
+   每列只剩 111px，号码都填不进去。 */
+.send-meta-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 6px 10px;
+}
+
+/* label 与控件同行：发送区高度直接决定「消息区 : 发送区」的比例，纵向省一行是一行。
+   label 元素保留在 DOM 里（测试用 getByLabelText 定位），只改排列方向。 */
+.send-form .send-meta-row .ant-form-item-row {
+  flex-direction: row;
+  /* antd 的 .ant-form-item-row 带 flex-wrap: wrap —— 不关掉的话 label 与控件会各占一行
+     （两者 x 相同、y 相差 label 高度），白改一通。 */
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.send-form .send-meta-row .ant-form-item-control {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.send-form .send-meta-row .ant-form-item-label {
+  flex: none;
+  /* 按内容宽度走，不再写死 56/40px —— 写死时「电话号码」四个字会被逐字挤成竖排。 */
+  width: auto;
+  padding: 0 8px 0 0 !important;
+  text-align: left;
+}
+.send-form .send-meta-row .ant-form-item-label > label {
+  width: auto;
+  height: auto;
+  /* 硬判据：label 永远单行。断掉它，它就会竖着排成「电/话/号/码」。 */
+  white-space: nowrap;
+}
+
+/* 单字段也走「label 在左」这一套（电话记录里的「联系人」），
+   免得同一张表单里上面一行 label 在控件上、下面几行又跑到左边。 */
+.send-form .send-meta-inline .ant-form-item-row {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.send-form .send-meta-inline .ant-form-item-control { flex: 1 1 0; min-width: 0; }
+.send-form .send-meta-inline .ant-form-item-label {
+  flex: none;
+  width: auto;
+  padding: 0 8px 0 0 !important;
+  text-align: left;
+}
+.send-form .send-meta-inline .ant-form-item-label > label {
+  width: auto;
+  height: auto;
+  white-space: nowrap;
+}
+
+/* 输入控件降噪：透明边框 + 浅灰底 + 圆角；聚焦时才回到白底描边。 */
+.send-form .ant-form-item { margin-bottom: 6px; }
+.send-form .ant-form-item-label { padding-bottom: 0 !important; }
+.send-form .ant-form-item-label > label {
+  height: auto;
+  color: #6b7280;
+  font-size: 12px;
+}
+.send-form .ant-form-item-label > label::after { display: none; }
+.send-form .ant-input,
+.send-form .ant-input-affix-wrapper,
+.send-form .ant-select .ant-select-selector,
+.send-form .ant-picker {
+  border-color: transparent !important;
+  border-radius: 10px !important;
+  background: #f5f6f7 !important;
+}
+.send-form textarea.ant-input {
+  padding: 8px 12px;
+  line-height: 1.65;
+  resize: none;
+}
+.send-form .ant-input:focus,
+.send-form .ant-input-affix-wrapper-focused,
+.send-form .ant-select-focused .ant-select-selector,
+.send-form .ant-picker-focused {
+  border-color: #1677ff !important;
+  background: #ffffff !important;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, .10) !important;
+}
+.send-form .ant-form-item-explain-error { font-size: 11px; }
+
+/* 工具栏：左图标组 / 右实心发送按钮，收在输入区下方一行。 */
+.send-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+}
+.send-tools {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.send-tools .ant-upload { line-height: 1; }
+.send-tool.ant-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #5b6572;
+  background: transparent;
+  box-shadow: none;
+}
+.send-tool.ant-btn:hover,
+.send-tool.ant-btn:focus-visible { color: #1677ff; background: #f0f2f5; }
+.send-submit.ant-btn {
+  flex: none;
+  height: 34px;
+  padding: 0 20px;
+  border-radius: 10px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .08);
+}
+
+/* 已选附件 / 媒体：以 chips 呈现，替代 antd Upload 自带的列表。 */
+.send-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.send-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: #f2f3f5;
+  color: #4b5563;
+  font-size: 12px;
+}
+.send-attachment-name {
+  overflow: hidden;
+  max-width: 220px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.send-attachment-remove {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #8b949e;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.send-attachment-remove:hover { color: #e5484d; }
+
+@media (max-width: 767px) {
+  .send-meta-row { grid-template-columns: 1fr; }
+  .message-center-thread-composer { padding: 10px 10px 8px; }
+}
+
+/* v4 工作台 · 发送区续：三列元数据行与工具栏提示。 */
+.send-meta-row-3 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+/* 宽屏下三列不必等分：号码和时间要放得下长串，方向只要装两个按钮。
+   窄屏仍走上面的 auto-fit —— 1280 下三列等分是实测不挤的最小形态。 */
+@media (min-width: 1280px) {
+  .send-meta-row-3 { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 1.3fr); }
+}
+/* Modal 里只有两列的宽度，直接给两列并把「通话时间」跨满一格，
+   免得它孤零零留在第二行的左半边、右边空一大块。 */
+.ant-modal .send-meta-row-3 { grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr); }
+.ant-modal .send-meta-row-3 > .ant-form-item:last-child { grid-column: 1 / -1; }
+.send-tool-hint {
+  flex: none;
+  color: #98a2b3;
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 767px) {
+  .send-meta-row-3 { grid-template-columns: 1fr; }
+  .send-tool-hint { display: none; }
+}
+
+/* v4 工作台 · 发送区定高（三渠道高度统一）：
+   发送区高度固定，正文输入区弹性吃掉剩余高度，底部工具栏用 margin-top:auto 贴底。
+   仅作用于会话页的 composer —— 独立发送页没有这个祖先，保持自然高度。 */
+.message-center-thread-composer .send-composer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.message-center-thread-composer .send-composer > .ant-tabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.message-center-thread-composer .send-composer .ant-tabs-nav { flex: none; }
+.message-center-thread-composer .send-composer .ant-tabs-content-holder {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.message-center-thread-composer .send-composer .ant-tabs-content,
+.message-center-thread-composer .send-composer .ant-tabs-tabpane {
+  height: 100%;
+  min-height: 0;
+}
+.message-center-thread-composer .send-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+/* 不参与生长的行不许被压扁 */
+.message-center-thread-composer .send-form > *:not(.send-grow) { flex: none; }
+.message-center-thread-composer .send-form > .send-toolbar { margin-top: auto; }
+.message-center-thread-composer .send-form > .ant-form-item.send-grow {
+  display: flex;
+  flex: 1 1 40px;
+  flex-direction: column;
+  /* 至少一行半高。写 0 的时候 composer 定高会把它压成 8px ——
+     备注框塌成一条线，placeholder 与下面的工具栏提示糊在一起。
+     也别写太大：ChatApp tab 上面还压着模式切换，一超就顶出 composer。 */
+  min-height: 42px;
+}
+.message-center-thread-composer .send-form > .ant-form-item.send-grow > .ant-form-item-row {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.message-center-thread-composer .send-form > .ant-form-item.send-grow .ant-form-item-label { flex: none; }
+.message-center-thread-composer .send-form > .ant-form-item.send-grow .ant-form-item-control {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.message-center-thread-composer .send-form > .ant-form-item.send-grow .ant-form-item-control-input {
+  flex: 1;
+  min-height: 0;
+}
+.message-center-thread-composer .send-form > .ant-form-item.send-grow .ant-form-item-control-input-content {
+  height: 100%;
+}
+.message-center-thread-composer .send-form > .ant-form-item.send-grow textarea.ant-input {
+  height: 100% !important;
+  /* 兜底：不给它任何最小高度，它就只能待在 Form.Item 里。
+     少了这一行，空间一紧它就从 Form.Item 底边冒出去压住工具栏（实测溢出 14px）。 */
+  min-height: 0 !important;
+  overflow: auto;
+}
+
+
+/* 右栏详情面板皮肤（.mc-detail-panel）：AppLayout 右栏在同一位置二选一渲染「联系人详情」与
+   「企微群详情」，两者共用这一层命名空间 —— 所以皮肤不叫 contact-detail-panel。
+   视觉语言取自 v5 设计稿的 ctx 侧栏：分组标题（图标 + 标题 + 计数胶囊）/ 无边框「键 · 值」行 /
+   chip 标签 / 分组间细分隔线。
+   色值直接取设计稿 :root 令牌（--ink:#0f1419 / --ink2:#5b6675 / --ink3:#98a1ad /
+   --hair:#eceef1 / --wecom:#5b5bd6 / --wecom-soft:#eeeefb），前端本项目没有这层变量。 */
+.mc-detail-panel .cd-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 16px 20px;
+}
+.mc-detail-panel .cd-group {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #eceef1;
+}
+.mc-detail-panel .cd-group:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+.mc-detail-panel .cd-group-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 10px;
+  color: #0f1419;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.mc-detail-panel .cd-group-title > .anticon {
+  flex: none;
+  color: #98a1ad;
+  font-size: 13px;
+}
+.mc-detail-panel .cd-cnt {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「键 · 值」行：标签灰、定宽；值占满剩余宽度并允许断行。 */
+.mc-detail-panel .cd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 0;
+  color: #0f1419;
+  font-size: 12.5px;
+}
+.mc-detail-panel .cd-k {
+  flex: none;
+  width: 62px;
+  color: #98a1ad;
+  font-size: 12px;
+}
+.mc-detail-panel .cd-v {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.mc-detail-panel .cd-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+.mc-detail-panel .cd-value-text {
+  min-width: 0;
+  word-break: break-word;
+}
+.mc-detail-panel .cd-inline-edit.ant-btn {
+  flex: none;
+  height: 20px;
+  padding: 0 4px;
+  color: #1677ff;
+}
+.mc-detail-panel .cd-inline-edit.ant-btn:hover { background: #f0f5ff; }
+
+/* chip：人工标签中性灰、AI 标签淡紫 —— 两类标签在稿子里靠色相分家。 */
+.mc-detail-panel .cd-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.mc-detail-panel .cd-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.mc-detail-panel .cd-chip-ai {
+  background: #eeeefb;
+  color: #5b5bd6;
+}
+.mc-detail-panel .cd-empty {
+  color: #98a1ad;
+  font-size: 12px;
+}
+
+.mc-detail-panel .cd-prose {
+  margin: 0;
+  color: #5b6675;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.mc-detail-panel .cd-prose.is-empty { color: #98a1ad; }
+.mc-detail-panel .cd-hint {
+  margin: 6px 0 0;
+  color: #98a1ad;
+  font-size: 11.5px;
+}
+
+/* 渠道身份行：整行可点 ⇒ 才需要 hover 底与「拆分」按钮的独立命中区。 */
+.mc-detail-panel .cd-row-link {
+  margin: 0 -6px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mc-detail-panel .cd-row-link:hover { background: #f7f8fa; }
+.mc-detail-panel .cd-v-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.mc-detail-panel .cd-identity-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mc-detail-panel .cd-identity-name { font-size: 12.5px; font-weight: 600; }
+.mc-detail-panel .cd-identity-value {
+  color: #98a1ad;
+  font-size: 11px;
+  word-break: break-all;
+}
+.mc-detail-panel .cd-message-body {
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+/* 面板里仍然用 antd Tag 的地方（渠道类型 / 消息方向等）统一成 chip 形状，别再是方角描边。 */
+.mc-detail-panel .cd-v .ant-tag,
+.mc-detail-panel .cd-chips .ant-tag {
+  height: 22px;
+  margin-inline-end: 0;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 22px;
+}
+
+
+/* ---- 同区域其他 tab 的收口：Topic 时间轴 / 手动整理 / 群成员 ----
+   这三处原先各自用 antd 默认观感（描边 Collapse 卡片、蓝底方块、List 分隔线），
+   与 ctx 侧栏（分组标题 + 无边框行 + chip）不是一套语言。下面把「行 / chip / 成块说明」
+   三种构件统一，交互与语义不动。 */
+
+.mc-detail-panel .cd-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mc-detail-panel .cd-collapse.ant-btn {
+  height: auto;
+  padding: 0;
+  color: #0f1419;
+}
+.mc-detail-panel .cd-collapse.ant-btn:hover,
+.mc-detail-panel .cd-collapse.ant-btn:focus-visible {
+  color: #0f1419;
+  background: transparent;
+}
+
+/* Topic 列表：antd Collapse 的描边卡片 → 工作台里的可点行（hover 变色、展开区无边框）。 */
+.mc-detail-panel .cd-topics.ant-collapse { background: transparent; }
+.mc-detail-panel .cd-topics > .ant-collapse-item { border: 0; }
+.mc-detail-panel .cd-topics > .ant-collapse-item > .ant-collapse-header {
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+}
+.mc-detail-panel .cd-topics > .ant-collapse-item > .ant-collapse-header:hover { background: #f7f8fa; }
+.mc-detail-panel .cd-topics .ant-collapse-content-box { padding: 0 8px 10px; }
+.mc-detail-panel .cd-topics > .ant-collapse-item + .ant-collapse-item { border-top: 1px solid #eceef1; }
+.mc-detail-panel .cd-topic-title { color: #0f1419; font-size: 12.5px; font-weight: 600; }
+.mc-detail-panel .cd-topic-time { color: #98a1ad; font-size: 11.5px; }
+.mc-detail-panel .cd-topic-summary { display: block; margin-top: 6px; color: #5b6675; font-size: 12.5px; line-height: 1.65; }
+
+/* 折叠行排版：栏宽只有 359px，「标题 + 最近事件时间」挤在一行必然折成四五行 ⇒ 改成两行 ——
+   第一行「标题（+ 只读群 Topic 标签）」，第二行 11.5px 小字时间；checkbox 与两行整体居中。 */
+.mc-detail-panel .cd-topic-label { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+.mc-detail-panel .cd-topic-main { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
+.mc-detail-panel .cd-topic-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 「待确定 Topic」的折叠行仍是 antd Space 结构：给它撑满，内容才不会被挤到下一行。 */
+.mc-detail-panel .cd-topics .ant-collapse-header .ant-space { display: flex; width: 100%; align-items: center; }
+.mc-detail-panel .cd-topics .ant-collapse-header .ant-space-item { min-width: 0; }
+.mc-detail-panel .cd-topic-time { white-space: nowrap; }
+
+/* 「事件时间」这类成块说明：原来的蓝底方块 → callout（左侧一道细竖线 + 极浅底）。 */
+.mc-detail-panel .cd-callout {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #cfd6de;
+  border-radius: 0 8px 8px 0;
+  background: #f7f8fa;
+}
+.mc-detail-panel .cd-callout-title {
+  display: block;
+  color: #5b6675;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+/* 来源 / 元数据：蓝色 link 按钮 → 中性 chip，hover 转 AI 淡紫。 */
+.mc-detail-panel .cd-srcs { gap: 6px; }
+.mc-detail-panel .cd-src.ant-btn {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-size: 11.5px;
+}
+.mc-detail-panel .cd-src.ant-btn:hover { background: #eeeefb; color: #5b5bd6; }
+.mc-detail-panel .cd-cnt.is-warn { background: #fff3e6; color: #b45309; }
+
+/* 手动整理：表单与 AI 预览各收进一张浅卡片。 */
+.mc-detail-panel .cd-card {
+  padding: 12px;
+  border: 1px solid #eceef1;
+  border-radius: 12px;
+  background: #fbfbfc;
+}
+.mc-detail-panel .cd-src-list { max-height: 280px; overflow: auto; }
+.mc-detail-panel .cd-src-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.mc-detail-panel .cd-src-row:hover { background: #f7f8fa; }
+.mc-detail-panel .cd-review-card { padding-top: 10px; border-top: 1px solid #eceef1; }
+
+/* 群成员：与「渠道身份」行同语言 —— 无边框行 + hover 底，角色退成 chip。 */
+.mc-detail-panel .cd-participants.ant-list { border: 0; }
+.mc-detail-panel .cd-participant { display: flex; align-items: center; gap: 8px; width: 100%; }
+.mc-detail-panel .cd-participants .ant-list-item {
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 8px;
+  border-block-end: 0;
+}
+.mc-detail-panel .cd-participants .ant-list-item:hover { background: #f7f8fa; }
+.mc-detail-panel .cd-participants a { color: inherit; }
+.mc-detail-panel .cd-participant-name { flex: 1; min-width: 0; color: #0f1419; font-size: 12.5px; }
+.mc-detail-panel .cd-participant-role.ant-tag {
+  height: 20px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-size: 11px;
+  line-height: 20px;
+}
+
+/* ===== AI 助手面板（2026-09-30）=====
+   把全局助手抽屉收进工作台同一套视觉语言：一张浮在灰底上的白卡（与左右两个侧块同款
+   10px 缝 / 16px 圆角 / 1px 描边 / 同款投影），chip 化的会话条与示例，气泡区分
+   「我说的 / 助手说的」，输入区复用发送区的降噪输入框与实心发送按钮。
+
+   命名空间为什么挂在 `rootClassName` 上：Drawer 是 portal 到 `body` 的，
+   它不在 `.message-center-*` 的祖先链里 —— 用 `.message-center-*` 前缀根本选不中它。
+   遮罩在组件里已关掉（`mask={false}`），这里不再处理。 */
+
+/* 打开时 antd 把焦点交给**抽屉根元素**（`tabindex="-1"`；实测 `document.activeElement`
+   就是它，rect 恰好铺满整屏）。Chrome 于是给视口边缘描了一圈 1px 焦点环 —— 实测色
+   `rgb(0, 95, 204)`，像素比对里表现为「屏幕四边各一条 1px 线变色」，很容易被误读成
+   『打开抽屉把页面改了』。焦点落在整屏上等于没有焦点，这圈线既不是设计也不是状态提示。 */
+.mc-assistant-drawer:focus,
+.mc-assistant-drawer:focus-visible { outline: none; }
+
+/* 抽屉本体 = 浮卡：四周留 10px 缝（原来右侧贴死屏幕边缘），阴影从 wrapper 移到 content。 */
+.mc-assistant-drawer .ant-drawer-content-wrapper {
+  padding: 10px;
+  box-shadow: none !important;
+}
+
+.mc-assistant-drawer .ant-drawer-content {
+  overflow: hidden;
+  border: 1px solid #e5e8ec;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 12px 28px rgba(16, 24, 40, .10);
+}
+
+/* 头部：与消息区标题栏同款（白底 + 一条极浅分隔线），标题字号对齐工作台。 */
+.mc-assistant-drawer .ant-drawer-header {
+  padding: 13px 16px;
+  border-bottom: 1px solid #eceef1;
+  background: #ffffff;
+}
+
+.mc-assistant-drawer .ant-drawer-header .ant-drawer-title {
+  color: #0f1419;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.mc-assistant-drawer .ant-drawer-close {
+  margin-inline-end: 10px;
+  border-radius: 8px;
+  color: #5b6572;
+}
+
+.mc-assistant-drawer .ant-drawer-close:hover { color: #111827; background: rgba(15, 23, 42, .06); }
+
+.mc-assistant-drawer .ant-drawer-body { display: flex; }
+
+/* —— 会话条：浅灰底，与左栏会话列表同一层灰 —— */
+.mc-assistant-drawer .as-panel {
+  width: 100%;
+  height: 100%;
+}
+
+.mc-assistant-drawer .as-top {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eceef1;
+  background: #f4f4f4;
+}
+
+.mc-assistant-drawer .as-top-main { flex: 1; min-width: 0; }
+
+.mc-assistant-drawer .as-session-select { flex: 1; min-width: 0; }
+
+.mc-assistant-drawer .as-session-select .ant-select-selector {
+  border-color: transparent !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.mc-assistant-drawer .as-session-select.ant-select-focused .ant-select-selector {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, .10) !important;
+}
+
+/* 图标按钮与胶囊按钮：会话条上的三个控件（删除 / 新会话）统一到这一套。 */
+.mc-assistant-drawer .as-icon-btn.ant-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #5b6572;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mc-assistant-drawer .as-icon-btn.ant-btn:hover,
+.mc-assistant-drawer .as-icon-btn.ant-btn:focus-visible { color: #1677ff; background: rgba(15, 23, 42, .07); }
+
+.mc-assistant-drawer .as-ghost-btn.ant-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: #3f4753;
+  background: #ffffff;
+  font-size: 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .06);
+}
+
+.mc-assistant-drawer .as-ghost-btn.ant-btn:hover,
+.mc-assistant-drawer .as-ghost-btn.ant-btn:focus-visible { color: #1677ff; background: #ffffff; }
+
+.mc-assistant-drawer .as-ghost-btn.ant-btn:disabled { color: #9aa1a9; background: #ededed; box-shadow: none; }
+
+/* —— 对话区 —— */
+.mc-assistant-drawer .as-stream {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow-y: auto;
+  background: #ffffff;
+}
+
+.mc-assistant-drawer .as-row { max-width: 100%; }
+
+.mc-assistant-drawer .ant-empty-image { height: auto; opacity: .5; }
+
+.mc-assistant-drawer .ant-empty-description { color: #6b7280; font-size: 12.5px; }
+
+/* 空态示例：原来是等宽字号的「代码块」，现在是能点一下填进输入框的 chip。 */
+.mc-assistant-drawer .as-examples { margin-top: 2px; }
+
+.mc-assistant-drawer .as-example {
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #f4f5f7;
+  color: #5b6675;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+
+.mc-assistant-drawer .as-example:hover,
+.mc-assistant-drawer .as-example:focus-visible {
+  background: #eeeefb;
+  color: #5b5bd6;
+}
+
+/* 气泡：用户侧实心主色（右下角收一个小尖角），助手侧白底描边 —— 一眼分得清谁在说。 */
+.mc-assistant-drawer .as-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mc-assistant-drawer .as-bubble.is-user {
+  border-bottom-right-radius: 4px;
+  background: #1677ff;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .12);
+}
+
+.mc-assistant-drawer .as-bubble.is-assistant {
+  border: 1px solid #eceef1;
+  border-bottom-left-radius: 4px;
+  background: #ffffff;
+  color: #0f1419;
+}
+
+.mc-assistant-drawer .as-bubble.is-streaming {
+  border: 1px dashed #dfe3e8;
+  background: #f7f8fa;
+  color: #5b6675;
+}
+
+.mc-assistant-drawer .as-bubble.is-error {
+  border: 1px solid #f3cfd2;
+  background: #fef4f4;
+  color: #b42318;
+}
+
+.mc-assistant-drawer .as-cursor { margin-left: 6px; color: #1677ff; font-size: 12px; }
+
+.mc-assistant-drawer .as-error-code { color: #98a1ad; font-size: 11.5px; }
+
+/* 结论标签：antd Tag 的方角描边 → chip（与详情面板的 chip 同一套色板）。 */
+.mc-assistant-drawer .as-panel .ant-tag {
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 20px;
+}
+
+.mc-assistant-drawer .as-tag { background: #f2f3f5; color: #5b6675; }
+.mc-assistant-drawer .as-tag.is-ok { background: #e7f6ec; color: #1a7f43; }
+.mc-assistant-drawer .as-tag.is-q { background: #e6f0ff; color: #1677ff; }
+.mc-assistant-drawer .as-tag.is-bad { background: #fdecec; color: #b42318; }
+.mc-assistant-drawer .as-tag.is-warn { background: #fff3e6; color: #b45309; }
+
+/* 确认卡片：antd 橙底 Card → callout（左侧一道细竖线 + 极浅底），语义色仍是琥珀。 */
+.mc-assistant-drawer .as-confirm {
+  padding: 12px 14px;
+  border: 1px solid #f0e2c4;
+  border-left: 3px solid #e0a94a;
+  border-radius: 4px 12px 12px 4px;
+  background: #fffbf3;
+}
+
+.mc-assistant-drawer .as-confirm-icon { color: #b45309; }
+
+.mc-assistant-drawer .as-confirm-body {
+  margin: 0;
+  color: #0f1419;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.mc-assistant-drawer .as-confirm-ok.ant-btn { height: 32px; border-radius: 10px; font-weight: 600; }
+
+.mc-assistant-drawer .as-retry.ant-btn {
+  height: 26px;
+  border-radius: 8px;
+  color: #5b6572;
+  font-size: 12px;
+}
+
+/* 顶部告警（未开启 / 模型不可用 / 回放失败）与卡片同圆角。 */
+.mc-assistant-drawer .ant-alert { border-radius: 12px; }
+
+/* —— 底部输入区：复用发送区的降噪输入框 + 工具栏排布 —— */
+.mc-assistant-drawer .as-composer {
+  flex: none;
+  padding: 12px 14px 14px;
+  border-top: 1px solid #eceef1;
+  background: #ffffff;
+}
+
+.mc-assistant-drawer .as-note { color: #6b7280; font-size: 12px; }
+.mc-assistant-drawer .as-note.is-warn { color: #b45309; }
+
+.mc-assistant-drawer .as-input.ant-input {
+  padding: 8px 12px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: #f5f6f7;
+  line-height: 1.7;
+  resize: none;
+  box-shadow: none;
+}
+
+.mc-assistant-drawer .as-input.ant-input:focus,
+.mc-assistant-drawer .as-input.ant-input-focused {
+  border-color: #1677ff;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, .10);
+}
+
+.mc-assistant-drawer .as-input.ant-input::placeholder { color: #9aa1a9; }
+
+.mc-assistant-drawer .as-toolbar { display: flex; align-items: center; gap: 8px; }
+
+.mc-assistant-drawer .as-tool.ant-btn {
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  color: #3f4753;
+  background: #f2f3f5;
+  box-shadow: none;
+}
+
+.mc-assistant-drawer .as-tool.ant-btn:hover,
+.mc-assistant-drawer .as-tool.ant-btn:focus-visible { color: #1677ff; background: #e7eaee; }
+
+.mc-assistant-drawer .as-submit.ant-btn {
+  flex: 1;
+  height: 34px;
+  border-radius: 10px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .08);
+}
+
+/* 待发送的图片：发送区附件 chips 的同一套语言（浅底 + 圆角缩略图 + 状态小字）。 */
+.mc-assistant-drawer .as-attachment {
+  padding: 6px 8px 6px 6px;
+  border-radius: 10px;
+  background: #f5f6f7;
+}
+
+.mc-assistant-drawer .as-attachment-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.mc-assistant-drawer .as-attachment-body { flex: 1; min-width: 0; }
+
+.mc-assistant-drawer .as-attachment-name { color: #0f1419; font-size: 12px; }
+
+.mc-assistant-drawer .as-attachment-note { font-size: 11.5px; }
+.mc-assistant-drawer .as-attachment-note.is-ok { color: #1a7f43; }
+.mc-assistant-drawer .as-attachment-note.is-bad { color: #b42318; }
+
+/* 手机端：抽屉铺满，不再留缝与圆角（此时它就是一张整页）。
+   这里**不改宽度**：实测抽屉 body 宽 = 布局视口（含经典滚动条，390 视口下是 397），
+   而 `min(420px, 100vw)` 算出来的 390 是「可见宽」，于是面板最右 7px 落在滚动条底下。
+   那是「布局视口 vs 可见视口」的固有差异（真机用 overlay 滚动条，不存在这 7px），
+   不是这次的皮肤引入的 —— 不修，也不留一条看着在修、实际被 inline 覆盖的 width 规则。 */
+@media (max-width: 767px) {
+  .mc-assistant-drawer .ant-drawer-content-wrapper { padding: 0; }
+  .mc-assistant-drawer .ant-drawer-content { border: 0; border-radius: 0; }
+}
+
+/* ---------- 助手悬浮球：可拖动 · 靠边吸附 · 悬停滑出 ---------- */
+
+/* 球体是一张位图（候选图都在 `public/assistant-icons/`，换图只改 `AssistantLauncher.tsx` 的
+   `ORB_ICON`）。这里只管「摆在哪儿、什么时候滑出来」—— 几何数字与组件里的常量一一对应，
+   改宽度就要改那边，别只改一处。 */
+.mc-assistant-orb {
+  position: fixed;
+  z-index: 90; /* 低于抽屉的 1000：面板打开时球被盖住，不去挡那 420px 的对话区 */
+  width: 56px;
+  height: 56px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* 拖动中必须关掉（下方 data-dragging），否则球会滞后于指针；
+     松手吸附那一下则要靠它滑到边上，而不是瞬移。 */
+  transition: left .24s cubic-bezier(.22, .61, .36, 1), top .24s cubic-bezier(.22, .61, .36, 1);
+}
+
+.mc-assistant-orb[data-dragging='true'] { transition: none; }
+
+.mc-assistant-orb-ball {
+  position: relative;
+  display: block;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: grab;
+  box-shadow: 0 6px 16px rgba(16, 24, 40, .18), 0 1px 2px rgba(16, 24, 40, .12);
+  transition: transform .24s cubic-bezier(.22, .61, .36, 1), box-shadow .24s ease;
+  will-change: transform;
+}
+
+.mc-assistant-orb-ball img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+
+/* 贴边 = 朝屏幕外多走 12px（与组件里的 ORB_PEEK 同值）；鼠标过来才滑回完整位置。
+   放大锚点放在**贴边那一侧**：球变大时朝屏幕里长，不朝外长（否则悬停瞬间会顶出视口 1px）。 */
+.mc-assistant-orb[data-edge='right'] .mc-assistant-orb-ball {
+  transform: translateX(12px);
+  transform-origin: right center;
+}
+
+.mc-assistant-orb[data-edge='left'] .mc-assistant-orb-ball {
+  transform: translateX(-12px);
+  transform-origin: left center;
+}
+
+.mc-assistant-orb:hover .mc-assistant-orb-ball,
+.mc-assistant-orb:focus-within .mc-assistant-orb-ball {
+  transform: translateX(0) scale(1.04);
+  box-shadow: 0 10px 24px rgba(16, 24, 40, .24), 0 2px 4px rgba(16, 24, 40, .14);
+}
+
+/* 正被拖着的时候球必须落在指针底下：动画全关，不留一点惯性。
+   这里也**不放大** —— 拖动的反馈是「跟手」，球一涨一缩只会让抓取点看着在漂。 */
+.mc-assistant-orb[data-dragging='true'] .mc-assistant-orb-ball {
+  transform: translateX(0);
+  transition: none;
+  cursor: grabbing;
+}
+
+.mc-assistant-orb-ball:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, .35), 0 8px 20px rgba(16, 24, 40, .22);
+}
+
+/* 文字标签是「滑出来」的另一半：球滑进来的同时，它从球身后面探出来。 */
+.mc-assistant-orb-label {
+  position: absolute;
+  top: 50%;
+  padding: 7px 11px;
+  border-radius: 9px;
+  color: #fff;
+  background: #1f2329;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, .22);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .18s ease, transform .24s cubic-bezier(.22, .61, .36, 1);
+}
+
+.mc-assistant-orb[data-edge='right'] .mc-assistant-orb-label {
+  right: calc(100% + 10px);
+  transform: translateY(-50%) translateX(6px);
+}
+
+.mc-assistant-orb[data-edge='left'] .mc-assistant-orb-label {
+  left: calc(100% + 10px);
+  transform: translateY(-50%) translateX(-6px);
+}
+
+.mc-assistant-orb:hover .mc-assistant-orb-label,
+.mc-assistant-orb:focus-within .mc-assistant-orb-label {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mc-assistant-orb,
+  .mc-assistant-orb-ball,
+  .mc-assistant-orb-label { transition: none; }
+}

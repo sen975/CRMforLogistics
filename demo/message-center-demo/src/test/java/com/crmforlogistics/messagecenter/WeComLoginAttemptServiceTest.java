@@ -1,0 +1,245 @@
+package com.crmforlogistics.messagecenter;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayDeque;
+import java.util.Base64;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class WeComLoginAttemptServiceTest {
+    private static final ViewerAuditSink NO_OP_AUDIT = new ViewerAuditSink() {
+        @Override public void record(String action, String result, String userId,
+                                      String contactPointId, String sessionId) { }
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) { }
+    };
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void createsConsumesExpiresAndBoundsAttemptsWithoutAuditingState() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(1000));
+        Config config = config("2");
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-test-corp", "1000247", "permanent-code");
+        Queue<String> states = states(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "cccccccccccccccccccccccccccccccc");
+        RecordingViewerAudit audit = new RecordingViewerAudit();
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(
+                config, store, clock, states::remove, audit);
+
+        WeComLoginAttemptService.LoginAttemptResponse first = service.createAttempt();
+        assertEquals("ServiceApp", first.loginType());
+        assertEquals("ww-login-suite", first.appId());
+        assertEquals("https://crm.example.com/", first.redirectUri());
+        assertEquals(30, first.expiresIn());
+        service.createAttempt();
+        assertThrows(WeComLoginAttemptService.PendingLimitException.class, service::createAttempt);
+
+        WeComLoginAttemptService.InstallationBinding binding = service.consume(first.state());
+        assertEquals("dk-test-suite", binding.suiteId());
+        assertEquals("ww-test-corp", binding.authCorpId());
+        assertEquals("1000247", binding.agentId());
+        assertEquals(1, binding.version());
+        assertThrows(SecurityException.class, () -> service.consume(first.state()));
+
+        WeComLoginAttemptService.LoginAttemptResponse expiring = service.createAttempt();
+        clock.advanceSeconds(30);
+        assertThrows(SecurityException.class, () -> service.consume(expiring.state()));
+
+        String recorded = String.join("\n", audit.events);
+        assertTrue(recorded.contains("wecom.viewer.login_attempt_create"));
+        assertTrue(recorded.contains("wecom.viewer.login_attempt_consume"));
+        assertTrue(recorded.contains("rate_limited"));
+        assertFalse(recorded.contains(first.state()));
+        assertFalse(recorded.contains(expiring.state()));
+        assertFalse(recorded.contains("permanent-code"));
+    }
+
+    @Test
+    void rejectsAttemptWhenInstallationVersionChangesOrIsRevoked() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(2000));
+        Config config = config("4");
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-test-corp", "1000247", "permanent-code-1");
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, store, clock, states(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")::remove, NO_OP_AUDIT);
+
+        WeComLoginAttemptService.LoginAttemptResponse changed = service.createAttempt();
+        store.upsertActive("dk-test-suite", "ww-test-corp", "1000248", "permanent-code-2");
+        WeComAuthorizationException changedError = assertThrows(WeComAuthorizationException.class,
+                () -> service.consume(changed.state()));
+        assertEquals("WECOM_INSTALLATION_CHANGED", changedError.code());
+        assertEquals(403, changedError.httpStatus());
+
+        WeComLoginAttemptService.LoginAttemptResponse revoked = service.createAttempt();
+        store.updateStatus("dk-test-suite", "ww-test-corp", WeComAuthorizationStore.AuthStatus.REVOKED);
+        WeComAuthorizationException revokedError = assertThrows(WeComAuthorizationException.class,
+                () -> service.consume(revoked.state()));
+        assertEquals("WECOM_INSTALLATION_INACTIVE", revokedError.code());
+    }
+
+    @Test
+    void usesServiceAppLoginSuiteForQrButKeepsInstallationBinding() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(2500));
+        Config config = new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_AUTH_CORP_ID", "ww-authorized-corp",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-login-app.jsonl").toString()));
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-authorized-corp", "2000001", "permanent-code");
+
+        WeComLoginAttemptService service = WeComLoginAttemptService.forTests(config, store, clock,
+                () -> "dddddddddddddddddddddddddddddddd", NO_OP_AUDIT);
+
+        WeComLoginAttemptService.LoginAttemptResponse attempt = service.createAttempt();
+        assertEquals("ServiceApp", attempt.loginType());
+        assertEquals("ww-login-suite", attempt.appId());
+
+        WeComLoginAttemptService.InstallationBinding binding = service.consume(attempt.state());
+        assertEquals("ww-authorized-corp", binding.authCorpId());
+        assertEquals("2000001", binding.agentId());
+    }
+
+    @Test
+    void rejectsPartiallyConfiguredLoginSuite() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(2600));
+        Config config = new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_AUTH_CORP_ID", "ww-authorized-corp",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-login-incomplete.jsonl").toString()));
+        WeComAuthorizationStore store = store(clock);
+        store.upsertActive("dk-test-suite", "ww-authorized-corp", "2000001", "permanent-code");
+
+        WeComAuthorizationException error = assertThrows(WeComAuthorizationException.class,
+                () -> WeComLoginAttemptService.forTests(config, store, clock,
+                        () -> "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", NO_OP_AUDIT).createAttempt());
+        assertEquals("WECOM_LOGIN_SUITE_INCOMPLETE", error.code());
+        assertEquals(400, error.httpStatus());
+    }
+
+    @Test
+    void failsClosedWithoutConfiguredOrActiveInstallation() throws Exception {
+        MutableClock clock = new MutableClock(Instant.ofEpochSecond(3000));
+        Config missingSelection = new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-missing.jsonl").toString()));
+        WeComAuthorizationStore store = store(clock);
+        WeComLoginAttemptService missingSelectionService = WeComLoginAttemptService.forTests(
+                missingSelection, store, clock, () -> "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NO_OP_AUDIT);
+        assertEquals("WECOM_LOGIN_INSTALLATION_NOT_SELECTED",
+                assertThrows(WeComAuthorizationException.class,
+                        missingSelectionService::createAttempt).code());
+
+        WeComLoginAttemptService noStoreService = new WeComLoginAttemptService(config("2"), null, NO_OP_AUDIT);
+        assertEquals("WECOM_INSTALLATION_CREDENTIAL_UNAVAILABLE",
+                assertThrows(WeComAuthorizationException.class, noStoreService::createAttempt).code());
+
+        WeComLoginAttemptService missingInstallationService = WeComLoginAttemptService.forTests(
+                config("2"), store, clock, () -> "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", NO_OP_AUDIT);
+        assertEquals("WECOM_INSTALLATION_NOT_FOUND",
+                assertThrows(WeComAuthorizationException.class,
+                        missingInstallationService::createAttempt).code());
+    }
+
+    private Config config(String maxPending) {
+        return new Config(Map.of(
+                "WECOM_SUITE_ID", "dk-test-suite",
+                "WECOM_LOGIN_SUITE_ID", "ww-login-suite",
+                "WECOM_LOGIN_SUITE_SECRET", "login-suite-secret",
+                "WECOM_LOGIN_AUTH_CORP_ID", "ww-test-corp",
+                "WECOM_ALLOWED_JSAPI_ORIGINS", "https://crm.example.com",
+                "WECOM_LOGIN_REDIRECT_URI", "https://crm.example.com/",
+                "WECOM_LOGIN_ATTEMPT_TTL_SECONDS", "30",
+                "WECOM_LOGIN_MAX_PENDING", maxPending,
+                "WECOM_VIEWER_AUDIT_FILE", tempDir.resolve("audit-" + maxPending + ".jsonl").toString()));
+    }
+
+    private WeComAuthorizationStore store(Clock clock) {
+        byte[] key = new byte[32];
+        byte[] seed = "wecom-login-attempt-test".getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(seed, 0, key, 0, seed.length);
+        CredentialCipher cipher = CredentialCipher.fromBase64Key(Base64.getEncoder().encodeToString(key));
+        return WeComAuthorizationStore.forTests(tempDir.resolve("installations.jsonl"), cipher, clock);
+    }
+
+    private static Queue<String> states(String... values) {
+        Queue<String> states = new ArrayDeque<>();
+        java.util.Collections.addAll(states, values);
+        return states;
+    }
+
+    private static final class RecordingViewerAudit implements ViewerAuditSink {
+        private final List<String> events = new ArrayList<>();
+
+        @Override public void record(String action, String result, String userId,
+                                     String contactPointId, String sessionId) {
+            events.add(String.join("|", action, result, userId, contactPointId, sessionId));
+        }
+
+        @Override public void recordDiagnostic(String action, String result, String userId,
+                                               String contactPointId, String sessionId,
+                                               String errorCode, Integer upstreamErrcode,
+                                               String upstreamPath, Integer upstreamHttpStatus,
+                                               String upstreamHint) {
+            record(action, result, userId, contactPointId, sessionId);
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+
+        MutableClock(Instant instant) {
+            this.instant = instant;
+        }
+
+        void advanceSeconds(long seconds) {
+            instant = instant.plusSeconds(seconds);
+        }
+
+        @Override public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override public Instant instant() {
+            return instant;
+        }
+    }
+}

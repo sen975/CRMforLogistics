@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>统一消息中心 · 工作台改版稿</title>
+<style>
+  :root{
+    --bg:#f4f6f9;
+    --panel:#ffffff;
+    --line:#e7eaf0;
+    --line-2:#d9dee7;
+    --ink:#0f172a;
+    --ink-2:#4a5768;
+    --ink-3:#8a97a8;
+    --brand:#2563eb;
+    --brand-2:#1d4ed8;
+    --brand-soft:#eef3ff;
+    --wa:#12b76a;
+    --mail:#3b82f6;
+    --wecom:#6366f1;
+    --phone:#f79009;
+    --warn:#e5484d;
+    --r-xl:18px; --r-lg:14px; --r:10px; --r-sm:8px;
+    --sh:0 1px 2px rgba(16,24,40,.05);
+    --sh-2:0 12px 32px -16px rgba(16,24,40,.28);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+    font-size:14px; line-height:1.5;
+  }
+  .app{min-height:720px; height:100vh; display:flex; flex-direction:column;}
+
+  /* ---------- 顶栏 ---------- */
+  .top{
+    height:60px; flex:none; display:flex; align-items:center; gap:20px;
+    padding:0 22px; background:var(--panel); border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex; align-items:center; gap:10px; font-weight:650; font-size:15px; letter-spacing:.01em}
+  .brand .mark{
+    width:26px;height:26px;border-radius:8px;flex:none;
+    background:linear-gradient(140deg,#3b82f6,#2563eb 55%,#1e40af);
+    box-shadow:0 2px 6px rgba(37,99,235,.35); position:relative;
+  }
+  .brand .mark::after{
+    content:""; position:absolute; inset:6px; border-radius:3px;
+    border:2px solid rgba(255,255,255,.92); border-right-color:transparent; border-bottom-color:transparent;
+  }
+  .nav{display:flex; align-items:center; gap:2px; margin-left:6px}
+  .nav a{
+    position:relative; padding:7px 12px; border-radius:var(--r-sm);
+    color:var(--ink-2); text-decoration:none; font-size:14px; font-weight:500;
+  }
+  .nav a:hover{background:#f3f5f9; color:var(--ink)}
+  .nav a.on{color:var(--brand-2); font-weight:600; background:var(--brand-soft)}
+  .nav a .dot{
+    position:absolute; top:5px; right:2px; width:6px;height:6px;border-radius:50%;
+    background:var(--warn); border:1.5px solid #fff;
+  }
+  .top .spacer{flex:1}
+  .search{
+    display:flex; align-items:center; gap:8px; width:250px; height:36px; padding:0 11px;
+    border:1px solid var(--line); border-radius:var(--r); background:#fafbfd; color:var(--ink-3);
+  }
+  .search svg{width:15px;height:15px;flex:none}
+  .search span{font-size:13px}
+  .search kbd{
+    margin-left:auto; font:500 11px/1 inherit; color:var(--ink-3);
+    border:1px solid var(--line-2); border-bottom-width:2px; border-radius:5px; padding:3px 5px; background:#fff;
+  }
+  .icon-btn{
+    width:36px;height:36px;flex:none;display:grid;place-items:center;position:relative;
+    border:1px solid var(--line); border-radius:var(--r); background:#fff; color:var(--ink-2); cursor:pointer;
+  }
+  .icon-btn:hover{border-color:var(--line-2); color:var(--ink)}
+  .icon-btn svg{width:17px;height:17px}
+  .icon-btn .badge{
+    position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px;
+    display:grid; place-items:center; border-radius:var(--r-pill,999px);
+    background:var(--warn); color:#fff; font-size:10.5px; font-weight:700; border:2px solid #fff;
+  }
+  .who{display:flex;align-items:center;gap:9px;padding-left:6px}
+  .who .av{
+    width:32px;height:32px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:linear-gradient(150deg,#60a5fa,#2563eb); color:#fff; font-size:12.5px; font-weight:650;
+  }
+  .who b{font-size:13.5px;font-weight:600}
+  .who small{display:block;font-size:11.5px;color:var(--ink-3);font-weight:400;line-height:1.25}
+
+  /* ---------- 主体 ---------- */
+  .shell{flex:1; min-height:0; display:grid; grid-template-columns:296px 1fr; gap:14px; padding:14px 22px 18px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--sh)}
+
+  /* 左：会话列表 */
+  .side{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .side-hd{padding:14px 14px 10px; border-bottom:1px solid var(--line)}
+  .side-hd .row{display:flex;align-items:center;gap:8px}
+  .mini-search{
+    flex:1;display:flex;align-items:center;gap:7px;height:34px;padding:0 10px;
+    border:1px solid var(--line);border-radius:var(--r);background:#fafbfd;color:var(--ink-3);font-size:13px;
+  }
+  .mini-search svg{width:14px;height:14px;flex:none}
+  .chips{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;
+    border:1px solid var(--line);border-radius:999px;background:#fff;
+    font-size:12.5px;color:var(--ink-2);cursor:pointer;
+  }
+  .chip .pd{width:7px;height:7px;border-radius:50%;background:var(--ink-3)}
+  .chip.on{background:var(--brand-soft);border-color:#c7d8ff;color:var(--brand-2);font-weight:600}
+  .chip.on .pd{background:var(--brand)}
+  .chip .n{color:var(--ink-3);font-size:11.5px;font-variant-numeric:tabular-nums}
+  .chip.on .n{color:var(--brand-2);opacity:.75}
+
+  .list{flex:1;min-height:0;overflow:auto;padding:6px 8px 10px}
+  .item{
+    position:relative;display:flex;gap:10px;padding:11px 10px 11px 12px;border-radius:var(--r);
+    cursor:pointer;border:1px solid transparent;
+  }
+  .item:hover{background:#f7f9fc}
+  .item.on{background:var(--brand-soft);border-color:#d9e4ff}
+  .item.on::before{
+    content:"";position:absolute;left:0;top:11px;bottom:11px;width:3px;border-radius:0 3px 3px 0;background:var(--brand);
+  }
+  .av{
+    width:38px;height:38px;border-radius:11px;flex:none;display:grid;place-items:center;
+    font-size:13px;font-weight:650;color:#fff;position:relative;
+  }
+  .av b{position:absolute;right:-2px;bottom:-2px;width:12px;height:12px;border-radius:50%;border:2px solid #fff;font-size:0}
+  .av.a1{background:linear-gradient(150deg,#34d399,#059669)}
+  .av.a2{background:linear-gradient(150deg,#60a5fa,#2563eb)}
+  .av.a3{background:linear-gradient(150deg,#fbbf24,#d97706)}
+  .av.a4{background:linear-gradient(150deg,#a78bfa,#6d28d9)}
+  .av.a5{background:linear-gradient(150deg,#f87171,#dc2626)}
+  .av.a6{background:linear-gradient(150deg,#22d3ee,#0891b2)}
+  .av.a7{background:linear-gradient(150deg,#94a3b8,#475569)}
+  .b-wa{background:var(--wa)} .b-mail{background:var(--mail)} .b-wecom{background:var(--wecom)} .b-phone{background:var(--phone)}
+  .it-b{min-width:0;flex:1}
+  .it-t{display:flex;align-items:center;gap:8px}
+  .it-t b{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item.unread .it-t b{font-weight:700}
+  .it-t time{margin-left:auto;font-size:11.5px;color:var(--ink-3);flex:none;font-variant-numeric:tabular-nums}
+  .it-p{font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .item.unread .it-p{color:var(--ink-2)}
+  .it-m{display:flex;align-items:center;gap:5px;margin-top:6px}
+  .it-m .dot{width:6px;height:6px;border-radius:50%;flex:none}
+  .it-m .txt{font-size:11px;color:var(--ink-3)}
+  .pill-n{
+    margin-left:auto;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center;
+    border-radius:999px;background:var(--warn);color:#fff;font-size:11px;font-weight:700;
+  }
+  .side-ft{
+    flex:none;display:flex;align-items:center;gap:6px;padding:9px 14px;
+    border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);background:#fafbfd;border-radius:0 0 var(--r-lg) var(--r-lg);
+  }
+
+  /* 右：工作台 */
+  .main{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:12px}
+  .hello{
+    display:flex;align-items:center;gap:16px;padding:15px 20px;
+    background:linear-gradient(100deg,#ffffff 0%,#f7faff 55%,#eef4ff 100%);
+  }
+  .hello h1{margin:0;font-size:19px;font-weight:650;letter-spacing:.01em}
+  .hello p{margin:4px 0 0;font-size:13px;color:var(--ink-2)}
+  .hello .act{margin-left:auto;display:flex;gap:9px}
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 15px;border-radius:var(--r);
+    border:1px solid var(--line-2);background:#fff;color:var(--ink);font-size:13.5px;font-weight:550;cursor:pointer;
+  }
+  .btn:hover{background:#f7f9fc}
+  .btn svg{width:15px;height:15px}
+  .btn.pri{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 2px 8px -2px rgba(37,99,235,.5)}
+  .btn.pri:hover{background:var(--brand-2);border-color:var(--brand-2)}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .kpi{padding:15px 16px 14px;position:relative;overflow:hidden}
+  .kpi .lab{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);font-weight:500}
+  .kpi .lab .sq{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;flex:none}
+  .kpi .lab .sq svg{width:13px;height:13px}
+  .kpi .v{display:flex;align-items:baseline;gap:8px;margin-top:10px}
+  .kpi .v b{font-size:27px;font-weight:680;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+  .kpi .v em{font-style:normal;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:2px}
+  .kpi .up{color:#0d8a5f} .kpi .down{color:var(--warn)} .kpi .flat{color:var(--ink-3)}
+  .kpi .sub{margin-top:7px;font-size:11.5px;color:var(--ink-3);position:relative;z-index:1}
+  .kpi .spark{position:absolute;right:0;bottom:0;width:96px;height:38px;opacity:.5}
+  .kpi.alert{border-color:#f7d3d5;background:linear-gradient(180deg,#fff 60%,#fff6f6 100%)}
+  .kpi.alert .v b{color:#c62a2f}
+
+  .cols{display:grid;grid-template-columns:1.62fr 1fr;gap:14px;align-items:start}
+  .hd{display:flex;align-items:center;gap:9px;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .hd h2{margin:0;font-size:14.5px;font-weight:640}
+  .hd .cnt{
+    min-width:20px;height:20px;padding:0 6px;display:grid;place-items:center;border-radius:999px;
+    background:#fdecec;color:#c62a2f;font-size:11.5px;font-weight:700;
+  }
+  .hd .more{margin-left:auto;font-size:12.5px;color:var(--brand-2);font-weight:550;text-decoration:none;display:inline-flex;align-items:center;gap:3px}
+  .hd .more svg{width:13px;height:13px}
+  .empty-note{padding:34px 18px;text-align:center;color:var(--ink-3);font-size:12.5px}
+
+  .need{display:flex;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);cursor:pointer}
+  .need:last-child{border-bottom:0}
+  .need:hover{background:#f9fbfe}
+  .need .av{width:36px;height:36px;border-radius:10px;font-size:12.5px}
+  .need .b{flex:1;min-width:0}
+  .need .t{display:flex;align-items:center;gap:8px}
+  .need .t b{font-size:13.5px;font-weight:640}
+  .need .t .org{font-size:12px;color:var(--ink-3)}
+  .need .t time{margin-left:auto;font-size:11.5px;color:var(--ink-3);flex:none}
+  .need .q{
+    margin-top:6px;padding:9px 11px;border-radius:var(--r);background:#f6f8fc;
+    border-left:2px solid var(--line-2); font-size:12.5px;color:var(--ink-2);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .need .m{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .tag{
+    display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:6px;
+    font-size:11px;font-weight:600;
+  }
+  .tag .dot{width:6px;height:6px;border-radius:50%}
+  .t-wa{background:#e7f8ef;color:#087443} .t-wa .dot{background:var(--wa)}
+  .t-mail{background:#eaf2fe;color:#1d4ed8} .t-mail .dot{background:var(--mail)}
+  .t-wecom{background:#eeeffe;color:#4338ca} .t-wecom .dot{background:var(--wecom)}
+  .t-phone{background:#fef4e6;color:#b45309} .t-phone .dot{background:var(--phone)}
+  .mini{
+    margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:29px;padding:0 11px;
+    border-radius:var(--r-sm);background:var(--brand);color:#fff;font-size:12.5px;font-weight:600;border:0;cursor:pointer;
+  }
+  .mini.ghost{background:#fff;color:var(--ink-2);border:1px solid var(--line-2)}
+  .mini svg{width:13px;height:13px}
+
+  .todo{padding:6px 8px 10px}
+  .td{display:flex;gap:10px;padding:7px 10px;border-radius:var(--r);cursor:pointer;align-items:flex-start}
+  .td:hover{background:#f7f9fc}
+  .td .box{width:17px;height:17px;border-radius:5px;border:1.6px solid var(--line-2);flex:none;margin-top:1px;display:grid;place-items:center}
+  .td .box svg{width:11px;height:11px;color:#fff;opacity:0}
+  .td.done .box{background:var(--brand);border-color:var(--brand)}
+  .td.done .box svg{opacity:1}
+  .td.done .txt{color:var(--ink-3);text-decoration:line-through}
+  .td .txt{font-size:13px;color:var(--ink);min-width:0}
+  .td .sub{font-size:11.5px;color:var(--ink-3);margin-top:2px;text-decoration:none;display:block}
+  .td .flag{margin-left:auto;flex:none;font-size:10.5px;font-weight:700;padding:2px 6px;border-radius:5px}
+  .f-hi{background:#fdecec;color:#c62a2f} .f-mid{background:#fef4e6;color:#b45309} .f-lo{background:#f1f3f7;color:var(--ink-3)}
+
+  .chan{padding:12px 18px 14px;display:flex;flex-direction:column;gap:10px}
+  .ch{display:grid;grid-template-columns:20px 1fr auto;align-items:center;gap:10px}
+  .ch .ic{width:20px;height:20px;border-radius:6px;display:grid;place-items:center}
+  .ch .ic svg{width:12px;height:12px;color:#fff}
+  .ch .nm{font-size:12.5px;color:var(--ink-2)}
+  .ch .nm i{font-style:normal;color:var(--ink-3);font-size:11.5px;margin-left:5px}
+  .ch .bar{grid-column:2/4;height:6px;border-radius:999px;background:#f1f3f7;overflow:hidden;margin-top:-4px}
+  .ch .bar i{display:block;height:100%;border-radius:999px}
+  .ch .num{font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums}
+  .foot-note{padding:0 18px 16px;font-size:11.5px;color:var(--ink-3)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;padding:0 18px 16px}
+  .lg{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2)}
+  .lg .dot{width:7px;height:7px;border-radius:50%}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 顶栏 ============ -->
+  <header class="top">
+    <div class="brand"><span class="mark"></span>统一消息中心</div>
+
+    <nav class="nav">
+      <a href="#" class="on">工作台</a>
+      <a href="#">收件箱<span class="dot"></span></a>
+      <a href="#">联系人</a>
+      <a href="#">模板</a>
+      <a href="#">渠道</a>
+    </nav>
+
+    <div class="spacer"></div>
+
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span>搜索联系人、公司、消息…</span>
+      <kbd>⌘K</kbd>
+    </div>
+
+    <button class="icon-btn" title="待办日历">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3"/></svg>
+      <span class="badge">3</span>
+    </button>
+    <button class="icon-btn" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4M17.8 17.8l-1.4-1.4M7.6 7.6L6.2 6.2"/></svg>
+    </button>
+
+    <div class="who">
+      <span class="av">森</span>
+      <span><b>admin</b><small>管理员</small></span>
+    </div>
+  </header>
+
+  <!-- ============ 主体 ============ -->
+  <div class="shell">
+
+    <!-- 左：会话列表 -->
+    <aside class="card side">
+      <div class="side-hd">
+        <div class="row">
+          <label class="mini-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            搜索联系人、邮箱…
+          </label>
+        </div>
+        <div class="chips">
+          <span class="chip on"><i class="pd"></i>全部<span class="n">15</span></span>
+          <span class="chip"><i class="pd" style="background:var(--wa)"></i>WhatsApp<span class="n">4</span></span>
+          <span class="chip"><i class="pd" style="background:var(--mail)"></i>邮件<span class="n">9</span></span>
+          <span class="chip"><i class="pd" style="background:var(--wecom)"></i>企微<span class="n">5</span></span>
+          <span class="chip"><i class="pd" style="background:var(--phone)"></i>电话<span class="n">2</span></span>
+        </div>
+      </div>
+
+      <div class="list">
+        <div class="item unread on">
+          <span class="av a1">守<b class="b-mail"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>守望</b><time>9月28日</time></div>
+            <div class="it-p">上次我们聊到开一条从广东到澳大利亚…</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="pill-n">2</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a2">K<b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>洛杉矶 Kevin</b><time>9月28日</time></div>
+            <div class="it-p">下周三那批货的提单能不能先给我？</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wa)"></span><span class="txt">WhatsApp</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a3">晓<b class="b-phone"></b><b class="b-mail"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>财务对接-晓雯</b><time>9月27日</time></div>
+            <div class="it-p">好的，发票我已经收到了，稍后核对。</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--phone)"></span><span class="txt">电话</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a4">Y<b class="b-mail"></b><b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>雅加达 Yusuf</b><time>9月26日</time></div>
+            <div class="it-p">Please confirm the CIF price for 2x40HQ.</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wa)"></span><span class="txt">WhatsApp</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a5">王<b class="b-mail"></b><b class="b-phone"></b><b class="b-wecom"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>深圳鑫海 - 王总</b><time>9月25日</time></div>
+            <div class="it-p">舱位帮我锁一下 10 月 8 号那班。</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wecom)"></span><span class="txt">企微</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a6">N<b class="b-mail"></b><b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>越南工厂 Nora</b><time>9月24日</time></div>
+            <div class="it-p">We need the inspection report before shipment.</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wa)"></span><span class="txt">WhatsApp</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a7">M<b class="b-mail"></b><b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>新加坡代理 Marcus</b><time>9月23日</time></div>
+            <div class="it-p">Noted, will revert by Friday.</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wa)"></span><span class="txt">WhatsApp</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a2">宁<b class="b-mail"></b><b class="b-phone"></b><b class="b-wecom"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>宁波远洋 · 老客户</b><time>9月22日</time></div>
+            <div class="it-p">合同条款我们再对一下第三条。</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wecom)"></span><span class="txt">企微</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a4">D<b class="b-mail"></b><b class="b-wecom"></b><b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>David（上海）- 美线询价</b><time>9月21日</time></div>
+            <div class="it-p">麻烦报一下 40HQ 到 LA 的价格。</div>
+            <div class="it-m"><span class="dot" style="background:var(--wecom)"></span><span class="txt">企微</span><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span></div>
+          </div>
+        </div>
+
+        <div class="item">
+          <span class="av a3">悦<b class="b-mail"></b><b class="b-wa"></b></span>
+          <div class="it-b">
+            <div class="it-t"><b>悦为小森</b><time>9月21日</time></div>
+            <div class="it-p">5</div>
+            <div class="it-m"><span class="dot" style="background:var(--mail)"></span><span class="txt">邮件</span><span class="dot" style="background:var(--wa)"></span><span class="txt">WhatsApp</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-ft">
+        <span>共 15 个会话</span>
+        <span style="margin-left:auto">自动合并同公司联系人</span>
+      </div>
+    </aside>
+
+    <!-- 右：工作台 -->
+    <main class="main">
+
+      <section class="card hello">
+        <div>
+          <h1>下午好，小森</h1>
+          <p>3 位客户在等你回复，今天还有 5 件事要办。</p>
+        </div>
+        <div class="act">
+          <button class="btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            新建消息
+          </button>
+          <button class="btn pri">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>
+            查看待回复
+          </button>
+        </div>
+      </section>
+
+      <section class="kpis">
+        <div class="card kpi">
+          <div class="lab"><span class="sq" style="background:#eaf2fe"><svg viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="1.9" stroke-linecap="round"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19.5c.6-3.3 3-5 5.5-5s4.9 1.7 5.5 5M16 5.5a3 3 0 010 6M17.5 19.5c-.2-1.6-.7-3-1.6-4"/></svg></span>联系人总数</div>
+          <div class="v"><b>15</b><em class="up">+2 本周</em></div>
+          <div class="sub">覆盖 4 个渠道 · 9 家已报过价</div>
+          <svg class="spark" viewBox="0 0 96 38" preserveAspectRatio="none"><path d="M0 30 L16 27 L32 28 L48 20 L64 16 L80 12 L96 7" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+
+        <div class="card kpi alert">
+          <div class="lab"><span class="sq" style="background:#fdecec"><svg viewBox="0 0 24 24" fill="none" stroke="#e5484d" stroke-width="1.9" stroke-linecap="round"><path d="M20.5 12a8.5 8.5 0 10-3.2 6.6L21 19.5l-.9-3.1"/><path d="M8.5 11.5v3M12 10v4.5M15.5 12.5v2"/></svg></span>待你回复</div>
+          <div class="v"><b>3</b><em class="down">需今天处理</em></div>
+          <div class="sub">最久的已等 14 小时（守望 · 邮件）</div>
+          <svg class="spark" viewBox="0 0 96 38" preserveAspectRatio="none"><path d="M0 24 L16 22 L32 26 L48 18 L64 14 L80 10 L96 6" fill="none" stroke="#e5484d" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+
+        <div class="card kpi">
+          <div class="lab"><span class="sq" style="background:#eef4ff"><svg viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="1.9" stroke-linecap="round"><path d="M6 3.5v6a4 4 0 008 0v-6M10 13.5v3a4 4 0 008 0v-2"/><circle cx="18" cy="12.5" r="2.2"/></svg></span>活跃渠道</div>
+          <div class="v"><b>4</b><em class="flat">全部健康</em></div>
+          <div class="sub">邮件 9 · 企微 5 · WhatsApp 4 · 电话 2</div>
+          <svg class="spark" viewBox="0 0 96 38" preserveAspectRatio="none"><path d="M0 26 L16 25 L32 22 L48 23 L64 18 L80 17 L96 15" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+
+        <div class="card kpi">
+          <div class="lab"><span class="sq" style="background:#fef4e6"><svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3M8.5 13.5l2 2 4-4"/></svg></span>今日待办</div>
+          <div class="v"><b>5</b><em class="flat">已完成 2</em></div>
+          <div class="sub">1 件已逾期 · 2 件高优先级</div>
+          <svg class="spark" viewBox="0 0 96 38" preserveAspectRatio="none"><path d="M0 28 L16 24 L32 25 L48 21 L64 20 L80 14 L96 11" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+      </section>
+
+      <section class="cols">
+
+        <div class="card">
+          <div class="hd">
+            <h2>需要你处理</h2><span class="cnt">3</span>
+            <a class="more" href="#">全部会话
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+            </a>
+          </div>
+
+          <div class="need">
+            <span class="av a4">D<b class="b-wecom"></b></span>
+            <div class="b">
+              <div class="t"><b>David（上海）- 美线询价</b><span class="org">上海美线</span><time>今天 09:12</time></div>
+              <div class="q">麻烦报一下 40HQ 到 LA 的价格，客户这周要定，越快越好。</div>
+              <div class="m">
+                <span class="tag t-wecom"><i class="dot"></i>企业微信</span>
+                <span class="tag" style="background:#f1f3f7;color:#c62a2f">等 4 小时</span>
+                <button class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 12h13M12 6l6 6-6 6"/></svg>回复</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="need">
+            <span class="av a1">守<b class="b-mail"></b></span>
+            <div class="b">
+              <div class="t"><b>守望</b><span class="org">物流同行</span><time>9月28日 19:20</time></div>
+              <div class="q">上次我们聊到开一条从广东到澳大利亚的线路，我这边可以先出个方案，你看什么时候方便？</div>
+              <div class="m">
+                <span class="tag t-mail"><i class="dot"></i>邮件</span>
+                <span class="tag" style="background:#fdecec;color:#c62a2f">等 14 小时</span>
+                <button class="mini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 12h13M12 6l6 6-6 6"/></svg>回复</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="need">
+            <span class="av a5">王<b class="b-phone"></b></span>
+            <div class="b">
+              <div class="t"><b>深圳鑫海 - 王总</b><span class="org">直客</span><time>今天 08:40</time></div>
+              <div class="q">来电未接（响铃 32 秒），未留言。上周他提过要锁 10 月 8 号的舱位。</div>
+              <div class="m">
+                <span class="tag t-phone"><i class="dot"></i>电话</span>
+                <span class="tag" style="background:#fef4e6;color:#b45309">来电未接</span>
+                <button class="mini ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6.5 4.5h3l1.5 4-2 1.4a11 11 0 005.6 5.6l1.4-2 4 1.5v3a1.5 1.5 0 01-1.6 1.5C10.4 19.8 4.2 13.6 3.5 6.1A1.5 1.5 0 015 4.5z"/></svg>回拨</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="hd" style="border-bottom:0;border-top:1px solid var(--line);padding:11px 18px">
+            <span style="font-size:12px;color:var(--ink-3)">其余 12 个会话都在 3 天内回复过，无需跟进</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+
+          <div class="card">
+            <div class="hd">
+              <h2>今日待办</h2><span class="cnt" style="background:#fef4e6;color:#b45309">5</span>
+              <a class="more" href="#">日历
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+              </a>
+            </div>
+            <div class="todo">
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">回复 David 的美线询价
+                  <span class="sub">今天 12:00 前</span>
+                </span>
+                <span class="flag f-hi">高</span>
+              </div>
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">给守望发澳洲线运价表
+                  <span class="sub">关联联系人：守望</span>
+                </span>
+                <span class="flag f-hi">高</span>
+              </div>
+              <div class="td">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">跟进宁波远洋合同第三条
+                  <span class="sub">已逾期 1 天</span>
+                </span>
+                <span class="flag f-mid">中</span>
+              </div>
+              <div class="td done">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">核对晓雯的发票
+                  <span class="sub">今天 09:30 完成</span>
+                </span>
+                <span class="flag f-lo">低</span>
+              </div>
+              <div class="td done">
+                <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <span class="txt">导出 9 月渠道对话量
+                  <span class="sub">今天 09:05 完成</span>
+                </span>
+                <span class="flag f-lo">低</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="hd"><h2>渠道分布</h2><span style="margin-left:auto;font-size:11.5px;color:var(--ink-3)">近 30 天会话</span></div>
+            <div class="chan">
+              <div class="ch">
+                <span class="ic" style="background:var(--mail)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3.8 7.5l8.2 5.6 8.2-5.6"/></svg></span>
+                <span class="nm">邮件<i>9 个联系人</i></span>
+                <span class="num">64%</span>
+                <span class="bar"><i style="width:64%;background:var(--mail)"></i></span>
+              </div>
+              <div class="ch">
+                <span class="ic" style="background:var(--wecom)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4.5 11.5c0-3.3 3.1-5.8 6.9-5.8s6.9 2.5 6.9 5.8-3.1 5.8-6.9 5.8c-.9 0-1.7-.1-2.5-.4L5.4 18l1-2.5a5.6 5.6 0 01-1.9-4z"/></svg></span>
+                <span class="nm">企业微信<i>5 个联系人</i></span>
+                <span class="num">36%</span>
+                <span class="bar"><i style="width:36%;background:var(--wecom)"></i></span>
+              </div>
+              <div class="ch">
+                <span class="ic" style="background:var(--wa)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3.5a8.5 8.5 0 00-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1012 3.5z"/></svg></span>
+                <span class="nm">WhatsApp<i>4 个联系人</i></span>
+                <span class="num">29%</span>
+                <span class="bar"><i style="width:29%;background:var(--wa)"></i></span>
+              </div>
+              <div class="ch">
+                <span class="ic" style="background:var(--phone)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 4.5h3l1.5 4-2 1.4a11 11 0 005.6 5.6l1.4-2 4 1.5v3a1.5 1.5 0 01-1.6 1.5C10.4 19.8 4.2 13.6 3.5 6.1A1.5 1.5 0 015 4.5z"/></svg></span>
+                <span class="nm">电话<i>2 个联系人</i></span>
+                <span class="num">14%</span>
+                <span class="bar"><i style="width:14%;background:var(--phone)"></i></span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

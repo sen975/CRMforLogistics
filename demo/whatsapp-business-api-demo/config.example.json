@@ -1,8 +1,0 @@
-{
-  "mode": "dry_run",
-  "graph_version": "v20.0",
-  "phone_number_id": "replace-with-phone-number-id",
-  "business_account_id": "optional-business-account-id",
-  "access_token": "replace-with-meta-cloud-api-token",
-  "verify_token": "choose-your-own-verify-token"
-}

@@ -1,6 +1,8 @@
 param(
-    [ValidateSet("web", "contacts", "test", "compile")]
-    [string]$Command = "web"
+    [ValidateSet("web", "contacts", "receive", "sync", "sync-templates", "wecom-access-token", "wecom-debug-access-token", "audit-status", "test", "compile")]
+    [string]$Command = "web",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,5 +18,6 @@ if ($Command -eq "compile") {
     exit $LASTEXITCODE
 }
 
-mvn -q exec:java "-Dexec.args=$Command"
+$execArgs = @($Command) + $Arguments
+mvn -q exec:java "-Dexec.args=$($execArgs -join ' ')"
 exit $LASTEXITCODE

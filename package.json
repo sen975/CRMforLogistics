@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@wecom/jssdk": "2.3.4"
+  }
+}
